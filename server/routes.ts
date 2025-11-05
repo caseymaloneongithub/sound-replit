@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
 import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema } from "@shared/schema";
-import { setupAuth } from "./auth";
+import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
 
 const stripe = process.env.STRIPE_SECRET_KEY 
@@ -13,20 +13,8 @@ const stripe = process.env.STRIPE_SECRET_KEY
   : null;
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Auth middleware
+  // Auth middleware - sets up /api/register, /api/login, /api/logout, /api/user
   await setupAuth(app);
-
-  // Auth routes
-  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      res.json(user);
-    } catch (error: any) {
-      console.error("Error fetching user:", error);
-      res.status(500).json({ message: "Failed to fetch user" });
-    }
-  });
 
   // Product routes
   app.get("/api/products", async (req, res) => {

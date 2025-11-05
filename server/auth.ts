@@ -127,3 +127,11 @@ export function setupAuth(app: Express) {
     res.json(userWithoutPassword);
   });
 }
+
+// Middleware to check if user is authenticated
+export function isAuthenticated(req: any, res: any, next: any) {
+  if (req.isAuthenticated()) {
+    return next();
+  }
+  res.sendStatus(401);
+}
