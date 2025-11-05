@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { BarChart3, TrendingUp, Package, Users, DollarSign, ShoppingBag } from "lucide-react";
 import type { WholesaleOrder, Subscription, Product } from "@shared/schema";
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function Reports() {
   const { data: orders } = useQuery<WholesaleOrder[]>({
@@ -29,6 +30,51 @@ export default function Reports() {
     const monthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
     return orderDate >= monthAgo;
   }).length || 0;
+
+  const orderStatusData = [
+    { name: 'Pending', value: orders?.filter(o => o.status === 'pending').length || 0, color: '#94a3b8' },
+    { name: 'Processing', value: orders?.filter(o => o.status === 'processing').length || 0, color: '#60a5fa' },
+    { name: 'Shipped', value: orders?.filter(o => o.status === 'shipped').length || 0, color: '#34d399' },
+    { name: 'Delivered', value: orders?.filter(o => o.status === 'delivered').length || 0, color: '#10b981' },
+  ];
+
+  const inventoryData = [
+    { name: 'In Stock', count: products?.filter(p => p.stockQuantity > p.lowStockThreshold).length || 0 },
+    { name: 'Low Stock', count: lowStockItems },
+    { name: 'Out of Stock', count: products?.filter(p => p.stockQuantity === 0).length || 0 },
+  ];
+
+  const getLast6Months = () => {
+    const months = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({
+        month: date.toLocaleDateString('en-US', { month: 'short' }),
+        revenue: 0,
+        orders: 0,
+      });
+    }
+    
+    orders?.forEach(order => {
+      const orderDate = new Date(order.orderDate);
+      const monthIndex = months.findIndex(m => {
+        const date = new Date();
+        date.setMonth(date.getMonth() - (5 - months.indexOf(m)));
+        return orderDate.getMonth() === date.getMonth() && 
+               orderDate.getFullYear() === date.getFullYear();
+      });
+      
+      if (monthIndex >= 0) {
+        months[monthIndex].revenue += Number(order.totalAmount);
+        months[monthIndex].orders += 1;
+      }
+    });
+    
+    return months;
+  };
+
+  const monthlyData = getLast6Months();
 
   return (
     <div className="p-8 space-y-8">
@@ -127,6 +173,75 @@ export default function Reports() {
                 </Badge>
               </div>
             </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card data-testid="card-revenue-chart">
+        <CardHeader>
+          <CardTitle>Revenue & Orders Trend</CardTitle>
+          <CardDescription>Last 6 months performance</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={monthlyData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" />
+              <YAxis yAxisId="left" orientation="left" />
+              <YAxis yAxisId="right" orientation="right" />
+              <Tooltip />
+              <Legend />
+              <Bar yAxisId="left" dataKey="revenue" fill="#10b981" name="Revenue ($)" />
+              <Bar yAxisId="right" dataKey="orders" fill="#60a5fa" name="Orders" />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <Card data-testid="card-order-status-chart">
+          <CardHeader>
+            <CardTitle>Order Status Distribution</CardTitle>
+            <CardDescription>Current wholesale order pipeline</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={orderStatusData.filter(d => d.value > 0)}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  outerRadius={100}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {orderStatusData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="card-inventory-chart">
+          <CardHeader>
+            <CardTitle>Inventory Status</CardTitle>
+            <CardDescription>Stock levels across all products</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={inventoryData} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis type="number" />
+                <YAxis dataKey="name" type="category" />
+                <Tooltip />
+                <Bar dataKey="count" fill="#10b981" />
+              </BarChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>
