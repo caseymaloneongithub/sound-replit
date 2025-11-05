@@ -62,11 +62,7 @@ export default function StaffPortal() {
 
   const updateOrderStatusMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: string; status: string }) => {
-      return await apiRequest(`/api/staff/orders/${orderId}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status }),
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return await apiRequest('PATCH', `/api/staff/orders/${orderId}/status`, { status });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/wholesale/orders'] });
@@ -86,11 +82,7 @@ export default function StaffPortal() {
 
   const updateProductMutation = useMutation({
     mutationFn: async ({ productId, updates }: { productId: string; updates: any }) => {
-      return await apiRequest(`/api/staff/products/${productId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(updates),
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return await apiRequest('PATCH', `/api/staff/products/${productId}`, updates);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/products'] });

@@ -75,16 +75,25 @@ export class PostgresStorage implements IStorage {
   }
 
   async upsertUser(userData: UpsertUser): Promise<User> {
+    const existingUser = userData.email 
+      ? await db.select().from(users).where(eq(users.email, userData.email))
+      : [];
+    
+    if (existingUser.length > 0) {
+      const result = await db
+        .update(users)
+        .set({
+          ...userData,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, existingUser[0].id))
+        .returning();
+      return result[0];
+    }
+    
     const result = await db
       .insert(users)
       .values(userData)
-      .onConflictDoUpdate({
-        target: users.id,
-        set: {
-          ...userData,
-          updatedAt: new Date(),
-        },
-      })
       .returning();
     return result[0];
   }
