@@ -8,7 +8,7 @@ import { Navbar } from "@/components/layout/navbar";
 import { ShoppingCart, Plus, Check } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import breweryHero from "@assets/generated_images/Brewery_hero_background_image_98193539.png";
+import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
 
 export default function Shop() {
   const [selectedFlavor, setSelectedFlavor] = useState<string>("all");
@@ -62,8 +62,8 @@ export default function Shop() {
       <div className="relative h-[70vh] md:h-[70vh] flex items-center justify-center overflow-hidden">
         <div className="absolute inset-0 z-0">
           <img 
-            src={breweryHero} 
-            alt="Kombucha Brewery" 
+            src={seattleHero} 
+            alt="Seattle skyline and Puget Sound" 
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-black/50 to-black/70" />
