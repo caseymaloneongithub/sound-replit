@@ -17,6 +17,7 @@ import WholesaleProducts from "@/pages/wholesale-products";
 import Inventory from "@/pages/inventory";
 import Reports from "@/pages/reports";
 import Account from "@/pages/account";
+import StaffPortal from "@/pages/staff-portal";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -36,6 +37,7 @@ function Router() {
       <Route path="/inventory" component={Inventory} />
       <Route path="/reports" component={Reports} />
       <Route path="/account" component={Account} />
+      <Route path="/staff" component={StaffPortal} />
       <Route component={NotFound} />
     </Switch>
   );

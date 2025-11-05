@@ -33,6 +33,7 @@ export interface IStorage {
   getProducts(): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
+  updateProduct(id: string, updates: Partial<InsertProduct>): Promise<Product | undefined>;
   updateProductStock(id: string, stockQuantity: number): Promise<Product | undefined>;
   getLowStockProducts(): Promise<Product[]>;
   
@@ -59,6 +60,7 @@ export interface IStorage {
   getWholesaleOrders(): Promise<WholesaleOrder[]>;
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
   createWholesaleOrder(order: InsertWholesaleOrder): Promise<WholesaleOrder>;
+  updateWholesaleOrderStatus(id: string, status: string): Promise<WholesaleOrder | undefined>;
   
   getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]>;
   createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem>;
@@ -98,6 +100,15 @@ export class PostgresStorage implements IStorage {
 
   async createProduct(insertProduct: InsertProduct): Promise<Product> {
     const result = await db.insert(products).values(insertProduct).returning();
+    return result[0];
+  }
+
+  async updateProduct(id: string, updates: Partial<InsertProduct>): Promise<Product | undefined> {
+    const result = await db
+      .update(products)
+      .set(updates)
+      .where(eq(products.id, id))
+      .returning();
     return result[0];
   }
 

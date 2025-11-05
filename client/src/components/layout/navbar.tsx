@@ -1,13 +1,20 @@
 import { Button } from "@/components/ui/button";
-import { Menu, User } from "lucide-react";
+import { Menu, User, Shield } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
+import { useQuery } from "@tanstack/react-query";
 import { CartDrawer } from "@/components/cart/cart-drawer";
 import logo from "@assets/text-stacked-black_1762299663824.png";
 
 export function Navbar() {
   const [location, setLocation] = useLocation();
   const { isAuthenticated, isLoading } = useAuth();
+  
+  const { data: user } = useQuery<any>({
+    queryKey: ['/api/auth/user'],
+    enabled: isAuthenticated,
+    retry: false,
+  });
   
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur">
@@ -42,6 +49,16 @@ export function Navbar() {
           >
             Wholesale
           </Button>
+          {user && user.isAdmin && (
+            <Button 
+              variant={location === '/staff' ? 'default' : 'ghost'}
+              onClick={() => setLocation('/staff')}
+              data-testid="nav-staff"
+            >
+              <Shield className="w-4 h-4 mr-2" />
+              Staff
+            </Button>
+          )}
         </nav>
 
         <div className="flex items-center gap-2">
