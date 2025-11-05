@@ -1,10 +1,16 @@
-import { useQuery } from "@tanstack/react-query";
-import { WholesaleOrder, WholesaleCustomer } from "@shared/schema";
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { WholesaleOrder, WholesaleCustomer, WholesaleOrderItem, Product } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { LayoutDashboard, Package, Users, ShoppingCart } from "lucide-react";
+import { LayoutDashboard, Package, Users, ShoppingCart, Eye } from "lucide-react";
 import { useLocation } from "wouter";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 function WholesaleSidebar() {
   const [location, setLocation] = useLocation();
@@ -46,12 +52,50 @@ function WholesaleSidebar() {
 }
 
 export default function WholesaleOrders() {
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [newStatus, setNewStatus] = useState<string>("");
+  const { toast } = useToast();
+
   const { data: orders, isLoading } = useQuery<WholesaleOrder[]>({
     queryKey: ["/api/wholesale/orders"],
   });
   
-  const { data: customers } = useQuery<WholesaleCustomer[]>({
+  const { data: customers = [] } = useQuery<WholesaleCustomer[]>({
     queryKey: ["/api/wholesale/customers"],
+  });
+
+  const { data: products = [] } = useQuery<Product[]>({
+    queryKey: ["/api/products"],
+  });
+
+  const { data: orderItems = [] } = useQuery<WholesaleOrderItem[]>({
+    queryKey: ["/api/wholesale/orders", selectedOrderId, "items"],
+    enabled: !!selectedOrderId,
+  });
+
+  const selectedOrder = orders?.find(o => o.id === selectedOrderId);
+  const selectedCustomer = customers?.find(c => c.id === selectedOrder?.customerId);
+
+  const updateStatusMutation = useMutation({
+    mutationFn: async (status: string) => {
+      const response = await apiRequest("PATCH", `/api/wholesale/orders/${selectedOrderId}`, { status });
+      return await response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Status Updated",
+        description: "Order status has been updated successfully",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
+      setNewStatus("");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update order status",
+        variant: "destructive",
+      });
+    },
   });
 
   const getStatusColor = (status: string) => {
@@ -118,6 +162,14 @@ export default function WholesaleOrders() {
                               <Badge variant={getStatusColor(order.status)} className="capitalize shrink-0">
                                 {order.status}
                               </Badge>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => setSelectedOrderId(order.id)}
+                                data-testid={`button-view-${order.id}`}
+                              >
+                                <Eye className="w-4 h-4" />
+                              </Button>
                             </div>
                           </div>
                         );
@@ -135,6 +187,120 @@ export default function WholesaleOrders() {
           </main>
         </div>
       </div>
+
+      <Dialog open={!!selectedOrderId} onOpenChange={(open) => !open && setSelectedOrderId(null)}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: 'var(--font-heading)' }}>Order Details</DialogTitle>
+            <DialogDescription>
+              Order #{selectedOrderId?.slice(0, 8)} • {selectedOrder && new Date(selectedOrder.orderDate).toLocaleDateString()}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedOrder && (
+            <div className="space-y-6">
+              <div className="grid md:grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader className="space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Customer</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="font-semibold">{selectedCustomer?.businessName}</p>
+                    <p className="text-sm text-muted-foreground">{selectedCustomer?.contactName}</p>
+                    <p className="text-sm text-muted-foreground">{selectedCustomer?.email}</p>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Order Status</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Badge variant={getStatusColor(selectedOrder.status)} className="capitalize">
+                      {selectedOrder.status}
+                    </Badge>
+                    <Select 
+                      value={newStatus || selectedOrder.status} 
+                      onValueChange={setNewStatus}
+                    >
+                      <SelectTrigger data-testid="select-status">
+                        <SelectValue placeholder="Update status..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="processing">Processing</SelectItem>
+                        <SelectItem value="shipped">Shipped</SelectItem>
+                        <SelectItem value="delivered">Delivered</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {newStatus && newStatus !== selectedOrder.status && (
+                      <Button
+                        className="w-full"
+                        size="sm"
+                        onClick={() => updateStatusMutation.mutate(newStatus)}
+                        disabled={updateStatusMutation.isPending}
+                        data-testid="button-update-status"
+                      >
+                        Update Status
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+
+              {selectedOrder.notes && (
+                <Card>
+                  <CardHeader className="space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Notes</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm">{selectedOrder.notes}</p>
+                  </CardContent>
+                </Card>
+              )}
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium">Order Items</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {orderItems.map((item) => {
+                      const product = products.find(p => p.id === item.productId);
+                      return (
+                        <div 
+                          key={item.id} 
+                          className="flex flex-wrap items-center justify-between gap-4 p-3 rounded-lg border"
+                          data-testid={`item-${item.id}`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">{product?.name || 'Unknown Product'}</p>
+                            <p className="text-sm text-muted-foreground">
+                              ${item.unitPrice} × {item.quantity}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold">
+                              ${(Number(item.unitPrice) * item.quantity).toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    
+                    <div className="flex items-center justify-between pt-3 border-t">
+                      <span className="font-semibold">Total</span>
+                      <span className="text-2xl font-bold" data-testid="text-detail-total">
+                        ${Number(selectedOrder.totalAmount).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </SidebarProvider>
   );
 }

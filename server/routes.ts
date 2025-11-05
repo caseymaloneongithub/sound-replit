@@ -451,6 +451,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/wholesale/orders/:id", async (req, res) => {
+    try {
+      const { status } = req.body;
+      
+      if (!status || !['pending', 'processing', 'shipped', 'delivered'].includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+
+      const order = await storage.getWholesaleOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      const updated = await storage.updateWholesaleOrderStatus(req.params.id, status);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error updating order: " + error.message });
+    }
+  });
+
   // Cart routes
   app.get("/api/cart", async (req, res) => {
     try {

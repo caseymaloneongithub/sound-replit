@@ -229,6 +229,15 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
+  async updateWholesaleOrderStatus(id: string, status: string): Promise<WholesaleOrder> {
+    const result = await db
+      .update(wholesaleOrders)
+      .set({ status })
+      .where(eq(wholesaleOrders.id, id))
+      .returning();
+    return result[0];
+  }
+
   async getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]> {
     return await db.select().from(wholesaleOrderItems).where(eq(wholesaleOrderItems.orderId, orderId));
   }
