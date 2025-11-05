@@ -7,6 +7,7 @@ import {
   type WholesaleOrder, type InsertWholesaleOrder,
   type WholesaleOrderItem, type InsertWholesaleOrderItem,
   type User, type InsertUser,
+  type VerificationCode, type InsertVerificationCode,
   products,
   subscriptionPlans,
   cartItems,
@@ -14,10 +15,11 @@ import {
   wholesaleCustomers,
   wholesaleOrders,
   wholesaleOrderItems,
-  users
+  users,
+  verificationCodes
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/neon-serverless";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import session from "express-session";
@@ -35,9 +37,14 @@ export interface IStorage {
   
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByPhoneNumber(phoneNumber: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
+  
+  createVerificationCode(code: InsertVerificationCode): Promise<VerificationCode>;
+  getLatestVerificationCode(phoneNumber: string): Promise<VerificationCode | undefined>;
+  markVerificationCodeAsVerified(id: string): Promise<void>;
   
   getProducts(): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
@@ -97,6 +104,11 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
+  async getUserByPhoneNumber(phoneNumber: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.phoneNumber, phoneNumber));
+    return result[0];
+  }
+
   async createUser(userData: InsertUser): Promise<User> {
     const result = await db.insert(users).values(userData).returning();
     return result[0];
@@ -118,6 +130,28 @@ export class PostgresStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return result[0];
+  }
+
+  async createVerificationCode(codeData: InsertVerificationCode): Promise<VerificationCode> {
+    const result = await db.insert(verificationCodes).values(codeData).returning();
+    return result[0];
+  }
+
+  async getLatestVerificationCode(phoneNumber: string): Promise<VerificationCode | undefined> {
+    const result = await db
+      .select()
+      .from(verificationCodes)
+      .where(eq(verificationCodes.phoneNumber, phoneNumber))
+      .orderBy(desc(verificationCodes.createdAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async markVerificationCodeAsVerified(id: string): Promise<void> {
+    await db
+      .update(verificationCodes)
+      .set({ verified: true })
+      .where(eq(verificationCodes.id, id));
   }
 
   async getProducts(): Promise<Product[]> {
