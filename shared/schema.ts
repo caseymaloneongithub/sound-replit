@@ -68,6 +68,8 @@ export const cartItems = pgTable("cart_items", {
   sessionId: text("session_id").notNull(),
   productId: varchar("product_id").notNull().references(() => products.id),
   quantity: integer("quantity").notNull().default(1),
+  isSubscription: boolean("is_subscription").notNull().default(false),
+  subscriptionFrequency: text("subscription_frequency"), // 'weekly' or 'bi-weekly'
 });
 
 export const subscriptions = pgTable("subscriptions", {
