@@ -6,13 +6,16 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Navbar } from "@/components/layout/navbar";
 import Shop from "@/pages/shop";
 import Subscriptions from "@/pages/subscriptions";
+import Subscribe from "@/pages/subscribe";
 import Checkout from "@/pages/checkout";
+import CheckoutSuccess from "@/pages/checkout-success";
 import SubscriptionSuccess from "@/pages/subscription-success";
 import Wholesale from "@/pages/wholesale";
 import WholesaleOrders from "@/pages/wholesale-orders";
 import WholesaleCustomers from "@/pages/wholesale-customers";
 import WholesaleProducts from "@/pages/wholesale-products";
 import Inventory from "@/pages/inventory";
+import Reports from "@/pages/reports";
 import Account from "@/pages/account";
 import NotFound from "@/pages/not-found";
 
@@ -22,13 +25,16 @@ function Router() {
       <Route path="/" component={() => <Redirect to="/shop" />} />
       <Route path="/shop" component={Shop} />
       <Route path="/subscriptions" component={Subscriptions} />
+      <Route path="/subscribe/:id" component={Subscribe} />
       <Route path="/checkout" component={Checkout} />
+      <Route path="/checkout/success" component={CheckoutSuccess} />
       <Route path="/subscription-success" component={SubscriptionSuccess} />
       <Route path="/wholesale" component={Wholesale} />
       <Route path="/wholesale/orders" component={WholesaleOrders} />
       <Route path="/wholesale/customers" component={WholesaleCustomers} />
       <Route path="/wholesale/products" component={WholesaleProducts} />
       <Route path="/inventory" component={Inventory} />
+      <Route path="/reports" component={Reports} />
       <Route path="/account" component={Account} />
       <Route component={NotFound} />
     </Switch>

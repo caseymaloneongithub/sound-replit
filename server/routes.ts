@@ -4,6 +4,7 @@ import Stripe from "stripe";
 import { storage } from "./storage";
 import { insertSubscriptionSchema } from "@shared/schema";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import { z } from "zod";
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -71,31 +72,166 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create Stripe subscription intent
-  app.post("/api/create-subscription-intent", async (req, res) => {
+  // Create Stripe checkout session for subscriptions
+  const createCheckoutSchema = z.object({
+    planId: z.string().uuid(),
+    customerEmail: z.string().email(),
+    customerName: z.string().min(1),
+  });
+
+  app.post("/api/create-checkout-session", async (req, res) => {
     try {
       if (!stripe) {
         return res.status(503).json({ message: "Payment processing is not configured. Please contact support." });
       }
 
-      const { planId } = req.body;
-      const plan = await storage.getSubscriptionPlan(planId);
+      const validated = createCheckoutSchema.parse(req.body);
+      const plan = await storage.getSubscriptionPlan(validated.planId);
       
       if (!plan) {
         return res.status(404).json({ message: "Plan not found" });
       }
 
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: Math.round(Number(plan.price) * 100),
-        currency: "usd",
-        automatic_payment_methods: {
-          enabled: true,
+      if (!plan.stripePriceId) {
+        return res.status(400).json({ message: "This plan is not available for online purchase" });
+      }
+
+      const baseUrl = process.env.REPL_SLUG 
+        ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
+        : 'http://localhost:5000';
+
+      const successUrl = `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${baseUrl}/shop`;
+
+      const session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        line_items: [
+          {
+            price: plan.stripePriceId,
+            quantity: 1,
+          },
+        ],
+        customer_email: validated.customerEmail,
+        metadata: {
+          planId: plan.id,
+          customerName: validated.customerName,
         },
+        success_url: successUrl,
+        cancel_url: cancelUrl,
       });
 
-      res.json({ clientSecret: paymentIntent.client_secret });
+      res.json({ url: session.url, sessionId: session.id });
     } catch (error: any) {
-      res.status(500).json({ message: "Error creating payment intent: " + error.message });
+      console.error("Stripe checkout error:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid request data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error creating checkout session: " + error.message });
+    }
+  });
+
+  // Stripe webhook handler with mandatory signature verification
+  app.post("/api/webhooks/stripe", async (req: any, res) => {
+    try {
+      if (!stripe) {
+        return res.status(503).send("Stripe not configured");
+      }
+
+      const sig = req.headers['stripe-signature'];
+      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+      if (!webhookSecret) {
+        console.error("STRIPE_WEBHOOK_SECRET not configured");
+        return res.status(400).send("Webhook secret not configured");
+      }
+
+      if (!sig) {
+        console.error("Missing Stripe-Signature header");
+        return res.status(400).send("Missing signature header");
+      }
+
+      let event: Stripe.Event;
+
+      try {
+        event = stripe.webhooks.constructEvent(
+          req.rawBody as Buffer,
+          sig,
+          webhookSecret
+        );
+      } catch (err: any) {
+        console.error(`Webhook signature verification failed: ${err.message}`);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+      }
+
+      switch (event.type) {
+        case 'checkout.session.completed': {
+          const session = event.data.object as Stripe.Checkout.Session;
+          
+          if (!session.subscription) {
+            console.error("No subscription ID in checkout session");
+            break;
+          }
+
+          const planId = session.metadata?.planId;
+          if (!planId) {
+            console.error("No planId in session metadata");
+            break;
+          }
+
+          const plan = await storage.getSubscriptionPlan(planId);
+          if (!plan) {
+            console.error(`Plan ${planId} not found`);
+            break;
+          }
+
+          const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
+          
+          const existing = await storage.getSubscriptionByStripeId(subscription.id);
+          if (existing) {
+            console.log(`Subscription ${subscription.id} already exists, skipping creation`);
+            break;
+          }
+
+          await storage.createSubscription({
+            customerName: session.metadata?.customerName || session.customer_details?.name || 'Unknown',
+            customerEmail: session.customer_details?.email || '',
+            customerPhone: '',
+            planId: plan.id,
+            stripeSubscriptionId: subscription.id,
+            stripeCustomerId: subscription.customer as string,
+            status: 'active',
+            nextDeliveryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          });
+          console.log(`Created subscription ${subscription.id}`);
+          break;
+        }
+        case 'customer.subscription.updated':
+        case 'customer.subscription.deleted': {
+          const subscription = event.data.object as Stripe.Subscription;
+          
+          const statusMap: Record<string, string> = {
+            'active': 'active',
+            'canceled': 'cancelled',
+            'past_due': 'active',
+            'unpaid': 'active',
+            'incomplete': 'active',
+            'incomplete_expired': 'cancelled',
+            'trialing': 'active',
+            'paused': 'paused',
+          };
+          
+          const status = statusMap[subscription.status] || 'active';
+          
+          await storage.updateSubscriptionByStripeId(subscription.id, { status });
+          console.log(`Updated subscription ${subscription.id} to status ${status}`);
+          break;
+        }
+      }
+
+      res.json({ received: true });
+    } catch (error: any) {
+      console.error("Webhook error:", error);
+      res.status(400).send(`Webhook Error: ${error.message}`);
     }
   });
 

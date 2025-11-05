@@ -48,6 +48,7 @@ export const subscriptionPlans = pgTable("subscription_plans", {
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   savings: text("savings"),
   benefits: text("benefits").array().notNull(),
+  stripePriceId: text("stripe_price_id"),
 });
 
 export const cartItems = pgTable("cart_items", {
