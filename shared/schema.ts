@@ -16,14 +16,25 @@ export const sessions = pgTable("sessions", {
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: varchar("username").notNull().unique(),
-  password: text("password").notNull(),
+  password: text("password"),
   email: varchar("email"),
+  phoneNumber: varchar("phone_number"),
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   role: text("role").notNull().default('user'), // 'user', 'admin', 'super_admin'
   isAdmin: boolean("is_admin").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Verification codes for SMS authentication
+export const verificationCodes = pgTable("verification_codes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  phoneNumber: varchar("phone_number").notNull(),
+  code: varchar("code", { length: 6 }).notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  verified: boolean("verified").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const products = pgTable("products", {
@@ -108,6 +119,7 @@ export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({
 export const insertWholesaleCustomerSchema = createInsertSchema(wholesaleCustomers).omit({ id: true });
 export const insertWholesaleOrderSchema = createInsertSchema(wholesaleOrders).omit({ id: true, orderDate: true });
 export const insertWholesaleOrderItemSchema = createInsertSchema(wholesaleOrderItems).omit({ id: true });
+export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
 
 // Insert types
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -118,6 +130,7 @@ export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
 export type InsertWholesaleCustomer = z.infer<typeof insertWholesaleCustomerSchema>;
 export type InsertWholesaleOrder = z.infer<typeof insertWholesaleOrderSchema>;
 export type InsertWholesaleOrderItem = z.infer<typeof insertWholesaleOrderItemSchema>;
+export type InsertVerificationCode = z.infer<typeof insertVerificationCodeSchema>;
 
 // Select types
 export type User = typeof users.$inferSelect;
@@ -128,3 +141,4 @@ export type Subscription = typeof subscriptions.$inferSelect;
 export type WholesaleCustomer = typeof wholesaleCustomers.$inferSelect;
 export type WholesaleOrder = typeof wholesaleOrders.$inferSelect;
 export type WholesaleOrderItem = typeof wholesaleOrderItems.$inferSelect;
+export type VerificationCode = typeof verificationCodes.$inferSelect;
