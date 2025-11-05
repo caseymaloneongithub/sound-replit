@@ -157,8 +157,8 @@ export default function Shop() {
                     {product.description}
                   </p>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold">${product.retailPrice}</span>
-                    <span className="text-sm text-muted-foreground">per bottle</span>
+                    <span className="text-2xl font-bold">${(Number(product.retailPrice) * 12).toFixed(0)}</span>
+                    <span className="text-sm text-muted-foreground">per case of 12</span>
                   </div>
                 </CardContent>
                 <CardFooter className="p-6 pt-0">
