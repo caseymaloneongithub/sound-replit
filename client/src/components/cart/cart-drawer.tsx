@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ShoppingCart, Trash2, Plus, Minus, Loader2 } from "lucide-react";
+import { ShoppingCart, Trash2, Plus, Minus, Loader2, Repeat } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -17,6 +17,8 @@ interface CartItemWithProduct {
   id: string;
   productId: string;
   quantity: number;
+  isSubscription: boolean;
+  subscriptionFrequency?: string | null;
   product: {
     id: string;
     name: string;
@@ -82,10 +84,11 @@ export function CartDrawer() {
   };
 
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
-  const cartTotal = cartItems.reduce(
-    (sum, item) => sum + Number(item.product.retailPrice) * item.quantity,
-    0
-  );
+  const cartTotal = cartItems.reduce((sum, item) => {
+    // $40 per case for one-time, $36 for subscription (10% off)
+    const casePrice = item.isSubscription ? 36 : 40;
+    return sum + casePrice * item.quantity;
+  }, 0);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -148,9 +151,17 @@ export function CartDrawer() {
                     <h4 className="font-semibold truncate" data-testid={`text-item-name-${item.id}`}>
                       {item.product.name}
                     </h4>
-                    <p className="text-sm text-muted-foreground" data-testid={`text-item-price-${item.id}`}>
-                      ${item.product.retailPrice} each
-                    </p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm text-muted-foreground" data-testid={`text-item-price-${item.id}`}>
+                        ${item.isSubscription ? '36' : '40'} per case
+                      </p>
+                      {item.isSubscription && (
+                        <Badge variant="secondary" className="gap-1 text-xs">
+                          <Repeat className="w-3 h-3" />
+                          {item.subscriptionFrequency === 'weekly' ? 'Weekly' : 'Bi-Weekly'}
+                        </Badge>
+                      )}
+                    </div>
                     <div className="flex items-center gap-3 mt-2">
                       <div className="flex items-center gap-1 bg-muted rounded-full">
                         <Button
@@ -200,7 +211,7 @@ export function CartDrawer() {
                   </div>
                   <div className="text-right">
                     <p className="font-bold" data-testid={`text-item-total-${item.id}`}>
-                      ${(Number(item.product.retailPrice) * item.quantity).toFixed(2)}
+                      ${((item.isSubscription ? 36 : 40) * item.quantity).toFixed(2)}
                     </p>
                   </div>
                 </div>

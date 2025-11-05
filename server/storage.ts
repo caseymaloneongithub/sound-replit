@@ -210,15 +210,22 @@ export class PostgresStorage implements IStorage {
   }
 
   async addToCart(item: InsertCartItem): Promise<CartItem> {
+    // Check for existing item matching product, session, subscription status, and frequency
+    const conditions = [
+      eq(cartItems.sessionId, item.sessionId),
+      eq(cartItems.productId, item.productId),
+      eq(cartItems.isSubscription, item.isSubscription || false),
+    ];
+
+    // Only check frequency if it's a subscription
+    if (item.isSubscription && item.subscriptionFrequency) {
+      conditions.push(eq(cartItems.subscriptionFrequency, item.subscriptionFrequency));
+    }
+
     const existing = await db
       .select()
       .from(cartItems)
-      .where(
-        and(
-          eq(cartItems.sessionId, item.sessionId),
-          eq(cartItems.productId, item.productId)
-        )
-      );
+      .where(and(...conditions));
 
     if (existing.length > 0) {
       const updated = await db

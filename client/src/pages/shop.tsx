@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Navbar } from "@/components/layout/navbar";
-import { ShoppingCart, Plus, Check } from "lucide-react";
+import { ShoppingCart, Plus, Check, Repeat } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
 
 export default function Shop() {
@@ -20,25 +21,32 @@ export default function Shop() {
   });
 
   const addToCartMutation = useMutation({
-    mutationFn: async (productId: string) => {
+    mutationFn: async ({ productId, isSubscription, subscriptionFrequency }: { 
+      productId: string; 
+      isSubscription: boolean; 
+      subscriptionFrequency?: string;
+    }) => {
       await apiRequest("POST", "/api/cart", {
         productId,
         quantity: 1,
+        isSubscription,
+        subscriptionFrequency,
       });
     },
-    onSuccess: (_, productId) => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
-      setAddedToCart(prev => new Set(prev).add(productId));
+      const key = `${variables.productId}-${variables.isSubscription}-${variables.subscriptionFrequency || 'onetime'}`;
+      setAddedToCart(prev => new Set(prev).add(key));
       setTimeout(() => {
         setAddedToCart(prev => {
           const next = new Set(prev);
-          next.delete(productId);
+          next.delete(key);
           return next;
         });
       }, 2000);
       toast({
         title: "Added to cart",
-        description: "Item added successfully",
+        description: variables.isSubscription ? "Subscription added successfully" : "Item added successfully",
       });
     },
     onError: () => {
@@ -85,15 +93,6 @@ export default function Shop() {
             >
               Shop Now
             </Button>
-            <Button 
-              size="lg" 
-              variant="outline" 
-              className="text-lg px-8 rounded-full backdrop-blur-md bg-white/10 border-white/30 text-white hover:bg-white/20"
-              data-testid="button-view-subscriptions"
-              onClick={() => window.location.href = '/subscriptions'}
-            >
-              View Subscriptions
-            </Button>
           </div>
         </div>
       </div>
@@ -138,51 +137,135 @@ export default function Shop() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {filteredProducts.map((product) => (
-              <Card key={product.id} className="overflow-hidden hover-elevate" data-testid={`card-product-${product.id}`}>
-                <CardHeader className="p-0">
-                  <div className="aspect-square bg-card overflow-hidden">
-                    <img 
-                      src={product.imageUrl} 
-                      alt={product.name}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                </CardHeader>
-                <CardContent className="p-6">
-                  <h3 className="text-xl font-semibold mb-3" style={{ fontFamily: 'var(--font-heading)' }}>
-                    {product.name}
-                  </h3>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {product.description}
-                  </p>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold">${(Number(product.retailPrice) * 12).toFixed(0)}</span>
-                    <span className="text-sm text-muted-foreground">per case of 12</span>
-                  </div>
-                </CardContent>
-                <CardFooter className="p-6 pt-0">
-                  <Button 
-                    className="w-full rounded-full gap-2" 
-                    disabled={!product.inStock || addToCartMutation.isPending}
-                    onClick={() => addToCartMutation.mutate(product.id)}
-                    data-testid={`button-add-to-cart-${product.id}`}
-                  >
-                    {addedToCart.has(product.id) ? (
-                      <>
-                        <Check className="w-4 h-4" />
-                        Added!
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="w-4 h-4" />
-                        {product.inStock ? 'Add to Cart' : 'Out of Stock'}
-                      </>
-                    )}
-                  </Button>
-                </CardFooter>
-              </Card>
-            ))}
+            {filteredProducts.map((product) => {
+              const casePrice = 40; // Standard case price
+              const subscriptionPrice = 36; // 10% off
+              const oneTimeKey = `${product.id}-false-onetime`;
+              const weeklyKey = `${product.id}-true-weekly`;
+              const biweeklyKey = `${product.id}-true-bi-weekly`;
+              
+              return (
+                <Card key={product.id} className="overflow-hidden hover-elevate" data-testid={`card-product-${product.id}`}>
+                  <CardHeader className="p-0">
+                    <div className="aspect-square bg-card overflow-hidden">
+                      <img 
+                        src={product.imageUrl} 
+                        alt={product.name}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-6">
+                    <h3 className="text-xl font-semibold mb-3" style={{ fontFamily: 'var(--font-heading)' }}>
+                      {product.name}
+                    </h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      {product.description}
+                    </p>
+                    
+                    <Tabs defaultValue="onetime" className="w-full">
+                      <TabsList className="grid w-full grid-cols-2 mb-4">
+                        <TabsTrigger value="onetime" data-testid={`tab-onetime-${product.id}`}>One-Time</TabsTrigger>
+                        <TabsTrigger value="subscribe" data-testid={`tab-subscribe-${product.id}`}>Subscribe & Save</TabsTrigger>
+                      </TabsList>
+                      
+                      <TabsContent value="onetime" className="space-y-4">
+                        <div className="space-y-2">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-3xl font-bold">${casePrice}</span>
+                            <span className="text-sm text-muted-foreground">per case of 12</span>
+                          </div>
+                        </div>
+                        <Button 
+                          className="w-full rounded-full gap-2" 
+                          disabled={!product.inStock || addToCartMutation.isPending}
+                          onClick={() => addToCartMutation.mutate({ 
+                            productId: product.id, 
+                            isSubscription: false 
+                          })}
+                          data-testid={`button-add-onetime-${product.id}`}
+                        >
+                          {addedToCart.has(oneTimeKey) ? (
+                            <>
+                              <Check className="w-4 h-4" />
+                              Added!
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="w-4 h-4" />
+                              {product.inStock ? 'Add to Cart' : 'Out of Stock'}
+                            </>
+                          )}
+                        </Button>
+                      </TabsContent>
+                      
+                      <TabsContent value="subscribe" className="space-y-4">
+                        <div className="space-y-2">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-3xl font-bold">${subscriptionPrice}</span>
+                            <span className="text-sm text-muted-foreground">per case of 12</span>
+                          </div>
+                          <Badge variant="secondary" className="w-fit">
+                            10% off with subscription
+                          </Badge>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button 
+                            variant="outline"
+                            className="rounded-full gap-2" 
+                            size="sm"
+                            disabled={!product.inStock || addToCartMutation.isPending}
+                            onClick={() => addToCartMutation.mutate({ 
+                              productId: product.id, 
+                              isSubscription: true,
+                              subscriptionFrequency: 'weekly'
+                            })}
+                            data-testid={`button-subscribe-weekly-${product.id}`}
+                          >
+                            {addedToCart.has(weeklyKey) ? (
+                              <>
+                                <Check className="w-3 h-3" />
+                                Added!
+                              </>
+                            ) : (
+                              <>
+                                <Repeat className="w-3 h-3" />
+                                Weekly
+                              </>
+                            )}
+                          </Button>
+                          <Button 
+                            variant="outline"
+                            className="rounded-full gap-2" 
+                            size="sm"
+                            disabled={!product.inStock || addToCartMutation.isPending}
+                            onClick={() => addToCartMutation.mutate({ 
+                              productId: product.id, 
+                              isSubscription: true,
+                              subscriptionFrequency: 'bi-weekly'
+                            })}
+                            data-testid={`button-subscribe-biweekly-${product.id}`}
+                          >
+                            {addedToCart.has(biweeklyKey) ? (
+                              <>
+                                <Check className="w-3 h-3" />
+                                Added!
+                              </>
+                            ) : (
+                              <>
+                                <Repeat className="w-3 h-3" />
+                                Bi-Weekly
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </TabsContent>
+                    </Tabs>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
 
@@ -217,7 +300,7 @@ export default function Shop() {
                 Subscribe & Save
               </h3>
               <p className="text-muted-foreground">
-                Get weekly or monthly deliveries at discounted rates
+                Get weekly or bi-weekly deliveries at 10% off
               </p>
             </div>
             <div>

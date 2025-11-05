@@ -132,7 +132,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create Stripe checkout session for one-time cart purchases
+  // Create Stripe checkout session for cart purchases (one-time or subscription)
   app.post("/api/create-cart-checkout", async (req: any, res) => {
     try {
       if (!stripe) {
@@ -144,6 +144,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (items.length === 0) {
         return res.status(400).json({ message: "Cart is empty" });
+      }
+
+      // Check if cart has both subscription and one-time items
+      const hasSubscription = items.some(item => item.isSubscription);
+      const hasOneTime = items.some(item => !item.isSubscription);
+
+      if (hasSubscription && hasOneTime) {
+        return res.status(400).json({ 
+          message: "Please checkout one-time purchases and subscriptions separately. Remove either the one-time or subscription items from your cart to continue."
+        });
       }
 
       const baseUrl = process.env.REPL_SLUG 
@@ -159,28 +169,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ? product.imageUrl 
             : `${baseUrl}${product.imageUrl}`;
           
-          return {
-            price_data: {
-              currency: 'usd',
-              product_data: {
-                name: product.name,
-                images: imageUrl.startsWith('http') ? [imageUrl] : [],
+          // Use case pricing: $40 for one-time, $36 for subscription
+          const casePrice = item.isSubscription ? 3600 : 4000; // in cents
+
+          if (item.isSubscription) {
+            // For subscriptions, create recurring price
+            return {
+              price_data: {
+                currency: 'usd',
+                product_data: {
+                  name: `${product.name} - Case of 12 (${item.subscriptionFrequency})`,
+                  description: `${item.subscriptionFrequency === 'weekly' ? 'Weekly' : 'Bi-weekly'} subscription`,
+                  images: imageUrl.startsWith('http') ? [imageUrl] : [],
+                },
+                unit_amount: casePrice,
+                recurring: {
+                  interval: item.subscriptionFrequency === 'weekly' ? 'week' as const : 'week' as const,
+                  interval_count: item.subscriptionFrequency === 'weekly' ? 1 : 2,
+                },
               },
-              unit_amount: Math.round(Number(product.retailPrice) * 100),
-            },
-            quantity: item.quantity,
-          };
+              quantity: item.quantity,
+            };
+          } else {
+            // One-time purchase
+            return {
+              price_data: {
+                currency: 'usd',
+                product_data: {
+                  name: `${product.name} - Case of 12`,
+                  images: imageUrl.startsWith('http') ? [imageUrl] : [],
+                },
+                unit_amount: casePrice,
+              },
+              quantity: item.quantity,
+            };
+          }
         })
       );
 
       const session = await stripe.checkout.sessions.create({
-        mode: 'payment',
+        mode: hasSubscription ? 'subscription' : 'payment',
         line_items: lineItems,
         success_url: `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${baseUrl}/shop`,
         metadata: {
           sessionId,
-          type: 'cart_purchase',
+          type: hasSubscription ? 'subscription_purchase' : 'cart_purchase',
         },
       });
 
@@ -561,12 +595,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/cart", async (req, res) => {
     try {
       const sessionId = req.sessionID || "guest";
-      const { productId, quantity } = req.body;
+      const { productId, quantity, isSubscription, subscriptionFrequency } = req.body;
       
       const cartItem = await storage.addToCart({
         sessionId,
         productId,
         quantity: quantity || 1,
+        isSubscription: isSubscription || false,
+        subscriptionFrequency: isSubscription ? subscriptionFrequency : null,
       });
       
       res.json(cartItem);
