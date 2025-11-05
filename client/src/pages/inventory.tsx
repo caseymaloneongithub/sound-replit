@@ -24,11 +24,8 @@ export default function Inventory() {
 
   const updateStockMutation = useMutation({
     mutationFn: async ({ id, stockQuantity }: { id: string; stockQuantity: number }) => {
-      return await apiRequest(`/api/inventory/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ stockQuantity }),
-        headers: { "Content-Type": "application/json" },
-      });
+      const response = await apiRequest("PATCH", `/api/inventory/${id}`, { stockQuantity });
+      return await response.json();
     },
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/products"] });
