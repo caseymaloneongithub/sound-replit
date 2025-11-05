@@ -7,12 +7,15 @@ Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacifi
 ## Recent Changes (November 2025)
 
 ### Authentication System Migration (November 5, 2025) - COMPLETED
-**Migration**: Fully migrated from Replit Auth (OIDC) to local username/password authentication
+**Migration**: Fully migrated from Replit Auth (OIDC) to local username/password authentication with required SMS verification
 **Backend Changes**:
 - Implemented Passport.js LocalStrategy with scrypt password hashing
 - Created authentication endpoints: /api/register, /api/login, /api/logout, /api/user
 - Session-based authentication with PostgreSQL-backed session storage
 - isAuthenticated middleware for protected routes
+- Integrated Twilio for SMS-based phone number verification during registration
+- Created verification endpoints: /api/send-verification-code, /api/verify-code
+- Server-side enforcement prevents account creation without verified phone number
 
 **Frontend Changes**:
 - Created AuthProvider context with useAuth hook for client-side state management
@@ -20,6 +23,14 @@ Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacifi
 - Updated Navbar to use local authentication (removed Replit Auth redirect)
 - Updated Account page with proper logout functionality
 - Protected routes automatically redirect to /auth for unauthenticated users
+- Registration form requires phone number verification via SMS before account creation
+- Submit button disabled until phone is verified
+
+**Phone Verification Security**:
+- Server validates phone verification before creating accounts (cannot be bypassed)
+- Verification codes expire after 5 minutes
+- Phone numbers must be unique (one account per phone)
+- Codes are single-use and invalidated after registration
 
 **Super Admin Setup**:
 - Casey Malone (casey@soundkombucha.com) configured as initial super admin
@@ -29,8 +40,15 @@ Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacifi
 
 **Database Schema Updates**:
 - Added username (unique, required) and password (hashed) fields to users table
+- Added phoneNumber (required, unique) field to users table
+- Created verification_codes table with expiration tracking
 - Maintained role and isAdmin fields for authorization
 - Session table automatically managed by connect-pg-simple
+
+**Testing Notes**:
+- SMS verification requires real phone numbers (test numbers like +15555551234 are rejected by Twilio)
+- Twilio charges ~$0.0079 per SMS sent
+- Use your own phone number for testing the registration flow
 
 ### Shopping Cart Session Fix (CRITICAL)
 **Problem**: Cart items were not persisting - users saw success toasts but cart remained empty.
