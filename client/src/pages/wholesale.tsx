@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { LayoutDashboard, Package, Users, ShoppingCart, TrendingUp, DollarSign, Clock } from "lucide-react";
+import { LayoutDashboard, Package, Users, ShoppingCart, TrendingUp, DollarSign, Clock, Warehouse } from "lucide-react";
 import { useLocation } from "wouter";
 
 function WholesaleSidebar() {
@@ -16,6 +16,7 @@ function WholesaleSidebar() {
     { title: "Orders", icon: ShoppingCart, path: "/wholesale/orders" },
     { title: "Customers", icon: Users, path: "/wholesale/customers" },
     { title: "Products", icon: Package, path: "/wholesale/products" },
+    { title: "Inventory", icon: Warehouse, path: "/inventory" },
   ];
 
   return (

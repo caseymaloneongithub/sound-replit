@@ -33,6 +33,8 @@ export interface IStorage {
   getProducts(): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
+  updateProductStock(id: string, stockQuantity: number): Promise<Product | undefined>;
+  getLowStockProducts(): Promise<Product[]>;
   
   getSubscriptionPlans(): Promise<SubscriptionPlan[]>;
   getSubscriptionPlan(id: string): Promise<SubscriptionPlan | undefined>;
@@ -94,6 +96,20 @@ export class PostgresStorage implements IStorage {
   async createProduct(insertProduct: InsertProduct): Promise<Product> {
     const result = await db.insert(products).values(insertProduct).returning();
     return result[0];
+  }
+
+  async updateProductStock(id: string, stockQuantity: number): Promise<Product | undefined> {
+    const result = await db
+      .update(products)
+      .set({ stockQuantity, inStock: stockQuantity > 0 })
+      .where(eq(products.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getLowStockProducts(): Promise<Product[]> {
+    const allProducts = await db.select().from(products);
+    return allProducts.filter(p => p.stockQuantity <= p.lowStockThreshold);
   }
 
   async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
@@ -194,6 +210,8 @@ export class PostgresStorage implements IStorage {
         wholesalePrice: "3.50",
         imageUrl: "/src/assets/generated_images/Ginger_citrus_kombucha_product_7a9581af.png",
         inStock: true,
+        stockQuantity: 150,
+        lowStockThreshold: 50,
       },
       {
         name: "Berry Hibiscus Kombucha",
@@ -205,6 +223,8 @@ export class PostgresStorage implements IStorage {
         wholesalePrice: "3.50",
         imageUrl: "/src/assets/generated_images/Berry_hibiscus_kombucha_product_27481eb8.png",
         inStock: true,
+        stockQuantity: 200,
+        lowStockThreshold: 50,
       },
       {
         name: "Green Tea Mint Kombucha",
@@ -216,6 +236,8 @@ export class PostgresStorage implements IStorage {
         wholesalePrice: "3.50",
         imageUrl: "/src/assets/generated_images/Green_tea_mint_kombucha_eb3e813e.png",
         inStock: true,
+        stockQuantity: 30,
+        lowStockThreshold: 50,
       },
       {
         name: "Turmeric Ginger Kombucha",
@@ -227,6 +249,8 @@ export class PostgresStorage implements IStorage {
         wholesalePrice: "3.75",
         imageUrl: "/src/assets/generated_images/Turmeric_ginger_kombucha_product_f7b46429.png",
         inStock: true,
+        stockQuantity: 175,
+        lowStockThreshold: 50,
       },
     ]);
 

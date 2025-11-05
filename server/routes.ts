@@ -210,6 +210,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Inventory management routes
+  app.get("/api/inventory/low-stock", async (req, res) => {
+    try {
+      const lowStockProducts = await storage.getLowStockProducts();
+      res.json(lowStockProducts);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching low stock products: " + error.message });
+    }
+  });
+
+  app.patch("/api/inventory/:id", async (req, res) => {
+    try {
+      const { stockQuantity } = req.body;
+      const parsedStock = Number(stockQuantity);
+      
+      if (!Number.isFinite(parsedStock) || parsedStock < 0) {
+        return res.status(400).json({ message: "Invalid stock quantity" });
+      }
+      
+      const product = await storage.updateProductStock(req.params.id, parsedStock);
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+      
+      res.json(product);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error updating stock: " + error.message });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;

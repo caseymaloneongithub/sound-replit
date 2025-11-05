@@ -36,6 +36,8 @@ export const products = pgTable("products", {
   wholesalePrice: decimal("wholesale_price", { precision: 10, scale: 2 }).notNull(),
   imageUrl: text("image_url").notNull(),
   inStock: boolean("in_stock").notNull().default(true),
+  stockQuantity: integer("stock_quantity").notNull().default(0),
+  lowStockThreshold: integer("low_stock_threshold").notNull().default(50),
 });
 
 export const subscriptionPlans = pgTable("subscription_plans", {
