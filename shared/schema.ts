@@ -32,8 +32,11 @@ export const verificationCodes = pgTable("verification_codes", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   phoneNumber: varchar("phone_number").notNull(),
   code: varchar("code", { length: 6 }).notNull(),
+  purpose: text("purpose").notNull().default('registration'), // 'registration' | 'login'
   expiresAt: timestamp("expires_at").notNull(),
   verified: boolean("verified").notNull().default(false),
+  consumedAt: timestamp("consumed_at"),
+  attempts: integer("attempts").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

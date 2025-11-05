@@ -19,7 +19,7 @@ import {
   verificationCodes
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/neon-serverless";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import session from "express-session";
@@ -44,7 +44,10 @@ export interface IStorage {
   
   createVerificationCode(code: InsertVerificationCode): Promise<VerificationCode>;
   getLatestVerificationCode(phoneNumber: string): Promise<VerificationCode | undefined>;
+  getLatestVerificationCodeByPurpose(phoneNumber: string, purpose: 'registration' | 'login'): Promise<VerificationCode | undefined>;
   markVerificationCodeAsVerified(id: string): Promise<void>;
+  markVerificationCodeAsConsumed(id: string): Promise<void>;
+  incrementVerificationAttempts(id: string): Promise<void>;
   
   getProducts(): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
@@ -147,10 +150,39 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
+  async getLatestVerificationCodeByPurpose(phoneNumber: string, purpose: 'registration' | 'login'): Promise<VerificationCode | undefined> {
+    const result = await db
+      .select()
+      .from(verificationCodes)
+      .where(
+        and(
+          eq(verificationCodes.phoneNumber, phoneNumber),
+          eq(verificationCodes.purpose, purpose)
+        )
+      )
+      .orderBy(desc(verificationCodes.createdAt))
+      .limit(1);
+    return result[0];
+  }
+
   async markVerificationCodeAsVerified(id: string): Promise<void> {
     await db
       .update(verificationCodes)
       .set({ verified: true })
+      .where(eq(verificationCodes.id, id));
+  }
+
+  async markVerificationCodeAsConsumed(id: string): Promise<void> {
+    await db
+      .update(verificationCodes)
+      .set({ consumedAt: new Date() })
+      .where(eq(verificationCodes.id, id));
+  }
+
+  async incrementVerificationAttempts(id: string): Promise<void> {
+    await db
+      .update(verificationCodes)
+      .set({ attempts: sql`${verificationCodes.attempts} + 1` })
       .where(eq(verificationCodes.id, id));
   }
 

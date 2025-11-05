@@ -25,11 +25,16 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const loginSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters"),
   password: z.string().min(6, "Password must be at least 6 characters"),
+});
+
+const smsLoginSchema = z.object({
+  phoneNumber: z.string().min(10, "Phone number must be at least 10 digits"),
+  verificationCode: z.string().optional(),
 });
 
 const registerSchema = insertUserSchema.extend({
@@ -50,12 +55,24 @@ export default function AuthPage() {
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
   const [verifyingCode, setVerifyingCode] = useState(false);
+  const [loginMethod, setLoginMethod] = useState<'password' | 'sms'>('password');
+  const [smsLoginCodeSent, setSmsLoginCodeSent] = useState(false);
+  const [sendingSmsLoginCode, setSendingSmsLoginCode] = useState(false);
+  const [verifyingSmsLoginCode, setVerifyingSmsLoginCode] = useState(false);
 
   const loginForm = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
       username: "",
       password: "",
+    },
+  });
+
+  const smsLoginForm = useForm<z.infer<typeof smsLoginSchema>>({
+    resolver: zodResolver(smsLoginSchema),
+    defaultValues: {
+      phoneNumber: "",
+      verificationCode: "",
     },
   });
 
@@ -136,6 +153,78 @@ export default function AuthPage() {
     }
   };
 
+  const sendSmsLoginCode = async () => {
+    const phoneNumber = smsLoginForm.getValues("phoneNumber");
+    
+    if (!phoneNumber || phoneNumber.length < 10) {
+      toast({
+        title: "Error",
+        description: "Please enter a valid phone number",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSendingSmsLoginCode(true);
+    try {
+      await apiRequest("POST", "/api/login/sms/request", { phoneNumber });
+      setSmsLoginCodeSent(true);
+      toast({
+        title: "Code Sent",
+        description: "Login code sent to your phone",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send login code",
+        variant: "destructive",
+      });
+    } finally {
+      setSendingSmsLoginCode(false);
+    }
+  };
+
+  const onSmsLogin = async (values: z.infer<typeof smsLoginSchema>) => {
+    const { phoneNumber, verificationCode } = values;
+    
+    if (!verificationCode || verificationCode.length !== 6) {
+      toast({
+        title: "Error",
+        description: "Please enter the 6-digit verification code",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setVerifyingSmsLoginCode(true);
+    try {
+      const response = await apiRequest("POST", "/api/login/sms/verify", { 
+        phoneNumber, 
+        code: verificationCode 
+      });
+      
+      // Parse the user object from the response
+      const user = await response.json();
+      
+      // Update the auth context with the logged-in user
+      queryClient.setQueryData(["/api/user"], user);
+      
+      toast({
+        title: "Success",
+        description: "Logged in successfully",
+      });
+      setLocation("/");
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Invalid verification code",
+        variant: "destructive",
+      });
+    } finally {
+      setVerifyingSmsLoginCode(false);
+    }
+  };
+
   const onLogin = async (values: z.infer<typeof loginSchema>) => {
     await loginMutation.mutateAsync(values);
     setLocation("/");
@@ -175,57 +264,135 @@ export default function AuthPage() {
               <CardHeader>
                 <CardTitle>Login</CardTitle>
                 <CardDescription>
-                  Enter your credentials to access your account
+                  Choose your preferred login method
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Form {...loginForm}>
-                  <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
-                    <FormField
-                      control={loginForm.control}
-                      name="username"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Username</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="Enter your username"
-                              data-testid="input-login-username"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={loginForm.control}
-                      name="password"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Password</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="password"
-                              placeholder="Enter your password"
-                              data-testid="input-login-password"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <Button
-                      type="submit"
-                      className="w-full"
-                      disabled={loginMutation.isPending}
-                      data-testid="button-login-submit"
-                    >
-                      {loginMutation.isPending ? "Logging in..." : "Login"}
-                    </Button>
-                  </form>
-                </Form>
+                <Tabs value={loginMethod} onValueChange={(v) => setLoginMethod(v as 'password' | 'sms')} className="w-full">
+                  <TabsList className="grid w-full grid-cols-2 mb-4">
+                    <TabsTrigger value="password" data-testid="tab-login-password">Password</TabsTrigger>
+                    <TabsTrigger value="sms" data-testid="tab-login-sms">SMS Code</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="password">
+                    <Form {...loginForm}>
+                      <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
+                        <FormField
+                          control={loginForm.control}
+                          name="username"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Username</FormLabel>
+                              <FormControl>
+                                <Input
+                                  placeholder="Enter your username"
+                                  data-testid="input-login-username"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={loginForm.control}
+                          name="password"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Password</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="password"
+                                  placeholder="Enter your password"
+                                  data-testid="input-login-password"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <Button
+                          type="submit"
+                          className="w-full"
+                          disabled={loginMutation.isPending}
+                          data-testid="button-login-submit"
+                        >
+                          {loginMutation.isPending ? "Logging in..." : "Login"}
+                        </Button>
+                      </form>
+                    </Form>
+                  </TabsContent>
+
+                  <TabsContent value="sms">
+                    <Form {...smsLoginForm}>
+                      <form onSubmit={smsLoginForm.handleSubmit(onSmsLogin)} className="space-y-4">
+                        <FormField
+                          control={smsLoginForm.control}
+                          name="phoneNumber"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Phone Number</FormLabel>
+                              <div className="flex gap-2">
+                                <FormControl>
+                                  <Input
+                                    placeholder="+1 (555) 123-4567"
+                                    data-testid="input-sms-login-phone"
+                                    {...field}
+                                    disabled={smsLoginCodeSent}
+                                  />
+                                </FormControl>
+                                <Button
+                                  type="button"
+                                  onClick={sendSmsLoginCode}
+                                  disabled={sendingSmsLoginCode || smsLoginCodeSent || !field.value}
+                                  data-testid="button-send-sms-login-code"
+                                >
+                                  {sendingSmsLoginCode ? "Sending..." : smsLoginCodeSent ? "Sent" : "Send Code"}
+                                </Button>
+                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        {smsLoginCodeSent && (
+                          <FormField
+                            control={smsLoginForm.control}
+                            name="verificationCode"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Verification Code</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    placeholder="Enter 6-digit code"
+                                    data-testid="input-sms-login-code"
+                                    maxLength={6}
+                                    {...field}
+                                    value={field.value ?? ""}
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
+                        <Button
+                          type="submit"
+                          className="w-full"
+                          disabled={verifyingSmsLoginCode || !smsLoginCodeSent}
+                          data-testid="button-sms-login-submit"
+                        >
+                          {verifyingSmsLoginCode ? "Logging in..." : "Login with Code"}
+                        </Button>
+                        {!smsLoginCodeSent && (
+                          <p className="text-sm text-muted-foreground text-center">
+                            Enter your phone number and request a code to continue
+                          </p>
+                        )}
+                      </form>
+                    </Form>
+                  </TabsContent>
+                </Tabs>
               </CardContent>
             </Card>
           </TabsContent>
