@@ -52,7 +52,7 @@ export function setupAuth(app: Express) {
     new LocalStrategy(async (username, password, done) => {
       try {
         const user = await storage.getUserByUsername(username);
-        if (!user || !(await comparePasswords(password, user.password))) {
+        if (!user || !user.password || !(await comparePasswords(password, user.password))) {
           return done(null, false, { message: "Invalid username or password" });
         }
         return done(null, user);
@@ -74,20 +74,57 @@ export function setupAuth(app: Express) {
 
   app.post("/api/register", async (req, res, next) => {
     try {
-      const existingUser = await storage.getUserByUsername(req.body.username);
+      const { phoneNumber, username, password } = req.body;
+
+      if (!phoneNumber) {
+        return res.status(400).send("Phone number is required");
+      }
+
+      if (!password) {
+        return res.status(400).send("Password is required");
+      }
+
+      // Check if phone number has been verified
+      const verificationCode = await storage.getLatestVerificationCode(phoneNumber);
+      
+      if (!verificationCode) {
+        return res.status(400).send("Phone number not verified. Please request a verification code.");
+      }
+
+      if (!verificationCode.verified) {
+        return res.status(400).send("Phone number not verified. Please verify your code.");
+      }
+
+      // Check if verification code has expired
+      if (new Date() > verificationCode.expiresAt) {
+        return res.status(400).send("Verification code has expired. Please request a new code.");
+      }
+
+      // Check if username already exists
+      const existingUser = await storage.getUserByUsername(username);
       if (existingUser) {
         return res.status(400).send("Username already exists");
       }
 
+      // Check if phone number already registered
+      const existingPhoneUser = await storage.getUserByPhoneNumber(phoneNumber);
+      if (existingPhoneUser) {
+        return res.status(400).send("Phone number already registered");
+      }
+
+      // Create user
       const user = await storage.createUser({
         ...req.body,
-        password: await hashPassword(req.body.password),
+        password: await hashPassword(password),
       });
+
+      // Invalidate verification code after successful registration
+      await storage.markVerificationCodeAsVerified(verificationCode.id);
 
       req.login(user, (err) => {
         if (err) return next(err);
         // Don't send password back
-        const { password, ...userWithoutPassword } = user;
+        const { password: _, ...userWithoutPassword } = user;
         res.status(201).json(userWithoutPassword);
       });
     } catch (error: any) {

@@ -24,6 +24,8 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 
 const loginSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters"),
@@ -31,7 +33,10 @@ const loginSchema = z.object({
 });
 
 const registerSchema = insertUserSchema.extend({
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  phoneNumber: z.string().min(10, "Phone number must be at least 10 digits"),
   confirmPassword: z.string().min(6, "Password must be at least 6 characters"),
+  verificationCode: z.string().optional(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -40,6 +45,11 @@ const registerSchema = insertUserSchema.extend({
 export default function AuthPage() {
   const { loginMutation, registerMutation } = useAuth();
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const [codeSent, setCodeSent] = useState(false);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [verifyingCode, setVerifyingCode] = useState(false);
 
   const loginForm = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -55,11 +65,82 @@ export default function AuthPage() {
       username: "",
       password: "",
       confirmPassword: "",
+      phoneNumber: "",
       email: "",
       firstName: "",
       lastName: "",
+      verificationCode: "",
     },
   });
+
+  const sendVerificationCode = async () => {
+    const phoneNumber = registerForm.getValues("phoneNumber");
+    
+    if (!phoneNumber || phoneNumber.length < 10) {
+      toast({
+        title: "Error",
+        description: "Please enter a valid phone number",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSendingCode(true);
+    try {
+      await apiRequest("/api/send-verification-code", {
+        method: "POST",
+        body: JSON.stringify({ phoneNumber }),
+      });
+      setCodeSent(true);
+      toast({
+        title: "Code Sent",
+        description: "Verification code sent to your phone",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send verification code",
+        variant: "destructive",
+      });
+    } finally {
+      setSendingCode(false);
+    }
+  };
+
+  const verifyCode = async () => {
+    const phoneNumber = registerForm.getValues("phoneNumber");
+    const code = registerForm.getValues("verificationCode");
+    
+    if (!code || code.length !== 6) {
+      toast({
+        title: "Error",
+        description: "Please enter the 6-digit verification code",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setVerifyingCode(true);
+    try {
+      await apiRequest("/api/verify-code", {
+        method: "POST",
+        body: JSON.stringify({ phoneNumber, code }),
+      });
+      setPhoneVerified(true);
+      toast({
+        title: "Success",
+        description: "Phone number verified successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Invalid verification code",
+        variant: "destructive",
+      });
+    } finally {
+      setVerifyingCode(false);
+    }
+  };
 
   const onLogin = async (values: z.infer<typeof loginSchema>) => {
     await loginMutation.mutateAsync(values);
@@ -67,7 +148,16 @@ export default function AuthPage() {
   };
 
   const onRegister = async (values: z.infer<typeof registerSchema>) => {
-    const { confirmPassword, ...userData } = values;
+    if (!phoneVerified) {
+      toast({
+        title: "Error",
+        description: "Please verify your phone number first",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const { confirmPassword, verificationCode, ...userData } = values;
     await registerMutation.mutateAsync(userData);
     setLocation("/");
   };
@@ -233,6 +323,66 @@ export default function AuthPage() {
                     />
                     <FormField
                       control={registerForm.control}
+                      name="phoneNumber"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Phone Number (Required)</FormLabel>
+                          <div className="flex gap-2">
+                            <FormControl>
+                              <Input
+                                placeholder="+1 (555) 123-4567"
+                                data-testid="input-register-phone"
+                                {...field}
+                                value={field.value ?? ""}
+                                disabled={phoneVerified}
+                              />
+                            </FormControl>
+                            <Button
+                              type="button"
+                              onClick={sendVerificationCode}
+                              disabled={sendingCode || phoneVerified || !field.value}
+                              data-testid="button-send-code"
+                            >
+                              {sendingCode ? "Sending..." : phoneVerified ? "Verified" : "Send Code"}
+                            </Button>
+                          </div>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    {codeSent && !phoneVerified && (
+                      <FormField
+                        control={registerForm.control}
+                        name="verificationCode"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Verification Code</FormLabel>
+                            <div className="flex gap-2">
+                              <FormControl>
+                                <Input
+                                  placeholder="Enter 6-digit code"
+                                  data-testid="input-verification-code"
+                                  maxLength={6}
+                                  {...field}
+                                  value={field.value ?? ""}
+                                />
+                              </FormControl>
+                              <Button
+                                type="button"
+                                onClick={verifyCode}
+                                disabled={verifyingCode}
+                                data-testid="button-verify-code"
+                              >
+                                {verifyingCode ? "Verifying..." : "Verify"}
+                              </Button>
+                            </div>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+                    <FormField
+                      control={registerForm.control}
                       name="password"
                       render={({ field }) => (
                         <FormItem>
@@ -270,11 +420,16 @@ export default function AuthPage() {
                     <Button
                       type="submit"
                       className="w-full"
-                      disabled={registerMutation.isPending}
+                      disabled={registerMutation.isPending || !phoneVerified}
                       data-testid="button-register-submit"
                     >
                       {registerMutation.isPending ? "Creating account..." : "Create Account"}
                     </Button>
+                    {!phoneVerified && (
+                      <p className="text-sm text-muted-foreground text-center">
+                        Please verify your phone number to continue
+                      </p>
+                    )}
                   </form>
                 </Form>
               </CardContent>
