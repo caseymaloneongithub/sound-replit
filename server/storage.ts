@@ -293,6 +293,19 @@ export class PostgresStorage implements IStorage {
         stockQuantity: 175,
         lowStockThreshold: 50,
       },
+      {
+        name: "Northzest",
+        description: "It's Lemon Zest with a slight kick! Our Northzest brew is citrusy, spicy, and tart. Metabolism-boosting cayenne pairs with energizing black tea, creating a blend good for both mind and body.",
+        flavor: "citrus spicy",
+        abv: "0.5% ABV",
+        ingredients: ["Black tea", "Lemon zest", "Cayenne pepper", "Raw cane sugar", "Live cultures"],
+        retailPrice: "6.49",
+        wholesalePrice: "3.75",
+        imageUrl: "/src/assets/generated_images/Ginger_citrus_kombucha_product_7a9581af.png",
+        inStock: true,
+        stockQuantity: 160,
+        lowStockThreshold: 50,
+      },
     ]);
 
     await db.insert(subscriptionPlans).values([
