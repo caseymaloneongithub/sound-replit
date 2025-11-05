@@ -17,7 +17,7 @@ import {
   users
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/neon-serverless";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 
@@ -42,6 +42,7 @@ export interface IStorage {
   
   getCartItems(sessionId: string): Promise<CartItem[]>;
   addToCart(item: InsertCartItem): Promise<CartItem>;
+  updateCartItemQuantity(id: string, quantity: number): Promise<CartItem | undefined>;
   removeFromCart(id: string): Promise<void>;
   clearCart(sessionId: string): Promise<void>;
   
@@ -133,7 +134,35 @@ export class PostgresStorage implements IStorage {
   }
 
   async addToCart(item: InsertCartItem): Promise<CartItem> {
+    const existing = await db
+      .select()
+      .from(cartItems)
+      .where(
+        and(
+          eq(cartItems.sessionId, item.sessionId),
+          eq(cartItems.productId, item.productId)
+        )
+      );
+
+    if (existing.length > 0) {
+      const updated = await db
+        .update(cartItems)
+        .set({ quantity: existing[0].quantity + item.quantity })
+        .where(eq(cartItems.id, existing[0].id))
+        .returning();
+      return updated[0];
+    }
+
     const result = await db.insert(cartItems).values(item).returning();
+    return result[0];
+  }
+
+  async updateCartItemQuantity(id: string, quantity: number): Promise<CartItem | undefined> {
+    const result = await db
+      .update(cartItems)
+      .set({ quantity })
+      .where(eq(cartItems.id, id))
+      .returning();
     return result[0];
   }
 

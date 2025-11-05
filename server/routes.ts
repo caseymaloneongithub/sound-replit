@@ -72,6 +72,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Create Stripe checkout session for one-time cart purchases
+  app.post("/api/create-cart-checkout", async (req: any, res) => {
+    try {
+      if (!stripe) {
+        return res.status(503).json({ message: "Payment processing is not configured" });
+      }
+
+      const sessionId = req.sessionID || "guest";
+      const items = await storage.getCartItems(sessionId);
+      
+      if (items.length === 0) {
+        return res.status(400).json({ message: "Cart is empty" });
+      }
+
+      const baseUrl = process.env.REPL_SLUG 
+        ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
+        : 'http://localhost:5000';
+
+      const lineItems = await Promise.all(
+        items.map(async (item) => {
+          const product = await storage.getProduct(item.productId);
+          if (!product) throw new Error(`Product ${item.productId} not found`);
+          
+          const imageUrl = product.imageUrl.startsWith('http') 
+            ? product.imageUrl 
+            : `${baseUrl}${product.imageUrl}`;
+          
+          return {
+            price_data: {
+              currency: 'usd',
+              product_data: {
+                name: product.name,
+                images: imageUrl.startsWith('http') ? [imageUrl] : [],
+              },
+              unit_amount: Math.round(Number(product.retailPrice) * 100),
+            },
+            quantity: item.quantity,
+          };
+        })
+      );
+
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        line_items: lineItems,
+        success_url: `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}/shop`,
+        metadata: {
+          sessionId,
+          type: 'cart_purchase',
+        },
+      });
+
+      res.json({ url: session.url, sessionId: session.id });
+    } catch (error: any) {
+      console.error("Cart checkout error:", error);
+      res.status(500).json({ message: "Error creating checkout: " + error.message });
+    }
+  });
+
   // Create Stripe checkout session for subscriptions
   const createCheckoutSchema = z.object({
     planId: z.string().uuid(),
@@ -166,6 +225,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       switch (event.type) {
         case 'checkout.session.completed': {
           const session = event.data.object as Stripe.Checkout.Session;
+          
+          if (session.metadata?.type === 'cart_purchase') {
+            const sessionId = session.metadata.sessionId;
+            if (sessionId) {
+              await storage.clearCart(sessionId);
+              console.log(`Cleared cart for session ${sessionId} after successful payment`);
+            }
+            break;
+          }
           
           if (!session.subscription) {
             console.error("No subscription ID in checkout session");
@@ -350,6 +418,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(cartItem);
     } catch (error: any) {
       res.status(400).json({ message: "Error adding to cart: " + error.message });
+    }
+  });
+
+  app.patch("/api/cart/:id", async (req, res) => {
+    try {
+      const { quantity } = req.body;
+      const parsedQuantity = Number(quantity);
+      
+      if (!Number.isFinite(parsedQuantity) || parsedQuantity < 1) {
+        return res.status(400).json({ message: "Invalid quantity" });
+      }
+      
+      const updated = await storage.updateCartItemQuantity(req.params.id, parsedQuantity);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error updating cart item: " + error.message });
     }
   });
 

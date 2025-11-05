@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ShoppingCart, Trash2, Plus, Minus } from "lucide-react";
+import { ShoppingCart, Trash2, Plus, Minus, Loader2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -27,10 +27,20 @@ interface CartItemWithProduct {
 
 export function CartDrawer() {
   const [open, setOpen] = useState(false);
+  const [isProcessingCheckout, setIsProcessingCheckout] = useState(false);
   const { toast } = useToast();
 
   const { data: cartItems = [], isLoading } = useQuery<CartItemWithProduct[]>({
     queryKey: ["/api/cart"],
+  });
+
+  const updateQuantityMutation = useMutation({
+    mutationFn: async ({ id, quantity }: { id: string; quantity: number }) => {
+      await apiRequest("PATCH", `/api/cart/${id}`, { quantity });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
+    },
   });
 
   const removeItemMutation = useMutation({
@@ -45,6 +55,31 @@ export function CartDrawer() {
       });
     },
   });
+
+  const checkoutMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/create-cart-checkout");
+      return await response.json();
+    },
+    onSuccess: (data) => {
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    },
+    onError: (error: any) => {
+      setIsProcessingCheckout(false);
+      toast({
+        title: "Checkout Error",
+        description: error.message || "Failed to create checkout session",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleCheckout = () => {
+    setIsProcessingCheckout(true);
+    checkoutMutation.mutate();
+  };
 
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cartItems.reduce(
@@ -117,10 +152,40 @@ export function CartDrawer() {
                       ${item.product.retailPrice} each
                     </p>
                     <div className="flex items-center gap-3 mt-2">
-                      <div className="flex items-center gap-2 bg-muted rounded-full px-3 py-1">
-                        <span className="text-sm font-medium" data-testid={`text-quantity-${item.id}`}>
-                          Qty: {item.quantity}
+                      <div className="flex items-center gap-1 bg-muted rounded-full">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-full"
+                          onClick={() =>
+                            updateQuantityMutation.mutate({
+                              id: item.id,
+                              quantity: Math.max(1, item.quantity - 1),
+                            })
+                          }
+                          disabled={item.quantity <= 1 || updateQuantityMutation.isPending}
+                          data-testid={`button-decrease-${item.id}`}
+                        >
+                          <Minus className="w-3 h-3" />
+                        </Button>
+                        <span className="text-sm font-medium px-3 min-w-12 text-center" data-testid={`text-quantity-${item.id}`}>
+                          {item.quantity}
                         </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-full"
+                          onClick={() =>
+                            updateQuantityMutation.mutate({
+                              id: item.id,
+                              quantity: item.quantity + 1,
+                            })
+                          }
+                          disabled={updateQuantityMutation.isPending}
+                          data-testid={`button-increase-${item.id}`}
+                        >
+                          <Plus className="w-3 h-3" />
+                        </Button>
                       </div>
                       <Button
                         variant="ghost"
@@ -153,13 +218,18 @@ export function CartDrawer() {
             <Button
               className="w-full rounded-full"
               size="lg"
-              onClick={() => {
-                setOpen(false);
-                window.location.href = "/checkout";
-              }}
+              onClick={handleCheckout}
+              disabled={isProcessingCheckout}
               data-testid="button-checkout"
             >
-              Proceed to Checkout
+              {isProcessingCheckout ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Proceed to Checkout"
+              )}
             </Button>
           </div>
         )}
