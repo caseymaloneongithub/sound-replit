@@ -1,7 +1,8 @@
 import { Button } from "@/components/ui/button";
-import { ShoppingCart, Menu, User } from "lucide-react";
+import { Menu, User } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
+import { CartDrawer } from "@/components/cart/cart-drawer";
 import logo from "@assets/text-stacked-black_1762299663824.png";
 
 export function Navbar() {
@@ -64,9 +65,7 @@ export function Navbar() {
               </Button>
             )
           )}
-          <Button variant="ghost" size="icon" className="relative" data-testid="button-cart">
-            <ShoppingCart className="w-5 h-5" />
-          </Button>
+          <CartDrawer />
           <Button variant="ghost" size="icon" className="md:hidden" data-testid="button-menu">
             <Menu className="w-5 h-5" />
           </Button>

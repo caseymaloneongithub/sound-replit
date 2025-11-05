@@ -88,7 +88,7 @@ export default function Subscriptions() {
                     className="w-full rounded-full"
                     variant={index === 1 ? "default" : "outline"}
                     data-testid={`button-subscribe-${plan.id}`}
-                    onClick={() => window.location.href = `/checkout?planId=${plan.id}`}
+                    onClick={() => window.location.href = `/subscribe/${plan.id}`}
                   >
                     Subscribe Now
                   </Button>

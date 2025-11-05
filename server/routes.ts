@@ -313,8 +313,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/cart", async (req, res) => {
     try {
       const sessionId = req.sessionID || "guest";
-      const cartItems = await storage.getCartItems(sessionId);
-      res.json(cartItems);
+      const items = await storage.getCartItems(sessionId);
+      
+      const itemsWithProducts = await Promise.all(
+        items.map(async (item) => {
+          const product = await storage.getProduct(item.productId);
+          return {
+            ...item,
+            product: product ? {
+              id: product.id,
+              name: product.name,
+              retailPrice: product.retailPrice,
+              imageUrl: product.imageUrl,
+            } : null,
+          };
+        })
+      );
+      
+      res.json(itemsWithProducts.filter(item => item.product !== null));
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching cart: " + error.message });
     }

@@ -1,17 +1,53 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Product } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Navbar } from "@/components/layout/navbar";
-import { ShoppingCart, Plus } from "lucide-react";
+import { ShoppingCart, Plus, Check } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import breweryHero from "@assets/generated_images/Brewery_hero_background_image_98193539.png";
 
 export default function Shop() {
   const [selectedFlavor, setSelectedFlavor] = useState<string>("all");
+  const [addedToCart, setAddedToCart] = useState<Set<string>>(new Set());
+  const { toast } = useToast();
+
   const { data: products, isLoading } = useQuery<Product[]>({
     queryKey: ["/api/products"],
+  });
+
+  const addToCartMutation = useMutation({
+    mutationFn: async (productId: string) => {
+      await apiRequest("POST", "/api/cart", {
+        productId,
+        quantity: 1,
+      });
+    },
+    onSuccess: (_, productId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
+      setAddedToCart(prev => new Set(prev).add(productId));
+      setTimeout(() => {
+        setAddedToCart(prev => {
+          const next = new Set(prev);
+          next.delete(productId);
+          return next;
+        });
+      }, 2000);
+      toast({
+        title: "Added to cart",
+        description: "Item added successfully",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to add item to cart",
+        variant: "destructive",
+      });
+    },
   });
 
   const filteredProducts = products?.filter(
@@ -131,11 +167,21 @@ export default function Shop() {
                 <CardFooter className="p-6 pt-0">
                   <Button 
                     className="w-full rounded-full gap-2" 
-                    disabled={!product.inStock}
+                    disabled={!product.inStock || addToCartMutation.isPending}
+                    onClick={() => addToCartMutation.mutate(product.id)}
                     data-testid={`button-add-to-cart-${product.id}`}
                   >
-                    <Plus className="w-4 h-4" />
-                    {product.inStock ? 'Add to Cart' : 'Out of Stock'}
+                    {addedToCart.has(product.id) ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Added!
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4" />
+                        {product.inStock ? 'Add to Cart' : 'Out of Stock'}
+                      </>
+                    )}
                   </Button>
                 </CardFooter>
               </Card>
