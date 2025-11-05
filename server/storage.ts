@@ -280,6 +280,19 @@ export class PostgresStorage implements IStorage {
         stockQuantity: 200,
         lowStockThreshold: 50,
       },
+      {
+        name: "Mist",
+        description: "Brewed with rose petals, giving it a pinkish color that shines through our new clear bottles. Natural energy booster Earl Grey is known for enhancing digestion and reducing stress.",
+        flavor: "floral earl grey",
+        abv: "0.5% ABV",
+        ingredients: ["Earl Grey tea", "Rose petals", "Raw cane sugar", "Live cultures"],
+        retailPrice: "5.99",
+        wholesalePrice: "3.50",
+        imageUrl: "/src/assets/generated_images/Berry_hibiscus_kombucha_product_27481eb8.png",
+        inStock: true,
+        stockQuantity: 175,
+        lowStockThreshold: 50,
+      },
     ]);
 
     await db.insert(subscriptionPlans).values([
