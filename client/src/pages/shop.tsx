@@ -10,6 +10,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
+import { getCasePrice } from "@shared/pricing";
 
 export default function Shop() {
   const [selectedFlavor, setSelectedFlavor] = useState<string>("all");
@@ -138,8 +139,8 @@ export default function Shop() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {filteredProducts.map((product) => {
-              const casePrice = 40; // Standard case price
-              const subscriptionPrice = 36; // 10% off
+              const casePrice = getCasePrice(false);
+              const subscriptionPrice = getCasePrice(true);
               const oneTimeKey = `${product.id}-false-onetime`;
               const weeklyKey = `${product.id}-true-weekly`;
               const biweeklyKey = `${product.id}-true-bi-weekly`;

@@ -6,6 +6,7 @@ import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesal
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
 import { sendVerificationCode, generateVerificationCode } from "./twilio";
+import { getCasePriceCents } from "@shared/pricing";
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -169,8 +170,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ? product.imageUrl 
             : `${baseUrl}${product.imageUrl}`;
           
-          // Use case pricing: $40 for one-time, $36 for subscription
-          const casePrice = item.isSubscription ? 3600 : 4000; // in cents
+          // Use centralized case pricing
+          const casePrice = getCasePriceCents(item.isSubscription);
 
           if (item.isSubscription) {
             // For subscriptions, create recurring price

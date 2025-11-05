@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { ShoppingCart, Trash2, Plus, Minus, Loader2, Repeat } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { getCasePrice } from "@shared/pricing";
 
 interface CartItemWithProduct {
   id: string;
@@ -85,8 +86,7 @@ export function CartDrawer() {
 
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cartItems.reduce((sum, item) => {
-    // $40 per case for one-time, $36 for subscription (10% off)
-    const casePrice = item.isSubscription ? 36 : 40;
+    const casePrice = getCasePrice(item.isSubscription);
     return sum + casePrice * item.quantity;
   }, 0);
 
@@ -153,7 +153,7 @@ export function CartDrawer() {
                     </h4>
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm text-muted-foreground" data-testid={`text-item-price-${item.id}`}>
-                        ${item.isSubscription ? '36' : '40'} per case
+                        ${getCasePrice(item.isSubscription)} per case
                       </p>
                       {item.isSubscription && (
                         <Badge variant="secondary" className="gap-1 text-xs">
@@ -211,7 +211,7 @@ export function CartDrawer() {
                   </div>
                   <div className="text-right">
                     <p className="font-bold" data-testid={`text-item-total-${item.id}`}>
-                      ${((item.isSubscription ? 36 : 40) * item.quantity).toFixed(2)}
+                      ${(getCasePrice(item.isSubscription) * item.quantity).toFixed(2)}
                     </p>
                   </div>
                 </div>
