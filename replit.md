@@ -20,7 +20,22 @@ The backend uses Node.js with Express.js and TypeScript, following an ESM-first 
 
 ### Authentication & Authorization
 
-The system uses local username/password authentication with Passport.js LocalStrategy and scrypt hashing, enhanced with SMS verification via Twilio during registration. Sessions are managed with `express-session` and stored in PostgreSQL. A role-based authorization system defines 'user', 'admin', and 'super_admin' levels, with granular API route protection and user management capabilities for super admins.
+The system supports dual authentication methods: traditional username/password login OR passwordless SMS code login. Both methods use Passport.js for session management with scrypt hashing for passwords and Twilio for SMS delivery. 
+
+**Authentication Methods:**
+- **Password Login**: Traditional username/password with LocalStrategy
+- **SMS Code Login**: Passwordless login via 6-digit verification codes sent to registered phone numbers
+  - 5-minute code expiration
+  - Maximum 3 verification attempts per code
+  - Single-use codes (marked as consumed after successful login)
+  - Purpose-scoped verification codes (registration vs. login)
+  - Phone number enumeration prevention (generic success responses)
+
+**Registration Requirements:**
+- SMS-based phone number verification is required during registration before account creation
+- Users must verify their phone number via a 6-digit code sent via Twilio
+
+Sessions are managed with `express-session` and stored in PostgreSQL. A role-based authorization system defines 'user', 'admin', and 'super_admin' levels, with granular API route protection and user management capabilities for super admins.
 
 ### Payment Processing
 
@@ -36,7 +51,7 @@ The development workflow uses `npm run dev` for a tsx server with Vite middlewar
 
 -   **Stripe**: Payment processing, subscription billing, and revenue management. Integrated via server-side API calls and client-side Elements.
 -   **Neon Database**: Primary PostgreSQL data storage for all application data, connected via `@neondatabase/serverless`.
--   **Twilio**: Used for SMS-based phone number verification during user registration.
+-   **Twilio**: Used for SMS-based phone number verification during registration and passwordless SMS code login.
 
 ### Key NPM Packages
 
