@@ -1,10 +1,12 @@
 import { Button } from "@/components/ui/button";
-import { ShoppingCart, Menu } from "lucide-react";
+import { ShoppingCart, Menu, User } from "lucide-react";
 import { Link, useLocation } from "wouter";
+import { useAuth } from "@/hooks/useAuth";
 import logo from "@assets/text-stacked-black_1762299663824.png";
 
 export function Navbar() {
   const [location, setLocation] = useLocation();
+  const { isAuthenticated, isLoading } = useAuth();
   
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur">
@@ -42,6 +44,26 @@ export function Navbar() {
         </nav>
 
         <div className="flex items-center gap-2">
+          {!isLoading && (
+            isAuthenticated ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setLocation('/account')}
+                data-testid="button-account"
+              >
+                <User className="w-5 h-5" />
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                onClick={() => window.location.href = '/api/login'}
+                data-testid="button-login"
+              >
+                Log In
+              </Button>
+            )
+          )}
           <Button variant="ghost" size="icon" className="relative" data-testid="button-cart">
             <ShoppingCart className="w-5 h-5" />
           </Button>

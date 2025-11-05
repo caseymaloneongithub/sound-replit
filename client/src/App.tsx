@@ -12,6 +12,7 @@ import Wholesale from "@/pages/wholesale";
 import WholesaleOrders from "@/pages/wholesale-orders";
 import WholesaleCustomers from "@/pages/wholesale-customers";
 import WholesaleProducts from "@/pages/wholesale-products";
+import Account from "@/pages/account";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -26,6 +27,7 @@ function Router() {
       <Route path="/wholesale/orders" component={WholesaleOrders} />
       <Route path="/wholesale/customers" component={WholesaleCustomers} />
       <Route path="/wholesale/products" component={WholesaleProducts} />
+      <Route path="/account" component={Account} />
       <Route component={NotFound} />
     </Switch>
   );

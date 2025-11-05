@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
 import { insertSubscriptionSchema } from "@shared/schema";
+import { setupAuth, isAuthenticated } from "./replitAuth";
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -11,6 +12,21 @@ const stripe = process.env.STRIPE_SECRET_KEY
   : null;
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Auth middleware
+  await setupAuth(app);
+
+  // Auth routes
+  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      res.json(user);
+    } catch (error: any) {
+      console.error("Error fetching user:", error);
+      res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
   // Product routes
   app.get("/api/products", async (req, res) => {
     try {
@@ -100,6 +116,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(subscriptions);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching subscriptions: " + error.message });
+    }
+  });
+
+  app.get("/api/my-subscriptions", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const subscriptions = await storage.getUserSubscriptions(userId);
+      res.json(subscriptions);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching user subscriptions: " + error.message });
     }
   });
 
