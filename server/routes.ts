@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema } from "@shared/schema";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema } from "@shared/schema";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { z } from "zod";
 
@@ -355,6 +355,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/wholesale/customers", async (req, res) => {
+    try {
+      const customer = insertWholesaleCustomerSchema.parse(req.body);
+      const created = await storage.createWholesaleCustomer(customer);
+      res.json(created);
+    } catch (error: any) {
+      res.status(400).json({ message: "Error creating customer: " + error.message });
+    }
+  });
+
   // Wholesale order routes
   app.get("/api/wholesale/orders", async (req, res) => {
     try {
@@ -374,6 +384,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(order);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching order: " + error.message });
+    }
+  });
+
+  app.post("/api/wholesale/orders", async (req, res) => {
+    try {
+      const { order, items } = req.body;
+      
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: "Order must contain at least one item" });
+      }
+      
+      let serverCalculatedTotal = 0;
+      const validatedItems = [];
+      
+      for (const item of items) {
+        if (!item.productId || !item.quantity || item.quantity <= 0) {
+          return res.status(400).json({ message: "Invalid item data" });
+        }
+        
+        const product = await storage.getProduct(item.productId);
+        if (!product) {
+          return res.status(404).json({ message: `Product ${item.productId} not found` });
+        }
+        
+        const unitPrice = Number(product.wholesalePrice);
+        const itemTotal = unitPrice * item.quantity;
+        serverCalculatedTotal += itemTotal;
+        
+        validatedItems.push({
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: product.wholesalePrice,
+        });
+      }
+      
+      const orderData = insertWholesaleOrderSchema.parse({
+        ...order,
+        totalAmount: serverCalculatedTotal.toFixed(2),
+      });
+      
+      const createdOrder = await storage.createWholesaleOrder(orderData);
+      
+      for (const item of validatedItems) {
+        await storage.createWholesaleOrderItem({
+          orderId: createdOrder.id,
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+        });
+      }
+      
+      res.json(createdOrder);
+    } catch (error: any) {
+      console.error("Wholesale order creation error:", error);
+      res.status(400).json({ message: "Error creating order: " + error.message });
+    }
+  });
+
+  app.get("/api/wholesale/orders/:id/items", async (req, res) => {
+    try {
+      const items = await storage.getWholesaleOrderItems(req.params.id);
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching order items: " + error.message });
     }
   });
 
