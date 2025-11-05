@@ -150,12 +150,9 @@ export default function Shop() {
                   </div>
                 </CardHeader>
                 <CardContent className="p-6">
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <h3 className="text-xl font-semibold" style={{ fontFamily: 'var(--font-heading)' }}>
-                      {product.name}
-                    </h3>
-                    <Badge variant="secondary" className="shrink-0">{product.abv}</Badge>
-                  </div>
+                  <h3 className="text-xl font-semibold mb-3" style={{ fontFamily: 'var(--font-heading)' }}>
+                    {product.name}
+                  </h3>
                   <p className="text-sm text-muted-foreground mb-4">
                     {product.description}
                   </p>
