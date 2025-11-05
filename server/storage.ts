@@ -29,6 +29,8 @@ const db = drizzle(pool);
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
+  getAllUsers(): Promise<User[]>;
+  updateUserRole(id: string, role: string): Promise<User | undefined>;
   
   getProducts(): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
@@ -94,6 +96,24 @@ export class PostgresStorage implements IStorage {
     const result = await db
       .insert(users)
       .values(userData)
+      .returning();
+    return result[0];
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return await db.select().from(users);
+  }
+
+  async updateUserRole(id: string, role: string): Promise<User | undefined> {
+    const isAdmin = role === 'admin' || role === 'super_admin';
+    const result = await db
+      .update(users)
+      .set({ 
+        role, 
+        isAdmin,
+        updatedAt: new Date() 
+      })
+      .where(eq(users.id, id))
       .returning();
     return result[0];
   }
@@ -271,6 +291,18 @@ export class PostgresStorage implements IStorage {
     const existingProducts = await this.getProducts();
     if (existingProducts.length > 0) {
       return;
+    }
+
+    // Create super admin user (Casey Malone)
+    const existingSuperAdmin = await db.select().from(users).where(eq(users.email, 'casey@soundkombucha.com'));
+    if (existingSuperAdmin.length === 0) {
+      await db.insert(users).values({
+        email: 'casey@soundkombucha.com',
+        firstName: 'Casey',
+        lastName: 'Malone',
+        role: 'super_admin',
+        isAdmin: true,
+      });
     }
 
     await db.insert(products).values([

@@ -10,10 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Package, ShoppingCart, Settings, AlertCircle, Loader2 } from "lucide-react";
+import { Package, ShoppingCart, Settings, AlertCircle, Loader2, Users } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Product, WholesaleOrder, WholesaleCustomer } from "@shared/schema";
+import type { Product, WholesaleOrder, WholesaleCustomer, User } from "@shared/schema";
 
 interface ProductFormData {
   name: string;
@@ -60,6 +60,11 @@ export default function StaffPortal() {
     queryKey: ['/api/wholesale/customers'],
   });
 
+  const { data: allUsers = [], isLoading: usersLoading } = useQuery<User[]>({
+    queryKey: ['/api/staff/users'],
+    enabled: user?.role === 'super_admin',
+  });
+
   const updateOrderStatusMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: string; status: string }) => {
       return await apiRequest('PATCH', `/api/staff/orders/${orderId}/status`, { status });
@@ -96,6 +101,26 @@ export default function StaffPortal() {
       toast({
         title: "Error",
         description: error.message || "Failed to update product",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateUserRoleMutation = useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
+      return await apiRequest('PATCH', `/api/staff/users/${userId}/role`, { role });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/staff/users'] });
+      toast({
+        title: "User role updated",
+        description: "User role has been updated successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update user role",
         variant: "destructive",
       });
     },
@@ -221,6 +246,12 @@ export default function StaffPortal() {
               <Settings className="w-4 h-4 mr-2" />
               Product Specs
             </TabsTrigger>
+            {user?.role === 'super_admin' && (
+              <TabsTrigger value="users" data-testid="tab-users">
+                <Users className="w-4 h-4 mr-2" />
+                User Management
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="orders" className="space-y-4">
@@ -494,6 +525,75 @@ export default function StaffPortal() {
               </div>
             )}
           </TabsContent>
+
+          {user?.role === 'super_admin' && (
+            <TabsContent value="users" className="space-y-4">
+              {usersLoading ? (
+                <div className="flex items-center justify-center py-12 gap-2">
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                  <span className="text-muted-foreground">Loading users...</span>
+                </div>
+              ) : allUsers.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center">
+                    <Users className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                    <p className="text-muted-foreground">No users found</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {allUsers.map((u) => (
+                    <Card key={u.id} data-testid={`card-user-${u.id}`}>
+                      <CardHeader>
+                        <CardTitle className="flex items-center justify-between">
+                          <span className="text-lg">
+                            {u.firstName} {u.lastName}
+                          </span>
+                          <Badge 
+                            variant={u.role === 'super_admin' ? 'default' : u.role === 'admin' ? 'secondary' : 'outline'}
+                            data-testid={`badge-role-${u.id}`}
+                          >
+                            {u.role === 'super_admin' ? 'Super Admin' : u.role === 'admin' ? 'Admin' : 'User'}
+                          </Badge>
+                        </CardTitle>
+                        <CardDescription data-testid={`text-email-${u.id}`}>
+                          {u.email}
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-2">
+                          <Label htmlFor={`role-${u.id}`}>Role</Label>
+                          <Select
+                            value={u.role}
+                            onValueChange={(role) => {
+                              if (u.id !== user?.sub) {
+                                updateUserRoleMutation.mutate({ userId: u.id, role });
+                              }
+                            }}
+                            disabled={u.id === user?.sub || updateUserRoleMutation.isPending}
+                          >
+                            <SelectTrigger id={`role-${u.id}`} data-testid={`select-role-${u.id}`}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="user" data-testid={`option-user-${u.id}`}>User</SelectItem>
+                              <SelectItem value="admin" data-testid={`option-admin-${u.id}`}>Admin</SelectItem>
+                              <SelectItem value="super_admin" data-testid={`option-super-admin-${u.id}`}>Super Admin</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {u.id === user?.sub && (
+                            <p className="text-xs text-muted-foreground">
+                              You cannot change your own role
+                            </p>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </div>

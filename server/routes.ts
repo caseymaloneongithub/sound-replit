@@ -666,6 +666,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Super admin middleware
+  const isSuperAdmin = async (req: any, res: any, next: any) => {
+    try {
+      if (!req.user?.claims?.sub) {
+        return res.status(401).json({ message: "Unauthorized - please log in" });
+      }
+      
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      
+      if (user?.role !== 'super_admin') {
+        return res.status(403).json({ message: "Forbidden: Super admin access required" });
+      }
+      
+      next();
+    } catch (error: any) {
+      console.error("Error verifying super admin status:", error);
+      res.status(500).json({ message: "Error verifying super admin status" });
+    }
+  };
+
+  // Get all users (super admin only)
+  app.get("/api/staff/users", isAuthenticated, isSuperAdmin, async (req, res) => {
+    try {
+      const users = await storage.getAllUsers();
+      res.json(users);
+    } catch (error: any) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // Update user role (super admin only)
+  app.patch("/api/staff/users/:id/role", isAuthenticated, isSuperAdmin, async (req, res) => {
+    try {
+      const roleSchema = z.object({
+        role: z.enum(['user', 'admin', 'super_admin']),
+      });
+      
+      const parsed = roleSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid role value" });
+      }
+      
+      // Prevent super admins from demoting themselves
+      const currentUserId = req.user.claims.sub;
+      if (req.params.id === currentUserId) {
+        return res.status(403).json({ message: "You cannot change your own role" });
+      }
+      
+      const user = await storage.updateUserRole(req.params.id, parsed.data.role);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      res.json(user);
+    } catch (error: any) {
+      console.error("Error updating user role:", error);
+      res.status(500).json({ message: "Failed to update user role" });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;

@@ -37,9 +37,32 @@ Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacifi
 - Automatic cart clearing after successful payment
 - Image URL normalization for Stripe compatibility (converts relative to absolute URLs)
 
+### User Role Management System
+**Super Admin**: Casey Malone (casey@soundkombucha.com) seeded as the initial super admin
+**Role Hierarchy**: Three levels - 'user', 'admin', 'super_admin'
+- **User**: Basic access to shop and subscriptions
+- **Admin**: Access to staff portal (orders, inventory, product specs)
+- **Super Admin**: Full admin access + user management capabilities
+
+**Key Features**:
+- User Management tab in staff portal (super admin only)
+- Role assignment dropdown with real-time updates
+- Server-side protection against self-demotion (prevents locking out last super admin)
+- Automatic isAdmin field sync (admin and super_admin roles set isAdmin = true)
+- Granular API route protection with role-specific middleware
+
+**API Endpoints**:
+- GET /api/staff/users - List all users (super admin only)
+- PATCH /api/staff/users/:id/role - Update user role (super admin only, cannot self-demote)
+
+**Security Measures**:
+- Double middleware protection: isAuthenticated + isSuperAdmin
+- Server-side validation prevents privilege escalation
+- UI-level and API-level guards against self-role modification
+
 ### Known Limitations
 **Email Notifications**: Not implemented - requires SendGrid or Resend integration setup
-**Authentication**: Pages are currently publicly accessible - no route protection implemented
+**Route Protection**: Shop and wholesale pages are publicly accessible - no authentication required
 **Inventory Management**: Manual stock adjustments only - no automatic deduction on order placement
 
 ## User Preferences
