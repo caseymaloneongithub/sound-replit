@@ -566,11 +566,11 @@ export default function StaffPortal() {
                           <Select
                             value={u.role}
                             onValueChange={(role) => {
-                              if (u.id !== user?.sub) {
+                              if (u.id !== user?.id) {
                                 updateUserRoleMutation.mutate({ userId: u.id, role });
                               }
                             }}
-                            disabled={u.id === user?.sub || updateUserRoleMutation.isPending}
+                            disabled={u.id === user?.id || updateUserRoleMutation.isPending}
                           >
                             <SelectTrigger id={`role-${u.id}`} data-testid={`select-role-${u.id}`}>
                               <SelectValue />
@@ -581,7 +581,7 @@ export default function StaffPortal() {
                               <SelectItem value="super_admin" data-testid={`option-super-admin-${u.id}`}>Super Admin</SelectItem>
                             </SelectContent>
                           </Select>
-                          {u.id === user?.sub && (
+                          {u.id === user?.id && (
                             <p className="text-xs text-muted-foreground">
                               You cannot change your own role
                             </p>
