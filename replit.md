@@ -4,6 +4,44 @@
 
 Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacific Northwest kombucha brewery. The platform serves dual audiences: retail customers purchasing kombucha products and subscriptions through a consumer-facing shop, and business clients managing wholesale orders through a dedicated portal. The application features product browsing, subscription management, Stripe payment integration, and comprehensive inventory tracking.
 
+## Recent Changes (November 2025)
+
+### Shopping Cart Session Fix (CRITICAL)
+**Problem**: Cart items were not persisting - users saw success toasts but cart remained empty.
+**Root Cause**: Session cookies had `secure: true` (required HTTPS) but development runs on HTTP.
+**Solution**: Updated `server/replitAuth.ts`:
+- Changed `secure: true` → `secure: process.env.NODE_ENV === 'production'`
+- Changed `saveUninitialized: false` → `true` to create sessions for guest users
+- Ensures cart works in development while maintaining production security
+
+### Reporting Dashboard with Charts
+**Added**: Three Recharts visualizations to `/reports` page:
+1. Revenue & Orders Trend (6-month dual-axis bar chart)
+2. Order Status Distribution (pie chart with percentage labels)
+3. Inventory Status (horizontal bar chart)
+**Components**: Uses ResponsiveContainer for mobile compatibility
+**Data**: Real-time calculations from orders, products, and subscriptions queries
+
+### Wholesale Portal Security
+**Enhancement**: Server-side price validation for wholesale orders
+- Server recalculates pricing from authoritative product database
+- Client-supplied prices are ignored (prevents tampering)
+- Validates product existence and quantities before order creation
+**Impact**: Prevents financial integrity issues in B2B transactions
+
+### Stripe Payment Integration
+**Features**:
+- One-time purchase checkout with Stripe Checkout Sessions
+- Subscription creation for recurring plans
+- Webhook handling with signature verification
+- Automatic cart clearing after successful payment
+- Image URL normalization for Stripe compatibility (converts relative to absolute URLs)
+
+### Known Limitations
+**Email Notifications**: Not implemented - requires SendGrid or Resend integration setup
+**Authentication**: Pages are currently publicly accessible - no route protection implemented
+**Inventory Management**: Manual stock adjustments only - no automatic deduction on order placement
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
