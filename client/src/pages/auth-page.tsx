@@ -87,10 +87,7 @@ export default function AuthPage() {
 
     setSendingCode(true);
     try {
-      await apiRequest("/api/send-verification-code", {
-        method: "POST",
-        body: JSON.stringify({ phoneNumber }),
-      });
+      await apiRequest("POST", "/api/send-verification-code", { phoneNumber });
       setCodeSent(true);
       toast({
         title: "Code Sent",
@@ -122,10 +119,7 @@ export default function AuthPage() {
 
     setVerifyingCode(true);
     try {
-      await apiRequest("/api/verify-code", {
-        method: "POST",
-        body: JSON.stringify({ phoneNumber, code }),
-      });
+      await apiRequest("POST", "/api/verify-code", { phoneNumber, code });
       setPhoneVerified(true);
       toast({
         title: "Success",
