@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
 import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema } from "@shared/schema";
-import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupAuth } from "./auth";
 import { z } from "zod";
 
 const stripe = process.env.STRIPE_SECRET_KEY 

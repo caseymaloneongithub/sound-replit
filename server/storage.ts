@@ -6,7 +6,7 @@ import {
   type WholesaleCustomer, type InsertWholesaleCustomer,
   type WholesaleOrder, type InsertWholesaleOrder,
   type WholesaleOrderItem, type InsertWholesaleOrderItem,
-  type User, type UpsertUser,
+  type User, type InsertUser,
   products,
   subscriptionPlans,
   cartItems,
@@ -20,15 +20,22 @@ import { drizzle } from "drizzle-orm/neon-serverless";
 import { eq, and } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
+import session from "express-session";
+import connectPg from "connect-pg-simple";
 
 neonConfig.webSocketConstructor = ws;
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle(pool);
 
+const PostgresSessionStore = connectPg(session);
+
 export interface IStorage {
+  sessionStore: ReturnType<typeof connectPg>;
+  
   getUser(id: string): Promise<User | undefined>;
-  upsertUser(user: UpsertUser): Promise<User>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   
@@ -71,32 +78,27 @@ export interface IStorage {
 }
 
 export class PostgresStorage implements IStorage {
+  sessionStore: ReturnType<typeof connectPg>;
+
+  constructor() {
+    this.sessionStore = new PostgresSessionStore({ 
+      pool, 
+      createTableIfMissing: true 
+    });
+  }
+
   async getUser(id: string): Promise<User | undefined> {
     const result = await db.select().from(users).where(eq(users.id, id));
     return result[0];
   }
 
-  async upsertUser(userData: UpsertUser): Promise<User> {
-    const existingUser = userData.email 
-      ? await db.select().from(users).where(eq(users.email, userData.email))
-      : [];
-    
-    if (existingUser.length > 0) {
-      const result = await db
-        .update(users)
-        .set({
-          ...userData,
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, existingUser[0].id))
-        .returning();
-      return result[0];
-    }
-    
-    const result = await db
-      .insert(users)
-      .values(userData)
-      .returning();
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.username, username));
+    return result[0];
+  }
+
+  async createUser(userData: InsertUser): Promise<User> {
+    const result = await db.insert(users).values(userData).returning();
     return result[0];
   }
 
@@ -291,18 +293,6 @@ export class PostgresStorage implements IStorage {
     const existingProducts = await this.getProducts();
     if (existingProducts.length > 0) {
       return;
-    }
-
-    // Create super admin user (Casey Malone)
-    const existingSuperAdmin = await db.select().from(users).where(eq(users.email, 'casey@soundkombucha.com'));
-    if (existingSuperAdmin.length === 0) {
-      await db.insert(users).values({
-        email: 'casey@soundkombucha.com',
-        firstName: 'Casey',
-        lastName: 'Malone',
-        role: 'super_admin',
-        isAdmin: true,
-      });
     }
 
     await db.insert(products).values([
