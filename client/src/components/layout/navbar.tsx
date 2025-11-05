@@ -1,20 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { Menu, User, Shield } from "lucide-react";
 import { Link, useLocation } from "wouter";
-import { useAuth } from "@/hooks/useAuth";
-import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/use-auth";
 import { CartDrawer } from "@/components/cart/cart-drawer";
 import logo from "@assets/text-stacked-black_1762299663824.png";
 
 export function Navbar() {
   const [location, setLocation] = useLocation();
-  const { isAuthenticated, isLoading } = useAuth();
-  
-  const { data: user } = useQuery<any>({
-    queryKey: ['/api/auth/user'],
-    enabled: isAuthenticated,
-    retry: false,
-  });
+  const { user, isLoading } = useAuth();
   
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur">
@@ -63,7 +56,7 @@ export function Navbar() {
 
         <div className="flex items-center gap-2">
           {!isLoading && (
-            isAuthenticated ? (
+            user ? (
               <Button
                 variant="ghost"
                 size="icon"
@@ -75,7 +68,7 @@ export function Navbar() {
             ) : (
               <Button
                 variant="ghost"
-                onClick={() => window.location.href = '/api/login'}
+                onClick={() => setLocation('/auth')}
                 data-testid="button-login"
               >
                 Log In

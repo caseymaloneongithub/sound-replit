@@ -3,16 +3,14 @@ import { pgTable, text, varchar, integer, decimal, timestamp, boolean, index, js
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Session storage table
-export const sessions = pgTable(
-  "sessions",
-  {
-    sid: varchar("sid").primaryKey(),
-    sess: jsonb("sess").notNull(),
-    expire: timestamp("expire").notNull(),
-  },
-  (table) => [index("IDX_session_expire").on(table.expire)],
-);
+// Session storage table (managed by connect-pg-simple)
+// Note: connect-pg-simple creates and manages this table automatically
+// We define it here for type safety but let connect-pg-simple handle the actual creation
+export const sessions = pgTable("sessions", {
+  sid: varchar("sid").primaryKey(),
+  sess: jsonb("sess").notNull(),
+  expire: timestamp("expire").notNull(),
+});
 
 // User storage table
 export const users = pgTable("users", {

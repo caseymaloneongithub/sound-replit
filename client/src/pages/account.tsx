@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
+import { useLocation } from "wouter";
 import { Navbar } from "@/components/layout/navbar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,25 +13,18 @@ import { format } from "date-fns";
 
 export default function Account() {
   const { toast } = useToast();
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isLoading, logoutMutation } = useAuth();
+  const [, setLocation] = useLocation();
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      toast({
-        title: "Unauthorized",
-        description: "You are logged out. Logging in again...",
-        variant: "destructive",
-      });
-      setTimeout(() => {
-        window.location.href = "/api/login";
-      }, 500);
-      return;
+    if (!isLoading && !user) {
+      setLocation('/auth');
     }
-  }, [isAuthenticated, isLoading, toast]);
+  }, [user, isLoading, setLocation]);
 
   const { data: subscriptions, isLoading: subscriptionsLoading } = useQuery<Subscription[]>({
     queryKey: ["/api/my-subscriptions"],
-    enabled: isAuthenticated,
+    enabled: !!user,
   });
 
   const { data: plans } = useQuery<SubscriptionPlan[]>({
@@ -74,11 +68,15 @@ export default function Account() {
           </div>
           <Button
             variant="outline"
-            onClick={() => window.location.href = '/api/logout'}
+            onClick={async () => {
+              await logoutMutation.mutateAsync();
+              setLocation('/auth');
+            }}
+            disabled={logoutMutation.isPending}
             data-testid="button-logout"
           >
             <LogOut className="w-4 h-4 mr-2" />
-            Log Out
+            {logoutMutation.isPending ? 'Logging out...' : 'Log Out'}
           </Button>
         </div>
 
@@ -96,8 +94,12 @@ export default function Account() {
                 <p className="font-medium" data-testid="text-user-name">
                   {user.firstName && user.lastName
                     ? `${user.firstName} ${user.lastName}`
-                    : 'Not provided'}
+                    : user.firstName || user.lastName || 'Not provided'}
                 </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Username</p>
+                <p className="font-medium" data-testid="text-user-username">{user.username}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Email</p>

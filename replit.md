@@ -6,6 +6,32 @@ Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacifi
 
 ## Recent Changes (November 2025)
 
+### Authentication System Migration (November 5, 2025) - COMPLETED
+**Migration**: Fully migrated from Replit Auth (OIDC) to local username/password authentication
+**Backend Changes**:
+- Implemented Passport.js LocalStrategy with scrypt password hashing
+- Created authentication endpoints: /api/register, /api/login, /api/logout, /api/user
+- Session-based authentication with PostgreSQL-backed session storage
+- isAuthenticated middleware for protected routes
+
+**Frontend Changes**:
+- Created AuthProvider context with useAuth hook for client-side state management
+- Built dedicated /auth page with login and registration forms
+- Updated Navbar to use local authentication (removed Replit Auth redirect)
+- Updated Account page with proper logout functionality
+- Protected routes automatically redirect to /auth for unauthenticated users
+
+**Super Admin Setup**:
+- Casey Malone (casey@soundkombucha.com) configured as initial super admin
+- Username: casey
+- Default password: kombucha2025 (should be changed after first login)
+- Seed script available at scripts/seed-super-admin.ts
+
+**Database Schema Updates**:
+- Added username (unique, required) and password (hashed) fields to users table
+- Maintained role and isAdmin fields for authorization
+- Session table automatically managed by connect-pg-simple
+
 ### Shopping Cart Session Fix (CRITICAL)
 **Problem**: Cart items were not persisting - users saw success toasts but cart remained empty.
 **Root Cause**: Session cookies had `secure: true` (required HTTPS) but development runs on HTTP.
@@ -115,7 +141,7 @@ Preferred communication style: Simple, everyday language.
 - Zod integration via drizzle-zod for runtime schema validation
 
 **Key Database Entities**
-- Users: Replit Auth user profiles
+- Users: User accounts with username/password authentication and role-based authorization
 - Products: Kombucha products with retail/wholesale pricing, inventory tracking
 - Subscription Plans: Recurring delivery plans (weekly/monthly with bottle counts)
 - Subscriptions: User subscription instances with Stripe subscription IDs
@@ -124,17 +150,18 @@ Preferred communication style: Simple, everyday language.
 
 ### Authentication & Authorization
 
-**Replit Auth Integration**
-- OpenID Connect (OIDC) based authentication via Replit's identity provider
-- Passport.js strategy for OIDC flow
-- Session management with PostgreSQL-backed store (7-day TTL)
-- User profile synchronization on login (upsert pattern)
+**Local Password Authentication**
+- Username/password based authentication using Passport.js LocalStrategy
+- Passwords hashed with scrypt for security (salt + derived key)
+- Session management with PostgreSQL-backed session store (connect-pg-simple)
+- User registration and login endpoints (/api/register, /api/login, /api/logout, /api/user)
+- Client-side AuthProvider context with useAuth hook
 - Middleware: `isAuthenticated` guard for protected routes
 
 **Session Security**
-- HTTP-only, secure cookies in production
+- HTTP-only cookies with secure flag in production
 - Session secret from environment variable
-- CSRF protection through session-based state
+- Session data stored in PostgreSQL for persistence across restarts
 
 ### Payment Processing
 
@@ -177,11 +204,6 @@ Preferred communication style: Simple, everyday language.
 - Integration: Server-side API calls with stripe npm package, client-side Elements for PCI compliance
 - Webhooks: Configured to receive payment and subscription events
 
-**Replit Auth (Authentication)**
-- Purpose: User authentication and identity management
-- Integration: OIDC discovery endpoint, Passport.js strategy
-- Environment: ISSUER_URL (defaults to https://replit.com/oidc), REPL_ID for client identification
-
 **Neon Database (PostgreSQL)**
 - Purpose: Primary data storage for all application data
 - Integration: @neondatabase/serverless with WebSocket support
@@ -204,13 +226,12 @@ Preferred communication style: Simple, everyday language.
 **Payment & Auth**
 - stripe (v17): Server-side Stripe API
 - @stripe/react-stripe-js + @stripe/stripe-js: Client-side payment UI
-- passport + openid-client: OIDC authentication
+- passport + passport-local: Local username/password authentication
 - express-session + connect-pg-simple: Session management
 
 **Server Dependencies**
 - express: Web server framework
 - ws: WebSocket library for Neon serverless connections
-- memoizee: Function result caching (OIDC config)
 - date-fns: Date formatting and manipulation
 
 ### Environment Variables Required
@@ -219,8 +240,6 @@ Preferred communication style: Simple, everyday language.
 - `SESSION_SECRET`: Secret for signing session cookies
 - `STRIPE_SECRET_KEY`: Stripe API secret key
 - `VITE_STRIPE_PUBLIC_KEY`: Stripe publishable key (client-side)
-- `ISSUER_URL`: OIDC issuer URL (optional, defaults to Replit)
-- `REPL_ID`: Replit application identifier
 - `NODE_ENV`: Environment mode (development/production)
 
 ### Asset Management
