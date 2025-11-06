@@ -1052,51 +1052,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update product details
+  // Update product details (admin can update all fields, staff can only update stock)
   app.patch("/api/staff/products/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const updateSchema = z.object({
-        name: z.string().optional(),
-        description: z.string().optional(),
-        flavor: z.string().optional(),
-        abv: z.string().optional(),
-        ingredients: z.array(z.string()).optional(),
-        retailPrice: z.number().positive().optional(),
-        wholesalePrice: z.number().positive().optional(),
-        stockQuantity: z.number().int().nonnegative().optional(),
-        lowStockThreshold: z.number().int().nonnegative().optional(),
-      });
+      if (!req.user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const isStaff = req.user.role === 'staff';
       
-      const parsed = updateSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ 
-          message: "Invalid product data", 
-          errors: parsed.error.errors 
+      if (isStaff) {
+        const staffUpdateSchema = z.object({
+          stockQuantity: z.number().int().nonnegative().optional(),
+          lowStockThreshold: z.number().int().nonnegative().optional(),
         });
+        
+        const parsed = staffUpdateSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ 
+            message: "Invalid product data", 
+            errors: parsed.error.errors 
+          });
+        }
+        
+        const updates: any = {};
+        if (parsed.data.stockQuantity !== undefined) {
+          updates.stockQuantity = parsed.data.stockQuantity;
+          updates.inStock = parsed.data.stockQuantity > 0;
+        }
+        if (parsed.data.lowStockThreshold !== undefined) {
+          updates.lowStockThreshold = parsed.data.lowStockThreshold;
+        }
+        
+        const product = await storage.updateProduct(req.params.id, updates);
+        if (!product) {
+          return res.status(404).json({ message: "Product not found" });
+        }
+        
+        res.json(product);
+      } else {
+        const adminUpdateSchema = z.object({
+          name: z.string().optional(),
+          description: z.string().optional(),
+          flavor: z.string().optional(),
+          abv: z.string().optional(),
+          ingredients: z.array(z.string()).optional(),
+          retailPrice: z.number().positive().optional(),
+          wholesalePrice: z.number().positive().optional(),
+          stockQuantity: z.number().int().nonnegative().optional(),
+          lowStockThreshold: z.number().int().nonnegative().optional(),
+        });
+        
+        const parsed = adminUpdateSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ 
+            message: "Invalid product data", 
+            errors: parsed.error.errors 
+          });
+        }
+        
+        const updates: any = {};
+        if (parsed.data.name !== undefined) updates.name = parsed.data.name;
+        if (parsed.data.description !== undefined) updates.description = parsed.data.description;
+        if (parsed.data.flavor !== undefined) updates.flavor = parsed.data.flavor;
+        if (parsed.data.abv !== undefined) updates.abv = parsed.data.abv;
+        if (parsed.data.ingredients !== undefined) updates.ingredients = parsed.data.ingredients;
+        if (parsed.data.retailPrice !== undefined) updates.retailPrice = String(parsed.data.retailPrice);
+        if (parsed.data.wholesalePrice !== undefined) updates.wholesalePrice = String(parsed.data.wholesalePrice);
+        if (parsed.data.stockQuantity !== undefined) {
+          updates.stockQuantity = parsed.data.stockQuantity;
+          updates.inStock = parsed.data.stockQuantity > 0;
+        }
+        if (parsed.data.lowStockThreshold !== undefined) {
+          updates.lowStockThreshold = parsed.data.lowStockThreshold;
+        }
+        
+        const product = await storage.updateProduct(req.params.id, updates);
+        if (!product) {
+          return res.status(404).json({ message: "Product not found" });
+        }
+        
+        res.json(product);
       }
-      
-      const updates: any = {};
-      if (parsed.data.name !== undefined) updates.name = parsed.data.name;
-      if (parsed.data.description !== undefined) updates.description = parsed.data.description;
-      if (parsed.data.flavor !== undefined) updates.flavor = parsed.data.flavor;
-      if (parsed.data.abv !== undefined) updates.abv = parsed.data.abv;
-      if (parsed.data.ingredients !== undefined) updates.ingredients = parsed.data.ingredients;
-      if (parsed.data.retailPrice !== undefined) updates.retailPrice = String(parsed.data.retailPrice);
-      if (parsed.data.wholesalePrice !== undefined) updates.wholesalePrice = String(parsed.data.wholesalePrice);
-      if (parsed.data.stockQuantity !== undefined) {
-        updates.stockQuantity = parsed.data.stockQuantity;
-        updates.inStock = parsed.data.stockQuantity > 0;
-      }
-      if (parsed.data.lowStockThreshold !== undefined) {
-        updates.lowStockThreshold = parsed.data.lowStockThreshold;
-      }
-      
-      const product = await storage.updateProduct(req.params.id, updates);
-      if (!product) {
-        return res.status(404).json({ message: "Product not found" });
-      }
-      
-      res.json(product);
     } catch (error: any) {
       console.error("Error updating product:", error);
       res.status(500).json({ message: "Failed to update product" });

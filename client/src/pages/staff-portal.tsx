@@ -244,10 +244,12 @@ export default function StaffPortal() {
               <Package className="w-4 h-4 mr-2" />
               Inventory
             </TabsTrigger>
-            <TabsTrigger value="products" data-testid="tab-products">
-              <Settings className="w-4 h-4 mr-2" />
-              Product Specs
-            </TabsTrigger>
+            {user?.isAdmin && (
+              <TabsTrigger value="products" data-testid="tab-products">
+                <Settings className="w-4 h-4 mr-2" />
+                Product Specs
+              </TabsTrigger>
+            )}
             {user?.role === 'super_admin' && (
               <TabsTrigger value="users" data-testid="tab-users">
                 <Users className="w-4 h-4 mr-2" />
@@ -382,7 +384,8 @@ export default function StaffPortal() {
             )}
           </TabsContent>
 
-          <TabsContent value="products" className="space-y-4">
+          {user?.isAdmin && (
+            <TabsContent value="products" className="space-y-4">
             {productsLoading ? (
               <div className="flex items-center justify-center py-12 gap-2">
                 <Loader2 className="w-6 h-6 animate-spin" />
@@ -527,6 +530,7 @@ export default function StaffPortal() {
               </div>
             )}
           </TabsContent>
+          )}
 
           {user?.role === 'super_admin' && (
             <TabsContent value="users" className="space-y-4">
@@ -555,7 +559,7 @@ export default function StaffPortal() {
                             variant={u.role === 'super_admin' ? 'default' : u.role === 'admin' ? 'secondary' : 'outline'}
                             data-testid={`badge-role-${u.id}`}
                           >
-                            {u.role === 'super_admin' ? 'Super Admin' : u.role === 'admin' ? 'Admin' : 'User'}
+                            {u.role === 'super_admin' ? 'Super Admin' : u.role === 'admin' ? 'Admin' : u.role === 'staff' ? 'Staff' : 'User'}
                           </Badge>
                         </CardTitle>
                         <CardDescription data-testid={`text-email-${u.id}`}>
