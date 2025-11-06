@@ -6,6 +6,7 @@ import {
   type WholesaleCustomer, type InsertWholesaleCustomer,
   type WholesaleOrder, type InsertWholesaleOrder,
   type WholesaleOrderItem, type InsertWholesaleOrderItem,
+  type WholesalePricing, type InsertWholesalePricing,
   type User, type InsertUser,
   type VerificationCode, type InsertVerificationCode,
   products,
@@ -15,6 +16,7 @@ import {
   wholesaleCustomers,
   wholesaleOrders,
   wholesaleOrderItems,
+  wholesalePricing,
   users,
   verificationCodes
 } from "@shared/schema";
@@ -83,6 +85,10 @@ export interface IStorage {
   
   getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]>;
   createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem>;
+  
+  getWholesalePricing(customerId: string): Promise<WholesalePricing[]>;
+  getWholesalePrice(customerId: string, productId: string): Promise<WholesalePricing | undefined>;
+  setWholesalePrice(pricing: InsertWholesalePricing): Promise<WholesalePricing>;
   
   seedData(): Promise<void>;
 }
@@ -360,6 +366,38 @@ export class PostgresStorage implements IStorage {
   async createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem> {
     const result = await db.insert(wholesaleOrderItems).values(item).returning();
     return result[0];
+  }
+
+  async getWholesalePricing(customerId: string): Promise<WholesalePricing[]> {
+    return await db.select().from(wholesalePricing).where(eq(wholesalePricing.customerId, customerId));
+  }
+
+  async getWholesalePrice(customerId: string, productId: string): Promise<WholesalePricing | undefined> {
+    const result = await db
+      .select()
+      .from(wholesalePricing)
+      .where(
+        and(
+          eq(wholesalePricing.customerId, customerId),
+          eq(wholesalePricing.productId, productId)
+        )
+      );
+    return result[0];
+  }
+
+  async setWholesalePrice(pricing: InsertWholesalePricing): Promise<WholesalePricing> {
+    const existing = await this.getWholesalePrice(pricing.customerId, pricing.productId);
+    if (existing) {
+      const result = await db
+        .update(wholesalePricing)
+        .set({ customPrice: pricing.customPrice })
+        .where(eq(wholesalePricing.id, existing.id))
+        .returning();
+      return result[0];
+    } else {
+      const result = await db.insert(wholesalePricing).values(pricing).returning();
+      return result[0];
+    }
   }
 
   async seedData(): Promise<void> {
