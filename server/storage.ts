@@ -80,8 +80,10 @@ export interface IStorage {
   
   getWholesaleOrders(): Promise<WholesaleOrder[]>;
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
+  getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
   createWholesaleOrder(order: InsertWholesaleOrder): Promise<WholesaleOrder>;
   updateWholesaleOrderStatus(id: string, status: string): Promise<WholesaleOrder | undefined>;
+  updateWholesaleOrderDeliveryDate(id: string, deliveryDate: Date | null): Promise<WholesaleOrder | undefined>;
   
   getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]>;
   createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem>;
@@ -357,6 +359,34 @@ export class PostgresStorage implements IStorage {
       .where(eq(wholesaleOrders.id, id))
       .returning();
     return result[0];
+  }
+
+  async updateWholesaleOrderDeliveryDate(id: string, deliveryDate: Date | null): Promise<WholesaleOrder | undefined> {
+    const result = await db
+      .update(wholesaleOrders)
+      .set({ deliveryDate })
+      .where(eq(wholesaleOrders.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]> {
+    const startOfDay = new Date(deliveryDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(deliveryDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    const result = await db
+      .select()
+      .from(wholesaleOrders)
+      .where(
+        and(
+          sql`${wholesaleOrders.deliveryDate} >= ${startOfDay}`,
+          sql`${wholesaleOrders.deliveryDate} <= ${endOfDay}`
+        )
+      )
+      .orderBy(wholesaleOrders.deliveryDate);
+    return result;
   }
 
   async getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]> {
