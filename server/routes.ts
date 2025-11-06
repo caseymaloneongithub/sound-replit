@@ -612,6 +612,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/wholesale/customers/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const updates = insertWholesaleCustomerSchema.partial().parse(req.body);
+      const updated = await storage.updateWholesaleCustomer(req.params.id, updates);
+      if (!updated) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: "Error updating customer: " + error.message });
+    }
+  });
+
   // Wholesale order routes (admin-only access)
   app.get("/api/wholesale/orders", isAuthenticated, isAdmin, async (req, res) => {
     try {
@@ -807,6 +820,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(pricing);
     } catch (error: any) {
       res.status(400).json({ message: "Error setting pricing: " + error.message });
+    }
+  });
+
+  // Create Stripe checkout session for wholesale invoice payment
+  app.post("/api/wholesale/orders/:id/create-payment", async (req, res) => {
+    try {
+      if (!stripe) {
+        return res.status(503).json({ message: "Payment processing is not configured" });
+      }
+
+      const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
+      if (!orderDetails) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      const { order, customer } = orderDetails;
+
+      // Check if customer has online payment enabled
+      if (!customer.allowOnlinePayment) {
+        return res.status(403).json({ message: "Online payment not enabled for this customer" });
+      }
+
+      const baseUrl = process.env.REPL_SLUG 
+        ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
+        : 'http://localhost:5000';
+
+      // Create line items from order items
+      const lineItems = orderDetails.items.map(item => ({
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: item.product.name,
+          },
+          unit_amount: Math.round(parseFloat(item.unitPrice) * 100),
+        },
+        quantity: item.quantity,
+      }));
+
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        line_items: lineItems,
+        customer_email: customer.email,
+        metadata: {
+          orderId: order.id,
+          invoiceNumber: order.invoiceNumber,
+          type: 'wholesale_invoice_payment',
+        },
+        success_url: `${baseUrl}/wholesale/invoice/${order.id}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}/wholesale/invoice/${order.id}`,
+      });
+
+      res.json({ url: session.url, sessionId: session.id });
+    } catch (error: any) {
+      console.error("Wholesale payment checkout error:", error);
+      res.status(500).json({ message: "Error creating checkout: " + error.message });
     }
   });
 

@@ -96,6 +96,7 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   email: text("email").notNull().unique(),
   phone: text("phone").notNull(),
   address: text("address").notNull(),
+  allowOnlinePayment: boolean("allow_online_payment").notNull().default(false),
 });
 
 export const wholesaleOrders = pgTable("wholesale_orders", {
