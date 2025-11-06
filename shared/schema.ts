@@ -115,6 +115,13 @@ export const wholesaleOrderItems = pgTable("wholesale_order_items", {
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
 });
 
+export const wholesalePricing = pgTable("wholesale_pricing", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id),
+  productId: varchar("product_id").notNull().references(() => products.id),
+  customPrice: decimal("custom_price", { precision: 10, scale: 2 }).notNull(),
+});
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, isAdmin: true, role: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
@@ -124,6 +131,7 @@ export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({
 export const insertWholesaleCustomerSchema = createInsertSchema(wholesaleCustomers).omit({ id: true });
 export const insertWholesaleOrderSchema = createInsertSchema(wholesaleOrders).omit({ id: true, orderDate: true });
 export const insertWholesaleOrderItemSchema = createInsertSchema(wholesaleOrderItems).omit({ id: true });
+export const insertWholesalePricingSchema = createInsertSchema(wholesalePricing).omit({ id: true });
 export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
 
 // Insert types
@@ -135,6 +143,7 @@ export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
 export type InsertWholesaleCustomer = z.infer<typeof insertWholesaleCustomerSchema>;
 export type InsertWholesaleOrder = z.infer<typeof insertWholesaleOrderSchema>;
 export type InsertWholesaleOrderItem = z.infer<typeof insertWholesaleOrderItemSchema>;
+export type InsertWholesalePricing = z.infer<typeof insertWholesalePricingSchema>;
 export type InsertVerificationCode = z.infer<typeof insertVerificationCodeSchema>;
 
 // Select types
@@ -146,4 +155,5 @@ export type Subscription = typeof subscriptions.$inferSelect;
 export type WholesaleCustomer = typeof wholesaleCustomers.$inferSelect;
 export type WholesaleOrder = typeof wholesaleOrders.$inferSelect;
 export type WholesaleOrderItem = typeof wholesaleOrderItems.$inferSelect;
+export type WholesalePricing = typeof wholesalePricing.$inferSelect;
 export type VerificationCode = typeof verificationCodes.$inferSelect;
