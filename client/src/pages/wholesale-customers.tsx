@@ -1,9 +1,21 @@
-import { useQuery } from "@tanstack/react-query";
-import { WholesaleCustomer } from "@shared/schema";
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { WholesaleCustomer, insertWholesaleCustomerSchema } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { LayoutDashboard, Package, Users, ShoppingCart, Mail, Phone, MapPin } from "lucide-react";
+import { LayoutDashboard, Package, Users, ShoppingCart, Mail, Phone, MapPin, Plus, Loader2, CalendarIcon, FileText } from "lucide-react";
 import { useLocation } from "wouter";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { z } from "zod";
 
 function WholesaleSidebar() {
   const [location, setLocation] = useLocation();
@@ -12,6 +24,7 @@ function WholesaleSidebar() {
     { title: "Dashboard", icon: LayoutDashboard, path: "/wholesale" },
     { title: "Place Order", icon: ShoppingCart, path: "/wholesale/place-order" },
     { title: "Orders", icon: ShoppingCart, path: "/wholesale/orders" },
+    { title: "Delivery Report", icon: FileText, path: "/wholesale/delivery-report" },
     { title: "Customers", icon: Users, path: "/wholesale/customers" },
     { title: "Products", icon: Package, path: "/wholesale/products" },
   ];
@@ -46,9 +59,50 @@ function WholesaleSidebar() {
 }
 
 export default function WholesaleCustomers() {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const { toast } = useToast();
+
   const { data: customers, isLoading } = useQuery<WholesaleCustomer[]>({
     queryKey: ["/api/wholesale/customers"],
   });
+
+  const form = useForm<z.infer<typeof insertWholesaleCustomerSchema>>({
+    resolver: zodResolver(insertWholesaleCustomerSchema),
+    defaultValues: {
+      businessName: "",
+      contactName: "",
+      email: "",
+      phone: "",
+      address: "",
+    },
+  });
+
+  const createCustomerMutation = useMutation({
+    mutationFn: async (data: z.infer<typeof insertWholesaleCustomerSchema>) => {
+      const response = await apiRequest("POST", "/api/wholesale/customers", data);
+      return await response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Customer Created",
+        description: "Wholesale customer has been created successfully",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
+      setDialogOpen(false);
+      form.reset();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create customer",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const onSubmit = (data: z.infer<typeof insertWholesaleCustomerSchema>) => {
+    createCustomerMutation.mutate(data);
+  };
 
   const style = {
     "--sidebar-width": "16rem",
@@ -62,7 +116,119 @@ export default function WholesaleCustomers() {
           <header className="flex items-center justify-between p-4 border-b gap-4">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
             <h1 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-heading)' }}>Customers</h1>
-            <div className="w-10" />
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button data-testid="button-add-customer">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Customer
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[500px]">
+                <DialogHeader>
+                  <DialogTitle>Add Wholesale Customer</DialogTitle>
+                  <DialogDescription>
+                    Create a new wholesale customer account
+                  </DialogDescription>
+                </DialogHeader>
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                    <FormField
+                      control={form.control}
+                      name="businessName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Business Name</FormLabel>
+                          <FormControl>
+                            <Input placeholder="Acme Coffee Co." {...field} data-testid="input-business-name" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="contactName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Contact Name</FormLabel>
+                          <FormControl>
+                            <Input placeholder="John Doe" {...field} data-testid="input-contact-name" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email</FormLabel>
+                          <FormControl>
+                            <Input type="email" placeholder="contact@acmecoffee.com" {...field} data-testid="input-email" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="phone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Phone</FormLabel>
+                          <FormControl>
+                            <Input placeholder="(555) 123-4567" {...field} data-testid="input-phone" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="address"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Address</FormLabel>
+                          <FormControl>
+                            <Textarea 
+                              placeholder="123 Main St, Seattle, WA 98101" 
+                              {...field} 
+                              data-testid="input-address"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <DialogFooter>
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        onClick={() => setDialogOpen(false)}
+                        data-testid="button-cancel"
+                      >
+                        Cancel
+                      </Button>
+                      <Button 
+                        type="submit" 
+                        disabled={createCustomerMutation.isPending}
+                        data-testid="button-submit"
+                      >
+                        {createCustomerMutation.isPending ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Creating...
+                          </>
+                        ) : (
+                          "Create Customer"
+                        )}
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </Form>
+              </DialogContent>
+            </Dialog>
           </header>
           <main className="flex-1 overflow-auto p-6">
             <div className="max-w-7xl mx-auto">
