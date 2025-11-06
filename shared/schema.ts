@@ -21,7 +21,7 @@ export const users = pgTable("users", {
   phoneNumber: varchar("phone_number"),
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
-  role: text("role").notNull().default('user'), // 'user', 'admin', 'super_admin'
+  role: text("role").notNull().default('user'), // 'user', 'staff', 'admin', 'super_admin'
   isAdmin: boolean("is_admin").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
