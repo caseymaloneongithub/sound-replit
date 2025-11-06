@@ -60,11 +60,17 @@ export async function sendVerificationCode(toPhoneNumber: string, code: string):
   
   console.log(`[Twilio] Sending SMS from ${fromPhoneNumber} to ${formattedPhoneNumber}`);
   
-  await client.messages.create({
+  const message = await client.messages.create({
     body: `Your Puget Sound Kombucha verification code is: ${code}`,
     to: formattedPhoneNumber,
     from: fromPhoneNumber,
   });
+  
+  console.log(`[Twilio] Message SID: ${message.sid}, Status: ${message.status}, Error Code: ${message.errorCode || 'none'}`);
+  
+  if (message.errorCode) {
+    throw new Error(`Twilio error ${message.errorCode}: ${message.errorMessage}`);
+  }
 }
 
 export function generateVerificationCode(): string {
