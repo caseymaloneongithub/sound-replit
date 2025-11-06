@@ -51,9 +51,18 @@ export async function sendVerificationCode(toPhoneNumber: string, code: string):
   const client = await getTwilioClient();
   const fromPhoneNumber = await getTwilioFromPhoneNumber();
   
+  // Format phone number to E.164 format if it doesn't have a country code
+  let formattedPhoneNumber = toPhoneNumber;
+  if (!toPhoneNumber.startsWith('+')) {
+    // Assume US/Canada (+1) if no country code provided
+    formattedPhoneNumber = `+1${toPhoneNumber}`;
+  }
+  
+  console.log(`[Twilio] Sending SMS from ${fromPhoneNumber} to ${formattedPhoneNumber}`);
+  
   await client.messages.create({
     body: `Your Puget Sound Kombucha verification code is: ${code}`,
-    to: toPhoneNumber,
+    to: formattedPhoneNumber,
     from: fromPhoneNumber,
   });
 }
