@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { LayoutDashboard, Package, Users, ShoppingCart, Mail, Phone, MapPin, Plus, Loader2, CalendarIcon, FileText } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { LayoutDashboard, Package, Users, ShoppingCart, Mail, Phone, MapPin, Plus, Loader2, CalendarIcon, FileText, CreditCard } from "lucide-react";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -95,6 +96,27 @@ export default function WholesaleCustomers() {
       toast({
         title: "Error",
         description: error.message || "Failed to create customer",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const togglePaymentMutation = useMutation({
+    mutationFn: async ({ id, allowOnlinePayment }: { id: string; allowOnlinePayment: boolean }) => {
+      const response = await apiRequest("PATCH", `/api/wholesale/customers/${id}`, { allowOnlinePayment });
+      return await response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
+      toast({
+        title: "Updated",
+        description: "Payment settings updated successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update settings",
         variant: "destructive",
       });
     },
@@ -254,7 +276,7 @@ export default function WholesaleCustomers() {
                             </CardTitle>
                             <CardDescription>{customer.contactName}</CardDescription>
                           </CardHeader>
-                          <CardContent className="space-y-2">
+                          <CardContent className="space-y-3">
                             <div className="flex items-center gap-2 text-sm">
                               <Mail className="w-4 h-4 text-muted-foreground" />
                               <span className="text-muted-foreground">{customer.email}</span>
@@ -266,6 +288,23 @@ export default function WholesaleCustomers() {
                             <div className="flex items-start gap-2 text-sm">
                               <MapPin className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
                               <span className="text-muted-foreground">{customer.address}</span>
+                            </div>
+                            <div className="flex items-center justify-between pt-2 border-t">
+                              <div className="flex items-center gap-2">
+                                <CreditCard className="w-4 h-4 text-muted-foreground" />
+                                <Label htmlFor={`payment-${customer.id}`} className="text-sm cursor-pointer">
+                                  Allow Online Payment
+                                </Label>
+                              </div>
+                              <Switch
+                                id={`payment-${customer.id}`}
+                                checked={customer.allowOnlinePayment}
+                                onCheckedChange={(checked) => {
+                                  togglePaymentMutation.mutate({ id: customer.id, allowOnlinePayment: checked });
+                                }}
+                                disabled={togglePaymentMutation.isPending}
+                                data-testid={`switch-payment-${customer.id}`}
+                              />
                             </div>
                           </CardContent>
                         </Card>

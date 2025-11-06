@@ -1,16 +1,20 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Printer, ArrowLeft } from "lucide-react";
+import { Printer, ArrowLeft, CreditCard, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 export default function WholesaleInvoice() {
   const [, params] = useRoute("/wholesale/invoice/:id");
   const [, setLocation] = useLocation();
   const orderId = params?.id;
+  const { toast } = useToast();
 
   const { data: invoiceData, isLoading } = useQuery<{
     order: any;
@@ -21,8 +25,31 @@ export default function WholesaleInvoice() {
     enabled: !!orderId,
   });
 
+  const paymentMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/wholesale/orders/${orderId}/create-payment`, {});
+      return await response.json();
+    },
+    onSuccess: (data) => {
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Payment Error",
+        description: error.message || "Failed to initiate payment",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handlePrint = () => {
     window.print();
+  };
+
+  const handlePayNow = () => {
+    paymentMutation.mutate();
   };
 
   if (isLoading) {
@@ -63,9 +90,29 @@ export default function WholesaleInvoice() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h1 className="text-lg font-semibold">Invoice {order.invoiceNumber}</h1>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {customer.allowOnlinePayment && (
+              <Button
+                onClick={handlePayNow}
+                disabled={paymentMutation.isPending}
+                data-testid="button-pay-now"
+              >
+                {paymentMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <CreditCard className="mr-2 h-4 w-4" />
+                    Pay Now
+                  </>
+                )}
+              </Button>
+            )}
             <Button
               onClick={handlePrint}
+              variant="outline"
               data-testid="button-print"
             >
               <Printer className="mr-2 h-4 w-4" />
