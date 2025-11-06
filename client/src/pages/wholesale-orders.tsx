@@ -7,10 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { LayoutDashboard, Package, Users, ShoppingCart, Eye } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { LayoutDashboard, Package, Users, ShoppingCart, Eye, CalendarIcon } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
 
 function WholesaleSidebar() {
   const [location, setLocation] = useLocation();
@@ -55,6 +58,7 @@ function WholesaleSidebar() {
 export default function WholesaleOrders() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [newStatus, setNewStatus] = useState<string>("");
+  const [deliveryDate, setDeliveryDate] = useState<Date | undefined>(undefined);
   const { toast } = useToast();
 
   const { data: orders, isLoading } = useQuery<WholesaleOrder[]>({
@@ -94,6 +98,29 @@ export default function WholesaleOrders() {
       toast({
         title: "Error",
         description: error.message || "Failed to update order status",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateDeliveryDateMutation = useMutation({
+    mutationFn: async (date: Date | null) => {
+      const response = await apiRequest("PATCH", `/api/wholesale/orders/${selectedOrderId}`, { 
+        deliveryDate: date ? date.toISOString() : null 
+      });
+      return await response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Delivery Date Updated",
+        description: "Order delivery date has been updated successfully",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update delivery date",
         variant: "destructive",
       });
     },
@@ -166,7 +193,10 @@ export default function WholesaleOrders() {
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                onClick={() => setSelectedOrderId(order.id)}
+                                onClick={() => {
+                                  setSelectedOrderId(order.id);
+                                  setDeliveryDate(order.deliveryDate ? new Date(order.deliveryDate) : undefined);
+                                }}
                                 data-testid={`button-view-${order.id}`}
                               >
                                 <Eye className="w-4 h-4" />
@@ -200,7 +230,7 @@ export default function WholesaleOrders() {
           
           {selectedOrder && (
             <div className="space-y-6">
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid md:grid-cols-3 gap-4">
                 <Card>
                   <CardHeader className="space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Customer</CardTitle>
@@ -243,6 +273,58 @@ export default function WholesaleOrders() {
                         data-testid="button-update-status"
                       >
                         Update Status
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Delivery Date</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {selectedOrder.deliveryDate && (
+                      <p className="text-sm text-muted-foreground">
+                        {format(new Date(selectedOrder.deliveryDate), 'PPP')}
+                      </p>
+                    )}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="w-full justify-start text-left font-normal"
+                          data-testid="button-delivery-date"
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {deliveryDate ? format(deliveryDate, "PPP") : "Set delivery date"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0">
+                        <Calendar
+                          mode="single"
+                          selected={deliveryDate}
+                          onSelect={(date) => {
+                            setDeliveryDate(date);
+                            if (date) {
+                              updateDeliveryDateMutation.mutate(date);
+                            }
+                          }}
+                          initialFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    {selectedOrder.deliveryDate && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => {
+                          setDeliveryDate(undefined);
+                          updateDeliveryDateMutation.mutate(null);
+                        }}
+                        data-testid="button-clear-delivery-date"
+                      >
+                        Clear Date
                       </Button>
                     )}
                   </CardContent>
