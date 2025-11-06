@@ -15,6 +15,7 @@ import SubscriptionSuccess from "@/pages/subscription-success";
 import Wholesale from "@/pages/wholesale";
 import WholesalePlaceOrder from "@/pages/wholesale-place-order";
 import WholesaleOrders from "@/pages/wholesale-orders";
+import WholesaleDeliveryReport from "@/pages/wholesale-delivery-report";
 import WholesaleCustomers from "@/pages/wholesale-customers";
 import WholesaleProducts from "@/pages/wholesale-products";
 import Inventory from "@/pages/inventory";
@@ -37,6 +38,7 @@ function Router() {
       <Route path="/wholesale" component={Wholesale} />
       <Route path="/wholesale/place-order" component={WholesalePlaceOrder} />
       <Route path="/wholesale/orders" component={WholesaleOrders} />
+      <Route path="/wholesale/delivery-report" component={WholesaleDeliveryReport} />
       <Route path="/wholesale/customers" component={WholesaleCustomers} />
       <Route path="/wholesale/products" component={WholesaleProducts} />
       <Route path="/inventory" component={Inventory} />

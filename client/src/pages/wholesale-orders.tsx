@@ -22,6 +22,7 @@ function WholesaleSidebar() {
     { title: "Dashboard", icon: LayoutDashboard, path: "/wholesale" },
     { title: "Place Order", icon: ShoppingCart, path: "/wholesale/place-order" },
     { title: "Orders", icon: ShoppingCart, path: "/wholesale/orders" },
+    { title: "Delivery Report", icon: CalendarIcon, path: "/wholesale/delivery-report" },
     { title: "Customers", icon: Users, path: "/wholesale/customers" },
     { title: "Products", icon: Package, path: "/wholesale/products" },
   ];
