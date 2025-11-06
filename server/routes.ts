@@ -598,6 +598,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/wholesale/delivery-report", async (req, res) => {
+    try {
+      const { date } = req.query;
+      if (!date || typeof date !== 'string') {
+        return res.status(400).json({ message: "Date parameter is required" });
+      }
+
+      const deliveryDate = new Date(date);
+      if (isNaN(deliveryDate.getTime())) {
+        return res.status(400).json({ message: "Invalid date format" });
+      }
+
+      const orders = await storage.getWholesaleOrdersByDeliveryDate(deliveryDate);
+      res.json(orders);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching delivery report: " + error.message });
+    }
+  });
+
   app.post("/api/wholesale/orders", async (req, res) => {
     try {
       const { order, items } = req.body;
@@ -669,18 +688,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/wholesale/orders/:id", async (req, res) => {
     try {
-      const { status } = req.body;
+      const { status, deliveryDate } = req.body;
       
-      if (!status || !['pending', 'processing', 'shipped', 'delivered'].includes(status)) {
-        return res.status(400).json({ message: "Invalid status" });
-      }
-
       const order = await storage.getWholesaleOrder(req.params.id);
       if (!order) {
         return res.status(404).json({ message: "Order not found" });
       }
 
-      const updated = await storage.updateWholesaleOrderStatus(req.params.id, status);
+      let updated = order;
+
+      if (status) {
+        if (!['pending', 'processing', 'shipped', 'delivered'].includes(status)) {
+          return res.status(400).json({ message: "Invalid status" });
+        }
+        updated = await storage.updateWholesaleOrderStatus(req.params.id, status);
+      }
+
+      if (deliveryDate !== undefined) {
+        const dateValue = deliveryDate ? new Date(deliveryDate) : null;
+        updated = await storage.updateWholesaleOrderDeliveryDate(req.params.id, dateValue) || updated;
+      }
+
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ message: "Error updating order: " + error.message });
