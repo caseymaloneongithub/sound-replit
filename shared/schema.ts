@@ -100,6 +100,7 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
 
 export const wholesaleOrders = pgTable("wholesale_orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceNumber: text("invoice_number").notNull().unique(),
   customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id),
   orderDate: timestamp("order_date").notNull().defaultNow(),
   deliveryDate: timestamp("delivery_date"),

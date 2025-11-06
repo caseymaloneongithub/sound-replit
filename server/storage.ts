@@ -81,9 +81,15 @@ export interface IStorage {
   getWholesaleOrders(): Promise<WholesaleOrder[]>;
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
   getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
+  getWholesaleOrderWithDetails(id: string): Promise<{
+    order: WholesaleOrder;
+    customer: WholesaleCustomer;
+    items: Array<WholesaleOrderItem & { product: Product }>;
+  } | undefined>;
   createWholesaleOrder(order: InsertWholesaleOrder): Promise<WholesaleOrder>;
   updateWholesaleOrderStatus(id: string, status: string): Promise<WholesaleOrder | undefined>;
   updateWholesaleOrderDeliveryDate(id: string, deliveryDate: Date | null): Promise<WholesaleOrder | undefined>;
+  generateNextInvoiceNumber(): Promise<string>;
   
   getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]>;
   createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem>;
@@ -387,6 +393,50 @@ export class PostgresStorage implements IStorage {
       )
       .orderBy(wholesaleOrders.deliveryDate);
     return result;
+  }
+
+  async getWholesaleOrderWithDetails(id: string): Promise<{
+    order: WholesaleOrder;
+    customer: WholesaleCustomer;
+    items: Array<WholesaleOrderItem & { product: Product }>;
+  } | undefined> {
+    const order = await this.getWholesaleOrder(id);
+    if (!order) return undefined;
+
+    const customer = await this.getWholesaleCustomer(order.customerId);
+    if (!customer) return undefined;
+
+    const orderItems = await this.getWholesaleOrderItems(id);
+    const itemsWithProducts = await Promise.all(
+      orderItems.map(async (item) => {
+        const product = await this.getProduct(item.productId);
+        return { ...item, product: product! };
+      })
+    );
+
+    return {
+      order,
+      customer,
+      items: itemsWithProducts,
+    };
+  }
+
+  async generateNextInvoiceNumber(): Promise<string> {
+    const currentYear = new Date().getFullYear();
+    const result = await db
+      .select()
+      .from(wholesaleOrders)
+      .where(sql`EXTRACT(YEAR FROM ${wholesaleOrders.orderDate}) = ${currentYear}`)
+      .orderBy(desc(wholesaleOrders.invoiceNumber));
+    
+    if (result.length === 0) {
+      return `INV-${currentYear}-0001`;
+    }
+    
+    const lastInvoice = result[0].invoiceNumber;
+    const match = lastInvoice.match(/INV-\d{4}-(\d{4})/);
+    const nextNumber = match ? parseInt(match[1]) + 1 : 1;
+    return `INV-${currentYear}-${String(nextNumber).padStart(4, '0')}`;
   }
 
   async getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]> {

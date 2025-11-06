@@ -654,8 +654,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
+      const invoiceNumber = await storage.generateNextInvoiceNumber();
+      
       const orderData = insertWholesaleOrderSchema.parse({
         ...order,
+        invoiceNumber,
         totalAmount: serverCalculatedTotal.toFixed(2),
       });
       
@@ -683,6 +686,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(items);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching order items: " + error.message });
+    }
+  });
+
+  app.get("/api/wholesale/orders/:id/invoice", async (req, res) => {
+    try {
+      const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
+      if (!orderDetails) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+      res.json(orderDetails);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching invoice: " + error.message });
     }
   });
 

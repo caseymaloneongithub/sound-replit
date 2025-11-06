@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { LayoutDashboard, Package, Users, ShoppingCart, Eye, CalendarIcon } from "lucide-react";
+import { LayoutDashboard, Package, Users, ShoppingCart, Eye, CalendarIcon, FileText } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -184,7 +184,7 @@ export default function WholesaleOrders() {
                                 <p className="text-sm text-muted-foreground mt-1 italic">{order.notes}</p>
                               )}
                             </div>
-                            <div className="flex items-center gap-4 justify-between sm:justify-end">
+                            <div className="flex items-center gap-2 justify-between sm:justify-end flex-wrap">
                               <div className="text-right">
                                 <p className="font-bold text-lg">${Number(order.totalAmount).toFixed(2)}</p>
                               </div>
@@ -194,11 +194,21 @@ export default function WholesaleOrders() {
                               <Button
                                 size="icon"
                                 variant="ghost"
+                                onClick={() => window.open(`/wholesale/invoice/${order.id}`, '_blank')}
+                                data-testid={`button-invoice-${order.id}`}
+                                title="View Invoice"
+                              >
+                                <FileText className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
                                 onClick={() => {
                                   setSelectedOrderId(order.id);
                                   setDeliveryDate(order.deliveryDate ? new Date(order.deliveryDate) : undefined);
                                 }}
                                 data-testid={`button-view-${order.id}`}
+                                title="View Details"
                               >
                                 <Eye className="w-4 h-4" />
                               </Button>
