@@ -44,8 +44,8 @@ export function Navbar() {
           </Button>
           {user && (user.isAdmin || user.role === 'staff') && (
             <Button 
-              variant={location === '/staff' ? 'default' : 'ghost'}
-              onClick={() => setLocation('/staff')}
+              variant={location === '/staff-portal' ? 'default' : 'ghost'}
+              onClick={() => setLocation('/staff-portal')}
               data-testid="nav-staff"
             >
               <Shield className="w-4 h-4 mr-2" />

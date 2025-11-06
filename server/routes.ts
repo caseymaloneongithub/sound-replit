@@ -1164,7 +1164,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Prevent super admins from demoting themselves
-      const currentUserId = req.user.claims.sub;
+      if (!req.user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const currentUserId = req.user.id;
       if (req.params.id === currentUserId) {
         return res.status(403).json({ message: "You cannot change your own role" });
       }

@@ -44,7 +44,7 @@ export default function StaffPortal() {
   const [inventoryForms, setInventoryForms] = useState<Record<string, InventoryFormData>>({});
 
   const { data: user, isLoading: userLoading, error: userError } = useQuery<any>({
-    queryKey: ['/api/auth/user'],
+    queryKey: ['/api/user'],
     retry: false,
   });
 
