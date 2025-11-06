@@ -18,6 +18,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware - sets up /api/register, /api/login, /api/logout, /api/user
   await setupAuth(app);
 
+  // Admin middleware - checks if user is an admin
+  const isAdmin = async (req: any, res: any, next: any) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Unauthorized - please log in" });
+      }
+      
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Forbidden: Admin access required" });
+      }
+      
+      next();
+    } catch (error: any) {
+      console.error("Error verifying admin status:", error);
+      res.status(500).json({ message: "Error verifying admin status" });
+    }
+  };
+
+  // Super admin middleware - checks if user is a super admin
+  const isSuperAdmin = async (req: any, res: any, next: any) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Unauthorized - please log in" });
+      }
+      
+      if (req.user.role !== 'super_admin') {
+        return res.status(403).json({ message: "Forbidden: Super admin access required" });
+      }
+      
+      next();
+    } catch (error: any) {
+      console.error("Error verifying super admin status:", error);
+      res.status(500).json({ message: "Error verifying super admin status" });
+    }
+  };
+
   // SMS verification routes
   app.post("/api/send-verification-code", async (req, res) => {
     try {
@@ -544,8 +580,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Wholesale customer routes
-  app.get("/api/wholesale/customers", async (req, res) => {
+  // Wholesale customer routes (admin-only access)
+  app.get("/api/wholesale/customers", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const customers = await storage.getWholesaleCustomers();
       res.json(customers);
@@ -554,7 +590,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/customers/:id", async (req, res) => {
+  app.get("/api/wholesale/customers/:id", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const customer = await storage.getWholesaleCustomer(req.params.id);
       if (!customer) {
@@ -566,7 +602,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/wholesale/customers", async (req, res) => {
+  app.post("/api/wholesale/customers", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const customer = insertWholesaleCustomerSchema.parse(req.body);
       const created = await storage.createWholesaleCustomer(customer);
@@ -576,8 +612,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Wholesale order routes
-  app.get("/api/wholesale/orders", async (req, res) => {
+  // Wholesale order routes (admin-only access)
+  app.get("/api/wholesale/orders", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const orders = await storage.getWholesaleOrders();
       res.json(orders);
@@ -586,7 +622,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/orders/:id", async (req, res) => {
+  app.get("/api/wholesale/orders/:id", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const order = await storage.getWholesaleOrder(req.params.id);
       if (!order) {
@@ -598,7 +634,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/delivery-report", async (req, res) => {
+  app.get("/api/wholesale/delivery-report", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const { date } = req.query;
       if (!date || typeof date !== 'string') {
@@ -617,7 +653,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/wholesale/orders", async (req, res) => {
+  app.post("/api/wholesale/orders", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const { order, items } = req.body;
       
@@ -680,7 +716,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/orders/:id/items", async (req, res) => {
+  app.get("/api/wholesale/orders/:id/items", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const items = await storage.getWholesaleOrderItems(req.params.id);
       res.json(items);
@@ -689,7 +725,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/orders/:id/invoice", async (req, res) => {
+  app.get("/api/wholesale/orders/:id/invoice", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
       if (!orderDetails) {
@@ -701,7 +737,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/wholesale/orders/:id/send-invoice", async (req, res) => {
+  app.post("/api/wholesale/orders/:id/send-invoice", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
       if (!orderDetails) {
@@ -717,7 +753,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/wholesale/orders/:id", async (req, res) => {
+  app.patch("/api/wholesale/orders/:id", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const { status, deliveryDate } = req.body;
       
@@ -746,7 +782,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/pricing/:customerId", async (req, res) => {
+  app.get("/api/wholesale/pricing/:customerId", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const pricing = await storage.getWholesalePricing(req.params.customerId);
       res.json(pricing);
@@ -755,7 +791,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/wholesale/pricing", async (req, res) => {
+  app.post("/api/wholesale/pricing", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const { customerId, productId, customPrice } = req.body;
       
@@ -876,26 +912,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Staff portal routes
-  const isAdmin = async (req: any, res: any, next: any) => {
-    try {
-      if (!req.user?.claims?.sub) {
-        return res.status(401).json({ message: "Unauthorized - please log in" });
-      }
-      
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      
-      if (!user?.isAdmin) {
-        return res.status(403).json({ message: "Forbidden: Admin access required" });
-      }
-      
-      next();
-    } catch (error: any) {
-      console.error("Error verifying admin status:", error);
-      res.status(500).json({ message: "Error verifying admin status" });
-    }
-  };
-
   // Update wholesale order status
   app.patch("/api/staff/orders/:id/status", isAuthenticated, isAdmin, async (req, res) => {
     try {
@@ -970,27 +986,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to update product" });
     }
   });
-
-  // Super admin middleware
-  const isSuperAdmin = async (req: any, res: any, next: any) => {
-    try {
-      if (!req.user?.claims?.sub) {
-        return res.status(401).json({ message: "Unauthorized - please log in" });
-      }
-      
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      
-      if (user?.role !== 'super_admin') {
-        return res.status(403).json({ message: "Forbidden: Super admin access required" });
-      }
-      
-      next();
-    } catch (error: any) {
-      console.error("Error verifying super admin status:", error);
-      res.status(500).json({ message: "Error verifying super admin status" });
-    }
-  };
 
   // Get all users (super admin only)
   app.get("/api/staff/users", isAuthenticated, isSuperAdmin, async (req, res) => {
