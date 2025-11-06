@@ -107,6 +107,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Generate 6-digit code
         const code = generateVerificationCode();
         
+        console.log(`[SMS Login] Sending code ${code} to ${phoneNumber}`);
+        
         // Store code in database with 5-minute expiration
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
         await storage.createVerificationCode({
@@ -118,7 +120,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         // Send SMS
-        await sendVerificationCode(phoneNumber, code);
+        try {
+          await sendVerificationCode(phoneNumber, code);
+          console.log(`[SMS Login] Successfully sent code to ${phoneNumber}`);
+        } catch (smsError: any) {
+          console.error(`[SMS Login] Failed to send SMS to ${phoneNumber}:`, smsError);
+          // Don't throw - we still want to return success for security
+        }
       } else {
         // Log potential enumeration attempt
         console.warn(`SMS login code requested for non-existent phone: ${phoneNumber}`);
