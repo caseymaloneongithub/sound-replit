@@ -54,6 +54,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   };
 
+  // Staff or admin middleware - checks if user is staff, admin, or super admin
+  const isStaffOrAdmin = async (req: any, res: any, next: any) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Unauthorized - please log in" });
+      }
+      
+      if (!['staff', 'admin', 'super_admin'].includes(req.user.role)) {
+        return res.status(403).json({ message: "Forbidden: Staff or admin access required" });
+      }
+      
+      next();
+    } catch (error: any) {
+      console.error("Error verifying staff/admin status:", error);
+      res.status(500).json({ message: "Error verifying staff/admin status" });
+    }
+  };
+
   // SMS verification routes
   app.post("/api/send-verification-code", async (req, res) => {
     try {
@@ -611,7 +629,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Wholesale customer routes (admin-only access)
-  app.get("/api/wholesale/customers", isAuthenticated, isAdmin, async (req, res) => {
+  app.get("/api/wholesale/customers", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const customers = await storage.getWholesaleCustomers();
       res.json(customers);
@@ -655,8 +673,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Wholesale order routes (admin-only access)
-  app.get("/api/wholesale/orders", isAuthenticated, isAdmin, async (req, res) => {
+  // Wholesale order routes (staff and admin access)
+  app.get("/api/wholesale/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const orders = await storage.getWholesaleOrders();
       res.json(orders);
@@ -665,7 +683,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/orders/:id", isAuthenticated, isAdmin, async (req, res) => {
+  app.get("/api/wholesale/orders/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const order = await storage.getWholesaleOrder(req.params.id);
       if (!order) {
@@ -677,7 +695,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/delivery-report", isAuthenticated, isAdmin, async (req, res) => {
+  app.get("/api/wholesale/delivery-report", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { date } = req.query;
       if (!date || typeof date !== 'string') {
@@ -696,7 +714,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/wholesale/orders", isAuthenticated, isAdmin, async (req, res) => {
+  app.post("/api/wholesale/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { order, items } = req.body;
       
@@ -759,7 +777,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/orders/:id/items", isAuthenticated, isAdmin, async (req, res) => {
+  app.get("/api/wholesale/orders/:id/items", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const items = await storage.getWholesaleOrderItems(req.params.id);
       res.json(items);
@@ -768,7 +786,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/orders/:id/invoice", isAuthenticated, isAdmin, async (req, res) => {
+  app.get("/api/wholesale/orders/:id/invoice", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
       if (!orderDetails) {
@@ -780,7 +798,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/wholesale/orders/:id/send-invoice", isAuthenticated, isAdmin, async (req, res) => {
+  app.post("/api/wholesale/orders/:id/send-invoice", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
       if (!orderDetails) {
@@ -796,7 +814,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/wholesale/orders/:id", isAuthenticated, isAdmin, async (req, res) => {
+  app.patch("/api/wholesale/orders/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { status, deliveryDate } = req.body;
       
@@ -825,7 +843,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wholesale/pricing/:customerId", isAuthenticated, isAdmin, async (req, res) => {
+  app.get("/api/wholesale/pricing/:customerId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const pricing = await storage.getWholesalePricing(req.params.customerId);
       res.json(pricing);
@@ -1011,7 +1029,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Staff portal routes
   // Update wholesale order status
-  app.patch("/api/staff/orders/:id/status", isAuthenticated, isAdmin, async (req, res) => {
+  app.patch("/api/staff/orders/:id/status", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const statusSchema = z.object({
         status: z.enum(['pending', 'processing', 'shipped', 'delivered']),
@@ -1035,7 +1053,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update product details
-  app.patch("/api/staff/products/:id", isAuthenticated, isAdmin, async (req, res) => {
+  app.patch("/api/staff/products/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const updateSchema = z.object({
         name: z.string().optional(),
@@ -1100,7 +1118,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/staff/users/:id/role", isAuthenticated, isSuperAdmin, async (req, res) => {
     try {
       const roleSchema = z.object({
-        role: z.enum(['user', 'admin', 'super_admin']),
+        role: z.enum(['user', 'staff', 'admin', 'super_admin']),
       });
       
       const parsed = roleSchema.safeParse(req.body);
