@@ -2,7 +2,7 @@
 
 ## Overview
 
-Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacific Northwest kombucha brewery. The platform caters to retail customers for product and subscription purchases, and business clients for wholesale orders. Key capabilities include product browsing, subscription management, Stripe payment integration, comprehensive inventory tracking, and a reporting dashboard. The business vision is to provide a seamless online experience for purchasing artisanal kombucha, expanding market reach, and streamlining B2B operations.
+Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacific Northwest kombucha brewery. The platform caters to retail customers for product and subscription purchases, and business clients for wholesale orders. Key capabilities include product browsing, subscription management, Stripe payment integration, comprehensive inventory tracking, wholesale customer management, delivery date scheduling, daily delivery reporting, and an admin dashboard. The business vision is to provide a seamless online experience for purchasing artisanal kombucha, expanding market reach, and streamlining B2B operations.
 
 ## User Preferences
 
@@ -40,6 +40,34 @@ Sessions are managed with `express-session` and stored in PostgreSQL. A role-bas
 ### Payment Processing
 
 Stripe is integrated for both one-time purchases and recurring subscriptions using Stripe Checkout Sessions. The system handles Stripe webhooks for payment confirmation and subscription lifecycle events. It supports a "subscribe and save" model with flexible delivery frequencies (weekly/bi-weekly), allowing for distinct pricing and checkout flows for one-time vs. subscription items. Server-side validation prevents mixed carts (one-time and subscription items) in a single checkout.
+
+### Wholesale Portal
+
+The wholesale portal provides comprehensive B2B order and customer management capabilities accessible to admin users:
+
+**Customer Management:**
+- Create and manage wholesale customer accounts with business details (business name, contact person, email, phone, address)
+- View all wholesale customers in a card-based layout
+- Each customer account supports client-specific pricing overrides
+
+**Order Management:**
+- Place wholesale orders by selecting customers and adding products to cart
+- View all wholesale orders with status tracking (pending, processing, shipped, delivered)
+- Set and manage delivery dates for orders via calendar picker
+- Add order notes for special instructions
+- Update order status through admin interface
+
+**Delivery Date Management:**
+- Assign delivery dates to wholesale orders
+- Daily delivery report page with date filtering
+- Summary statistics: total orders, total value, unique customers per delivery date
+- Detailed delivery manifest showing all orders scheduled for a specific date
+- Print-friendly layout for physical delivery manifests
+
+**Client-Specific Pricing:**
+- Default wholesale pricing ($2.50/bottle) with support for custom per-customer pricing
+- Pricing overrides stored in wholesale_pricing table with unique constraint per customer-product combination
+- Order placement automatically uses client-specific pricing when available
 
 ### Development & Build Process
 
