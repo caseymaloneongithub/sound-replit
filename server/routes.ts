@@ -606,6 +606,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Order must contain at least one item" });
       }
       
+      if (!order.customerId) {
+        return res.status(400).json({ message: "Customer ID is required" });
+      }
+      
       let serverCalculatedTotal = 0;
       const validatedItems = [];
       
@@ -619,14 +623,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: `Product ${item.productId} not found` });
         }
         
-        const unitPrice = Number(product.wholesalePrice);
+        const customPricing = await storage.getWholesalePrice(order.customerId, item.productId);
+        const unitPrice = customPricing ? Number(customPricing.customPrice) : Number(product.wholesalePrice);
         const itemTotal = unitPrice * item.quantity;
         serverCalculatedTotal += itemTotal;
         
         validatedItems.push({
           productId: item.productId,
           quantity: item.quantity,
-          unitPrice: product.wholesalePrice,
+          unitPrice: unitPrice.toFixed(2),
         });
       }
       
@@ -679,6 +684,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ message: "Error updating order: " + error.message });
+    }
+  });
+
+  app.get("/api/wholesale/pricing/:customerId", async (req, res) => {
+    try {
+      const pricing = await storage.getWholesalePricing(req.params.customerId);
+      res.json(pricing);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching pricing: " + error.message });
+    }
+  });
+
+  app.post("/api/wholesale/pricing", async (req, res) => {
+    try {
+      const { customerId, productId, customPrice } = req.body;
+      
+      if (!customerId || !productId || !customPrice) {
+        return res.status(400).json({ message: "customerId, productId, and customPrice are required" });
+      }
+
+      const pricing = await storage.setWholesalePrice({
+        customerId,
+        productId,
+        customPrice: customPrice.toString(),
+      });
+      res.json(pricing);
+    } catch (error: any) {
+      res.status(400).json({ message: "Error setting pricing: " + error.message });
     }
   });
 
