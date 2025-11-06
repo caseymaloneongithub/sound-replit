@@ -182,7 +182,9 @@ export default function StaffPortal() {
     );
   }
 
-  if (userError || !user || !user.isAdmin) {
+  const hasStaffAccess = user && (user.isAdmin || user.role === 'staff');
+
+  if (userError || !user || !hasStaffAccess) {
     return (
       <div className="min-h-screen bg-background">
         <Navbar />
@@ -192,7 +194,7 @@ export default function StaffPortal() {
               <AlertCircle className="w-12 h-12 mx-auto mb-4 text-destructive" />
               <CardTitle className="text-center">Access Denied</CardTitle>
               <CardDescription className="text-center">
-                {userError ? "Please log in to access this page." : "You need admin privileges to access this page."}
+                {userError ? "Please log in to access this page." : "You need staff or admin privileges to access this page."}
               </CardDescription>
             </CardHeader>
             {userError && (
