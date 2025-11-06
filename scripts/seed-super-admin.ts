@@ -15,8 +15,8 @@ const scryptAsync = promisify(scrypt);
 
 async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString("hex");
-  const derivedKey = (await scryptAsync(password, salt, 64)) as Buffer;
-  return `${salt}:${derivedKey.toString("hex")}`;
+  const buf = (await scryptAsync(password, salt, 64)) as Buffer;
+  return `${buf.toString("hex")}.${salt}`;
 }
 
 async function seedSuperAdmin() {
@@ -29,15 +29,20 @@ async function seedSuperAdmin() {
   const existing = await db.select().from(users).where(eq(users.email, email));
   
   if (existing.length > 0) {
-    console.log(`User ${email} already exists. Updating to super_admin role...`);
+    console.log(`User ${email} already exists. Updating to super_admin role and password...`);
+    const hashedPassword = await hashPassword(password);
     await db
       .update(users)
       .set({ 
         role: "super_admin", 
-        isAdmin: true 
+        isAdmin: true,
+        password: hashedPassword,
+        username 
       })
       .where(eq(users.email, email));
     console.log("✓ Updated existing user to super_admin");
+    console.log(`  Username: ${username}`);
+    console.log(`  Password: ${password}`);
   } else {
     console.log("Creating new super admin user...");
     const hashedPassword = await hashPassword(password);
