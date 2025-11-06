@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, decimal, timestamp, boolean, index, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, decimal, timestamp, boolean, index, jsonb, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -120,7 +120,9 @@ export const wholesalePricing = pgTable("wholesale_pricing", {
   customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id),
   productId: varchar("product_id").notNull().references(() => products.id),
   customPrice: decimal("custom_price", { precision: 10, scale: 2 }).notNull(),
-});
+}, (table) => ({
+  uniqueCustomerProduct: unique().on(table.customerId, table.productId),
+}));
 
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, isAdmin: true, role: true });

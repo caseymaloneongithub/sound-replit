@@ -402,11 +402,10 @@ export class PostgresStorage implements IStorage {
 
   async seedData(): Promise<void> {
     const existingProducts = await this.getProducts();
-    if (existingProducts.length > 0) {
-      return;
-    }
+    const existingCustomers = await this.getWholesaleCustomers();
 
-    await db.insert(products).values([
+    if (existingProducts.length === 0) {
+      await db.insert(products).values([
       {
         name: "Island Hop",
         description: "It's hoppy, tropical, and fresh, and is a great option for someone craving a cold beer without the buzz. This blend is made with grapefruit and Cascade hops -- ingredients known to support the immune and cardiovascular systems.",
@@ -513,51 +512,53 @@ export class PostgresStorage implements IStorage {
       },
     ]);
 
-    await db.insert(subscriptionPlans).values([
-      {
-        name: "Weekly Fresh",
-        frequency: "weekly",
-        bottleCount: 6,
-        price: "32.99",
-        savings: "Save 8%",
-        benefits: [
-          "6 bottles delivered weekly",
-          "Mix and match any flavors",
-          "Free local pickup",
-          "Pause or cancel anytime",
-        ],
-      },
-      {
-        name: "Monthly Bundle",
-        frequency: "monthly",
-        bottleCount: 24,
-        price: "119.99",
-        savings: "Save 17%",
-        benefits: [
-          "24 bottles delivered monthly",
-          "Choose your flavor mix",
-          "Priority pickup times",
-          "Exclusive subscriber flavors",
-          "Pause or cancel anytime",
-        ],
-      },
-      {
-        name: "Bi-Weekly Select",
-        frequency: "monthly",
-        bottleCount: 12,
-        price: "64.99",
-        savings: "Save 10%",
-        benefits: [
-          "12 bottles every 2 weeks",
-          "Flexible flavor selection",
-          "Free local pickup",
-          "Easy subscription management",
-          "Pause or cancel anytime",
-        ],
-      },
-    ]);
+      await db.insert(subscriptionPlans).values([
+        {
+          name: "Weekly Fresh",
+          frequency: "weekly",
+          bottleCount: 6,
+          price: "32.99",
+          savings: "Save 8%",
+          benefits: [
+            "6 bottles delivered weekly",
+            "Mix and match any flavors",
+            "Free local pickup",
+            "Pause or cancel anytime",
+          ],
+        },
+        {
+          name: "Monthly Bundle",
+          frequency: "monthly",
+          bottleCount: 24,
+          price: "119.99",
+          savings: "Save 17%",
+          benefits: [
+            "24 bottles delivered monthly",
+            "Choose your flavor mix",
+            "Priority pickup times",
+            "Exclusive subscriber flavors",
+            "Pause or cancel anytime",
+          ],
+        },
+        {
+          name: "Bi-Weekly Select",
+          frequency: "monthly",
+          bottleCount: 12,
+          price: "64.99",
+          savings: "Save 10%",
+          benefits: [
+            "12 bottles every 2 weeks",
+            "Flexible flavor selection",
+            "Free local pickup",
+            "Easy subscription management",
+            "Pause or cancel anytime",
+          ],
+        },
+      ]);
+    }
 
-    const customerResults = await db.insert(wholesaleCustomers).values([
+    if (existingCustomers.length === 0) {
+      const customerResults = await db.insert(wholesaleCustomers).values([
       {
         businessName: "Green Valley Cafe",
         contactName: "Sarah Johnson",
@@ -574,20 +575,21 @@ export class PostgresStorage implements IStorage {
       },
     ]).returning();
 
-    await db.insert(wholesaleOrders).values([
-      {
-        customerId: customerResults[0].id,
-        status: "delivered",
-        totalAmount: "210.00",
-        notes: "Regular weekly order",
-      },
-      {
-        customerId: customerResults[1].id,
-        status: "pending",
-        totalAmount: "157.50",
-        notes: null,
-      },
-    ]);
+      await db.insert(wholesaleOrders).values([
+        {
+          customerId: customerResults[0].id,
+          status: "delivered",
+          totalAmount: "210.00",
+          notes: "Regular weekly order",
+        },
+        {
+          customerId: customerResults[1].id,
+          status: "pending",
+          totalAmount: "157.50",
+          notes: null,
+        },
+      ]);
+    }
   }
 }
 
