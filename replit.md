@@ -49,6 +49,9 @@ The wholesale portal provides comprehensive B2B order and customer management ca
 - Create and manage wholesale customer accounts with business details (business name, contact person, email, phone, address)
 - View all wholesale customers in a card-based layout
 - Each customer account supports client-specific pricing overrides
+- Toggle online payment capability per customer (allowOnlinePayment field)
+  - Admins can enable/disable online payments for select wholesale customers
+  - When enabled, customers can pay invoices directly via Stripe
 
 **Order Management:**
 - Place wholesale orders by selecting customers and adding products to cart
@@ -69,11 +72,16 @@ The wholesale portal provides comprehensive B2B order and customer management ca
 - Pricing overrides stored in wholesale_pricing table with unique constraint per customer-product combination
 - Order placement automatically uses client-specific pricing when available
 
-**Invoice Generation:**
+**Invoice Generation & Payment:**
 - Automatic invoice number generation (format: INV-YYYY-NNNN, auto-increments per year)
 - Professional invoice layout with company and customer details, line items, totals
 - Print-ready invoice page accessible via direct URL or from orders list
 - Invoice button on each order opens invoice in new tab
+- **Online Payment:** Pay Now button appears on invoices when customer has online payment enabled
+  - Integrated Stripe Checkout for secure wholesale invoice payments
+  - Payment session endpoint: POST /api/wholesale/orders/:id/create-payment
+  - Redirects to dedicated payment success page after completion
+  - Only available for customers with allowOnlinePayment flag enabled
 - Email sending infrastructure placeholder (awaiting Gmail API credentials)
   - Placeholder endpoint: POST /api/wholesale/orders/:id/send-invoice
   - Future integration requires: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN secrets
