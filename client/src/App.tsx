@@ -24,6 +24,7 @@ import Inventory from "@/pages/inventory";
 import Reports from "@/pages/reports";
 import Account from "@/pages/account";
 import StaffPortal from "@/pages/staff-portal";
+import AdminProducts from "@/pages/admin-products";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -45,6 +46,7 @@ function Router() {
       <Route path="/wholesale/delivery-report" component={WholesaleDeliveryReport} />
       <Route path="/wholesale/customers" component={WholesaleCustomers} />
       <Route path="/wholesale/products" component={WholesaleProducts} />
+      <Route path="/admin/products" component={AdminProducts} />
       <Route path="/inventory" component={Inventory} />
       <Route path="/reports" component={Reports} />
       <Route path="/account" component={Account} />

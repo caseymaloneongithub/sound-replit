@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema } from "@shared/schema";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema } from "@shared/schema";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
 import { sendVerificationCode, generateVerificationCode } from "./twilio";
@@ -260,6 +260,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(product);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching product: " + error.message });
+    }
+  });
+
+  app.post("/api/products", isAdmin, async (req, res) => {
+    try {
+      const validatedData = insertProductSchema.parse(req.body);
+      const product = await storage.createProduct(validatedData);
+      res.json(product);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error creating product: " + error.message });
+    }
+  });
+
+  app.patch("/api/products/:id", isAdmin, async (req, res) => {
+    try {
+      const partialProductSchema = insertProductSchema.partial();
+      const validatedUpdates = partialProductSchema.parse(req.body);
+      const product = await storage.updateProduct(req.params.id, validatedUpdates);
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+      res.json(product);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error updating product: " + error.message });
     }
   });
 

@@ -43,14 +43,23 @@ export function Navbar() {
             Wholesale
           </Button>
           {user && user.isAdmin && (
-            <Button 
-              variant={location === '/staff' ? 'default' : 'ghost'}
-              onClick={() => setLocation('/staff')}
-              data-testid="nav-staff"
-            >
-              <Shield className="w-4 h-4 mr-2" />
-              Staff
-            </Button>
+            <>
+              <Button 
+                variant={location === '/admin/products' ? 'default' : 'ghost'}
+                onClick={() => setLocation('/admin/products')}
+                data-testid="nav-products"
+              >
+                Products
+              </Button>
+              <Button 
+                variant={location === '/staff' ? 'default' : 'ghost'}
+                onClick={() => setLocation('/staff')}
+                data-testid="nav-staff"
+              >
+                <Shield className="w-4 h-4 mr-2" />
+                Staff
+              </Button>
+            </>
           )}
         </nav>
 
