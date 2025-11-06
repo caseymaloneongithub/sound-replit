@@ -69,6 +69,15 @@ The wholesale portal provides comprehensive B2B order and customer management ca
 - Pricing overrides stored in wholesale_pricing table with unique constraint per customer-product combination
 - Order placement automatically uses client-specific pricing when available
 
+**Invoice Generation:**
+- Automatic invoice number generation (format: INV-YYYY-NNNN, auto-increments per year)
+- Professional invoice layout with company and customer details, line items, totals
+- Print-ready invoice page accessible via direct URL or from orders list
+- Invoice button on each order opens invoice in new tab
+- Email sending infrastructure placeholder (awaiting Gmail API credentials)
+  - Placeholder endpoint: POST /api/wholesale/orders/:id/send-invoice
+  - Future integration requires: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN secrets
+
 ### Development & Build Process
 
 The development workflow uses `npm run dev` for a tsx server with Vite middleware. Production builds (`npm run build`) create a client bundle with Vite and a server bundle with esbuild. Type checking is performed with `npm run check`.

@@ -701,6 +701,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/wholesale/orders/:id/send-invoice", async (req, res) => {
+    try {
+      const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
+      if (!orderDetails) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      res.status(501).json({ 
+        message: "Email sending not configured. Please set up Gmail API credentials to enable invoice emails.",
+        instructions: "Add GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_REFRESH_TOKEN to environment secrets."
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error sending invoice: " + error.message });
+    }
+  });
+
   app.patch("/api/wholesale/orders/:id", async (req, res) => {
     try {
       const { status, deliveryDate } = req.body;
