@@ -23,7 +23,9 @@ The backend uses Node.js with Express.js and TypeScript, following an ESM-first 
 The system supports dual authentication methods: traditional username/password login OR passwordless SMS code login. Both methods use Passport.js for session management with scrypt hashing for passwords and Twilio for SMS delivery. 
 
 **Authentication Methods:**
-- **Password Login**: Traditional username/password with LocalStrategy
+- **Password Login**: Users can login with either email or username, paired with their password
+  - LocalStrategy implementation with case-insensitive email comparison
+  - Supports both username and email as login identifiers
 - **SMS Code Login**: Passwordless login via 6-digit verification codes sent to registered phone numbers
   - 5-minute code expiration
   - Maximum 3 verification attempts per code
