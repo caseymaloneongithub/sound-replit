@@ -53,6 +53,7 @@ export const products = pgTable("products", {
   imageUrls: text("image_urls").array().notNull().default(sql`ARRAY[]::text[]`),
   unitType: text("unit_type").notNull().default('case'), // 'case', '1/6-barrel', '1/2-barrel'
   inStock: boolean("in_stock").notNull().default(true),
+  isActive: boolean("is_active").notNull().default(true),
   stockQuantity: integer("stock_quantity").notNull().default(0),
   lowStockThreshold: integer("low_stock_threshold").notNull().default(50),
 });
