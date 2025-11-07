@@ -13,7 +13,6 @@ import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg"
 import { getCasePrice } from "@shared/pricing";
 
 export default function Shop() {
-  const [selectedFlavor, setSelectedFlavor] = useState<string>("all");
   const [addedToCart, setAddedToCart] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
@@ -59,12 +58,6 @@ export default function Shop() {
     },
   });
 
-  const filteredProducts = products?.filter(
-    (p) => selectedFlavor === "all" || p.flavor.toLowerCase().includes(selectedFlavor.toLowerCase())
-  ) || [];
-
-  const flavors = ["all", "citrus", "berry", "green tea", "ginger"];
-
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
@@ -108,20 +101,6 @@ export default function Shop() {
           </p>
         </div>
 
-        <div className="flex gap-3 justify-center mb-12 flex-wrap">
-          {flavors.map((flavor) => (
-            <Button
-              key={flavor}
-              variant={selectedFlavor === flavor ? "default" : "outline"}
-              onClick={() => setSelectedFlavor(flavor)}
-              className="rounded-full capitalize"
-              data-testid={`button-filter-${flavor}`}
-            >
-              {flavor}
-            </Button>
-          ))}
-        </div>
-
         {isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {[1, 2, 3].map((i) => (
@@ -138,7 +117,7 @@ export default function Shop() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {filteredProducts.map((product) => {
+            {products?.map((product) => {
               const casePrice = getCasePrice(false);
               const subscriptionPrice = getCasePrice(true);
               const oneTimeKey = `${product.id}-false-onetime`;
@@ -270,11 +249,11 @@ export default function Shop() {
           </div>
         )}
 
-        {!isLoading && filteredProducts.length === 0 && (
+        {!isLoading && products?.length === 0 && (
           <div className="text-center py-20">
             <ShoppingCart className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-            <h3 className="text-2xl font-semibold mb-2">No products found</h3>
-            <p className="text-muted-foreground">Try selecting a different flavor filter</p>
+            <h3 className="text-2xl font-semibold mb-2">No products available</h3>
+            <p className="text-muted-foreground">Check back soon for new flavors</p>
           </div>
         )}
       </div>
