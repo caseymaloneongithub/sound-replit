@@ -6,11 +6,11 @@ import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesal
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
 import { sendVerificationCode, generateVerificationCode } from "./twilio";
-import { getCasePriceCents } from "@shared/pricing";
+import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
-      apiVersion: "2024-11-20.acacia",
+      apiVersion: "2025-10-29.clover",
     })
   : null;
 
@@ -802,14 +802,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         
         const customPricing = await storage.getWholesalePrice(order.customerId, item.productId);
-        const unitPrice = customPricing ? Number(customPricing.customPrice) : Number(product.wholesalePrice);
-        const itemTotal = unitPrice * item.quantity;
+        const perBottlePrice = customPricing ? Number(customPricing.customPrice) : Number(product.wholesalePrice);
+        const perCasePrice = perBottlePrice * CASE_SIZE;
+        const itemTotal = perCasePrice * item.quantity;
         serverCalculatedTotal += itemTotal;
         
         validatedItems.push({
           productId: item.productId,
           quantity: item.quantity,
-          unitPrice: unitPrice.toFixed(2),
+          unitPrice: perCasePrice.toFixed(2),
         });
       }
       

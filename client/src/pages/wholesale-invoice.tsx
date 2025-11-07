@@ -9,6 +9,7 @@ import { Printer, ArrowLeft, CreditCard, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { formatCaseQuantity } from "@shared/pricing";
 
 export default function WholesaleInvoice() {
   const [, params] = useRoute("/wholesale/invoice/:id");
@@ -171,8 +172,8 @@ export default function WholesaleInvoice() {
                 <thead>
                   <tr className="border-b">
                     <th className="text-left py-3 font-semibold">Product</th>
-                    <th className="text-right py-3 font-semibold">Qty</th>
-                    <th className="text-right py-3 font-semibold">Unit Price</th>
+                    <th className="text-right py-3 font-semibold">Cases</th>
+                    <th className="text-right py-3 font-semibold">Price/Case</th>
                     <th className="text-right py-3 font-semibold">Total</th>
                   </tr>
                 </thead>
@@ -183,7 +184,9 @@ export default function WholesaleInvoice() {
                         <div className="font-medium">{item.product.name}</div>
                         <div className="text-sm text-muted-foreground">{item.product.flavor}</div>
                       </td>
-                      <td className="text-right py-4">{item.quantity}</td>
+                      <td className="text-right py-4">
+                        <div>{formatCaseQuantity(item.quantity)}</div>
+                      </td>
                       <td className="text-right py-4">${parseFloat(item.unitPrice).toFixed(2)}</td>
                       <td className="text-right py-4 font-medium">
                         ${(parseFloat(item.unitPrice) * item.quantity).toFixed(2)}
