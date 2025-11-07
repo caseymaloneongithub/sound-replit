@@ -630,16 +630,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Tax only applies to one-time purchases, not subscriptions
       const TAX_RATE = 0.1035; // 10.35%
       
-      if (!hasSubscription) {
-        // Calculate subtotal in cents
-        const subtotal = lineItems.reduce((sum, item) => {
-          const itemPrice = item.price_data?.unit_amount || 0;
-          const quantity = item.quantity || 1;
-          return sum + (itemPrice * quantity);
-        }, 0);
-        
+      // Calculate subtotal from non-subscription items only, using actual product prices
+      const taxableSubtotal = await Promise.all(
+        items
+          .filter(item => !item.isSubscription)
+          .map(async (item) => {
+            const product = await storage.getProduct(item.productId);
+            if (!product) return 0;
+            // Use actual product retail price in cents
+            const priceInCents = Math.round(parseFloat(product.retailPrice) * 100);
+            return priceInCents * item.quantity;
+          })
+      ).then(amounts => amounts.reduce((sum, amount) => sum + amount, 0));
+      
+      if (taxableSubtotal > 0) {
         // Calculate tax amount in cents
-        const taxAmount = Math.round(subtotal * TAX_RATE);
+        const taxAmount = Math.round(taxableSubtotal * TAX_RATE);
         
         // Add tax as a separate line item
         lineItems.push({
@@ -657,7 +663,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Store tax info in metadata for reference
         metadata.taxRate = TAX_RATE.toString();
         metadata.taxAmount = (taxAmount / 100).toFixed(2);
-        metadata.subtotal = (subtotal / 100).toFixed(2);
+        metadata.taxableSubtotal = (taxableSubtotal / 100).toFixed(2);
       }
 
       const session = await stripe.checkout.sessions.create({

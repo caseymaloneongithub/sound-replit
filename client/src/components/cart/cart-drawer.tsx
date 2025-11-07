@@ -61,8 +61,7 @@ export function CartDrawer() {
 
   const checkoutMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("POST", "/api/create-cart-checkout");
-      return await response.json();
+      return await apiRequest("POST", "/api/create-cart-checkout");
     },
     onSuccess: (data) => {
       if (data.url) {
@@ -85,10 +84,27 @@ export function CartDrawer() {
   };
 
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
-  const cartTotal = cartItems.reduce((sum, item) => {
-    const casePrice = getCasePrice(item.isSubscription);
-    return sum + casePrice * item.quantity;
+  
+  // Calculate subtotal for all items using actual product prices
+  const subtotal = cartItems.reduce((sum, item) => {
+    const pricePerCase = parseFloat(item.product.retailPrice);
+    return sum + (pricePerCase * item.quantity);
   }, 0);
+  
+  // Calculate taxable subtotal (only non-subscription items), using actual product prices
+  const taxableSubtotal = cartItems
+    .filter(item => !item.isSubscription)
+    .reduce((sum, item) => {
+      // Use actual product retail price from the cart item
+      const pricePerCase = parseFloat(item.product.retailPrice);
+      return sum + (pricePerCase * item.quantity);
+    }, 0);
+  
+  // Calculate sales tax (WA State 6.5% + Seattle 3.85% = 10.35%)
+  // Tax only applies to one-time purchases, not subscriptions
+  const TAX_RATE = 0.1035;
+  const taxAmount = taxableSubtotal * TAX_RATE;
+  const cartTotal = subtotal + taxAmount;
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -158,7 +174,7 @@ export function CartDrawer() {
                     </div>
                     <div className="flex items-center gap-2 flex-wrap mt-1">
                       <p className="text-sm text-muted-foreground" data-testid={`text-item-price-${item.id}`}>
-                        ${getCasePrice(item.isSubscription)} per case
+                        ${parseFloat(item.product.retailPrice).toFixed(2)} per case
                       </p>
                       {item.isSubscription && (
                         <Badge variant="secondary" className="gap-1 text-xs">
@@ -216,7 +232,7 @@ export function CartDrawer() {
                   </div>
                   <div className="text-right">
                     <p className="font-bold" data-testid={`text-item-total-${item.id}`}>
-                      ${(getCasePrice(item.isSubscription) * item.quantity).toFixed(2)}
+                      ${(parseFloat(item.product.retailPrice) * item.quantity).toFixed(2)}
                     </p>
                   </div>
                 </div>
@@ -227,10 +243,31 @@ export function CartDrawer() {
 
         {cartItems.length > 0 && (
           <div className="border-t pt-6 space-y-4">
-            <div className="flex items-center justify-between text-lg font-bold">
-              <span>Total</span>
-              <span data-testid="text-cart-total">${cartTotal.toFixed(2)}</span>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Subtotal</span>
+                <span data-testid="text-cart-subtotal">${subtotal.toFixed(2)}</span>
+              </div>
+              
+              {taxAmount > 0 && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Sales Tax (10.35%)</span>
+                  <span data-testid="text-cart-tax">${taxAmount.toFixed(2)}</span>
+                </div>
+              )}
+              
+              {taxableSubtotal === 0 && cartItems.length > 0 && (
+                <div className="text-xs text-muted-foreground">
+                  * Subscriptions are not subject to sales tax
+                </div>
+              )}
+              
+              <div className="flex items-center justify-between text-lg font-bold pt-2 border-t">
+                <span>Total</span>
+                <span data-testid="text-cart-total">${cartTotal.toFixed(2)}</span>
+              </div>
             </div>
+            
             <Button
               className="w-full rounded-full"
               size="lg"
