@@ -132,7 +132,7 @@ export class PostgresStorage implements IStorage {
 
   async getUserByEmailOrUsername(emailOrUsername: string): Promise<User | undefined> {
     const result = await db.select().from(users).where(
-      sql`${users.email} = ${emailOrUsername} OR ${users.username} = ${emailOrUsername}`
+      sql`LOWER(${users.email}) = LOWER(${emailOrUsername}) OR ${users.username} = ${emailOrUsername}`
     );
     return result[0];
   }
