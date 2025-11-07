@@ -626,6 +626,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
         metadata.userId = req.user.id;
       }
 
+      // Calculate sales tax for retail orders (WA State 6.5% + Seattle City 3.85% = 10.35%)
+      // Tax only applies to one-time purchases, not subscriptions
+      const TAX_RATE = 0.1035; // 10.35%
+      
+      if (!hasSubscription) {
+        // Calculate subtotal in cents
+        const subtotal = lineItems.reduce((sum, item) => {
+          const itemPrice = item.price_data?.unit_amount || 0;
+          const quantity = item.quantity || 1;
+          return sum + (itemPrice * quantity);
+        }, 0);
+        
+        // Calculate tax amount in cents
+        const taxAmount = Math.round(subtotal * TAX_RATE);
+        
+        // Add tax as a separate line item
+        lineItems.push({
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: 'Sales Tax (WA State 6.5% + Seattle 3.85%)',
+              description: 'Washington State and Seattle sales tax',
+            },
+            unit_amount: taxAmount,
+          },
+          quantity: 1,
+        });
+        
+        // Store tax info in metadata for reference
+        metadata.taxRate = TAX_RATE.toString();
+        metadata.taxAmount = (taxAmount / 100).toFixed(2);
+        metadata.subtotal = (subtotal / 100).toFixed(2);
+      }
+
       const session = await stripe.checkout.sessions.create({
         mode: hasSubscription ? 'subscription' : 'payment',
         line_items: lineItems,
