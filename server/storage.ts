@@ -69,9 +69,11 @@ export interface IStorage {
   clearCart(sessionId: string): Promise<void>;
   
   getSubscriptions(): Promise<Subscription[]>;
+  getSubscription(id: string): Promise<Subscription | undefined>;
   getUserSubscriptions(userId: string): Promise<Subscription[]>;
   getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined>;
   createSubscription(subscription: InsertSubscription): Promise<Subscription>;
+  updateSubscription(id: string, updates: Partial<Subscription>): Promise<Subscription | undefined>;
   updateSubscriptionByStripeId(stripeSubscriptionId: string, updates: Partial<Subscription>): Promise<Subscription | undefined>;
   
   getWholesaleCustomers(): Promise<WholesaleCustomer[]>;
@@ -308,6 +310,11 @@ export class PostgresStorage implements IStorage {
     return await db.select().from(subscriptions);
   }
 
+  async getSubscription(id: string): Promise<Subscription | undefined> {
+    const result = await db.select().from(subscriptions).where(eq(subscriptions.id, id));
+    return result[0];
+  }
+
   async getUserSubscriptions(userId: string): Promise<Subscription[]> {
     return await db.select().from(subscriptions).where(eq(subscriptions.userId, userId));
   }
@@ -319,6 +326,15 @@ export class PostgresStorage implements IStorage {
 
   async createSubscription(subscription: InsertSubscription): Promise<Subscription> {
     const result = await db.insert(subscriptions).values(subscription).returning();
+    return result[0];
+  }
+
+  async updateSubscription(id: string, updates: Partial<Subscription>): Promise<Subscription | undefined> {
+    const result = await db
+      .update(subscriptions)
+      .set(updates)
+      .where(eq(subscriptions.id, id))
+      .returning();
     return result[0];
   }
 

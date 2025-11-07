@@ -408,15 +408,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
+      // For subscriptions, include product info in metadata
+      const metadata: Record<string, string> = {
+        sessionId,
+        type: hasSubscription ? 'subscription_purchase' : 'cart_purchase',
+      };
+      
+      if (hasSubscription && items.length > 0) {
+        const subItem = items.find(item => item.isSubscription);
+        if (subItem) {
+          metadata.productId = subItem.productId;
+          metadata.subscriptionFrequency = subItem.subscriptionFrequency || 'weekly';
+        }
+      }
+      
+      // Include userId if user is authenticated
+      if (req.user && req.user.id) {
+        metadata.userId = req.user.id;
+      }
+
       const session = await stripe.checkout.sessions.create({
         mode: hasSubscription ? 'subscription' : 'payment',
         line_items: lineItems,
         success_url: `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${baseUrl}/shop`,
-        metadata: {
-          sessionId,
-          type: hasSubscription ? 'subscription_purchase' : 'cart_purchase',
-        },
+        metadata,
       });
 
       res.json({ url: session.url, sessionId: session.id });
@@ -535,18 +551,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             break;
           }
 
-          const planId = session.metadata?.planId;
-          if (!planId) {
-            console.error("No planId in session metadata");
-            break;
-          }
-
-          const plan = await storage.getSubscriptionPlan(planId);
-          if (!plan) {
-            console.error(`Plan ${planId} not found`);
-            break;
-          }
-
           const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
           
           const existing = await storage.getSubscriptionByStripeId(subscription.id);
@@ -555,16 +559,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
             break;
           }
 
-          await storage.createSubscription({
+          // Determine frequency for next delivery calculation
+          const frequency = session.metadata?.subscriptionFrequency || 'weekly';
+          const daysUntilNext = frequency === 'weekly' ? 7 : 14;
+
+          // Create subscription with product info from metadata (cart-based) or planId (plan-based)
+          const subscriptionData: any = {
             customerName: session.metadata?.customerName || session.customer_details?.name || 'Unknown',
             customerEmail: session.customer_details?.email || '',
             customerPhone: '',
-            planId: plan.id,
             stripeSubscriptionId: subscription.id,
             stripeCustomerId: subscription.customer as string,
             status: 'active',
-            nextDeliveryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-          });
+            nextDeliveryDate: new Date(Date.now() + daysUntilNext * 24 * 60 * 60 * 1000),
+          };
+
+          // Add userId if available
+          if (session.metadata?.userId) {
+            subscriptionData.userId = session.metadata.userId;
+          }
+
+          // Cart-based subscription (has productId in metadata)
+          if (session.metadata?.productId) {
+            subscriptionData.productId = session.metadata.productId;
+            subscriptionData.subscriptionFrequency = frequency;
+            // Clear cart after subscription created
+            if (session.metadata.sessionId) {
+              await storage.clearCart(session.metadata.sessionId);
+            }
+          } 
+          // Plan-based subscription (legacy)
+          else if (session.metadata?.planId) {
+            const plan = await storage.getSubscriptionPlan(session.metadata.planId);
+            if (plan) {
+              subscriptionData.planId = plan.id;
+            }
+          }
+
+          await storage.createSubscription(subscriptionData);
           console.log(`Created subscription ${subscription.id}`);
           break;
         }
@@ -620,11 +652,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/my-subscriptions", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const subscriptions = await storage.getUserSubscriptions(userId);
       res.json(subscriptions);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching user subscriptions: " + error.message });
+    }
+  });
+
+  // Update subscription (delay delivery, change product)
+  app.patch("/api/my-subscriptions/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      
+      // Verify subscription belongs to user
+      const subscription = await storage.getSubscription(subscriptionId);
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      const updateSchema = z.object({
+        productId: z.string().uuid().optional(),
+        nextDeliveryDate: z.string().datetime().transform(str => new Date(str)).optional(),
+      });
+      
+      const validated = updateSchema.parse(req.body);
+      const updated = await storage.updateSubscription(subscriptionId, validated);
+      
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating subscription:", error);
+      res.status(400).json({ message: "Error updating subscription: " + error.message });
     }
   });
 

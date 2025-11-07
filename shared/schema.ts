@@ -81,7 +81,9 @@ export const subscriptions = pgTable("subscriptions", {
   customerName: text("customer_name").notNull(),
   customerEmail: text("customer_email").notNull(),
   customerPhone: text("customer_phone").notNull(),
-  planId: varchar("plan_id").notNull().references(() => subscriptionPlans.id),
+  planId: varchar("plan_id").references(() => subscriptionPlans.id),
+  productId: varchar("product_id").references(() => products.id),
+  subscriptionFrequency: text("subscription_frequency"), // 'weekly' or 'bi-weekly'
   stripeSubscriptionId: text("stripe_subscription_id"),
   stripeCustomerId: text("stripe_customer_id"),
   status: text("status").notNull().default('active'), // 'active', 'paused', 'cancelled'
