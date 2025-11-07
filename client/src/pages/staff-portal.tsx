@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Navbar } from "@/components/layout/navbar";
+import { StaffLayout } from "@/components/staff/staff-layout";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -168,26 +168,24 @@ export default function StaffPortal() {
     });
   };
 
+  const hasStaffAccess = user && (user.isAdmin || user.role === 'staff');
+
   if (userLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
+      <StaffLayout>
         <div className="max-w-7xl mx-auto px-6 py-20">
           <div className="flex items-center justify-center gap-2">
             <Loader2 className="w-6 h-6 animate-spin" />
             <span className="text-muted-foreground">Loading...</span>
           </div>
         </div>
-      </div>
+      </StaffLayout>
     );
   }
 
-  const hasStaffAccess = user && (user.isAdmin || user.role === 'staff');
-
   if (userError || !user || !hasStaffAccess) {
     return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
+      <StaffLayout>
         <div className="max-w-7xl mx-auto px-6 py-20">
           <Card className="max-w-md mx-auto">
             <CardHeader>
@@ -210,7 +208,7 @@ export default function StaffPortal() {
             )}
           </Card>
         </div>
-      </div>
+      </StaffLayout>
     );
   }
 
@@ -221,9 +219,7 @@ export default function StaffPortal() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar />
-      
+    <StaffLayout>
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="mb-8">
           <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
@@ -602,6 +598,6 @@ export default function StaffPortal() {
           )}
         </Tabs>
       </div>
-    </div>
+    </StaffLayout>
   );
 }
