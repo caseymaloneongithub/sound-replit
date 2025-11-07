@@ -330,9 +330,18 @@ export class PostgresStorage implements IStorage {
   }
 
   async updateSubscription(id: string, updates: Partial<Subscription>): Promise<Subscription | undefined> {
+    // Whitelist only allowed fields for user updates (defense in depth)
+    const allowedUpdates: Partial<Subscription> = {};
+    if (updates.nextDeliveryDate !== undefined) {
+      allowedUpdates.nextDeliveryDate = updates.nextDeliveryDate;
+    }
+    if (updates.productId !== undefined) {
+      allowedUpdates.productId = updates.productId;
+    }
+    
     const result = await db
       .update(subscriptions)
-      .set(updates)
+      .set(allowedUpdates)
       .where(eq(subscriptions.id, id))
       .returning();
     return result[0];
