@@ -11,12 +11,14 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Package, Plus, Edit, DollarSign, X } from "lucide-react";
+import { Loader2, Package, Plus, Edit, DollarSign, X, Upload, Image as ImageIcon } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { insertProductSchema, type Product, type WholesaleCustomer, type WholesalePricing, type InsertProduct } from "@shared/schema";
 import { z } from "zod";
+import { ObjectUploader } from "@/components/ObjectUploader";
+import type { UploadResult } from "@uppy/core";
 
 const productFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -26,7 +28,7 @@ const productFormSchema = z.object({
   ingredients: z.string().min(1, "Ingredients are required"),
   retailPrice: z.string(),
   wholesalePrice: z.string(),
-  imageUrl: z.string().min(1, "Image URL is required"),
+  unitType: z.enum(["case", "1/6-barrel", "1/2-barrel"]).default("case"),
   inStock: z.boolean().default(true),
   stockQuantity: z.number(),
   lowStockThreshold: z.number(),
@@ -218,6 +220,8 @@ export default function AdminProducts() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [pricingProduct, setPricingProduct] = useState<Product | null>(null);
+  const [uploadedPhotos, setUploadedPhotos] = useState<string[]>([]);
+  const [isUploadingPhotos, setIsUploadingPhotos] = useState(false);
 
   const { data: products, isLoading } = useQuery<Product[]>({
     queryKey: ["/api/products"],
@@ -237,7 +241,7 @@ export default function AdminProducts() {
       ingredients: "",
       retailPrice: "3.33",
       wholesalePrice: "2.50",
-      imageUrl: "",
+      unitType: "case",
       inStock: true,
       stockQuantity: 0,
       lowStockThreshold: 50,
@@ -290,10 +294,21 @@ export default function AdminProducts() {
     },
   });
 
-  const handleSubmit = (data: ProductFormData) => {
+  const handleSubmit = async (data: ProductFormData) => {
+    if (uploadedPhotos.length === 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please upload at least one product photo.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const transformedData: InsertProduct = {
       ...data,
       ingredients: data.ingredients.split(',').map(s => s.trim()),
+      imageUrls: uploadedPhotos,
+      imageUrl: uploadedPhotos[0] || "",
     };
     
     if (editingProduct) {
@@ -305,6 +320,7 @@ export default function AdminProducts() {
 
   const handleEdit = (product: Product) => {
     setEditingProduct(product);
+    setUploadedPhotos(product.imageUrls || (product.imageUrl ? [product.imageUrl] : []));
     form.reset({
       name: product.name,
       description: product.description,
@@ -313,7 +329,7 @@ export default function AdminProducts() {
       ingredients: product.ingredients.join(', '),
       retailPrice: product.retailPrice,
       wholesalePrice: product.wholesalePrice,
-      imageUrl: product.imageUrl,
+      unitType: (product.unitType as "case" | "1/6-barrel" | "1/2-barrel") || "case",
       inStock: product.inStock,
       stockQuantity: product.stockQuantity,
       lowStockThreshold: product.lowStockThreshold,
@@ -324,7 +340,74 @@ export default function AdminProducts() {
   const handleCloseDialog = () => {
     setIsAddDialogOpen(false);
     setEditingProduct(null);
+    setUploadedPhotos([]);
     form.reset();
+  };
+
+  const handlePhotoUpload = async () => {
+    try {
+      const response = await fetch("/api/objects/upload", {
+        method: "POST",
+        credentials: "include",
+      });
+      
+      if (!response.ok) throw new Error("Failed to get upload URL");
+      
+      const { uploadURL } = await response.json();
+      return { method: "PUT" as const, url: uploadURL };
+    } catch (error) {
+      console.error("Error getting upload URL:", error);
+      toast({
+        title: "Upload Error",
+        description: "Failed to prepare upload. Please try again.",
+        variant: "destructive",
+      });
+      throw error;
+    }
+  };
+
+  const handlePhotoUploadComplete = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
+    try {
+      setIsUploadingPhotos(true);
+      const uploadedUrls = result.successful.map((file: any) => file.uploadURL);
+      
+      if (!uploadedUrls.length) {
+        toast({
+          title: "Upload Error",
+          description: "No files were uploaded successfully.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const tempProductId = "new-product";
+      const response = await apiRequest("PUT", `/api/products/${tempProductId}/photos`, {
+        photoUrls: uploadedUrls
+      });
+
+      const result2 = await response.json();
+      const newPaths = result2.imageUrls || [];
+      
+      setUploadedPhotos(prev => [...prev, ...newPaths]);
+      
+      toast({
+        title: "Photos Uploaded",
+        description: `${newPaths.length} photo(s) uploaded successfully.`,
+      });
+    } catch (error) {
+      console.error("Error completing upload:", error);
+      toast({
+        title: "Upload Error",
+        description: "Failed to complete upload. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploadingPhotos(false);
+    }
+  };
+
+  const handleRemovePhoto = (photoUrl: string) => {
+    setUploadedPhotos(prev => prev.filter(url => url !== photoUrl));
   };
 
   if (isLoading) {
@@ -446,17 +529,65 @@ export default function AdminProducts() {
 
                   <FormField
                     control={form.control}
-                    name="imageUrl"
+                    name="unitType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Image URL</FormLabel>
-                        <FormControl>
-                          <Input placeholder="/products/ProductName.jpg" {...field} data-testid="input-product-image" />
-                        </FormControl>
+                        <FormLabel>Unit Type</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger data-testid="select-unit-type">
+                              <SelectValue placeholder="Select unit type" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="case">Case (12 bottles)</SelectItem>
+                            <SelectItem value="1/6-barrel">1/6 Barrel Keg</SelectItem>
+                            <SelectItem value="1/2-barrel">1/2 Barrel Keg</SelectItem>
+                          </SelectContent>
+                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
+
+                  <div className="space-y-3">
+                    <Label>Product Photos</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {uploadedPhotos.map((photoUrl, index) => (
+                        <div 
+                          key={photoUrl} 
+                          className="relative group w-24 h-24 rounded-md overflow-hidden border-2 border-border"
+                          data-testid={`photo-${index}`}
+                        >
+                          <img 
+                            src={photoUrl} 
+                            alt={`Product photo ${index + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePhoto(photoUrl)}
+                            className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                            data-testid={`button-remove-photo-${index}`}
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <ObjectUploader
+                      maxNumberOfFiles={5}
+                      maxFileSize={5242880}
+                      onGetUploadParameters={handlePhotoUpload}
+                      onComplete={handlePhotoUploadComplete}
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      {isUploadingPhotos ? "Uploading..." : "Add Photos"}
+                    </ObjectUploader>
+                    {uploadedPhotos.length === 0 && (
+                      <p className="text-sm text-muted-foreground">At least one photo is required</p>
+                    )}
+                  </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <FormField

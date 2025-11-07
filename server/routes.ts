@@ -459,7 +459,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/products/:id/photos", isAdmin, async (req, res) => {
+  app.put("/api/products/:id/photos", isAdmin, async (req: any, res) => {
     try {
       const { photoUrls } = req.body;
       
@@ -467,7 +467,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "photoUrls array is required" });
       }
 
-      if (!req.user?.id) {
+      if (!req.user || !req.user.id) {
         return res.status(401).json({ message: "Unauthorized" });
       }
 
@@ -485,15 +485,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         normalizedPaths.push(normalizedPath);
       }
 
-      const product = await storage.updateProduct(req.params.id, {
-        imageUrls: normalizedPaths
-      });
+      if (req.params.id !== "new-product") {
+        const product = await storage.updateProduct(req.params.id, {
+          imageUrls: normalizedPaths
+        });
 
-      if (!product) {
-        return res.status(404).json({ message: "Product not found" });
+        if (!product) {
+          return res.status(404).json({ message: "Product not found" });
+        }
+
+        res.json(product);
+      } else {
+        res.json({ imageUrls: normalizedPaths });
       }
-
-      res.json(product);
     } catch (error: any) {
       console.error("Error updating product photos:", error);
       res.status(500).json({ message: "Error updating product photos: " + error.message });

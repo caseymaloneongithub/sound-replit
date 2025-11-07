@@ -5,12 +5,92 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Navbar } from "@/components/layout/navbar";
-import { ShoppingCart, Plus, Check, Repeat } from "lucide-react";
+import { ShoppingCart, Plus, Check, Repeat, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
 import { getCasePrice } from "@shared/pricing";
+
+function ProductImageCarousel({ product }: { product: Product }) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  
+  const images = product.imageUrls && product.imageUrls.length > 0 
+    ? product.imageUrls 
+    : (product.imageUrl ? [product.imageUrl] : []);
+
+  const nextImage = () => {
+    setCurrentIndex((prev) => (prev + 1) % images.length);
+  };
+
+  const prevImage = () => {
+    setCurrentIndex((prev) => (prev - 1 + images.length) % images.length);
+  };
+
+  if (images.length === 0) {
+    return (
+      <div className="aspect-square bg-muted flex items-center justify-center">
+        <p className="text-muted-foreground">No image available</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative aspect-square bg-card overflow-hidden group">
+      <img 
+        src={images[currentIndex]} 
+        alt={`${product.name} - Image ${currentIndex + 1}`}
+        className="w-full h-full object-cover"
+        data-testid={`image-${product.id}-${currentIndex}`}
+      />
+      
+      {images.length > 1 && (
+        <>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              prevImage();
+            }}
+            className="absolute left-2 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-background p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+            data-testid={`button-prev-image-${product.id}`}
+            type="button"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              nextImage();
+            }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-background p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+            data-testid={`button-next-image-${product.id}`}
+            type="button"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
+            {images.map((_, index) => (
+              <button
+                key={index}
+                onClick={(e) => {
+                  e.preventDefault();
+                  setCurrentIndex(index);
+                }}
+                className={`w-2 h-2 rounded-full transition-all ${
+                  index === currentIndex 
+                    ? 'bg-primary w-4' 
+                    : 'bg-background/60'
+                }`}
+                data-testid={`dot-${product.id}-${index}`}
+                type="button"
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function Shop() {
   const [addedToCart, setAddedToCart] = useState<Set<string>>(new Set());
@@ -127,13 +207,7 @@ export default function Shop() {
               return (
                 <Card key={product.id} className="overflow-hidden hover-elevate" data-testid={`card-product-${product.id}`}>
                   <CardHeader className="p-0">
-                    <div className="aspect-square bg-card overflow-hidden">
-                      <img 
-                        src={product.imageUrl} 
-                        alt={product.name}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
+                    <ProductImageCarousel product={product} />
                   </CardHeader>
                   <CardContent className="p-6">
                     <h3 className="text-xl font-semibold mb-3" style={{ fontFamily: 'var(--font-heading)' }}>
