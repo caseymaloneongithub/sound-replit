@@ -31,6 +31,9 @@ export function StaffSidebar() {
   const [location] = useLocation();
   const { user } = useAuth();
 
+  // Check if user has elevated privileges (admin or super_admin)
+  const isElevated = user?.role === 'admin' || user?.role === 'super_admin';
+
   const navSections: NavSection[] = [
     {
       title: "Overview",
@@ -73,9 +76,9 @@ export function StaffSidebar() {
 
       <nav className="px-3 space-y-6">
         {navSections.map((section) => {
-          // Filter out admin-only items if user is not admin
+          // Filter out admin-only items if user is not elevated (admin or super_admin)
           const visibleItems = section.items.filter(
-            (item) => !item.adminOnly || user?.isAdmin
+            (item) => !item.adminOnly || isElevated
           );
 
           if (visibleItems.length === 0) return null;
@@ -91,12 +94,14 @@ export function StaffSidebar() {
                   const isActive = location === item.href || location.startsWith(item.href + "/");
 
                   return (
-                    <Link key={item.href} href={item.href}>
-                      <Button
-                        variant={isActive ? "default" : "ghost"}
-                        className="w-full justify-start gap-3"
-                        data-testid={`staff-nav-${item.href.replace(/\//g, "-")}`}
-                      >
+                    <Button
+                      key={item.href}
+                      variant={isActive ? "default" : "ghost"}
+                      className="w-full justify-start gap-3"
+                      data-testid={`staff-nav-${item.href.replace(/\//g, "-")}`}
+                      asChild
+                    >
+                      <Link href={item.href}>
                         <Icon className="w-4 h-4" />
                         <span>{item.title}</span>
                         {item.adminOnly && (
@@ -104,8 +109,8 @@ export function StaffSidebar() {
                             Admin
                           </Badge>
                         )}
-                      </Button>
-                    </Link>
+                      </Link>
+                    </Button>
                   );
                 })}
               </div>

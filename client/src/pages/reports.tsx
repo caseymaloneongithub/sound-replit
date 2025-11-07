@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BarChart3, TrendingUp, Package, Users, DollarSign, ShoppingBag } from "lucide-react";
@@ -80,8 +81,9 @@ export default function Reports() {
   const monthlyData = getLast6Months();
 
   return (
-    <div className="p-8 space-y-8">
-      <div>
+    <StaffLayout>
+      <div className="p-8 space-y-8">
+        <div>
         <h1 className="text-4xl font-bold mb-2" data-testid="text-reports-title">
           Reports & Analytics
         </h1>
@@ -313,7 +315,8 @@ export default function Reports() {
             </div>
           </CardContent>
         </Card>
+        </div>
       </div>
-    </div>
+    </StaffLayout>
   );
 }

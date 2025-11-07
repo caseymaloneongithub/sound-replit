@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,9 +76,11 @@ export default function Inventory() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
+      <StaffLayout>
+        <div className="flex items-center justify-center p-20">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </StaffLayout>
     );
   }
 
@@ -86,8 +89,9 @@ export default function Inventory() {
   const outOfStockCount = products?.filter(p => p.stockQuantity === 0).length || 0;
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-7xl mx-auto">
+    <StaffLayout>
+      <div className="p-6">
+        <div className="max-w-7xl mx-auto">
         <div className="mb-8">
           <h1 className="text-4xl font-bold mb-2" data-testid="text-inventory-title">Inventory Management</h1>
           <p className="text-muted-foreground">Track and manage product stock levels</p>
@@ -265,7 +269,8 @@ export default function Inventory() {
             </Table>
           </CardContent>
         </Card>
+        </div>
       </div>
-    </div>
+    </StaffLayout>
   );
 }
