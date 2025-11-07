@@ -653,9 +653,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/my-subscriptions", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
+      console.log('[DEBUG] Fetching subscriptions for user:', userId);
       const subscriptions = await storage.getUserSubscriptions(userId);
+      console.log('[DEBUG] Found subscriptions:', subscriptions.length);
       res.json(subscriptions);
     } catch (error: any) {
+      console.error('[ERROR] Failed to fetch user subscriptions:', error);
       res.status(500).json({ message: "Error fetching user subscriptions: " + error.message });
     }
   });
