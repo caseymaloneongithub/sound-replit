@@ -41,6 +41,41 @@ Sessions are managed with `express-session` and stored in PostgreSQL. A role-bas
 
 Stripe is integrated for both one-time purchases and recurring subscriptions using Stripe Checkout Sessions. The system handles Stripe webhooks for payment confirmation and subscription lifecycle events. It supports a "subscribe and save" model with flexible delivery frequencies (weekly/bi-weekly), allowing for distinct pricing and checkout flows for one-time vs. subscription items. Server-side validation prevents mixed carts (one-time and subscription items) in a single checkout.
 
+### Subscription Management
+
+The platform provides comprehensive subscription management capabilities for retail customers:
+
+**My Subscriptions Page:**
+- Path: `/my-subscriptions` (requires authentication)
+- View all active subscriptions with product details, delivery frequency, and next delivery date
+- Only visible to authenticated users via navbar link
+
+**Subscription Features:**
+- **Delay/Skip Deliveries**: Users can postpone their next delivery using an interactive calendar picker
+  - Updates persist to database (`nextDeliveryDate` field)
+  - Validation ensures future dates only
+- **Change Products**: Users can switch their subscription to a different product via dropdown selector
+  - Updates persist to database (`productId` field)
+  - Shows all available products with current stock
+- **Visual Feedback**: Toast notifications confirm successful updates or display errors
+
+**Database Schema:**
+- Subscriptions table includes `productId` and `subscriptionFrequency` fields for product-based subscriptions
+- Supports both plan-based (legacy) and product-based subscription models
+- Status tracking: 'active', 'paused', 'cancelled'
+
+**API Endpoints:**
+- `GET /api/my-subscriptions`: Returns user's active subscriptions (filtered by userId)
+- `PATCH /api/my-subscriptions/:id`: Updates subscription with security validations
+  - Zod schema validation allows only `nextDeliveryDate` and `productId` updates
+  - Storage layer whitelisting prevents unauthorized field modifications
+  - Ownership verification ensures users can only modify their own subscriptions
+
+**Security:**
+- Defense-in-depth approach with dual validation layers (API + Storage)
+- Protected fields (userId, status, stripeSubscriptionId) cannot be modified by users
+- Session-based authentication required for all subscription endpoints
+
 ### Wholesale Portal
 
 The wholesale portal provides comprehensive B2B order and customer management capabilities accessible to admin users:
