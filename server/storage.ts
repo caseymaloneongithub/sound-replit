@@ -80,12 +80,14 @@ export interface IStorage {
   getWholesaleCustomers(): Promise<WholesaleCustomer[]>;
   getWholesaleCustomer(id: string): Promise<WholesaleCustomer | undefined>;
   getWholesaleCustomerByEmail(email: string): Promise<WholesaleCustomer | undefined>;
+  getWholesaleCustomerByUserId(userId: string): Promise<WholesaleCustomer | undefined>;
   createWholesaleCustomer(customer: InsertWholesaleCustomer): Promise<WholesaleCustomer>;
   updateWholesaleCustomer(id: string, updates: Partial<InsertWholesaleCustomer>): Promise<WholesaleCustomer | undefined>;
   
   getWholesaleOrders(): Promise<WholesaleOrder[]>;
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
   getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
+  getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string }> }>>;
   getWholesaleOrderWithDetails(id: string): Promise<{
     order: WholesaleOrder;
     customer: WholesaleCustomer;
@@ -379,6 +381,11 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
+  async getWholesaleCustomerByUserId(userId: string): Promise<WholesaleCustomer | undefined> {
+    const result = await db.select().from(wholesaleCustomers).where(eq(wholesaleCustomers.userId, userId));
+    return result[0];
+  }
+
   async createWholesaleCustomer(customer: InsertWholesaleCustomer): Promise<WholesaleCustomer> {
     const result = await db.insert(wholesaleCustomers).values(customer).returning();
     return result[0];
@@ -441,6 +448,42 @@ export class PostgresStorage implements IStorage {
       )
       .orderBy(wholesaleOrders.deliveryDate);
     return result;
+  }
+
+  async getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string }> }>> {
+    const result = await db
+      .select()
+      .from(wholesaleOrders)
+      .where(eq(wholesaleOrders.customerId, customerId))
+      .orderBy(desc(wholesaleOrders.orderDate));
+
+    // Get items for each order
+    const ordersWithItems = await Promise.all(
+      result.map(async (order) => {
+        const items = await db
+          .select({
+            id: wholesaleOrderItems.id,
+            orderId: wholesaleOrderItems.orderId,
+            productId: wholesaleOrderItems.productId,
+            quantity: wholesaleOrderItems.quantity,
+            unitPrice: wholesaleOrderItems.unitPrice,
+            productName: products.name,
+          })
+          .from(wholesaleOrderItems)
+          .leftJoin(products, eq(wholesaleOrderItems.productId, products.id))
+          .where(eq(wholesaleOrderItems.orderId, order.id));
+
+        return {
+          ...order,
+          items: items.map((item) => ({
+            ...item,
+            productName: item.productName || 'Unknown Product',
+          })),
+        };
+      })
+    );
+
+    return ordersWithItems;
   }
 
   async getWholesaleOrderWithDetails(id: string): Promise<{

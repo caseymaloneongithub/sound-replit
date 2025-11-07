@@ -220,6 +220,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Wholesale customer endpoints - for customers to view their own orders
+  app.get("/api/wholesale-customer/orders", isAuthenticated, isWholesaleCustomer, async (req, res) => {
+    try {
+      // Get wholesale customer record for authenticated user
+      const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      if (!customer) {
+        return res.status(404).json({ message: "Wholesale customer record not found" });
+      }
+
+      // Get orders for this customer only
+      const orders = await storage.getWholesaleOrdersByCustomerId(customer.id);
+      res.json(orders);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching orders: " + error.message });
+    }
+  });
+
+  app.get("/api/wholesale-customer/orders/:id", isAuthenticated, isWholesaleCustomer, async (req, res) => {
+    try {
+      // Get wholesale customer record for authenticated user
+      const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      if (!customer) {
+        return res.status(404).json({ message: "Wholesale customer record not found" });
+      }
+
+      // Get order details
+      const order = await storage.getWholesaleOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      // Verify this order belongs to the authenticated customer
+      if (order.customerId !== customer.id) {
+        return res.status(403).json({ message: "Access denied to this order" });
+      }
+
+      // Get order with items
+      const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
+      res.json(orderDetails);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching order: " + error.message });
+    }
+  });
+
   // SMS login routes
   app.post("/api/login/sms/request", async (req, res) => {
     try {
