@@ -10,7 +10,6 @@ import AuthPage from "@/pages/auth-page";
 import WholesaleRegister from "@/pages/wholesale-register";
 import WholesaleCustomerDashboard from "@/pages/wholesale-customer-dashboard";
 import Shop from "@/pages/shop";
-import Subscriptions from "@/pages/subscriptions";
 import MySubscriptions from "@/pages/my-subscriptions";
 import Subscribe from "@/pages/subscribe";
 import Checkout from "@/pages/checkout";
@@ -39,7 +38,6 @@ function Router() {
       <WholesaleCustomerProtectedRoute path="/wholesale-customer" component={WholesaleCustomerDashboard} />
       <Route path="/" component={() => <Redirect to="/shop" />} />
       <Route path="/shop" component={Shop} />
-      <Route path="/subscriptions" component={Subscriptions} />
       <Route path="/my-subscriptions" component={MySubscriptions} />
       <Route path="/subscribe/:id" component={Subscribe} />
       <Route path="/checkout" component={Checkout} />

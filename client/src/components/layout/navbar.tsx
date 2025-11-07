@@ -28,13 +28,6 @@ export function Navbar() {
           >
             Shop
           </Button>
-          <Button 
-            variant={location === '/subscriptions' ? 'default' : 'ghost'}
-            onClick={() => setLocation('/subscriptions')}
-            data-testid="nav-subscriptions"
-          >
-            Subscriptions
-          </Button>
           {user && (
             <Button 
               variant={location === '/my-subscriptions' ? 'default' : 'ghost'}
