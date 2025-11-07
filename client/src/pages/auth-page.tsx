@@ -597,6 +597,20 @@ export default function AuthPage() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <div className="mt-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            Looking for wholesale pricing?{" "}
+            <button
+              type="button"
+              onClick={() => setLocation("/wholesale-register")}
+              className="p-0 h-auto font-semibold text-primary hover:underline"
+              data-testid="button-wholesale-register-link"
+            >
+              Register as a Wholesale Customer
+            </button>
+          </p>
+        </div>
       </div>
     </div>
   );

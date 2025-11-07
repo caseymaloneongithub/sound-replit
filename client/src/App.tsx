@@ -7,6 +7,7 @@ import { AuthProvider } from "@/hooks/use-auth";
 import { Navbar } from "@/components/layout/navbar";
 import { StaffProtectedRoute } from "@/lib/protected-route";
 import AuthPage from "@/pages/auth-page";
+import WholesaleRegister from "@/pages/wholesale-register";
 import Shop from "@/pages/shop";
 import Subscriptions from "@/pages/subscriptions";
 import MySubscriptions from "@/pages/my-subscriptions";
@@ -33,6 +34,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/auth" component={AuthPage} />
+      <Route path="/wholesale-register" component={WholesaleRegister} />
       <Route path="/" component={() => <Redirect to="/shop" />} />
       <Route path="/shop" component={Shop} />
       <Route path="/subscriptions" component={Subscriptions} />

@@ -78,18 +78,33 @@ The system supports dual authentication methods: traditional username/password l
 Sessions are managed with `express-session` and stored in PostgreSQL. A role-based authorization system defines 'user', 'staff', 'admin', and 'super_admin' levels, with granular API route protection and user management capabilities for super admins.
 
 **Role Hierarchy & Permissions:**
-- **User**: Standard customers - access to shop, cart, subscriptions
-- **Staff**: Wholesale operations only - can view orders, manage inventory, place orders (no revenue access)
+- **User**: Standard retail customers - access to shop, cart, subscriptions
+- **Wholesale Customer**: Business customers - access to wholesale portal for placing bulk orders, viewing their own orders and pricing
+- **Staff**: Internal wholesale operations only - can view all orders, manage inventory, place orders on behalf of customers (no revenue access)
 - **Admin**: Full wholesale access including revenue numbers, customer management, pricing overrides
 - **Super Admin**: All admin capabilities plus user role management
 
+**Registration Flows:**
+- **Retail Registration** (`/auth` register tab): 
+  - Username, password, phone number (with SMS verification), email (optional), first/last name (optional)
+  - Creates user with 'user' role
+  - Access to retail shop, cart, and subscription features
+- **Wholesale Registration** (`/wholesale-register`):
+  - Business name, contact person, email, business phone, business address
+  - Account credentials: username, password, phone number (with SMS verification)
+  - Creates user with 'wholesale_customer' role
+  - Linked wholesale_customers record with business information
+  - Self-service registration - immediate access to wholesale portal after verification
+
 **Access Control Implementation:**
 - **Backend**: Middleware functions `isAuthenticated`, `isStaffOrAdmin`, `isAdmin`, `isSuperAdmin` protect API routes
-- **Frontend**: `StaffProtectedRoute` component restricts wholesale portal to staff and admins
+  - `isStaffOrAdmin` now includes wholesale_customer, staff, admin, and super_admin roles
+- **Frontend**: `StaffProtectedRoute` component restricts wholesale portal to wholesale customers, staff, and admins
 - **Revenue Visibility**: Financial data (total revenue, revenue charts) conditionally rendered only for admin/super_admin roles
-  - Wholesale dashboard: Revenue card hidden from staff
-  - Delivery reports: Total value card hidden from staff
-  - Reports page: Wholesale revenue card and revenue chart hidden from staff
+  - Wholesale dashboard: Revenue card hidden from staff and wholesale customers
+  - Delivery reports: Total value card hidden from staff and wholesale customers
+  - Reports page: Wholesale revenue card and revenue chart hidden from staff and wholesale customers
+- **Data Access**: Wholesale customers can only view/manage their own orders; staff/admin can view all orders
 
 ### Payment Processing
 

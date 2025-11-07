@@ -72,6 +72,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   };
 
+  // Wholesale customer middleware - checks if user is a wholesale customer
+  const isWholesaleCustomer = async (req: any, res: any, next: any) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Unauthorized - please log in" });
+      }
+      
+      if (req.user.role !== 'wholesale_customer') {
+        return res.status(403).json({ message: "Forbidden: Wholesale customer access required" });
+      }
+      
+      next();
+    } catch (error: any) {
+      console.error("Error verifying wholesale customer status:", error);
+      res.status(500).json({ message: "Error verifying wholesale customer status" });
+    }
+  };
+
   // SMS verification routes
   app.post("/api/send-verification-code", async (req, res) => {
     try {
@@ -140,6 +158,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error verifying code:", error);
       res.status(500).json({ message: "Error verifying code: " + error.message });
+    }
+  });
+
+  // Wholesale customer registration
+  app.post("/api/register-wholesale", async (req, res) => {
+    try {
+      const { phoneNumber, username, password, businessName, contactName, email, phone, address } = req.body;
+
+      if (!phoneNumber || !username || !password || !businessName || !contactName || !email || !phone || !address) {
+        return res.status(400).json({ message: "All fields are required" });
+      }
+
+      // Check if phone number has been verified
+      const verificationCode = await storage.getLatestVerificationCode(phoneNumber);
+      
+      if (!verificationCode || !verificationCode.verified) {
+        return res.status(400).json({ message: "Phone number not verified" });
+      }
+
+      // Check if username already exists
+      const existingUser = await storage.getUserByUsername(username);
+      if (existingUser) {
+        return res.status(400).json({ message: "Username already taken" });
+      }
+
+      // Check if email already exists in wholesale customers
+      const existingCustomer = await storage.getWholesaleCustomerByEmail(email);
+      if (existingCustomer) {
+        return res.status(400).json({ message: "Email already registered as wholesale customer" });
+      }
+
+      // Import hashPassword function from auth
+      const { hashPassword } = await import('./auth');
+      
+      // Create user with wholesale_customer role
+      const user = await storage.createUser({
+        username,
+        password: await hashPassword(password),
+        phoneNumber,
+        email,
+      });
+
+      // Update user role to wholesale_customer
+      await storage.updateUserRole(user.id, 'wholesale_customer');
+
+      // Create wholesale customer record linked to user
+      await storage.createWholesaleCustomer({
+        userId: user.id,
+        businessName,
+        contactName,
+        email,
+        phone,
+        address,
+      });
+
+      res.status(201).json({ message: "Wholesale account created successfully" });
+    } catch (error: any) {
+      console.error("Wholesale registration error:", error);
+      res.status(500).json({ message: "Registration failed: " + error.message });
     }
   });
 

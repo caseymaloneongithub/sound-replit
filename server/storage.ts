@@ -79,6 +79,7 @@ export interface IStorage {
   
   getWholesaleCustomers(): Promise<WholesaleCustomer[]>;
   getWholesaleCustomer(id: string): Promise<WholesaleCustomer | undefined>;
+  getWholesaleCustomerByEmail(email: string): Promise<WholesaleCustomer | undefined>;
   createWholesaleCustomer(customer: InsertWholesaleCustomer): Promise<WholesaleCustomer>;
   updateWholesaleCustomer(id: string, updates: Partial<InsertWholesaleCustomer>): Promise<WholesaleCustomer | undefined>;
   
@@ -370,6 +371,11 @@ export class PostgresStorage implements IStorage {
 
   async getWholesaleCustomer(id: string): Promise<WholesaleCustomer | undefined> {
     const result = await db.select().from(wholesaleCustomers).where(eq(wholesaleCustomers.id, id));
+    return result[0];
+  }
+
+  async getWholesaleCustomerByEmail(email: string): Promise<WholesaleCustomer | undefined> {
+    const result = await db.select().from(wholesaleCustomers).where(eq(wholesaleCustomers.email, email));
     return result[0];
   }
 

@@ -21,7 +21,7 @@ export const users = pgTable("users", {
   phoneNumber: varchar("phone_number"),
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
-  role: text("role").notNull().default('user'), // 'user', 'staff', 'admin', 'super_admin'
+  role: text("role").notNull().default('user'), // 'user', 'wholesale_customer', 'staff', 'admin', 'super_admin'
   isAdmin: boolean("is_admin").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -93,6 +93,7 @@ export const subscriptions = pgTable("subscriptions", {
 
 export const wholesaleCustomers = pgTable("wholesale_customers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
   businessName: text("business_name").notNull(),
   contactName: text("contact_name").notNull(),
   email: text("email").notNull().unique(),
