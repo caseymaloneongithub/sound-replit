@@ -8,6 +8,7 @@ import { Navbar } from "@/components/layout/navbar";
 import AuthPage from "@/pages/auth-page";
 import Shop from "@/pages/shop";
 import Subscriptions from "@/pages/subscriptions";
+import MySubscriptions from "@/pages/my-subscriptions";
 import Subscribe from "@/pages/subscribe";
 import Checkout from "@/pages/checkout";
 import CheckoutSuccess from "@/pages/checkout-success";
@@ -34,6 +35,7 @@ function Router() {
       <Route path="/" component={() => <Redirect to="/shop" />} />
       <Route path="/shop" component={Shop} />
       <Route path="/subscriptions" component={Subscriptions} />
+      <Route path="/my-subscriptions" component={MySubscriptions} />
       <Route path="/subscribe/:id" component={Subscribe} />
       <Route path="/checkout" component={Checkout} />
       <Route path="/checkout/success" component={CheckoutSuccess} />

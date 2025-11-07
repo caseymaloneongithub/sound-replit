@@ -35,6 +35,15 @@ export function Navbar() {
           >
             Subscriptions
           </Button>
+          {user && (
+            <Button 
+              variant={location === '/my-subscriptions' ? 'default' : 'ghost'}
+              onClick={() => setLocation('/my-subscriptions')}
+              data-testid="nav-my-subscriptions"
+            >
+              My Subscriptions
+            </Button>
+          )}
           <Button 
             variant={location.startsWith('/wholesale') ? 'default' : 'ghost'}
             onClick={() => setLocation('/wholesale')}
