@@ -63,9 +63,16 @@ export function CartDrawer() {
     mutationFn: async () => {
       return await apiRequest("POST", "/api/create-cart-checkout");
     },
-    onSuccess: (data) => {
-      if (data.url) {
+    onSuccess: (data: any) => {
+      if (data && data.url) {
         window.location.href = data.url;
+      } else {
+        setIsProcessingCheckout(false);
+        toast({
+          title: "Checkout Error",
+          description: "No checkout URL received",
+          variant: "destructive",
+        });
       }
     },
     onError: (error: any) => {

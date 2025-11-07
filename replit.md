@@ -30,6 +30,8 @@ Supports username/password login and passwordless SMS code login (via Twilio), b
 
 Stripe is integrated for one-time purchases and recurring subscriptions using Stripe Checkout Sessions. It handles webhooks for payment confirmations and subscription lifecycle events. A "subscribe and save" model with flexible delivery frequencies is supported, with server-side validation preventing mixed carts.
 
+Sales tax (10.35%: 6.5% WA State + 3.85% Seattle) is automatically calculated and applied to retail one-time purchases only (subscription items are tax-exempt). Tax is added as a separate line item in Stripe checkout sessions with metadata stored for record-keeping. Both frontend cart display and backend checkout use actual product prices from the database (`product.retailPrice`) to ensure pricing consistency.
+
 ### Subscription Management
 
 Provides retail customers comprehensive tools to view and manage active subscriptions, including delaying/skipping deliveries via an interactive calendar and changing subscribed products. All updates persist to the database with robust security validations ensuring users only modify their own subscriptions.
