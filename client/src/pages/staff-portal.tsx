@@ -198,7 +198,7 @@ export default function StaffPortal() {
             {userError && (
               <CardContent>
                 <Button
-                  onClick={() => window.location.href = '/api/login'}
+                  onClick={() => window.location.href = '/auth'}
                   className="w-full"
                   data-testid="button-login"
                 >
