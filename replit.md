@@ -75,7 +75,21 @@ The system supports dual authentication methods: traditional username/password l
 - SMS-based phone number verification is required during registration before account creation
 - Users must verify their phone number via a 6-digit code sent via Twilio
 
-Sessions are managed with `express-session` and stored in PostgreSQL. A role-based authorization system defines 'user', 'admin', and 'super_admin' levels, with granular API route protection and user management capabilities for super admins.
+Sessions are managed with `express-session` and stored in PostgreSQL. A role-based authorization system defines 'user', 'staff', 'admin', and 'super_admin' levels, with granular API route protection and user management capabilities for super admins.
+
+**Role Hierarchy & Permissions:**
+- **User**: Standard customers - access to shop, cart, subscriptions
+- **Staff**: Wholesale operations only - can view orders, manage inventory, place orders (no revenue access)
+- **Admin**: Full wholesale access including revenue numbers, customer management, pricing overrides
+- **Super Admin**: All admin capabilities plus user role management
+
+**Access Control Implementation:**
+- **Backend**: Middleware functions `isAuthenticated`, `isStaffOrAdmin`, `isAdmin`, `isSuperAdmin` protect API routes
+- **Frontend**: `StaffProtectedRoute` component restricts wholesale portal to staff and admins
+- **Revenue Visibility**: Financial data (total revenue, revenue charts) conditionally rendered only for admin/super_admin roles
+  - Wholesale dashboard: Revenue card hidden from staff
+  - Delivery reports: Total value card hidden from staff
+  - Reports page: Wholesale revenue card and revenue chart hidden from staff
 
 ### Payment Processing
 

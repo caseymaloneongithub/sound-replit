@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/use-auth";
 import { Navbar } from "@/components/layout/navbar";
+import { StaffProtectedRoute } from "@/lib/protected-route";
 import AuthPage from "@/pages/auth-page";
 import Shop from "@/pages/shop";
 import Subscriptions from "@/pages/subscriptions";
@@ -40,17 +41,17 @@ function Router() {
       <Route path="/checkout" component={Checkout} />
       <Route path="/checkout/success" component={CheckoutSuccess} />
       <Route path="/subscription-success" component={SubscriptionSuccess} />
-      <Route path="/wholesale" component={Wholesale} />
-      <Route path="/wholesale/place-order" component={WholesalePlaceOrder} />
-      <Route path="/wholesale/orders" component={WholesaleOrders} />
-      <Route path="/wholesale/invoice/:id/payment-success" component={WholesalePaymentSuccess} />
-      <Route path="/wholesale/invoice/:id" component={WholesaleInvoice} />
-      <Route path="/wholesale/delivery-report" component={WholesaleDeliveryReport} />
-      <Route path="/wholesale/customers" component={WholesaleCustomers} />
-      <Route path="/wholesale/products" component={WholesaleProducts} />
-      <Route path="/admin/products" component={AdminProducts} />
-      <Route path="/inventory" component={Inventory} />
-      <Route path="/reports" component={Reports} />
+      <StaffProtectedRoute path="/wholesale" component={Wholesale} />
+      <StaffProtectedRoute path="/wholesale/place-order" component={WholesalePlaceOrder} />
+      <StaffProtectedRoute path="/wholesale/orders" component={WholesaleOrders} />
+      <StaffProtectedRoute path="/wholesale/invoice/:id/payment-success" component={WholesalePaymentSuccess} />
+      <StaffProtectedRoute path="/wholesale/invoice/:id" component={WholesaleInvoice} />
+      <StaffProtectedRoute path="/wholesale/delivery-report" component={WholesaleDeliveryReport} />
+      <StaffProtectedRoute path="/wholesale/customers" component={WholesaleCustomers} />
+      <StaffProtectedRoute path="/wholesale/products" component={WholesaleProducts} />
+      <StaffProtectedRoute path="/admin/products" component={AdminProducts} />
+      <StaffProtectedRoute path="/inventory" component={Inventory} />
+      <StaffProtectedRoute path="/reports" component={Reports} />
       <Route path="/account" component={Account} />
       <Route path="/staff-portal" component={StaffPortal} />
       <Route component={NotFound} />

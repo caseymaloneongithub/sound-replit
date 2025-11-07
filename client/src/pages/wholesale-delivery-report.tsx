@@ -10,6 +10,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { LayoutDashboard, Package, Users, ShoppingCart, CalendarIcon, FileText, Printer } from "lucide-react";
 import { useLocation } from "wouter";
 import { format } from "date-fns";
+import { useAuth } from "@/hooks/use-auth";
 
 function WholesaleSidebar() {
   const [location, setLocation] = useLocation();
@@ -53,7 +54,9 @@ function WholesaleSidebar() {
 }
 
 export default function WholesaleDeliveryReport() {
+  const { user } = useAuth();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
   const { data: orders = [], isLoading: ordersLoading } = useQuery<WholesaleOrder[]>({
     queryKey: ["/api/wholesale/delivery-report", selectedDate.toISOString()],
@@ -164,7 +167,7 @@ export default function WholesaleDeliveryReport() {
                 </p>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-3 print:grid-cols-3">
+              <div className={`grid gap-4 ${isAdmin ? 'md:grid-cols-3 print:grid-cols-3' : 'md:grid-cols-2 print:grid-cols-2'}`}>
                 <Card>
                   <CardHeader className="space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Total Orders</CardTitle>
@@ -174,16 +177,18 @@ export default function WholesaleDeliveryReport() {
                   </CardContent>
                 </Card>
                 
-                <Card>
-                  <CardHeader className="space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Total Value</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold" data-testid="text-total-value">
-                      ${totalAmount.toFixed(2)}
-                    </div>
-                  </CardContent>
-                </Card>
+                {isAdmin && (
+                  <Card>
+                    <CardHeader className="space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium">Total Value</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold" data-testid="text-total-value">
+                        ${totalAmount.toFixed(2)}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
 
                 <Card>
                   <CardHeader className="space-y-0 pb-2">

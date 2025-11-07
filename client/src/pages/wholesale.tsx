@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { LayoutDashboard, Package, Users, ShoppingCart, TrendingUp, DollarSign, Clock, Warehouse } from "lucide-react";
 import { useLocation } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
 
 function WholesaleSidebar() {
   const [location, setLocation] = useLocation();
@@ -50,6 +51,7 @@ function WholesaleSidebar() {
 }
 
 export default function Wholesale() {
+  const { user } = useAuth();
   const { data: orders } = useQuery<WholesaleOrder[]>({
     queryKey: ["/api/wholesale/orders"],
   });
@@ -58,6 +60,7 @@ export default function Wholesale() {
     queryKey: ["/api/wholesale/customers"],
   });
 
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const totalRevenue = orders?.reduce((sum, order) => sum + Number(order.totalAmount), 0) || 0;
   const pendingOrders = orders?.filter(o => o.status === 'pending').length || 0;
   const activeCustomers = customers?.length || 0;
@@ -90,21 +93,23 @@ export default function Wholesale() {
           </header>
           <main className="flex-1 overflow-auto p-6">
             <div className="max-w-7xl mx-auto space-y-8">
-              <div className="grid gap-6 md:grid-cols-3">
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-                    <DollarSign className="w-4 h-4 text-muted-foreground" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-3xl font-bold" data-testid="text-total-revenue">
-                      ${totalRevenue.toFixed(2)}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      All-time wholesale sales
-                    </p>
-                  </CardContent>
-                </Card>
+              <div className={`grid gap-6 ${isAdmin ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+                {isAdmin && (
+                  <Card>
+                    <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+                      <DollarSign className="w-4 h-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold" data-testid="text-total-revenue">
+                        ${totalRevenue.toFixed(2)}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        All-time wholesale sales
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Pending Orders</CardTitle>

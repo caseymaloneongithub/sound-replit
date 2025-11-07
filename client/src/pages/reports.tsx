@@ -4,8 +4,10 @@ import { Badge } from "@/components/ui/badge";
 import { BarChart3, TrendingUp, Package, Users, DollarSign, ShoppingBag } from "lucide-react";
 import type { WholesaleOrder, Subscription, Product } from "@shared/schema";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { useAuth } from "@/hooks/use-auth";
 
 export default function Reports() {
+  const { user } = useAuth();
   const { data: orders } = useQuery<WholesaleOrder[]>({
     queryKey: ["/api/wholesale/orders"],
   });
@@ -18,6 +20,7 @@ export default function Reports() {
     queryKey: ["/api/products"],
   });
 
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const totalWholesaleRevenue = orders?.reduce((sum, o) => sum + Number(o.totalAmount), 0) || 0;
   const totalOrders = orders?.length || 0;
   const activeSubscriptions = subscriptions?.filter(s => s.status === 'active').length || 0;
@@ -87,19 +90,21 @@ export default function Reports() {
         </p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        <Card data-testid="card-wholesale-revenue">
-          <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Wholesale Revenue</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-wholesale-revenue">
-              ${totalWholesaleRevenue.toFixed(2)}
-            </div>
-            <p className="text-xs text-muted-foreground">All-time B2B sales</p>
-          </CardContent>
-        </Card>
+      <div className={`grid gap-6 ${isAdmin ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-2'}`}>
+        {isAdmin && (
+          <Card data-testid="card-wholesale-revenue">
+            <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Wholesale Revenue</CardTitle>
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold" data-testid="text-wholesale-revenue">
+                ${totalWholesaleRevenue.toFixed(2)}
+              </div>
+              <p className="text-xs text-muted-foreground">All-time B2B sales</p>
+            </CardContent>
+          </Card>
+        )}
 
         <Card data-testid="card-total-orders">
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
@@ -177,26 +182,28 @@ export default function Reports() {
         </Card>
       </div>
 
-      <Card data-testid="card-revenue-chart">
-        <CardHeader>
-          <CardTitle>Revenue & Orders Trend</CardTitle>
-          <CardDescription>Last 6 months performance</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={monthlyData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" />
-              <YAxis yAxisId="left" orientation="left" />
-              <YAxis yAxisId="right" orientation="right" />
-              <Tooltip />
-              <Legend />
-              <Bar yAxisId="left" dataKey="revenue" fill="#10b981" name="Revenue ($)" />
-              <Bar yAxisId="right" dataKey="orders" fill="#60a5fa" name="Orders" />
-            </BarChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
+      {isAdmin && (
+        <Card data-testid="card-revenue-chart">
+          <CardHeader>
+            <CardTitle>Revenue & Orders Trend</CardTitle>
+            <CardDescription>Last 6 months performance</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={monthlyData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" />
+                <YAxis yAxisId="left" orientation="left" />
+                <YAxis yAxisId="right" orientation="right" />
+                <Tooltip />
+                <Legend />
+                <Bar yAxisId="left" dataKey="revenue" fill="#10b981" name="Revenue ($)" />
+                <Bar yAxisId="right" dataKey="orders" fill="#60a5fa" name="Orders" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card data-testid="card-order-status-chart">
