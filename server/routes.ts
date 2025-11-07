@@ -382,9 +382,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Product routes
-  app.get("/api/products", async (req, res) => {
+  app.get("/api/products", async (req: any, res) => {
     try {
-      const products = await storage.getProducts();
+      const includeInactive = req.query.includeInactive === 'true';
+      
+      if (includeInactive && (!req.user || req.user.role !== 'admin')) {
+        return res.status(403).json({ message: "Only admins can view inactive products" });
+      }
+      
+      const products = await storage.getProducts(includeInactive);
       res.json(products);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching products: " + error.message });

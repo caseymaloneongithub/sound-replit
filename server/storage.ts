@@ -52,7 +52,7 @@ export interface IStorage {
   markVerificationCodeAsConsumed(id: string): Promise<void>;
   incrementVerificationAttempts(id: string): Promise<void>;
   
-  getProducts(): Promise<Product[]>;
+  getProducts(includeInactive?: boolean): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
   updateProduct(id: string, updates: Partial<InsertProduct>): Promise<Product | undefined>;
@@ -214,8 +214,11 @@ export class PostgresStorage implements IStorage {
       .where(eq(verificationCodes.id, id));
   }
 
-  async getProducts(): Promise<Product[]> {
-    return await db.select().from(products);
+  async getProducts(includeInactive = false): Promise<Product[]> {
+    if (includeInactive) {
+      return await db.select().from(products);
+    }
+    return await db.select().from(products).where(eq(products.isActive, true));
   }
 
   async getProduct(id: string): Promise<Product | undefined> {
