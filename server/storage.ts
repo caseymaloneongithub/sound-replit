@@ -105,7 +105,7 @@ export interface IStorage {
 }
 
 export class PostgresStorage implements IStorage {
-  sessionStore: ReturnType<typeof connectPg>;
+  sessionStore: any;
 
   constructor() {
     this.sessionStore = new PostgresSessionStore({ 
