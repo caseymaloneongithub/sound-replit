@@ -7,6 +7,7 @@ import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
 import { sendVerificationCode, generateVerificationCode } from "./twilio";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
+import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -429,6 +430,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
       }
       res.status(500).json({ message: "Error updating product: " + error.message });
+    }
+  });
+
+  // Object storage routes
+  app.post("/api/objects/upload", isAdmin, async (req, res) => {
+    try {
+      const objectStorageService = new ObjectStorageService();
+      const uploadURL = await objectStorageService.getObjectEntityUploadURL();
+      res.json({ uploadURL });
+    } catch (error: any) {
+      console.error("Error getting upload URL:", error);
+      res.status(500).json({ message: "Error getting upload URL: " + error.message });
+    }
+  });
+
+  app.get("/objects/:objectPath(*)", async (req, res) => {
+    const objectStorageService = new ObjectStorageService();
+    try {
+      const objectFile = await objectStorageService.getObjectEntityFile(req.path);
+      objectStorageService.downloadObject(objectFile, res);
+    } catch (error: any) {
+      console.error("Error accessing object:", error);
+      if (error instanceof ObjectNotFoundError) {
+        return res.sendStatus(404);
+      }
+      return res.sendStatus(500);
+    }
+  });
+
+  app.put("/api/products/:id/photos", isAdmin, async (req, res) => {
+    try {
+      const { photoUrls } = req.body;
+      
+      if (!photoUrls || !Array.isArray(photoUrls)) {
+        return res.status(400).json({ message: "photoUrls array is required" });
+      }
+
+      if (!req.user?.id) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const objectStorageService = new ObjectStorageService();
+      const normalizedPaths: string[] = [];
+
+      for (const url of photoUrls) {
+        const normalizedPath = await objectStorageService.trySetObjectEntityAclPolicy(
+          url,
+          {
+            owner: req.user.id,
+            visibility: "public",
+          }
+        );
+        normalizedPaths.push(normalizedPath);
+      }
+
+      const product = await storage.updateProduct(req.params.id, {
+        imageUrls: normalizedPaths
+      });
+
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+
+      res.json(product);
+    } catch (error: any) {
+      console.error("Error updating product photos:", error);
+      res.status(500).json({ message: "Error updating product photos: " + error.message });
     }
   });
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import Uppy from "@uppy/core";
 import { DashboardModal } from "@uppy/react";
@@ -49,6 +49,12 @@ export function ObjectUploader({
         setShowModal(false);
       })
   );
+
+  useEffect(() => {
+    return () => {
+      uppy.close();
+    };
+  }, [uppy]);
 
   return (
     <div>
