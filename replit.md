@@ -18,6 +18,44 @@ The frontend is built with React 18 and TypeScript, utilizing Vite for developme
 
 The backend uses Node.js with Express.js and TypeScript, following an ESM-first approach. It implements a RESTful API with session-based authentication using Passport.js and PostgreSQL-backed session storage. Drizzle ORM is used for type-safe PostgreSQL (Neon serverless) queries, following a schema-first approach with migrations. Key entities include Users, Products, Subscription Plans, Subscriptions, Wholesale data, and Sessions.
 
+### Case-Based Ordering System
+
+All orders in the system are for cases of 12 bottles, not individual bottles. This applies to both retail and wholesale orders.
+
+**Key Constants:**
+- `CASE_SIZE = 12` (defined in `shared/pricing.ts`)
+- Helper functions: `formatCaseQuantity(cases)`, `casesToBottles(cases)`, `bottlesToCases(bottles)`
+
+**Pricing Model:**
+- **Retail Pricing**: Stored per-case in the products table
+  - One-time purchase: $40/case
+  - Subscription: $36/case
+- **Wholesale Pricing**: Stored per-bottle in the products table, multiplied by CASE_SIZE for display and storage
+  - Default: $2.50/bottle = $30/case
+  - Custom pricing: Per-customer pricing overrides, also stored per-bottle
+
+**Data Flow:**
+1. **Product Catalog**: 
+   - Retail prices stored as per-case amounts
+   - Wholesale prices stored as per-bottle amounts ($2.50)
+2. **Display Layer**: 
+   - Frontend multiplies wholesale prices by CASE_SIZE (12) for user-facing displays
+   - All quantity inputs/displays show cases with bottle counts: "2 cases (24 bottles)"
+3. **Order Creation**: 
+   - Backend multiplies wholesale per-bottle price by CASE_SIZE before storing in `wholesale_order_items.unitPrice`
+   - Stored unitPrice is per-case ($30), quantity is number of cases
+4. **Invoices & Reports**: 
+   - Read stored per-case unitPrice from database
+   - Display quantities using formatCaseQuantity helper
+   - Calculate totals: unitPrice × quantity (both already case-based)
+
+**Implementation Files:**
+- `shared/pricing.ts`: Constants and helper functions
+- `server/routes.ts`: Backend order creation with CASE_SIZE multiplication
+- `client/src/components/cart/cart-drawer.tsx`: Retail cart display
+- `client/src/pages/wholesale-place-order.tsx`: Wholesale ordering interface
+- `client/src/pages/wholesale-invoice.tsx`: Invoice display with case quantities
+
 ### Authentication & Authorization
 
 The system supports dual authentication methods: traditional username/password login OR passwordless SMS code login. Both methods use Passport.js for session management with scrypt hashing for passwords and Twilio for SMS delivery. 
@@ -105,9 +143,10 @@ The wholesale portal provides comprehensive B2B order and customer management ca
 - Print-friendly layout for physical delivery manifests
 
 **Client-Specific Pricing:**
-- Default wholesale pricing ($2.50/bottle) with support for custom per-customer pricing
-- Pricing overrides stored in wholesale_pricing table with unique constraint per customer-product combination
-- Order placement automatically uses client-specific pricing when available
+- Default wholesale pricing ($2.50/bottle = $30/case) with support for custom per-customer pricing
+- Pricing overrides stored in wholesale_pricing table as per-bottle amounts with unique constraint per customer-product combination
+- Order placement automatically uses client-specific pricing when available, multiplying by CASE_SIZE before storing
+- All order items store per-case unitPrice for consistent invoice calculations
 
 **Invoice Generation & Payment:**
 - Automatic invoice number generation (format: INV-YYYY-NNNN, auto-increments per year)
