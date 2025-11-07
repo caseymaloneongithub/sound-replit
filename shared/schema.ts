@@ -50,6 +50,8 @@ export const products = pgTable("products", {
   retailPrice: decimal("retail_price", { precision: 10, scale: 2 }).notNull(),
   wholesalePrice: decimal("wholesale_price", { precision: 10, scale: 2 }).notNull(),
   imageUrl: text("image_url").notNull(),
+  imageUrls: text("image_urls").array().notNull().default(sql`ARRAY[]::text[]`),
+  unitType: text("unit_type").notNull().default('case'), // 'case', '1/6-barrel', '1/2-barrel'
   inStock: boolean("in_stock").notNull().default(true),
   stockQuantity: integer("stock_quantity").notNull().default(0),
   lowStockThreshold: integer("low_stock_threshold").notNull().default(50),
