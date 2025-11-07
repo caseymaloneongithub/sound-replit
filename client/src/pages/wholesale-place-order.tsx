@@ -12,6 +12,7 @@ import { LayoutDashboard, Package, Users, ShoppingCart, Plus, Minus, Trash2 } fr
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { CASE_SIZE, formatCaseQuantity } from "@shared/pricing";
 
 interface CartItem {
   productId: string;
@@ -121,11 +122,11 @@ export default function WholesalePlaceOrder() {
     
     const customPrice = pricing.find(p => p.productId === productId);
     if (customPrice) {
-      return Number(customPrice.customPrice);
+      return Number(customPrice.customPrice) * CASE_SIZE;
     }
     
     const product = products.find(p => p.id === productId);
-    return product ? Number(product.wholesalePrice) : 0;
+    return product ? Number(product.wholesalePrice) * CASE_SIZE : 0;
   };
 
   const addToCart = (productId: string) => {
@@ -276,8 +277,11 @@ export default function WholesalePlaceOrder() {
                                 >
                                   <div className="flex-1 min-w-0">
                                     <p className="font-medium truncate">{product?.name}</p>
+                                    <p className="text-sm font-medium mb-1">
+                                      {formatCaseQuantity(item.quantity)}
+                                    </p>
                                     <p className="text-sm text-muted-foreground">
-                                      ${price.toFixed(2)} × {item.quantity} = ${(price * item.quantity).toFixed(2)}
+                                      ${price.toFixed(2)}/case × {item.quantity} = ${(price * item.quantity).toFixed(2)}
                                     </p>
                                   </div>
                                   <div className="flex items-center gap-2">

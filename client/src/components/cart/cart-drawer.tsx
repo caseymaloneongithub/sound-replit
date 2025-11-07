@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { ShoppingCart, Trash2, Plus, Minus, Loader2, Repeat } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { getCasePrice } from "@shared/pricing";
+import { getCasePrice, formatCaseQuantity } from "@shared/pricing";
 
 interface CartItemWithProduct {
   id: string;
@@ -152,6 +152,11 @@ export function CartDrawer() {
                       {item.product.name}
                     </h4>
                     <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-medium" data-testid={`text-item-quantity-${item.id}`}>
+                        {formatCaseQuantity(item.quantity)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap mt-1">
                       <p className="text-sm text-muted-foreground" data-testid={`text-item-price-${item.id}`}>
                         ${getCasePrice(item.isSubscription)} per case
                       </p>
