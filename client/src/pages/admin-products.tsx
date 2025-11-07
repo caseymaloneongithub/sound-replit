@@ -11,7 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Package, Plus, Edit, DollarSign, X, Upload, Image as ImageIcon } from "lucide-react";
+import { Loader2, Package, Plus, Edit, DollarSign, X, Upload, Image as ImageIcon, Power, PowerOff } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -222,9 +223,19 @@ export default function AdminProducts() {
   const [pricingProduct, setPricingProduct] = useState<Product | null>(null);
   const [uploadedPhotos, setUploadedPhotos] = useState<string[]>([]);
   const [isUploadingPhotos, setIsUploadingPhotos] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
 
   const { data: products, isLoading } = useQuery<Product[]>({
-    queryKey: ["/api/products"],
+    queryKey: ["/api/products", { includeInactive: showInactive }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (showInactive) {
+        params.append('includeInactive', 'true');
+      }
+      const response = await fetch(`/api/products?${params.toString()}`);
+      if (!response.ok) throw new Error('Failed to fetch products');
+      return response.json();
+    },
   });
 
   const { data: customers = [] } = useQuery<WholesaleCustomer[]>({
@@ -289,6 +300,26 @@ export default function AdminProducts() {
       toast({
         title: "Error",
         description: "Failed to update product. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const toggleActivationMutation = useMutation({
+    mutationFn: async ({ id, isActive }: { id: string; isActive: boolean }) => {
+      return await apiRequest("PATCH", `/api/products/${id}`, { isActive });
+    },
+    onSuccess: (_, variables) => {
+      toast({
+        title: variables.isActive ? "Product Activated" : "Product Deactivated",
+        description: `Product has been ${variables.isActive ? "activated" : "deactivated"} successfully.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update product status. Please try again.",
         variant: "destructive",
       });
     },
@@ -426,14 +457,27 @@ export default function AdminProducts() {
             <h1 className="text-4xl font-bold mb-2" data-testid="text-products-title">Product Management</h1>
             <p className="text-muted-foreground">Manage products, pricing, and inventory</p>
           </div>
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button data-testid="button-add-product">
-                <Plus className="w-4 h-4 mr-2" />
-                Add Product
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Switch 
+                id="show-inactive" 
+                checked={showInactive} 
+                onCheckedChange={setShowInactive}
+                data-testid="switch-show-inactive"
+              />
+              <Label htmlFor="show-inactive" className="cursor-pointer">
+                Show Inactive Products
+              </Label>
+            </div>
+            <Button onClick={() => setIsAddDialogOpen(true)} data-testid="button-add-product">
+              <Plus className="w-4 h-4 mr-2" />
+              Add Product
+            </Button>
+          </div>
+        </div>
+        
+        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>
                   {editingProduct ? 'Edit Product' : 'Add New Product'}
@@ -718,12 +762,27 @@ export default function AdminProducts() {
                         <span data-testid={`stock-${product.id}`}>{product.stockQuantity}</span>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={product.inStock ? "default" : "destructive"}>
-                          {product.inStock ? 'In Stock' : 'Out of Stock'}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant={product.inStock ? "default" : "destructive"}>
+                            {product.inStock ? 'In Stock' : 'Out of Stock'}
+                          </Badge>
+                          <Badge variant={product.isActive ? "default" : "secondary"}>
+                            {product.isActive ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </div>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant={product.isActive ? "outline" : "default"}
+                            onClick={() => toggleActivationMutation.mutate({ id: product.id, isActive: !product.isActive })}
+                            disabled={toggleActivationMutation.isPending}
+                            data-testid={`button-toggle-active-${product.id}`}
+                            title={product.isActive ? "Deactivate Product" : "Activate Product"}
+                          >
+                            {product.isActive ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+                          </Button>
                           <Button
                             size="sm"
                             variant="outline"
