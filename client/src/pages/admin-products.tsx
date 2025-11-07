@@ -450,8 +450,9 @@ export default function AdminProducts() {
   }
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-7xl mx-auto">
+    <>
+      <div className="min-h-screen bg-background p-6">
+        <div className="max-w-7xl mx-auto">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-4xl font-bold mb-2" data-testid="text-products-title">Product Management</h1>
@@ -813,6 +814,7 @@ export default function AdminProducts() {
             )}
           </CardContent>
         </Card>
+        </div>
       </div>
 
       {pricingProduct && (
@@ -824,6 +826,6 @@ export default function AdminProducts() {
           />
         </Dialog>
       )}
-    </div>
+    </>
   );
 }
