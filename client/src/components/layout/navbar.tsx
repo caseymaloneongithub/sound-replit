@@ -21,13 +21,6 @@ export function Navbar() {
         </Link>
 
         <nav className="hidden md:flex items-center gap-1">
-          <Button 
-            variant={location === '/shop' ? 'default' : 'ghost'}
-            onClick={() => setLocation('/shop')}
-            data-testid="nav-shop"
-          >
-            Shop
-          </Button>
           {user && (
             <Button 
               variant={location === '/my-subscriptions' ? 'default' : 'ghost'}
