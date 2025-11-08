@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertUserSchema } from "@shared/schema";
@@ -35,6 +36,9 @@ const loginSchema = z.object({
 const smsLoginSchema = z.object({
   phoneNumber: z.string().min(10, "Phone number must be at least 10 digits"),
   verificationCode: z.string().optional(),
+  smsConsent: z.boolean().refine(val => val === true, {
+    message: "You must agree to receive text messages to use SMS login",
+  }),
 });
 
 const registerSchema = insertUserSchema.extend({
@@ -42,6 +46,9 @@ const registerSchema = insertUserSchema.extend({
   phoneNumber: z.string().min(10, "Phone number must be at least 10 digits"),
   confirmPassword: z.string().min(6, "Password must be at least 6 characters"),
   verificationCode: z.string().optional(),
+  smsConsent: z.boolean().refine(val => val === true, {
+    message: "You must agree to receive text messages to verify your phone number",
+  }),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -73,6 +80,7 @@ export default function AuthPage() {
     defaultValues: {
       phoneNumber: "",
       verificationCode: "",
+      smsConsent: false,
     },
   });
 
@@ -87,16 +95,27 @@ export default function AuthPage() {
       firstName: "",
       lastName: "",
       verificationCode: "",
+      smsConsent: false,
     },
   });
 
   const sendVerificationCode = async () => {
     const phoneNumber = registerForm.getValues("phoneNumber");
+    const smsConsent = registerForm.getValues("smsConsent");
     
     if (!phoneNumber || phoneNumber.length < 10) {
       toast({
         title: "Error",
         description: "Please enter a valid phone number",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!smsConsent) {
+      toast({
+        title: "SMS Consent Required",
+        description: "You must agree to receive text messages to verify your phone number",
         variant: "destructive",
       });
       return;
@@ -155,11 +174,21 @@ export default function AuthPage() {
 
   const sendSmsLoginCode = async () => {
     const phoneNumber = smsLoginForm.getValues("phoneNumber");
+    const smsConsent = smsLoginForm.getValues("smsConsent");
     
     if (!phoneNumber || phoneNumber.length < 10) {
       toast({
         title: "Error",
         description: "Please enter a valid phone number",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!smsConsent) {
+      toast({
+        title: "SMS Consent Required",
+        description: "You must agree to receive text messages to use SMS login",
         variant: "destructive",
       });
       return;
@@ -285,7 +314,7 @@ export default function AuthPage() {
                               <FormLabel>Email or Username</FormLabel>
                               <FormControl>
                                 <Input
-                                  placeholder="Enter your email or username"
+                                 
                                   data-testid="input-login-username"
                                   {...field}
                                 />
@@ -303,7 +332,7 @@ export default function AuthPage() {
                               <FormControl>
                                 <Input
                                   type="password"
-                                  placeholder="Enter your password"
+                                 
                                   data-testid="input-login-password"
                                   {...field}
                                 />
@@ -336,7 +365,7 @@ export default function AuthPage() {
                               <div className="flex gap-2">
                                 <FormControl>
                                   <Input
-                                    placeholder="+1 (555) 123-4567"
+                                   
                                     data-testid="input-sms-login-phone"
                                     {...field}
                                     disabled={smsLoginCodeSent}
@@ -355,6 +384,32 @@ export default function AuthPage() {
                             </FormItem>
                           )}
                         />
+                        <FormField
+                          control={smsLoginForm.control}
+                          name="smsConsent"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                              <FormControl>
+                                <Checkbox
+                                  checked={field.value}
+                                  onCheckedChange={field.onChange}
+                                  data-testid="checkbox-sms-login-consent"
+                                />
+                              </FormControl>
+                              <div className="space-y-1 leading-none">
+                                <FormLabel>
+                                  I agree to receive text messages for authentication purposes
+                                </FormLabel>
+                                <p className="text-xs text-muted-foreground">
+                                  By checking this box, you consent to receive SMS verification codes from Puget Sound Kombucha Co. 
+                                  Message frequency varies. Message & data rates may apply. Text STOP to unsubscribe, HELP for help. 
+                                  Consent is not a condition of purchase.
+                                </p>
+                                <FormMessage />
+                              </div>
+                            </FormItem>
+                          )}
+                        />
                         {smsLoginCodeSent && (
                           <FormField
                             control={smsLoginForm.control}
@@ -364,7 +419,7 @@ export default function AuthPage() {
                                 <FormLabel>Verification Code</FormLabel>
                                 <FormControl>
                                   <Input
-                                    placeholder="Enter 6-digit code"
+                                   
                                     data-testid="input-sms-login-code"
                                     maxLength={6}
                                     {...field}
@@ -417,7 +472,7 @@ export default function AuthPage() {
                             <FormLabel>First Name</FormLabel>
                             <FormControl>
                               <Input
-                                placeholder="First name"
+                               
                                 data-testid="input-register-firstname"
                                 {...field}
                                 value={field.value ?? ""}
@@ -435,7 +490,7 @@ export default function AuthPage() {
                             <FormLabel>Last Name</FormLabel>
                             <FormControl>
                               <Input
-                                placeholder="Last name"
+                               
                                 data-testid="input-register-lastname"
                                 {...field}
                                 value={field.value ?? ""}
@@ -455,7 +510,7 @@ export default function AuthPage() {
                           <FormControl>
                             <Input
                               type="email"
-                              placeholder="Enter your email"
+                             
                               data-testid="input-register-email"
                               {...field}
                               value={field.value ?? ""}
@@ -473,7 +528,7 @@ export default function AuthPage() {
                           <FormLabel>Username</FormLabel>
                           <FormControl>
                             <Input
-                              placeholder="Choose a username"
+                             
                               data-testid="input-register-username"
                               {...field}
                             />
@@ -491,7 +546,7 @@ export default function AuthPage() {
                           <div className="flex gap-2">
                             <FormControl>
                               <Input
-                                placeholder="+1 (555) 123-4567"
+                               
                                 data-testid="input-register-phone"
                                 {...field}
                                 value={field.value ?? ""}
@@ -511,6 +566,32 @@ export default function AuthPage() {
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={registerForm.control}
+                      name="smsConsent"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                              data-testid="checkbox-register-sms-consent"
+                            />
+                          </FormControl>
+                          <div className="space-y-1 leading-none">
+                            <FormLabel>
+                              I agree to receive text messages for verification purposes
+                            </FormLabel>
+                            <p className="text-xs text-muted-foreground">
+                              By checking this box, you consent to receive SMS verification codes from Puget Sound Kombucha Co. 
+                              Message frequency varies. Message & data rates may apply. Text STOP to unsubscribe, HELP for help. 
+                              Consent is not a condition of purchase.
+                            </p>
+                            <FormMessage />
+                          </div>
+                        </FormItem>
+                      )}
+                    />
                     {codeSent && !phoneVerified && (
                       <FormField
                         control={registerForm.control}
@@ -521,7 +602,7 @@ export default function AuthPage() {
                             <div className="flex gap-2">
                               <FormControl>
                                 <Input
-                                  placeholder="Enter 6-digit code"
+                                 
                                   data-testid="input-verification-code"
                                   maxLength={6}
                                   {...field}
@@ -551,7 +632,7 @@ export default function AuthPage() {
                           <FormControl>
                             <Input
                               type="password"
-                              placeholder="Choose a password"
+                             
                               data-testid="input-register-password"
                               {...field}
                             />
@@ -569,7 +650,7 @@ export default function AuthPage() {
                           <FormControl>
                             <Input
                               type="password"
-                              placeholder="Confirm your password"
+                             
                               data-testid="input-register-confirm-password"
                               {...field}
                             />
@@ -603,7 +684,7 @@ export default function AuthPage() {
             Looking for wholesale pricing?{" "}
             <button
               type="button"
-              onClick={() => setLocation("/wholesale-register")}
+              onClick={() => setLocation("/wholesale/register")}
               className="p-0 h-auto font-semibold text-primary hover:underline"
               data-testid="button-wholesale-register-link"
             >

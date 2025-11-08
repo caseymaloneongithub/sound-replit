@@ -174,7 +174,7 @@ export default function WholesaleProducts() {
                       <label className="text-sm font-medium mb-2 block">Select Customer</label>
                       <Select value={selectedCustomer} onValueChange={setSelectedCustomer}>
                         <SelectTrigger data-testid="select-customer">
-                          <SelectValue placeholder="Choose a customer..." />
+                          <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           {customers.map((customer) => (
@@ -242,7 +242,7 @@ export default function WholesaleProducts() {
                     <div>
                       <label className="text-sm font-medium mb-2 block">Notes (Optional)</label>
                       <Textarea
-                        placeholder="Add any special instructions..."
+                       
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
                         data-testid="input-notes"

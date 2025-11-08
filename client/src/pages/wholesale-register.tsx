@@ -9,6 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -35,6 +36,9 @@ const wholesaleRegisterSchema = z.object({
   address: z.string().min(5, "Business address is required"),
   phoneNumber: z.string().min(10, "Phone number must be at least 10 digits"),
   verificationCode: z.string().optional(),
+  smsConsent: z.boolean().refine(val => val === true, {
+    message: "You must agree to receive text messages to verify your phone number",
+  }),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -62,16 +66,27 @@ export default function WholesaleRegister() {
       address: "",
       phoneNumber: "",
       verificationCode: "",
+      smsConsent: false,
     },
   });
 
   const sendVerificationCode = async () => {
     const phoneNumber = form.getValues("phoneNumber");
+    const smsConsent = form.getValues("smsConsent");
     
     if (!phoneNumber || phoneNumber.length < 10) {
       toast({
         title: "Error",
         description: "Please enter a valid phone number",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!smsConsent) {
+      toast({
+        title: "SMS Consent Required",
+        description: "You must agree to receive text messages to verify your phone number",
         variant: "destructive",
       });
       return;
@@ -191,7 +206,7 @@ export default function WholesaleRegister() {
                       <FormLabel>Business Name *</FormLabel>
                       <FormControl>
                         <Input
-                          placeholder="Acme Coffee Shop"
+                         
                           data-testid="input-business-name"
                           {...field}
                         />
@@ -209,7 +224,7 @@ export default function WholesaleRegister() {
                       <FormLabel>Contact Person *</FormLabel>
                       <FormControl>
                         <Input
-                          placeholder="John Doe"
+                         
                           data-testid="input-contact-name"
                           {...field}
                         />
@@ -230,7 +245,7 @@ export default function WholesaleRegister() {
                       <FormControl>
                         <Input
                           type="email"
-                          placeholder="contact@business.com"
+                         
                           data-testid="input-email"
                           {...field}
                         />
@@ -248,7 +263,7 @@ export default function WholesaleRegister() {
                       <FormLabel>Business Phone *</FormLabel>
                       <FormControl>
                         <Input
-                          placeholder="(555) 123-4567"
+                         
                           data-testid="input-phone"
                           {...field}
                         />
@@ -267,7 +282,7 @@ export default function WholesaleRegister() {
                     <FormLabel>Business Address *</FormLabel>
                     <FormControl>
                       <Textarea
-                        placeholder="123 Main St, Seattle, WA 98101"
+                       
                         data-testid="input-address"
                         {...field}
                       />
@@ -288,7 +303,7 @@ export default function WholesaleRegister() {
                         <FormLabel>Username *</FormLabel>
                         <FormControl>
                           <Input
-                            placeholder="businessuser"
+                           
                             data-testid="input-username"
                             {...field}
                           />
@@ -306,7 +321,7 @@ export default function WholesaleRegister() {
                         <FormLabel>Phone Number (for login) *</FormLabel>
                         <FormControl>
                           <Input
-                            placeholder="5551234567"
+                           
                             data-testid="input-phone-number"
                             {...field}
                           />
@@ -327,7 +342,7 @@ export default function WholesaleRegister() {
                         <FormControl>
                           <Input
                             type="password"
-                            placeholder="••••••"
+                           
                             data-testid="input-password"
                             {...field}
                           />
@@ -346,7 +361,7 @@ export default function WholesaleRegister() {
                         <FormControl>
                           <Input
                             type="password"
-                            placeholder="••••••"
+                           
                             data-testid="input-confirm-password"
                             {...field}
                           />
@@ -361,6 +376,32 @@ export default function WholesaleRegister() {
               <div className="border-t pt-4">
                 <h3 className="font-semibold mb-3">Phone Verification</h3>
                 <div className="space-y-3">
+                  <FormField
+                    control={form.control}
+                    name="smsConsent"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            data-testid="checkbox-wholesale-sms-consent"
+                          />
+                        </FormControl>
+                        <div className="space-y-1 leading-none">
+                          <FormLabel>
+                            I agree to receive text messages for verification purposes
+                          </FormLabel>
+                          <p className="text-xs text-muted-foreground">
+                            By checking this box, you consent to receive SMS verification codes from Puget Sound Kombucha Co. 
+                            Message frequency varies. Message & data rates may apply. Text STOP to unsubscribe, HELP for help. 
+                            Consent is not a condition of purchase.
+                          </p>
+                          <FormMessage />
+                        </div>
+                      </FormItem>
+                    )}
+                  />
                   {!codeSent && (
                     <Button
                       type="button"
@@ -384,7 +425,7 @@ export default function WholesaleRegister() {
                             <FormLabel>Verification Code</FormLabel>
                             <FormControl>
                               <Input
-                                placeholder="123456"
+                               
                                 maxLength={6}
                                 data-testid="input-verification-code"
                                 {...field}

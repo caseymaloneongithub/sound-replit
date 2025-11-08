@@ -214,7 +214,7 @@ export default function MySubscriptions() {
                               className="flex-1"
                               data-testid={`select-product-${subscription.id}`}
                             >
-                              <SelectValue placeholder="Select product" />
+                              <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
                               {products?.map((product) => (

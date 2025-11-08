@@ -266,7 +266,7 @@ export default function WholesaleOrders() {
                       onValueChange={setNewStatus}
                     >
                       <SelectTrigger data-testid="select-status">
-                        <SelectValue placeholder="Update status..." />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="pending">Pending</SelectItem>

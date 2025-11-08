@@ -189,7 +189,7 @@ export default function WholesalePlaceOrder() {
                 <CardContent>
                   <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
                     <SelectTrigger data-testid="select-customer">
-                      <SelectValue placeholder="Select a customer..." />
+                      <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       {customers.map((customer) => (
@@ -342,7 +342,7 @@ export default function WholesalePlaceOrder() {
                       </CardHeader>
                       <CardContent>
                         <Textarea
-                          placeholder="Delivery instructions, special requests, etc."
+                         
                           value={notes}
                           onChange={(e) => setNotes(e.target.value)}
                           rows={4}

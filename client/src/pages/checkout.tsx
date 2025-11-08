@@ -104,7 +104,7 @@ function CheckoutForm({ planId, plan }: { planId: string; plan?: SubscriptionPla
             <Input
               id="customerName"
               {...form.register("customerName")}
-              placeholder="John Doe"
+             
               data-testid="input-customer-name"
             />
             {form.formState.errors.customerName && (
@@ -117,7 +117,7 @@ function CheckoutForm({ planId, plan }: { planId: string; plan?: SubscriptionPla
               id="customerEmail"
               type="email"
               {...form.register("customerEmail")}
-              placeholder="john@example.com"
+             
               data-testid="input-customer-email"
             />
             {form.formState.errors.customerEmail && (
@@ -130,7 +130,7 @@ function CheckoutForm({ planId, plan }: { planId: string; plan?: SubscriptionPla
               id="customerPhone"
               type="tel"
               {...form.register("customerPhone")}
-              placeholder="(555) 123-4567"
+             
               data-testid="input-customer-phone"
             />
             {form.formState.errors.customerPhone && (

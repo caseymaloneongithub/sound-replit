@@ -141,7 +141,7 @@ function PricingDialog({ product, customers, onClose }: PricingDialogProps) {
               <Label htmlFor="customer">Customer</Label>
               <Select value={selectedCustomer} onValueChange={setSelectedCustomer}>
                 <SelectTrigger data-testid="select-pricing-customer">
-                  <SelectValue placeholder="Select customer..." />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {customers.map((customer) => (
@@ -158,7 +158,7 @@ function PricingDialog({ product, customers, onClose }: PricingDialogProps) {
                 id="price"
                 type="number"
                 step="0.01"
-                placeholder="0.00"
+               
                 value={customPrice}
                 onChange={(e) => setCustomPrice(e.target.value)}
                 data-testid="input-custom-price"
@@ -494,7 +494,7 @@ export default function AdminProducts() {
                       <FormItem>
                         <FormLabel>Product Name</FormLabel>
                         <FormControl>
-                          <Input placeholder="Island Hop" {...field} data-testid="input-product-name" />
+                          <Input {...field} data-testid="input-product-name" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -509,7 +509,7 @@ export default function AdminProducts() {
                         <FormLabel>Description</FormLabel>
                         <FormControl>
                           <Textarea 
-                            placeholder="Describe this kombucha flavor..."
+                           
                             rows={3}
                             {...field}
                             data-testid="input-product-description"
@@ -527,7 +527,7 @@ export default function AdminProducts() {
                       <FormItem>
                         <FormLabel>Flavor Profile</FormLabel>
                         <FormControl>
-                          <Input placeholder="hoppy tropical" {...field} data-testid="input-product-flavor" />
+                          <Input {...field} data-testid="input-product-flavor" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -542,7 +542,7 @@ export default function AdminProducts() {
                         <FormLabel>Ingredients (comma-separated)</FormLabel>
                         <FormControl>
                           <Textarea 
-                            placeholder="Organic green tea, Grapefruit, Cascade hops, Raw cane sugar, Live cultures"
+                           
                             rows={2}
                             {...field}
                             data-testid="input-product-ingredients"
@@ -562,7 +562,7 @@ export default function AdminProducts() {
                         <Select onValueChange={field.onChange} value={field.value}>
                           <FormControl>
                             <SelectTrigger data-testid="select-unit-type">
-                              <SelectValue placeholder="Select unit type" />
+                              <SelectValue />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
@@ -623,7 +623,7 @@ export default function AdminProducts() {
                         <FormItem>
                           <FormLabel>Retail Price (per case)</FormLabel>
                           <FormControl>
-                            <Input type="number" step="0.01" placeholder="40.00" {...field} data-testid="input-retail-price" />
+                            <Input type="number" step="0.01" {...field} data-testid="input-retail-price" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -637,7 +637,7 @@ export default function AdminProducts() {
                         <FormItem>
                           <FormLabel>Wholesale Price (per case - default)</FormLabel>
                           <FormControl>
-                            <Input type="number" step="0.01" placeholder="30.00" {...field} data-testid="input-wholesale-price" />
+                            <Input type="number" step="0.01" {...field} data-testid="input-wholesale-price" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -653,7 +653,7 @@ export default function AdminProducts() {
                         <FormItem>
                           <FormLabel>Stock Quantity</FormLabel>
                           <FormControl>
-                            <Input type="number" placeholder="150" {...field} onChange={e => field.onChange(parseInt(e.target.value))} data-testid="input-stock-quantity" />
+                            <Input type="number" {...field} onChange={e => field.onChange(parseInt(e.target.value))} data-testid="input-stock-quantity" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -667,7 +667,7 @@ export default function AdminProducts() {
                         <FormItem>
                           <FormLabel>Low Stock Threshold</FormLabel>
                           <FormControl>
-                            <Input type="number" placeholder="50" {...field} onChange={e => field.onChange(parseInt(e.target.value))} data-testid="input-low-stock-threshold" />
+                            <Input type="number" {...field} onChange={e => field.onChange(parseInt(e.target.value))} data-testid="input-low-stock-threshold" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>

@@ -35,7 +35,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/auth" component={AuthPage} />
-      <Route path="/wholesale-register" component={WholesaleRegister} />
+      <Route path="/wholesale/register" component={WholesaleRegister} />
       <WholesaleCustomerProtectedRoute path="/wholesale-customer" component={WholesaleCustomerDashboard} />
       <Route path="/" component={() => <Redirect to="/shop" />} />
       <Route path="/shop" component={Shop} />

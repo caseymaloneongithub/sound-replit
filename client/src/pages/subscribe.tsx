@@ -157,7 +157,7 @@ export default function Subscribe() {
                         <FormLabel>Full Name</FormLabel>
                         <FormControl>
                           <Input
-                            placeholder="John Doe"
+                           
                             {...field}
                             data-testid="input-customer-name"
                           />
@@ -176,7 +176,7 @@ export default function Subscribe() {
                         <FormControl>
                           <Input
                             type="email"
-                            placeholder="john@example.com"
+                           
                             {...field}
                             data-testid="input-customer-email"
                           />

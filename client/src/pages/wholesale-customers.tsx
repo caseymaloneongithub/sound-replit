@@ -161,7 +161,7 @@ export default function WholesaleCustomers() {
                         <FormItem>
                           <FormLabel>Business Name</FormLabel>
                           <FormControl>
-                            <Input placeholder="Acme Coffee Co." {...field} data-testid="input-business-name" />
+                            <Input {...field} data-testid="input-business-name" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -174,7 +174,7 @@ export default function WholesaleCustomers() {
                         <FormItem>
                           <FormLabel>Contact Name</FormLabel>
                           <FormControl>
-                            <Input placeholder="John Doe" {...field} data-testid="input-contact-name" />
+                            <Input {...field} data-testid="input-contact-name" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -187,7 +187,7 @@ export default function WholesaleCustomers() {
                         <FormItem>
                           <FormLabel>Email</FormLabel>
                           <FormControl>
-                            <Input type="email" placeholder="contact@acmecoffee.com" {...field} data-testid="input-email" />
+                            <Input type="email" {...field} data-testid="input-email" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -200,7 +200,7 @@ export default function WholesaleCustomers() {
                         <FormItem>
                           <FormLabel>Phone</FormLabel>
                           <FormControl>
-                            <Input placeholder="(555) 123-4567" {...field} data-testid="input-phone" />
+                            <Input {...field} data-testid="input-phone" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -214,7 +214,7 @@ export default function WholesaleCustomers() {
                           <FormLabel>Address</FormLabel>
                           <FormControl>
                             <Textarea 
-                              placeholder="123 Main St, Seattle, WA 98101" 
+                              
                               {...field} 
                               data-testid="input-address"
                             />
