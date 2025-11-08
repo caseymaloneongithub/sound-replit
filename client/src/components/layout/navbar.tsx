@@ -37,13 +37,6 @@ export function Navbar() {
               My Subscriptions
             </Button>
           )}
-          <Button 
-            variant={location.startsWith('/wholesale') ? 'default' : 'ghost'}
-            onClick={() => setLocation('/wholesale')}
-            data-testid="nav-wholesale"
-          >
-            Wholesale
-          </Button>
           {user && (user.isAdmin || user.role === 'staff') && (
             <Button 
               variant={location === '/staff-portal' ? 'default' : 'ghost'}
