@@ -20,7 +20,14 @@ export async function apiRequest(
   });
 
   await throwIfResNotOk(res);
-  return await res.json();
+  
+  const contentType = res.headers.get("content-type");
+  if (contentType && contentType.includes("application/json")) {
+    return await res.json();
+  }
+  
+  const text = await res.text();
+  return text || undefined;
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";

@@ -14,7 +14,7 @@ export default function SubscriptionSuccess() {
             Subscription Confirmed!
           </CardTitle>
           <CardDescription className="text-base mt-2">
-            Thank you for subscribing to our kombucha delivery service
+            Thank you for subscribing to our kombucha subscription service
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -24,7 +24,7 @@ export default function SubscriptionSuccess() {
             </p>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>• You'll receive a confirmation email shortly</li>
-              <li>• We'll send you pickup details before your first delivery</li>
+              <li>• We'll send you pickup details before your first pickup</li>
               <li>• You can manage your subscription anytime</li>
             </ul>
           </div>

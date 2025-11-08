@@ -32,7 +32,7 @@ export default function CheckoutSuccess() {
           <div className="bg-muted p-4 rounded-lg">
             <p className="text-sm text-muted-foreground" data-testid="text-success-message">
               You'll receive a confirmation email shortly with details about your subscription. 
-              Your first delivery will be ready for pickup within the next week.
+              Your first pickup will be ready within the next week.
             </p>
           </div>
           <div className="flex gap-3">

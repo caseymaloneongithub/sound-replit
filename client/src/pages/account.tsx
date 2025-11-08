@@ -125,7 +125,7 @@ export default function Account() {
             </CardContent>
           </Card>
 
-          <Card data-testid="card-next-delivery">
+          <Card data-testid="card-next-pickup">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Calendar className="w-5 h-5" />
@@ -135,7 +135,7 @@ export default function Account() {
             <CardContent>
               {activeSubscriptions.length > 0 && activeSubscriptions[0].nextDeliveryDate ? (
                 <>
-                  <div className="text-2xl font-bold" data-testid="text-next-delivery">
+                  <div className="text-2xl font-bold" data-testid="text-next-pickup">
                     {format(new Date(activeSubscriptions[0].nextDeliveryDate!), 'MMM d, yyyy')}
                   </div>
                   <p className="text-sm text-muted-foreground mt-1">

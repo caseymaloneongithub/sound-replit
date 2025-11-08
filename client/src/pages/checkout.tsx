@@ -264,7 +264,7 @@ export default function Checkout() {
                 Subscribe to {plan.name}
               </CardTitle>
               <CardDescription>
-                {plan.frequency.charAt(0).toUpperCase() + plan.frequency.slice(1)} delivery • {plan.bottleCount} bottles
+                {plan.frequency.charAt(0).toUpperCase() + plan.frequency.slice(1)} pickup • {plan.bottleCount} bottles
               </CardDescription>
             </CardHeader>
             <CardContent>

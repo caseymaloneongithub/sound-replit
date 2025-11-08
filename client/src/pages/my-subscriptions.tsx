@@ -5,11 +5,9 @@ import { Navbar } from "@/components/layout/navbar";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CalendarIcon, Package, Repeat } from "lucide-react";
-import { format, addDays, addWeeks } from "date-fns";
+import { Package, Repeat } from "lucide-react";
+import { format, addWeeks } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -19,7 +17,7 @@ type SubscriptionWithProduct = Subscription & {
 
 export default function MySubscriptions() {
   const { toast } = useToast();
-  const [selectedDate, setSelectedDate] = useState<Record<string, Date>>({});
+  const [selectedWeeksDelay, setSelectedWeeksDelay] = useState<Record<string, number>>({});
   const [selectedProduct, setSelectedProduct] = useState<Record<string, string>>({});
 
   const { data: subscriptions, isLoading: subscriptionsLoading } = useQuery<SubscriptionWithProduct[]>({
@@ -50,20 +48,33 @@ export default function MySubscriptions() {
     },
   });
 
-  const handleDelayDelivery = (subscriptionId: string) => {
-    const newDate = selectedDate[subscriptionId];
-    if (!newDate) {
+  const handleDelayPickup = (subscriptionId: string) => {
+    const weeksToDelay = selectedWeeksDelay[subscriptionId];
+    if (!weeksToDelay) {
       toast({
         title: "Error",
-        description: "Please select a new delivery date",
+        description: "Please select how many weeks to delay",
         variant: "destructive",
       });
       return;
     }
 
+    const subscription = subscriptions?.find(s => s.id === subscriptionId);
+    const currentDate = subscription?.nextDeliveryDate 
+      ? new Date(subscription.nextDeliveryDate)
+      : new Date();
+    
+    const newDate = addWeeks(currentDate, weeksToDelay);
+
     updateSubscriptionMutation.mutate({
       subscriptionId,
       updates: { nextDeliveryDate: newDate.toISOString() },
+    });
+    
+    setSelectedWeeksDelay(prev => {
+      const updated = { ...prev };
+      delete updated[subscriptionId];
+      return updated;
     });
   };
 
@@ -160,42 +171,35 @@ export default function MySubscriptions() {
                   <CardContent className="space-y-6">
                     {nextDelivery && (
                       <div>
-                        <div className="text-sm text-muted-foreground mb-1">Next Delivery</div>
+                        <div className="text-sm text-muted-foreground mb-1">Next Pickup</div>
                         <div className="font-semibold">{format(nextDelivery, 'MMMM d, yyyy')}</div>
                       </div>
                     )}
 
                     <div className="space-y-4">
                       <div>
-                        <div className="text-sm font-medium mb-3">Delay Next Delivery</div>
+                        <div className="text-sm font-medium mb-3">Delay Next Pickup</div>
                         <div className="flex gap-2">
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button 
-                                variant="outline" 
-                                className="flex-1 justify-start gap-2"
-                                data-testid={`button-select-date-${subscription.id}`}
-                              >
-                                <CalendarIcon className="w-4 h-4" />
-                                {selectedDate[subscription.id] 
-                                  ? format(selectedDate[subscription.id], 'MMM d, yyyy')
-                                  : 'Select new date'
-                                }
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <Calendar
-                                mode="single"
-                                selected={selectedDate[subscription.id]}
-                                onSelect={(date) => date && setSelectedDate(prev => ({ ...prev, [subscription.id]: date }))}
-                                disabled={(date) => date < addDays(new Date(), 1)}
-                                initialFocus
-                              />
-                            </PopoverContent>
-                          </Popover>
+                          <Select
+                            value={selectedWeeksDelay[subscription.id]?.toString() || ""}
+                            onValueChange={(value) => setSelectedWeeksDelay(prev => ({ ...prev, [subscription.id]: parseInt(value) }))}
+                          >
+                            <SelectTrigger 
+                              className="flex-1"
+                              data-testid={`select-delay-weeks-${subscription.id}`}
+                            >
+                              <SelectValue placeholder="Select weeks to delay" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="1" data-testid="option-delay-1">1 week</SelectItem>
+                              <SelectItem value="2" data-testid="option-delay-2">2 weeks</SelectItem>
+                              <SelectItem value="3" data-testid="option-delay-3">3 weeks</SelectItem>
+                              <SelectItem value="4" data-testid="option-delay-4">4 weeks</SelectItem>
+                            </SelectContent>
+                          </Select>
                           <Button 
-                            onClick={() => handleDelayDelivery(subscription.id)}
-                            disabled={!selectedDate[subscription.id] || updateSubscriptionMutation.isPending}
+                            onClick={() => handleDelayPickup(subscription.id)}
+                            disabled={!selectedWeeksDelay[subscription.id] || updateSubscriptionMutation.isPending}
                             data-testid={`button-delay-${subscription.id}`}
                           >
                             Update
