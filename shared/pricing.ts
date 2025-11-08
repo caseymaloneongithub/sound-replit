@@ -7,7 +7,7 @@ export const PRICING = {
 
 export const CASE_SIZE = PRICING.BOTTLES_PER_CASE;
 
-export type SubscriptionFrequency = 'weekly' | 'bi-weekly';
+export type SubscriptionFrequency = 'weekly' | 'bi-weekly' | 'every-4-weeks';
 
 export function getCasePrice(isSubscription: boolean): number {
   return isSubscription ? PRICING.CASE_SUBSCRIPTION : PRICING.CASE_ONE_TIME;

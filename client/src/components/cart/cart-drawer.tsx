@@ -174,7 +174,9 @@ export function CartDrawer() {
                       {item.isSubscription && (
                         <Badge variant="secondary" className="gap-1 text-xs">
                           <Repeat className="w-3 h-3" />
-                          {item.subscriptionFrequency === 'weekly' ? 'Weekly' : 'Bi-Weekly'}
+                          {item.subscriptionFrequency === 'weekly' ? 'Weekly' :
+                           item.subscriptionFrequency === 'bi-weekly' ? 'Bi-Weekly' :
+                           'Every 4 Weeks'}
                         </Badge>
                       )}
                     </div>

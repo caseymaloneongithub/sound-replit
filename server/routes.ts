@@ -582,18 +582,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           if (item.isSubscription) {
             // For subscriptions, create recurring price
+            const frequencyLabel = 
+              item.subscriptionFrequency === 'weekly' ? 'Weekly' :
+              item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
+              'Every 4 Weeks';
+            
+            const intervalCount = 
+              item.subscriptionFrequency === 'weekly' ? 1 :
+              item.subscriptionFrequency === 'bi-weekly' ? 2 :
+              4;
+            
             return {
               price_data: {
                 currency: 'usd',
                 product_data: {
                   name: `${product.name} - Case of 12 (${item.subscriptionFrequency})`,
-                  description: `${item.subscriptionFrequency === 'weekly' ? 'Weekly' : 'Bi-weekly'} subscription`,
+                  description: `${frequencyLabel} subscription`,
                   images: imageUrl.startsWith('http') ? [imageUrl] : [],
                 },
                 unit_amount: casePrice,
                 recurring: {
-                  interval: item.subscriptionFrequency === 'weekly' ? 'week' as const : 'week' as const,
-                  interval_count: item.subscriptionFrequency === 'weekly' ? 1 : 2,
+                  interval: 'week' as const,
+                  interval_count: intervalCount,
                 },
               },
               quantity: item.quantity,
@@ -882,7 +892,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Determine frequency for next delivery calculation
           const frequency = session.metadata?.subscriptionFrequency || 'weekly';
-          const daysUntilNext = frequency === 'weekly' ? 7 : 14;
+          const daysUntilNext = 
+            frequency === 'weekly' ? 7 :
+            frequency === 'bi-weekly' ? 14 :
+            28; // every-4-weeks
 
           // Create subscription with product info from metadata (cart-based) or planId (plan-based)
           const subscriptionData: any = {

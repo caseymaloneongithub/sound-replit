@@ -203,6 +203,7 @@ export default function Shop() {
               const oneTimeKey = `${product.id}-false-onetime`;
               const weeklyKey = `${product.id}-true-weekly`;
               const biweeklyKey = `${product.id}-true-bi-weekly`;
+              const every4weeksKey = `${product.id}-true-every-4-weeks`;
               
               return (
                 <Card key={product.id} className="overflow-hidden hover-elevate" data-testid={`card-product-${product.id}`}>
@@ -264,7 +265,7 @@ export default function Shop() {
                           </Badge>
                         </div>
                         
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-3 gap-2">
                           <Button 
                             variant="outline"
                             className="rounded-full gap-2" 
@@ -313,6 +314,30 @@ export default function Shop() {
                               </>
                             )}
                           </Button>
+                          <Button 
+                            variant="outline"
+                            className="rounded-full gap-2" 
+                            size="sm"
+                            disabled={!product.inStock || addToCartMutation.isPending}
+                            onClick={() => addToCartMutation.mutate({ 
+                              productId: product.id, 
+                              isSubscription: true,
+                              subscriptionFrequency: 'every-4-weeks'
+                            })}
+                            data-testid={`button-subscribe-every4weeks-${product.id}`}
+                          >
+                            {addedToCart.has(every4weeksKey) ? (
+                              <>
+                                <Check className="w-3 h-3" />
+                                Added!
+                              </>
+                            ) : (
+                              <>
+                                <Repeat className="w-3 h-3" />
+                                Every 4 Weeks
+                              </>
+                            )}
+                          </Button>
                         </div>
                       </TabsContent>
                     </Tabs>
@@ -354,7 +379,7 @@ export default function Shop() {
                 Subscribe & Save
               </h3>
               <p className="text-muted-foreground">
-                Get weekly or bi-weekly deliveries at 10% off
+                Get weekly, bi-weekly, or every 4 weeks deliveries at 10% off
               </p>
             </div>
             <div>

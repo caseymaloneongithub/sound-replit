@@ -61,7 +61,7 @@ export const products = pgTable("products", {
 export const subscriptionPlans = pgTable("subscription_plans", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  frequency: text("frequency").notNull(), // 'weekly' or 'monthly'
+  frequency: text("frequency").notNull(), // 'weekly', 'bi-weekly', or 'every-4-weeks'
   bottleCount: integer("bottle_count").notNull(),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   savings: text("savings"),
@@ -75,7 +75,7 @@ export const cartItems = pgTable("cart_items", {
   productId: varchar("product_id").notNull().references(() => products.id),
   quantity: integer("quantity").notNull().default(1),
   isSubscription: boolean("is_subscription").notNull().default(false),
-  subscriptionFrequency: text("subscription_frequency"), // 'weekly' or 'bi-weekly'
+  subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
 });
 
 export const subscriptions = pgTable("subscriptions", {
@@ -86,7 +86,7 @@ export const subscriptions = pgTable("subscriptions", {
   customerPhone: text("customer_phone").notNull(),
   planId: varchar("plan_id").references(() => subscriptionPlans.id),
   productId: varchar("product_id").references(() => products.id),
-  subscriptionFrequency: text("subscription_frequency"), // 'weekly' or 'bi-weekly'
+  subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
   stripeSubscriptionId: text("stripe_subscription_id"),
   stripeCustomerId: text("stripe_customer_id"),
   status: text("status").notNull().default('active'), // 'active', 'paused', 'cancelled'
