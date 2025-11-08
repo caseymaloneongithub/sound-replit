@@ -19,7 +19,6 @@ interface ProductFormData {
   name: string;
   description: string;
   flavor: string;
-  abv: string;
   retailPrice: number;
   wholesalePrice: number;
   lowStockThreshold: number;
@@ -36,7 +35,6 @@ export default function StaffPortal() {
     name: '',
     description: '',
     flavor: '',
-    abv: '',
     retailPrice: 0,
     wholesalePrice: 0,
     lowStockThreshold: 0,
@@ -132,7 +130,6 @@ export default function StaffPortal() {
       name: product.name,
       description: product.description,
       flavor: product.flavor,
-      abv: product.abv,
       retailPrice: Number(product.retailPrice),
       wholesalePrice: Number(product.wholesalePrice),
       lowStockThreshold: product.lowStockThreshold,
@@ -445,16 +442,7 @@ export default function StaffPortal() {
                                 />
                               </div>
                               <div>
-                                <Label htmlFor="abv">ABV</Label>
-                                <Input
-                                  id="abv"
-                                  value={productForm.abv}
-                                  onChange={(e) => setProductForm({ ...productForm, abv: e.target.value })}
-                                  data-testid="input-product-abv"
-                                />
-                              </div>
-                              <div>
-                                <Label htmlFor="retailPrice">Retail Price (per bottle)</Label>
+                                <Label htmlFor="retailPrice">Retail Price (per case)</Label>
                                 <Input
                                   id="retailPrice"
                                   type="number"
@@ -465,7 +453,7 @@ export default function StaffPortal() {
                                 />
                               </div>
                               <div>
-                                <Label htmlFor="wholesalePrice">Wholesale Price (per bottle)</Label>
+                                <Label htmlFor="wholesalePrice">Wholesale Price (per case)</Label>
                                 <Input
                                   id="wholesalePrice"
                                   type="number"
@@ -509,15 +497,11 @@ export default function StaffPortal() {
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
                           <span className="text-muted-foreground">Retail Price:</span>
-                          <span className="font-semibold">${Number(product.retailPrice).toFixed(2)} / bottle</span>
+                          <span className="font-semibold">${Number(product.retailPrice).toFixed(2)} / case</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-muted-foreground">Wholesale Price:</span>
-                          <span className="font-semibold">${Number(product.wholesalePrice).toFixed(2)} / bottle</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">ABV:</span>
-                          <span>{product.abv}</span>
+                          <span className="font-semibold">${Number(product.wholesalePrice).toFixed(2)} / case</span>
                         </div>
                       </div>
                     </CardContent>

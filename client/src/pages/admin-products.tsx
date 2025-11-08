@@ -25,7 +25,6 @@ const productFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().min(1, "Description is required"),
   flavor: z.string().min(1, "Flavor is required"),
-  abv: z.string().min(1, "ABV is required"),
   ingredients: z.string().min(1, "Ingredients are required"),
   retailPrice: z.string(),
   wholesalePrice: z.string(),
@@ -248,10 +247,9 @@ export default function AdminProducts() {
       name: "",
       description: "",
       flavor: "",
-      abv: "",
       ingredients: "",
-      retailPrice: "3.33",
-      wholesalePrice: "2.50",
+      retailPrice: "40.00",
+      wholesalePrice: "30.00",
       unitType: "case",
       inStock: true,
       stockQuantity: 0,
@@ -356,7 +354,6 @@ export default function AdminProducts() {
       name: product.name,
       description: product.description,
       flavor: product.flavor,
-      abv: product.abv,
       ingredients: product.ingredients.join(', '),
       retailPrice: product.retailPrice,
       wholesalePrice: product.wholesalePrice,
@@ -400,7 +397,7 @@ export default function AdminProducts() {
   const handlePhotoUploadComplete = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
     try {
       setIsUploadingPhotos(true);
-      const uploadedUrls = result.successful.map((file: any) => file.uploadURL);
+      const uploadedUrls = result.successful?.map((file: any) => file.uploadURL) || [];
       
       if (!uploadedUrls.length) {
         toast({
@@ -523,35 +520,19 @@ export default function AdminProducts() {
                     )}
                   />
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="flavor"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Flavor Profile</FormLabel>
-                          <FormControl>
-                            <Input placeholder="hoppy tropical" {...field} data-testid="input-product-flavor" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="abv"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>ABV</FormLabel>
-                          <FormControl>
-                            <Input placeholder="0.5% ABV" {...field} data-testid="input-product-abv" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
+                  <FormField
+                    control={form.control}
+                    name="flavor"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Flavor Profile</FormLabel>
+                        <FormControl>
+                          <Input placeholder="hoppy tropical" {...field} data-testid="input-product-flavor" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
                   <FormField
                     control={form.control}
@@ -640,9 +621,9 @@ export default function AdminProducts() {
                       name="retailPrice"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Retail Price</FormLabel>
+                          <FormLabel>Retail Price (per case)</FormLabel>
                           <FormControl>
-                            <Input type="number" step="0.01" placeholder="3.33" {...field} data-testid="input-retail-price" />
+                            <Input type="number" step="0.01" placeholder="40.00" {...field} data-testid="input-retail-price" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -654,9 +635,9 @@ export default function AdminProducts() {
                       name="wholesalePrice"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Wholesale Price (Default)</FormLabel>
+                          <FormLabel>Wholesale Price (per case - default)</FormLabel>
                           <FormControl>
-                            <Input type="number" step="0.01" placeholder="2.50" {...field} data-testid="input-wholesale-price" />
+                            <Input type="number" step="0.01" placeholder="30.00" {...field} data-testid="input-wholesale-price" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -733,8 +714,8 @@ export default function AdminProducts() {
                   <TableRow>
                     <TableHead>Product</TableHead>
                     <TableHead>Flavor</TableHead>
-                    <TableHead>Retail Price</TableHead>
-                    <TableHead>Wholesale Price</TableHead>
+                    <TableHead>Retail Price/Case</TableHead>
+                    <TableHead>Wholesale Price/Case</TableHead>
                     <TableHead>Stock</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -752,7 +733,7 @@ export default function AdminProducts() {
                           />
                           <div>
                             <p className="font-medium">{product.name}</p>
-                            <p className="text-sm text-muted-foreground">{product.abv}</p>
+                            <p className="text-sm text-muted-foreground capitalize">{product.unitType === 'case' ? 'Case (12 bottles)' : product.unitType}</p>
                           </div>
                         </div>
                       </TableCell>

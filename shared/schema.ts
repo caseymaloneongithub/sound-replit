@@ -45,7 +45,6 @@ export const products = pgTable("products", {
   name: text("name").notNull(),
   description: text("description").notNull(),
   flavor: text("flavor").notNull(),
-  abv: text("abv").notNull(),
   ingredients: text("ingredients").array().notNull(),
   retailPrice: decimal("retail_price", { precision: 10, scale: 2 }).notNull(),
   wholesalePrice: decimal("wholesale_price", { precision: 10, scale: 2 }).notNull(),
