@@ -20,7 +20,7 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 
 ### Case-Based Ordering
 
-All orders are for cases of 12 bottles. Pricing is stored per-case for retail and per-bottle for wholesale, with frontend display logic to show quantities in cases and bottles. Wholesale pricing supports custom overrides per customer.
+All orders are for cases of 12 bottles. Pricing is stored per-case for both retail and wholesale, with frontend display logic to show quantities in cases and bottles. Wholesale pricing supports custom overrides per customer.
 
 ### Authentication & Authorization
 
