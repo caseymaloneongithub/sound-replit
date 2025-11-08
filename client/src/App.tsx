@@ -16,7 +16,6 @@ import Checkout from "@/pages/checkout";
 import CartCheckout from "@/pages/cart-checkout";
 import CheckoutSuccess from "@/pages/checkout-success";
 import SubscriptionSuccess from "@/pages/subscription-success";
-import Wholesale from "@/pages/wholesale";
 import WholesalePlaceOrder from "@/pages/wholesale-place-order";
 import WholesaleOrders from "@/pages/wholesale-orders";
 import WholesaleDeliveryReport from "@/pages/wholesale-delivery-report";
@@ -45,7 +44,7 @@ function Router() {
       <Route path="/cart-checkout" component={CartCheckout} />
       <Route path="/checkout/success" component={CheckoutSuccess} />
       <Route path="/subscription-success" component={SubscriptionSuccess} />
-      <StaffProtectedRoute path="/wholesale" component={Wholesale} />
+      <Route path="/wholesale" component={() => <Redirect to="/staff-portal" />} />
       <StaffProtectedRoute path="/wholesale/place-order" component={WholesalePlaceOrder} />
       <StaffProtectedRoute path="/wholesale/orders" component={WholesaleOrders} />
       <StaffProtectedRoute path="/wholesale/invoice/:id/payment-success" component={WholesalePaymentSuccess} />

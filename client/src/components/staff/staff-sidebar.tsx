@@ -10,8 +10,7 @@ import {
   TruckIcon,
   ClipboardList,
   Settings,
-  BarChart3,
-  Home
+  BarChart3
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -44,7 +43,6 @@ export function StaffSidebar() {
     {
       title: "Wholesale",
       items: [
-        { title: "Dashboard", href: "/wholesale", icon: Home },
         { title: "Place Order", href: "/wholesale/place-order", icon: ShoppingCart },
         { title: "Orders", href: "/wholesale/orders", icon: FileText },
         { title: "Customers", href: "/wholesale/customers", icon: Users },

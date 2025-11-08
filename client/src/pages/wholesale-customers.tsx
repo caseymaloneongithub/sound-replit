@@ -22,7 +22,7 @@ function WholesaleSidebar() {
   const [location, setLocation] = useLocation();
   
   const menuItems = [
-    { title: "Dashboard", icon: LayoutDashboard, path: "/wholesale" },
+    { title: "Dashboard", icon: LayoutDashboard, path: "/staff-portal" },
     { title: "Place Order", icon: ShoppingCart, path: "/wholesale/place-order" },
     { title: "Orders", icon: ShoppingCart, path: "/wholesale/orders" },
     { title: "Delivery Report", icon: FileText, path: "/wholesale/delivery-report" },

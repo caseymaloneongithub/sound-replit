@@ -43,11 +43,28 @@ Stripe is integrated for one-time purchases and recurring subscriptions. One-tim
 
 ### Subscription Management
 
-Provides retail customers comprehensive tools to view and manage active subscriptions, including delaying/skipping deliveries via an interactive calendar and changing subscribed products. All updates persist to the database with robust security validations ensuring users only modify their own subscriptions.
+Provides retail customers comprehensive tools to view and manage active subscriptions, including delaying pickups by 1-4 weeks (dropdown selection instead of calendar) and changing subscribed products. All updates persist to the database with robust security validations ensuring users only modify their own subscriptions. All retail-facing pages use "pickup" terminology instead of "delivery" (wholesale operations retain "delivery" terminology).
 
-### Wholesale Portal
+### Staff Portal
 
-Offers comprehensive B2B order and customer management for admin users. Features include creating and managing wholesale customer accounts (with client-specific pricing overrides and toggleable online payment), placing and managing wholesale orders, setting delivery dates, generating daily delivery reports, and professional invoice generation. Online payment for invoices via Stripe is available for enabled customers.
+A unified management portal at `/staff-portal` for staff and admin users, consolidating inventory, order, and wholesale management functions. The portal includes:
+
+**Core Features** (all staff):
+- **Orders Tab**: View and manage wholesale orders with status updates
+- **Inventory Tab**: Real-time stock management with low-stock alerts
+
+**Admin Features**:
+- **Product Specs Tab**: Edit product details, pricing, and thresholds
+- **User Management Tab** (super_admin only): Manage user roles
+
+**Wholesale Management** (dedicated pages accessible via sidebar):
+- Create and manage wholesale customer accounts with client-specific pricing overrides
+- Place orders on behalf of wholesale customers
+- Manage wholesale orders with delivery scheduling
+- Generate daily delivery reports for logistics
+- Professional invoice generation with optional online payment (Stripe)
+
+The Staff Portal uses a sidebar navigation system that organizes features into sections: Overview, Wholesale, Inventory & Reports, and Administration. Wholesale customers have a separate self-service dashboard at `/wholesale-customer` for viewing orders and placing new orders independently.
 
 ### Development & Build Process
 
