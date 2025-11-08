@@ -28,9 +28,18 @@ Supports username/password login and passwordless SMS code login (via Twilio), b
 
 ### Payment Processing
 
-Stripe is integrated for one-time purchases and recurring subscriptions using Stripe Checkout Sessions. It handles webhooks for payment confirmations and subscription lifecycle events. A "subscribe and save" model with flexible delivery frequencies is supported, with server-side validation preventing mixed carts.
+Stripe is integrated for one-time purchases and recurring subscriptions. One-time cart purchases use **embedded checkout** with Stripe Payment Elements (on-site payment form), while subscription purchases use Stripe Checkout Sessions (redirect to Stripe). The system handles webhooks for payment confirmations and subscription lifecycle events. A "subscribe and save" model with flexible delivery frequencies is supported, with server-side validation preventing mixed carts.
 
-Sales tax (10.35%: 6.5% WA State + 3.85% Seattle) is automatically calculated and applied to retail one-time purchases only (subscription items are tax-exempt). Tax is added as a separate line item in Stripe checkout sessions with metadata stored for record-keeping. Both frontend cart display and backend checkout use actual product prices from the database (`product.retailPrice`) to ensure pricing consistency.
+**Embedded Cart Checkout Flow**:
+- Users navigate from cart drawer to `/cart-checkout` page
+- Frontend calls `/api/create-cart-payment-intent` to create Payment Intent
+- Two-step process: customer information → payment details
+- Stripe PaymentElement renders card input fields in iframe
+- Payment confirmed client-side via `stripe.confirmPayment()`
+- Webhook clears cart on `payment_intent.succeeded` event
+- Users stay on-site throughout entire checkout process
+
+**Sales Tax**: 10.35% (6.5% WA State + 3.85% Seattle) is automatically calculated and applied to retail one-time purchases only (subscription items are tax-exempt). Tax is included in the Payment Intent amount for embedded checkout and added as a separate line item for Stripe Checkout Sessions. Both frontend cart display and backend checkout use actual product prices from the database (`product.retailPrice`) to ensure pricing consistency.
 
 ### Subscription Management
 
