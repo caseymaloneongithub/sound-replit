@@ -40,15 +40,6 @@ export function Navbar() {
               Staff Portal
             </Button>
           )}
-          {user && user.isAdmin && (
-            <Button 
-              variant={location === '/admin/products' ? 'default' : 'ghost'}
-              onClick={() => setLocation('/admin/products')}
-              data-testid="nav-products"
-            >
-              Products
-            </Button>
-          )}
         </nav>
 
         <div className="flex items-center gap-2">

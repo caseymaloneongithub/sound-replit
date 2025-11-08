@@ -23,6 +23,9 @@ import WholesaleCustomers from "@/pages/wholesale-customers";
 import WholesaleProducts from "@/pages/wholesale-products";
 import WholesaleInvoice from "@/pages/wholesale-invoice";
 import WholesalePaymentSuccess from "@/pages/wholesale-payment-success";
+import RetailOrders from "@/pages/retail-orders";
+import RetailCustomers from "@/pages/retail-customers";
+import RetailPickupReport from "@/pages/retail-pickup-report";
 import Inventory from "@/pages/inventory";
 import Reports from "@/pages/reports";
 import Account from "@/pages/account";
@@ -52,6 +55,9 @@ function Router() {
       <StaffProtectedRoute path="/wholesale/delivery-report" component={WholesaleDeliveryReport} />
       <StaffProtectedRoute path="/wholesale/customers" component={WholesaleCustomers} />
       <StaffProtectedRoute path="/wholesale/products" component={WholesaleProducts} />
+      <StaffProtectedRoute path="/retail/orders" component={RetailOrders} />
+      <StaffProtectedRoute path="/retail/customers" component={RetailCustomers} />
+      <StaffProtectedRoute path="/retail/pickup-report" component={RetailPickupReport} />
       <StaffProtectedRoute path="/admin/products" component={AdminProducts} />
       <StaffProtectedRoute path="/inventory" component={Inventory} />
       <StaffProtectedRoute path="/reports" component={Reports} />

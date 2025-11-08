@@ -10,7 +10,9 @@ import {
   TruckIcon,
   ClipboardList,
   Settings,
-  BarChart3
+  BarChart3,
+  DollarSign,
+  UserCog
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -35,12 +37,6 @@ export function StaffSidebar() {
 
   const navSections: NavSection[] = [
     {
-      title: "Overview",
-      items: [
-        { title: "Staff Portal", href: "/staff-portal", icon: LayoutDashboard },
-      ],
-    },
-    {
       title: "Wholesale",
       items: [
         { title: "Place Order", href: "/wholesale/place-order", icon: ShoppingCart },
@@ -51,16 +47,25 @@ export function StaffSidebar() {
       ],
     },
     {
-      title: "Inventory & Reports",
+      title: "Retail",
+      items: [
+        { title: "Orders", href: "/retail/orders", icon: ShoppingCart },
+        { title: "Customers", href: "/retail/customers", icon: Users },
+        { title: "Products", href: "/admin/products", icon: Package, adminOnly: true },
+        { title: "Pickup Report", href: "/retail/pickup-report", icon: FileText },
+      ],
+    },
+    {
+      title: "Reports",
       items: [
         { title: "Inventory", href: "/inventory", icon: ClipboardList },
-        { title: "Reports", href: "/reports", icon: BarChart3 },
+        { title: "Revenue", href: "/reports", icon: DollarSign },
       ],
     },
     {
       title: "Administration",
       items: [
-        { title: "Product Management", href: "/admin/products", icon: Settings, adminOnly: true },
+        { title: "User Management", href: "/staff-portal?tab=users", icon: UserCog, adminOnly: true },
       ],
     },
   ];
