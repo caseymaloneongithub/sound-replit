@@ -13,6 +13,7 @@ import Shop from "@/pages/shop";
 import MySubscriptions from "@/pages/my-subscriptions";
 import Subscribe from "@/pages/subscribe";
 import Checkout from "@/pages/checkout";
+import CartCheckout from "@/pages/cart-checkout";
 import CheckoutSuccess from "@/pages/checkout-success";
 import SubscriptionSuccess from "@/pages/subscription-success";
 import Wholesale from "@/pages/wholesale";
@@ -41,6 +42,7 @@ function Router() {
       <Route path="/my-subscriptions" component={MySubscriptions} />
       <Route path="/subscribe/:id" component={Subscribe} />
       <Route path="/checkout" component={Checkout} />
+      <Route path="/cart-checkout" component={CartCheckout} />
       <Route path="/checkout/success" component={CheckoutSuccess} />
       <Route path="/subscription-success" component={SubscriptionSuccess} />
       <StaffProtectedRoute path="/wholesale" component={Wholesale} />

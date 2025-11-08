@@ -224,6 +224,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Wholesale customer endpoints - for customers to view their own orders
   app.get("/api/wholesale-customer/orders", isAuthenticated, isWholesaleCustomer, async (req, res) => {
     try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+      
       // Get wholesale customer record for authenticated user
       const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
       if (!customer) {
@@ -240,6 +244,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/wholesale-customer/orders/:id", isAuthenticated, isWholesaleCustomer, async (req, res) => {
     try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+      
       // Get wholesale customer record for authenticated user
       const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
       if (!customer) {
@@ -653,7 +661,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             currency: 'usd',
             product_data: {
               name: 'Sales Tax (WA State 6.5% + Seattle 3.85%)',
-              description: 'Washington State and Seattle sales tax',
+              images: [],
             },
             unit_amount: taxAmount,
           },
@@ -678,6 +686,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Cart checkout error:", error);
       res.status(500).json({ message: "Error creating checkout: " + error.message });
+    }
+  });
+
+  // Create Stripe Payment Intent for embedded cart checkout
+  app.post("/api/create-cart-payment-intent", async (req: any, res) => {
+    try {
+      if (!stripe) {
+        return res.status(503).json({ message: "Payment processing is not configured" });
+      }
+
+      const sessionId = req.sessionID || "guest";
+      const items = await storage.getCartItems(sessionId);
+      
+      if (items.length === 0) {
+        return res.status(400).json({ message: "Cart is empty" });
+      }
+
+      // Check if cart has both subscription and one-time items
+      const hasSubscription = items.some(item => item.isSubscription);
+      const hasOneTime = items.some(item => !item.isSubscription);
+
+      if (hasSubscription && hasOneTime) {
+        return res.status(400).json({ 
+          message: "Please checkout one-time purchases and subscriptions separately. Remove either the one-time or subscription items from your cart to continue."
+        });
+      }
+
+      // Payment Intents only work for one-time payments, not subscriptions
+      if (hasSubscription) {
+        return res.status(400).json({
+          message: "Subscriptions require a different checkout flow. Please use the subscription checkout page."
+        });
+      }
+
+      // Calculate total amount in cents using actual product prices
+      let subtotalCents = 0;
+      for (const item of items) {
+        const product = await storage.getProduct(item.productId);
+        if (!product) throw new Error(`Product ${item.productId} not found`);
+        const priceInCents = Math.round(parseFloat(product.retailPrice) * 100);
+        subtotalCents += priceInCents * item.quantity;
+      }
+
+      // Calculate sales tax (WA State 6.5% + Seattle City 3.85% = 10.35%)
+      const TAX_RATE = 0.1035;
+      const taxAmountCents = Math.round(subtotalCents * TAX_RATE);
+      const totalAmountCents = subtotalCents + taxAmountCents;
+
+      // Create payment intent
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: totalAmountCents,
+        currency: 'usd',
+        automatic_payment_methods: {
+          enabled: true,
+        },
+        metadata: {
+          sessionId,
+          type: 'cart_purchase',
+          userId: req.user?.id || 'guest',
+          subtotal: (subtotalCents / 100).toFixed(2),
+          taxRate: TAX_RATE.toString(),
+          taxAmount: (taxAmountCents / 100).toFixed(2),
+        },
+      });
+
+      res.json({ 
+        clientSecret: paymentIntent.client_secret,
+        subtotal: subtotalCents / 100,
+        taxAmount: taxAmountCents / 100,
+        total: totalAmountCents / 100,
+      });
+    } catch (error: any) {
+      console.error("Cart payment intent error:", error);
+      res.status(500).json({ message: "Error creating payment intent: " + error.message });
     }
   });
 
@@ -858,6 +940,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           await storage.updateSubscriptionByStripeId(subscription.id, { status });
           console.log(`Updated subscription ${subscription.id} to status ${status}`);
+          break;
+        }
+        case 'payment_intent.succeeded': {
+          const paymentIntent = event.data.object as Stripe.PaymentIntent;
+          
+          // Handle cart purchase payments
+          if (paymentIntent.metadata?.type === 'cart_purchase') {
+            const sessionId = paymentIntent.metadata.sessionId;
+            if (sessionId) {
+              await storage.clearCart(sessionId);
+              console.log(`Cleared cart for session ${sessionId} after successful payment`);
+            }
+          }
           break;
         }
       }

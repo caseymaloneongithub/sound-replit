@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import {
   Sheet,
   SheetContent,
@@ -30,8 +31,8 @@ interface CartItemWithProduct {
 
 export function CartDrawer() {
   const [open, setOpen] = useState(false);
-  const [isProcessingCheckout, setIsProcessingCheckout] = useState(false);
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
 
   const { data: cartItems = [], isLoading } = useQuery<CartItemWithProduct[]>({
     queryKey: ["/api/cart"],
@@ -59,35 +60,22 @@ export function CartDrawer() {
     },
   });
 
-  const checkoutMutation = useMutation({
-    mutationFn: async () => {
-      return await apiRequest("POST", "/api/create-cart-checkout");
-    },
-    onSuccess: (data: any) => {
-      if (data && data.url) {
-        window.location.href = data.url;
-      } else {
-        setIsProcessingCheckout(false);
-        toast({
-          title: "Checkout Error",
-          description: "No checkout URL received",
-          variant: "destructive",
-        });
-      }
-    },
-    onError: (error: any) => {
-      setIsProcessingCheckout(false);
-      toast({
-        title: "Checkout Error",
-        description: error.message || "Failed to create checkout session",
-        variant: "destructive",
-      });
-    },
-  });
-
   const handleCheckout = () => {
-    setIsProcessingCheckout(true);
-    checkoutMutation.mutate();
+    // Check if cart has subscriptions - those need the old flow
+    const hasSubscription = cartItems.some(item => item.isSubscription);
+    
+    if (hasSubscription) {
+      // Keep old redirect flow for subscriptions since Payment Intents don't support them
+      toast({
+        title: "Subscription checkout",
+        description: "Subscriptions require a different checkout process",
+      });
+      return;
+    }
+    
+    // Navigate to embedded checkout page for one-time purchases
+    setOpen(false);
+    setLocation('/cart-checkout');
   };
 
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
@@ -279,17 +267,9 @@ export function CartDrawer() {
               className="w-full rounded-full"
               size="lg"
               onClick={handleCheckout}
-              disabled={isProcessingCheckout}
               data-testid="button-checkout"
             >
-              {isProcessingCheckout ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                "Proceed to Checkout"
-              )}
+              Proceed to Checkout
             </Button>
           </div>
         )}

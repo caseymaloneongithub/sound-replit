@@ -3,14 +3,13 @@ import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useStripe, Elements, PaymentElement, useElements } from '@stripe/react-stripe-js';
 import { loadStripe, Stripe } from '@stripe/stripe-js';
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { SubscriptionPlan } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, CheckCircle2, AlertCircle } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -28,14 +27,35 @@ const customerSchema = z.object({
 
 type CustomerForm = z.infer<typeof customerSchema>;
 
-function CheckoutForm({ planId, plan }: { planId: string; plan?: SubscriptionPlan }) {
+interface CartItemWithProduct {
+  id: string;
+  productId: string;
+  quantity: number;
+  isSubscription: boolean;
+  subscriptionFrequency?: string | null;
+  product: {
+    id: string;
+    name: string;
+    retailPrice: string;
+    imageUrl: string;
+  };
+}
+
+interface PaymentIntentResponse {
+  clientSecret: string;
+  subtotal: number;
+  taxAmount: number;
+  total: number;
+}
+
+function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
   const stripe = useStripe();
   const elements = useElements();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [isProcessing, setIsProcessing] = useState(false);
   const [customerInfo, setCustomerInfo] = useState<CustomerForm | null>(null);
-  const [step, setStep] = useState<'info' | 'payment'>(customerInfo ? 'payment' : 'info');
+  const [step, setStep] = useState<'info' | 'payment'>('info');
 
   const form = useForm<CustomerForm>({
     resolver: zodResolver(customerSchema),
@@ -64,7 +84,7 @@ function CheckoutForm({ planId, plan }: { planId: string; plan?: SubscriptionPla
       const { error } = await stripe.confirmPayment({
         elements,
         confirmParams: {
-          return_url: `${window.location.origin}/subscription-success`,
+          return_url: `${window.location.origin}/checkout/success`,
           receipt_email: customerInfo.customerEmail,
         },
         redirect: 'if_required',
@@ -77,12 +97,10 @@ function CheckoutForm({ planId, plan }: { planId: string; plan?: SubscriptionPla
           variant: "destructive",
         });
       } else {
-        await apiRequest("POST", "/api/subscriptions", {
-          ...customerInfo,
-          planId,
-        });
+        // Clear cart query cache
+        queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
         
-        setLocation('/subscription-success');
+        setLocation('/checkout/success');
       }
     } catch (err: any) {
       toast({
@@ -138,7 +156,7 @@ function CheckoutForm({ planId, plan }: { planId: string; plan?: SubscriptionPla
             )}
           </div>
         </div>
-        <Button type="submit" className="w-full rounded-full" data-testid="button-continue-to-payment">
+        <Button type="submit" className="w-full" data-testid="button-continue-to-payment">
           Continue to Payment
         </Button>
       </form>
@@ -167,30 +185,35 @@ function CheckoutForm({ planId, plan }: { planId: string; plan?: SubscriptionPla
       </div>
       <Button 
         type="submit" 
-        className="w-full rounded-full" 
+        className="w-full" 
         disabled={!stripe || isProcessing}
-        data-testid="button-complete-subscription"
+        data-testid="button-complete-purchase"
       >
-        {isProcessing ? 'Processing...' : `Subscribe for $${plan?.price}/${plan?.frequency === 'weekly' ? 'week' : 'month'}`}
+        {isProcessing ? 'Processing...' : `Pay $${paymentInfo.total.toFixed(2)}`}
       </Button>
     </form>
   );
 }
 
-export default function Checkout() {
+export default function CartCheckout() {
   const [clientSecret, setClientSecret] = useState("");
-  const searchParams = new URLSearchParams(window.location.search);
-  const planId = searchParams.get('planId');
+  const [paymentInfo, setPaymentInfo] = useState<PaymentIntentResponse | null>(null);
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
 
-  const { data: plan } = useQuery<SubscriptionPlan>({
-    queryKey: [`/api/subscription-plans/${planId}`],
-    enabled: !!planId,
+  const { data: cartItems = [], isLoading } = useQuery<CartItemWithProduct[]>({
+    queryKey: ["/api/cart"],
   });
 
   useEffect(() => {
-    if (!planId) {
-      setLocation('/subscriptions');
+    if (isLoading) return;
+
+    if (cartItems.length === 0) {
+      toast({
+        title: "Cart is empty",
+        description: "Add items to your cart before checking out",
+      });
+      setLocation('/shop');
       return;
     }
 
@@ -198,18 +221,36 @@ export default function Checkout() {
       return;
     }
 
-    apiRequest("POST", "/api/create-subscription-intent", { planId })
-      .then((res) => res.json())
+    apiRequest("POST", "/api/create-cart-payment-intent", {})
       .then((data) => {
-        if (data.message) {
-          throw new Error(data.message);
+        if (!data.clientSecret) {
+          throw new Error(data.message || "No client secret received");
         }
         setClientSecret(data.clientSecret);
+        setPaymentInfo({
+          clientSecret: data.clientSecret,
+          subtotal: data.subtotal,
+          taxAmount: data.taxAmount,
+          total: data.total,
+        });
       })
-      .catch(() => {
-        setLocation('/subscriptions');
+      .catch((error) => {
+        toast({
+          title: "Error",
+          description: error.message || "Failed to initialize checkout",
+          variant: "destructive",
+        });
+        setLocation('/shop');
       });
-  }, [planId, setLocation]);
+  }, [cartItems.length, isLoading, setLocation, toast]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!STRIPE_PUBLIC_KEY) {
     return (
@@ -217,17 +258,14 @@ export default function Checkout() {
         <div className="max-w-2xl mx-auto">
           <Card className="border-destructive">
             <CardHeader>
-              <div className="flex items-center gap-3 mb-2">
-                <AlertCircle className="w-6 h-6 text-destructive" />
-                <CardTitle className="text-destructive">Payment System Not Configured</CardTitle>
-              </div>
+              <CardTitle className="text-destructive">Payment System Not Configured</CardTitle>
               <CardDescription>
-                Payment processing is currently unavailable. Please contact support for assistance with subscriptions.
+                Payment processing is currently unavailable. Please contact support.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Button onClick={() => setLocation('/subscriptions')} variant="outline" className="w-full">
-                Back to Plans
+              <Button onClick={() => setLocation('/shop')} variant="outline" className="w-full">
+                Back to Shop
               </Button>
             </CardContent>
           </Card>
@@ -236,48 +274,92 @@ export default function Checkout() {
     );
   }
 
-  if (!clientSecret || !plan) {
+  if (!clientSecret || !paymentInfo) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" aria-label="Loading"/>
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
   }
 
+  // Calculate item summary
+  const subtotal = cartItems.reduce((sum, item) => {
+    const pricePerCase = parseFloat(item.product.retailPrice);
+    return sum + (pricePerCase * item.quantity);
+  }, 0);
+
   return (
     <div className="min-h-screen bg-background py-12 px-6">
-      <div className="max-w-2xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <Button
           variant="ghost"
           className="mb-6 gap-2"
-          onClick={() => setLocation('/subscriptions')}
-          data-testid="button-back-to-plans"
+          onClick={() => setLocation('/shop')}
+          data-testid="button-back-to-shop"
         >
           <ArrowLeft className="w-4 h-4" />
-          Back to Plans
+          Back to Shop
         </Button>
 
-        <div className="grid gap-8">
+        <div className="grid lg:grid-cols-2 gap-8">
+          {/* Order Summary */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-2xl" style={{ fontFamily: 'var(--font-heading)' }}>
-                Subscribe to {plan.name}
-              </CardTitle>
+              <CardTitle className="text-2xl">Order Summary</CardTitle>
               <CardDescription>
-                {plan.frequency.charAt(0).toUpperCase() + plan.frequency.slice(1)} delivery • {plan.bottleCount} bottles
+                {cartItems.length} {cartItems.length === 1 ? 'item' : 'items'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {cartItems.map((item) => (
+                <div key={item.id} className="flex gap-4" data-testid={`summary-item-${item.id}`}>
+                  <img
+                    src={item.product.imageUrl}
+                    alt={item.product.name}
+                    className="w-16 h-16 object-cover rounded"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-medium truncate">{item.product.name}</h4>
+                    <p className="text-sm text-muted-foreground">
+                      {item.quantity} {item.quantity === 1 ? 'case' : 'cases'} × ${parseFloat(item.product.retailPrice).toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold">
+                      ${(parseFloat(item.product.retailPrice) * item.quantity).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+
+              <div className="border-t pt-4 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Subtotal</span>
+                  <span data-testid="text-summary-subtotal">${subtotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Sales Tax (10.35%)</span>
+                  <span data-testid="text-summary-tax">${paymentInfo.taxAmount.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-lg font-bold pt-2 border-t">
+                  <span>Total</span>
+                  <span data-testid="text-summary-total">${paymentInfo.total.toFixed(2)}</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Payment Form */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-2xl">Payment</CardTitle>
+              <CardDescription>
+                Enter your information and payment details
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex justify-between items-baseline mb-6 p-4 bg-muted rounded-lg">
-                <span className="font-medium">Total</span>
-                <div className="text-right">
-                  <div className="text-3xl font-bold">${plan.price}</div>
-                  <div className="text-sm text-muted-foreground">per {plan.frequency === 'weekly' ? 'week' : 'month'}</div>
-                </div>
-              </div>
-
               <Elements stripe={stripePromise} options={{ clientSecret }}>
-                <CheckoutForm planId={planId!} plan={plan} />
+                <CheckoutForm paymentInfo={paymentInfo} />
               </Elements>
             </CardContent>
           </Card>
