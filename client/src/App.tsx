@@ -47,14 +47,25 @@ function Router() {
       <Route path="/cart-checkout" component={CartCheckout} />
       <Route path="/checkout/success" component={CheckoutSuccess} />
       <Route path="/subscription-success" component={SubscriptionSuccess} />
-      <Route path="/wholesale" component={() => <Redirect to="/staff-portal" />} />
-      <StaffProtectedRoute path="/wholesale/place-order" component={WholesalePlaceOrder} />
-      <StaffProtectedRoute path="/wholesale/orders" component={WholesaleOrders} />
+      
+      {/* Legacy wholesale redirects */}
+      <Route path="/wholesale" component={() => <Redirect to="/staff-portal/wholesale/orders" />} />
+      <Route path="/wholesale/place-order" component={() => <Redirect to="/staff-portal/wholesale/place-order" />} />
+      <Route path="/wholesale/orders" component={() => <Redirect to="/staff-portal/wholesale/orders" />} />
+      <Route path="/wholesale/delivery-report" component={() => <Redirect to="/staff-portal/wholesale/delivery-report" />} />
+      <Route path="/wholesale/customers" component={() => <Redirect to="/staff-portal/wholesale/customers" />} />
+      <Route path="/wholesale/products" component={() => <Redirect to="/staff-portal/wholesale/products" />} />
+      
+      {/* Consolidated Staff Portal - Wholesale Section */}
+      <StaffProtectedRoute path="/staff-portal/wholesale/place-order" component={WholesalePlaceOrder} />
+      <StaffProtectedRoute path="/staff-portal/wholesale/orders" component={WholesaleOrders} />
+      <StaffProtectedRoute path="/staff-portal/wholesale/delivery-report" component={WholesaleDeliveryReport} />
+      <StaffProtectedRoute path="/staff-portal/wholesale/customers" component={WholesaleCustomers} />
+      <StaffProtectedRoute path="/staff-portal/wholesale/products" component={WholesaleProducts} />
+      
+      {/* Invoice pages remain accessible outside main navigation */}
       <StaffProtectedRoute path="/wholesale/invoice/:id/payment-success" component={WholesalePaymentSuccess} />
       <StaffProtectedRoute path="/wholesale/invoice/:id" component={WholesaleInvoice} />
-      <StaffProtectedRoute path="/wholesale/delivery-report" component={WholesaleDeliveryReport} />
-      <StaffProtectedRoute path="/wholesale/customers" component={WholesaleCustomers} />
-      <StaffProtectedRoute path="/wholesale/products" component={WholesaleProducts} />
       <StaffProtectedRoute path="/retail/orders" component={RetailOrders} />
       <StaffProtectedRoute path="/retail/customers" component={RetailCustomers} />
       <StaffProtectedRoute path="/retail/pickup-report" component={RetailPickupReport} />

@@ -39,11 +39,11 @@ export function StaffSidebar() {
     {
       title: "Wholesale",
       items: [
-        { title: "Place Order", href: "/wholesale/place-order", icon: ShoppingCart },
-        { title: "Orders", href: "/wholesale/orders", icon: FileText },
-        { title: "Customers", href: "/wholesale/customers", icon: Users },
-        { title: "Products", href: "/wholesale/products", icon: Package },
-        { title: "Delivery Report", href: "/wholesale/delivery-report", icon: TruckIcon },
+        { title: "Place Order", href: "/staff-portal/wholesale/place-order", icon: ShoppingCart },
+        { title: "Orders", href: "/staff-portal/wholesale/orders", icon: FileText },
+        { title: "Customers", href: "/staff-portal/wholesale/customers", icon: Users },
+        { title: "Products", href: "/staff-portal/wholesale/products", icon: Package },
+        { title: "Delivery Report", href: "/staff-portal/wholesale/delivery-report", icon: TruckIcon },
       ],
     },
     {

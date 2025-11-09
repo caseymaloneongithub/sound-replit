@@ -6,55 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { LayoutDashboard, Package, Users, ShoppingCart, Eye, CalendarIcon, FileText } from "lucide-react";
-import { useLocation } from "wouter";
+import { ShoppingCart, Eye, CalendarIcon, FileText } from "lucide-react";
+import { StaffLayout } from "@/components/staff/staff-layout";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
-
-function WholesaleSidebar() {
-  const [location, setLocation] = useLocation();
-  
-  const menuItems = [
-    { title: "Dashboard", icon: LayoutDashboard, path: "/staff-portal" },
-    { title: "Place Order", icon: ShoppingCart, path: "/wholesale/place-order" },
-    { title: "Orders", icon: ShoppingCart, path: "/wholesale/orders" },
-    { title: "Delivery Report", icon: CalendarIcon, path: "/wholesale/delivery-report" },
-    { title: "Customers", icon: Users, path: "/wholesale/customers" },
-    { title: "Products", icon: Package, path: "/wholesale/products" },
-  ];
-
-  return (
-    <Sidebar>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-lg font-semibold px-4 py-3" style={{ fontFamily: 'var(--font-heading)' }}>
-            Wholesale Portal
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton 
-                    onClick={() => setLocation(item.path)}
-                    isActive={location === item.path}
-                    data-testid={`nav-${item.title.toLowerCase()}`}
-                  >
-                    <item.icon className="w-4 h-4" />
-                    <span>{item.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-    </Sidebar>
-  );
-}
 
 export default function WholesaleOrders() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -137,28 +95,21 @@ export default function WholesaleOrders() {
     }
   };
 
-  const style = {
-    "--sidebar-width": "16rem",
-  };
-
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <WholesaleSidebar />
-        <div className="flex flex-col flex-1">
-          <header className="flex items-center justify-between p-4 border-b gap-4">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <h1 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-heading)' }}>Orders</h1>
-            <div className="w-10" />
-          </header>
-          <main className="flex-1 overflow-auto p-6">
-            <div className="max-w-7xl mx-auto">
-              <Card>
-                <CardHeader>
-                  <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>All Wholesale Orders</CardTitle>
-                  <CardDescription>Manage and track wholesale customer orders</CardDescription>
-                </CardHeader>
-                <CardContent>
+    <StaffLayout>
+      <div className="max-w-7xl mx-auto px-6 py-12">
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
+            Wholesale Orders
+          </h1>
+          <p className="text-muted-foreground">
+            Manage and track wholesale customer orders
+          </p>
+        </div>
+
+        <div className="space-y-6">
+          <Card>
+            <CardContent className="pt-6">
                   {isLoading ? (
                     <div className="space-y-3">
                       {[1, 2, 3].map((i) => (
@@ -222,16 +173,13 @@ export default function WholesaleOrders() {
                       <ShoppingCart className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
                       <p className="text-muted-foreground">No orders yet</p>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          </main>
+              )}
+            </CardContent>
+          </Card>
         </div>
-      </div>
 
-      <Dialog open={!!selectedOrderId} onOpenChange={(open) => !open && setSelectedOrderId(null)}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <Dialog open={!!selectedOrderId} onOpenChange={(open) => !open && setSelectedOrderId(null)}>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle style={{ fontFamily: 'var(--font-heading)' }}>Order Details</DialogTitle>
             <DialogDescription>
@@ -393,8 +341,9 @@ export default function WholesaleOrders() {
               </Card>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-    </SidebarProvider>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </StaffLayout>
   );
 }
