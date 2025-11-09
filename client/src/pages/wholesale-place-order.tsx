@@ -7,8 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { LayoutDashboard, Package, Users, ShoppingCart, Plus, Minus, Trash2 } from "lucide-react";
+import { Plus, Minus, Trash2, ShoppingCart } from "lucide-react";
+import { StaffLayout } from "@/components/staff/staff-layout";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -17,46 +17,6 @@ import { CASE_SIZE, formatCaseQuantity } from "@shared/pricing";
 interface CartItem {
   productId: string;
   quantity: number;
-}
-
-function WholesaleSidebar() {
-  const [location, setLocation] = useLocation();
-  
-  const menuItems = [
-    { title: "Dashboard", icon: LayoutDashboard, path: "/staff-portal" },
-    { title: "Place Order", icon: ShoppingCart, path: "/wholesale/place-order" },
-    { title: "Orders", icon: ShoppingCart, path: "/wholesale/orders" },
-    { title: "Customers", icon: Users, path: "/wholesale/customers" },
-    { title: "Products", icon: Package, path: "/wholesale/products" },
-  ];
-
-  return (
-    <Sidebar>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-lg font-semibold px-4 py-3" style={{ fontFamily: 'var(--font-heading)' }}>
-            Wholesale Portal
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton 
-                    onClick={() => setLocation(item.path)}
-                    isActive={location === item.path}
-                    data-testid={`nav-${item.title.toLowerCase()}`}
-                  >
-                    <item.icon className="w-4 h-4" />
-                    <span>{item.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-    </Sidebar>
-  );
 }
 
 export default function WholesalePlaceOrder() {
@@ -106,7 +66,7 @@ export default function WholesalePlaceOrder() {
       setCart([]);
       setNotes("");
       setSelectedCustomerId("");
-      setLocation("/wholesale/orders");
+      setLocation("/staff-portal/wholesale/orders");
     },
     onError: (error: any) => {
       toast({
@@ -165,22 +125,19 @@ export default function WholesalePlaceOrder() {
     }, 0);
   };
 
-  const style = {
-    "--sidebar-width": "16rem",
-  };
-
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <WholesaleSidebar />
-        <div className="flex flex-col flex-1">
-          <header className="flex items-center justify-between p-4 border-b gap-4">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <h1 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-heading)' }}>Place Order</h1>
-            <div className="w-10" />
-          </header>
-          <main className="flex-1 overflow-auto p-6">
-            <div className="max-w-7xl mx-auto space-y-6">
+    <StaffLayout>
+      <div className="max-w-7xl mx-auto px-6 py-12">
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
+            Place Wholesale Order
+          </h1>
+          <p className="text-muted-foreground">
+            Create a new wholesale order for a customer
+          </p>
+        </div>
+
+        <div className="space-y-6">
               <Card>
                 <CardHeader>
                   <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>Select Customer</CardTitle>
@@ -363,10 +320,8 @@ export default function WholesalePlaceOrder() {
                   </div>
                 </div>
               )}
-            </div>
-          </main>
         </div>
       </div>
-    </SidebarProvider>
+    </StaffLayout>
   );
 }

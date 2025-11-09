@@ -4,54 +4,12 @@ import { WholesaleOrder, WholesaleCustomer, WholesaleOrderItem, Product } from "
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { LayoutDashboard, Package, Users, ShoppingCart, CalendarIcon, FileText, Printer } from "lucide-react";
-import { useLocation } from "wouter";
+import { CalendarIcon, Printer } from "lucide-react";
+import { StaffLayout } from "@/components/staff/staff-layout";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/use-auth";
-
-function WholesaleSidebar() {
-  const [location, setLocation] = useLocation();
-  
-  const menuItems = [
-    { title: "Dashboard", icon: LayoutDashboard, path: "/staff-portal" },
-    { title: "Place Order", icon: ShoppingCart, path: "/wholesale/place-order" },
-    { title: "Orders", icon: ShoppingCart, path: "/wholesale/orders" },
-    { title: "Delivery Report", icon: FileText, path: "/wholesale/delivery-report" },
-    { title: "Customers", icon: Users, path: "/wholesale/customers" },
-    { title: "Products", icon: Package, path: "/wholesale/products" },
-  ];
-
-  return (
-    <Sidebar>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-lg font-semibold px-4 py-3" style={{ fontFamily: 'var(--font-heading)' }}>
-            Wholesale Portal
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton 
-                    onClick={() => setLocation(item.path)}
-                    isActive={location === item.path}
-                    data-testid={`nav-${item.title.toLowerCase().replace(' ', '-')}`}
-                  >
-                    <item.icon className="w-4 h-4" />
-                    <span>{item.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-    </Sidebar>
-  );
-}
 
 export default function WholesaleDeliveryReport() {
   const { user } = useAuth();
@@ -110,23 +68,19 @@ export default function WholesaleDeliveryReport() {
   const totalAmount = orders.reduce((sum, order) => sum + Number(order.totalAmount), 0);
   const totalOrders = orders.length;
 
-  const style = {
-    "--sidebar-width": "16rem",
-  };
-
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <WholesaleSidebar />
-        <div className="flex flex-col flex-1">
-          <header className="flex items-center justify-between p-4 border-b gap-4 print:hidden">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <h1 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-heading)' }}>Daily Delivery Report</h1>
-            <div className="w-10" />
-          </header>
-          <main className="flex-1 overflow-auto p-6">
-            <div className="max-w-7xl mx-auto space-y-6">
-              <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between print:hidden">
+    <StaffLayout>
+      <div className="max-w-7xl mx-auto px-6 py-12">
+        <div className="flex items-center justify-between mb-8 print:hidden">
+          <div>
+            <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
+              Daily Delivery Report
+            </h1>
+            <p className="text-muted-foreground">
+              View and print wholesale delivery schedules
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
@@ -156,9 +110,11 @@ export default function WholesaleDeliveryReport() {
                   <Printer className="mr-2 h-4 w-4" />
                   Print Report
                 </Button>
-              </div>
+          </div>
+        </div>
 
-              <div className="hidden print:block mb-6">
+        <div className="space-y-6">
+          <div className="hidden print:block mb-6">
                 <h1 className="text-3xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
                   Daily Delivery Report
                 </h1>
@@ -294,10 +250,8 @@ export default function WholesaleDeliveryReport() {
                   )}
                 </CardContent>
               </Card>
-            </div>
-          </main>
         </div>
       </div>
-    </SidebarProvider>
+    </StaffLayout>
   );
 }

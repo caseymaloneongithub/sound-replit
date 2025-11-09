@@ -7,57 +7,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Switch } from "@/components/ui/switch";
-import { LayoutDashboard, Package, Users, ShoppingCart, Mail, Phone, MapPin, Plus, Loader2, CalendarIcon, FileText, CreditCard } from "lucide-react";
-import { useLocation } from "wouter";
+import { Mail, Phone, MapPin, Plus, Loader2, CreditCard, Users } from "lucide-react";
+import { StaffLayout } from "@/components/staff/staff-layout";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
-
-function WholesaleSidebar() {
-  const [location, setLocation] = useLocation();
-  
-  const menuItems = [
-    { title: "Dashboard", icon: LayoutDashboard, path: "/staff-portal" },
-    { title: "Place Order", icon: ShoppingCart, path: "/wholesale/place-order" },
-    { title: "Orders", icon: ShoppingCart, path: "/wholesale/orders" },
-    { title: "Delivery Report", icon: FileText, path: "/wholesale/delivery-report" },
-    { title: "Customers", icon: Users, path: "/wholesale/customers" },
-    { title: "Products", icon: Package, path: "/wholesale/products" },
-  ];
-
-  return (
-    <Sidebar>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-lg font-semibold px-4 py-3" style={{ fontFamily: 'var(--font-heading)' }}>
-            Wholesale Portal
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton 
-                    onClick={() => setLocation(item.path)}
-                    isActive={location === item.path}
-                    data-testid={`nav-${item.title.toLowerCase()}`}
-                  >
-                    <item.icon className="w-4 h-4" />
-                    <span>{item.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-    </Sidebar>
-  );
-}
 
 export default function WholesaleCustomers() {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -126,19 +84,19 @@ export default function WholesaleCustomers() {
     createCustomerMutation.mutate(data);
   };
 
-  const style = {
-    "--sidebar-width": "16rem",
-  };
-
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <WholesaleSidebar />
-        <div className="flex flex-col flex-1">
-          <header className="flex items-center justify-between p-4 border-b gap-4">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <h1 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-heading)' }}>Customers</h1>
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+    <StaffLayout>
+      <div className="max-w-7xl mx-auto px-6 py-12">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
+              Wholesale Customers
+            </h1>
+            <p className="text-muted-foreground">
+              Manage wholesale customer accounts
+            </p>
+          </div>
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button data-testid="button-add-customer">
                   <Plus className="w-4 h-4 mr-2" />
@@ -251,10 +209,9 @@ export default function WholesaleCustomers() {
                 </Form>
               </DialogContent>
             </Dialog>
-          </header>
-          <main className="flex-1 overflow-auto p-6">
-            <div className="max-w-7xl mx-auto">
-              <Card>
+        </div>
+
+        <Card>
                 <CardHeader>
                   <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>Wholesale Customers</CardTitle>
                   <CardDescription>Manage your B2B customer relationships</CardDescription>
@@ -318,10 +275,7 @@ export default function WholesaleCustomers() {
                   )}
                 </CardContent>
               </Card>
-            </div>
-          </main>
-        </div>
       </div>
-    </SidebarProvider>
+    </StaffLayout>
   );
 }
