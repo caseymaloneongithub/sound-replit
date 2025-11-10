@@ -2,25 +2,43 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Subscription, Product } from "@shared/schema";
 import { Navbar } from "@/components/layout/navbar";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Package, Repeat } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Package, Repeat, Plus, Trash2, X } from "lucide-react";
 import { format, addWeeks } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-type SubscriptionWithProduct = Subscription & {
+type SubscriptionItem = {
+  id: string;
+  subscriptionId: string;
+  productId: string;
+  quantity: number;
   product?: Product;
+};
+
+type SubscriptionWithItems = Subscription & {
+  items: SubscriptionItem[];
 };
 
 export default function MySubscriptions() {
   const { toast } = useToast();
   const [selectedWeeksDelay, setSelectedWeeksDelay] = useState<Record<string, number>>({});
-  const [selectedProduct, setSelectedProduct] = useState<Record<string, string>>({});
+  const [addProductDialog, setAddProductDialog] = useState<{ open: boolean; subscriptionId: string | null }>({ 
+    open: false, 
+    subscriptionId: null 
+  });
+  const [cancelDialog, setCancelDialog] = useState<{ open: boolean; subscriptionId: string | null }>({ 
+    open: false, 
+    subscriptionId: null 
+  });
+  const [selectedNewProduct, setSelectedNewProduct] = useState<string>("");
+  const [selectedNewQuantity, setSelectedNewQuantity] = useState<number>(1);
 
-  const { data: subscriptions, isLoading: subscriptionsLoading } = useQuery<SubscriptionWithProduct[]>({
+  const { data: subscriptions, isLoading: subscriptionsLoading } = useQuery<SubscriptionWithItems[]>({
     queryKey: ["/api/my-subscriptions"],
   });
 
@@ -43,6 +61,70 @@ export default function MySubscriptions() {
       toast({
         title: "Error",
         description: "Failed to update subscription",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const addItemMutation = useMutation({
+    mutationFn: async ({ subscriptionId, productId, quantity }: { subscriptionId: string; productId: string; quantity: number }) => {
+      return await apiRequest("POST", `/api/my-subscriptions/${subscriptionId}/items`, { productId, quantity });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/my-subscriptions"] });
+      setAddProductDialog({ open: false, subscriptionId: null });
+      setSelectedNewProduct("");
+      setSelectedNewQuantity(1);
+      toast({
+        title: "Product added",
+        description: "Product added to your subscription",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add product",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const removeItemMutation = useMutation({
+    mutationFn: async ({ subscriptionId, itemId }: { subscriptionId: string; itemId: string }) => {
+      return await apiRequest("DELETE", `/api/my-subscriptions/${subscriptionId}/items/${itemId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/my-subscriptions"] });
+      toast({
+        title: "Product removed",
+        description: "Product removed from your subscription",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to remove product",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const cancelSubscriptionMutation = useMutation({
+    mutationFn: async (subscriptionId: string) => {
+      return await apiRequest("DELETE", `/api/my-subscriptions/${subscriptionId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/my-subscriptions"] });
+      setCancelDialog({ open: false, subscriptionId: null });
+      toast({
+        title: "Subscription cancelled",
+        description: "Your subscription has been cancelled",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to cancel subscription",
         variant: "destructive",
       });
     },
@@ -78,9 +160,8 @@ export default function MySubscriptions() {
     });
   };
 
-  const handleChangeProduct = (subscriptionId: string) => {
-    const newProductId = selectedProduct[subscriptionId];
-    if (!newProductId) {
+  const handleAddProduct = () => {
+    if (!selectedNewProduct || !addProductDialog.subscriptionId) {
       toast({
         title: "Error",
         description: "Please select a product",
@@ -89,19 +170,23 @@ export default function MySubscriptions() {
       return;
     }
 
-    updateSubscriptionMutation.mutate({
-      subscriptionId,
-      updates: { productId: newProductId },
+    addItemMutation.mutate({
+      subscriptionId: addProductDialog.subscriptionId,
+      productId: selectedNewProduct,
+      quantity: selectedNewQuantity,
     });
   };
 
-  // Enrich subscriptions with product data
-  const enrichedSubscriptions = subscriptions?.map(sub => {
-    const product = products?.find(p => p.id === sub.productId);
-    return { ...sub, product };
-  });
+  const handleRemoveItem = (subscriptionId: string, itemId: string) => {
+    removeItemMutation.mutate({ subscriptionId, itemId });
+  };
 
-  const activeSubscriptions = enrichedSubscriptions?.filter(sub => sub.status === 'active');
+  const handleCancelSubscription = () => {
+    if (!cancelDialog.subscriptionId) return;
+    cancelSubscriptionMutation.mutate(cancelDialog.subscriptionId);
+  };
+
+  const activeSubscriptions = subscriptions?.filter(sub => sub.status === 'active');
 
   return (
     <div className="min-h-screen bg-background">
@@ -143,9 +228,9 @@ export default function MySubscriptions() {
                 <Card key={subscription.id} data-testid={`card-subscription-${subscription.id}`}>
                   <CardHeader className="pb-4">
                     <div className="flex items-start justify-between gap-4">
-                      <div>
+                      <div className="flex-1">
                         <CardTitle className="text-xl mb-2">
-                          {subscription.product?.name || 'Product'}
+                          Subscription
                         </CardTitle>
                         <div className="flex gap-2 flex-wrap">
                           <Badge variant="secondary" className="capitalize">
@@ -157,24 +242,86 @@ export default function MySubscriptions() {
                           </Badge>
                         </div>
                       </div>
-                      {subscription.product?.imageUrl && (
-                        <div className="w-20 h-20 rounded-md overflow-hidden flex-shrink-0">
-                          <img 
-                            src={subscription.product.imageUrl} 
-                            alt={subscription.product.name}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                      )}
+                      <Button 
+                        variant="ghost" 
+                        size="icon"
+                        onClick={() => setCancelDialog({ open: true, subscriptionId: subscription.id })}
+                        data-testid={`button-cancel-${subscription.id}`}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-6">
                     {nextDelivery && (
                       <div>
                         <div className="text-sm text-muted-foreground mb-1">Next Pickup</div>
-                        <div className="font-semibold">{format(nextDelivery, 'MMMM d, yyyy')}</div>
+                        <div className="font-semibold" data-testid={`text-next-pickup-${subscription.id}`}>
+                          {format(nextDelivery, 'MMMM d, yyyy')}
+                        </div>
                       </div>
                     )}
+
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="text-sm font-medium">Products</div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setAddProductDialog({ open: true, subscriptionId: subscription.id })}
+                          data-testid={`button-add-product-${subscription.id}`}
+                        >
+                          <Plus className="w-3 h-3 mr-1" />
+                          Add Product
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        {subscription.items && subscription.items.length > 0 ? (
+                          subscription.items.map((item) => (
+                            <div 
+                              key={item.id} 
+                              className="flex items-center justify-between p-3 rounded-md bg-muted/50"
+                              data-testid={`item-${item.id}`}
+                            >
+                              <div className="flex items-center gap-3 flex-1">
+                                {item.product?.imageUrl && (
+                                  <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0">
+                                    <img 
+                                      src={item.product.imageUrl} 
+                                      alt={item.product.name}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  </div>
+                                )}
+                                <div className="flex-1">
+                                  <div className="font-medium text-sm" data-testid={`text-product-name-${item.id}`}>
+                                    {item.product?.name || 'Product'}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    Quantity: {item.quantity} case{item.quantity > 1 ? 's' : ''}
+                                  </div>
+                                </div>
+                              </div>
+                              {subscription.items.length > 1 && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleRemoveItem(subscription.id, item.id)}
+                                  disabled={removeItemMutation.isPending}
+                                  data-testid={`button-remove-item-${item.id}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-sm text-muted-foreground text-center py-4">
+                            No products in this subscription
+                          </div>
+                        )}
+                      </div>
+                    </div>
 
                     <div className="space-y-4">
                       <div>
@@ -206,45 +353,6 @@ export default function MySubscriptions() {
                           </Button>
                         </div>
                       </div>
-
-                      <div>
-                        <div className="text-sm font-medium mb-3">Change Product</div>
-                        <div className="flex gap-2">
-                          <Select
-                            value={selectedProduct[subscription.id] || subscription.productId || undefined}
-                            onValueChange={(value) => setSelectedProduct(prev => ({ ...prev, [subscription.id]: value }))}
-                          >
-                            <SelectTrigger 
-                              className="flex-1"
-                              data-testid={`select-product-${subscription.id}`}
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {products?.map((product) => (
-                                <SelectItem 
-                                  key={product.id} 
-                                  value={product.id}
-                                  data-testid={`option-product-${product.id}`}
-                                >
-                                  {product.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Button 
-                            onClick={() => handleChangeProduct(subscription.id)}
-                            disabled={
-                              !selectedProduct[subscription.id] || 
-                              selectedProduct[subscription.id] === subscription.productId ||
-                              updateSubscriptionMutation.isPending
-                            }
-                            data-testid={`button-change-product-${subscription.id}`}
-                          >
-                            Update
-                          </Button>
-                        </div>
-                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -266,6 +374,108 @@ export default function MySubscriptions() {
           </Card>
         )}
       </div>
+
+      <Dialog open={addProductDialog.open} onOpenChange={(open) => {
+        if (!open) {
+          setAddProductDialog({ open: false, subscriptionId: null });
+          setSelectedNewProduct("");
+          setSelectedNewQuantity(1);
+        }
+      }}>
+        <DialogContent data-testid="dialog-add-product">
+          <DialogHeader>
+            <DialogTitle>Add Product to Subscription</DialogTitle>
+            <DialogDescription>
+              Select a product and quantity to add to your subscription
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <label className="text-sm font-medium mb-2 block">Product</label>
+              <Select value={selectedNewProduct} onValueChange={setSelectedNewProduct}>
+                <SelectTrigger data-testid="select-new-product">
+                  <SelectValue placeholder="Select a product" />
+                </SelectTrigger>
+                <SelectContent>
+                  {products?.map((product) => (
+                    <SelectItem key={product.id} value={product.id} data-testid={`option-new-product-${product.id}`}>
+                      {product.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-2 block">Quantity (cases)</label>
+              <Select 
+                value={selectedNewQuantity.toString()} 
+                onValueChange={(value) => setSelectedNewQuantity(parseInt(value))}
+              >
+                <SelectTrigger data-testid="select-new-quantity">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[1, 2, 3, 4, 5].map((qty) => (
+                    <SelectItem key={qty} value={qty.toString()} data-testid={`option-quantity-${qty}`}>
+                      {qty} case{qty > 1 ? 's' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setAddProductDialog({ open: false, subscriptionId: null });
+                setSelectedNewProduct("");
+                setSelectedNewQuantity(1);
+              }}
+              data-testid="button-cancel-add"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleAddProduct}
+              disabled={!selectedNewProduct || addItemMutation.isPending}
+              data-testid="button-confirm-add"
+            >
+              Add Product
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cancelDialog.open} onOpenChange={(open) => {
+        if (!open) setCancelDialog({ open: false, subscriptionId: null });
+      }}>
+        <DialogContent data-testid="dialog-cancel-subscription">
+          <DialogHeader>
+            <DialogTitle>Cancel Subscription</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to cancel this subscription? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setCancelDialog({ open: false, subscriptionId: null })}
+              data-testid="button-cancel-dialog-no"
+            >
+              No, keep it
+            </Button>
+            <Button 
+              variant="destructive"
+              onClick={handleCancelSubscription}
+              disabled={cancelSubscriptionMutation.isPending}
+              data-testid="button-cancel-dialog-yes"
+            >
+              Yes, cancel subscription
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

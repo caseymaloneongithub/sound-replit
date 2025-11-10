@@ -1003,7 +1003,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('[DEBUG] Fetching subscriptions for user:', userId);
       const subscriptions = await storage.getUserSubscriptions(userId);
       console.log('[DEBUG] Found subscriptions:', subscriptions.length);
-      res.json(subscriptions);
+      
+      // Fetch items for each subscription
+      const subscriptionsWithItems = await Promise.all(
+        subscriptions.map(async (sub) => {
+          const items = await storage.getSubscriptionItems(sub.id);
+          
+          // Enrich items with product data
+          const itemsWithProducts = await Promise.all(
+            items.map(async (item) => {
+              const product = await storage.getProduct(item.productId);
+              return { ...item, product };
+            })
+          );
+          
+          return { ...sub, items: itemsWithProducts };
+        })
+      );
+      
+      res.json(subscriptionsWithItems);
     } catch (error: any) {
       console.error('[ERROR] Failed to fetch user subscriptions:', error);
       res.status(500).json({ message: "Error fetching user subscriptions: " + error.message });
@@ -1037,7 +1055,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Cancel subscription
+  // Cancel subscription (DELETE method)
+  app.delete("/api/my-subscriptions/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      
+      // Verify subscription belongs to user
+      const subscription = await storage.getSubscription(subscriptionId);
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      // Check if already cancelled
+      if (subscription.status === 'cancelled') {
+        return res.status(400).json({ message: "Subscription is already cancelled" });
+      }
+      
+      const cancelled = await storage.cancelSubscription(subscriptionId);
+      res.json(cancelled);
+    } catch (error: any) {
+      console.error("Error cancelling subscription:", error);
+      res.status(500).json({ message: "Error cancelling subscription: " + error.message });
+    }
+  });
+
+  // Cancel subscription (POST method for backwards compatibility)
   app.post("/api/my-subscriptions/:id/cancel", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
