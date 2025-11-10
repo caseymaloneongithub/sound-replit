@@ -43,7 +43,24 @@ Stripe is integrated for one-time purchases and recurring subscriptions. One-tim
 
 ### Subscription Management
 
-Provides retail customers comprehensive tools to view and manage active subscriptions, including delaying pickups by 1-4 weeks (dropdown selection instead of calendar) and changing subscribed products. All updates persist to the database with robust security validations ensuring users only modify their own subscriptions. All retail-facing pages use "pickup" terminology instead of "delivery" (wholesale operations retain "delivery" terminology).
+**Multi-Product Subscriptions** (Updated November 2025):
+Retail customers can now manage subscriptions containing multiple products with flexible quantities. The system uses a `subscription_items` table as the authoritative source for subscription contents, supporting:
+
+- **Add Products**: Add multiple products to existing subscriptions with custom quantities per product
+- **Remove Products**: Remove individual products from subscriptions (atomic row-level locking prevents removing the last item)
+- **View All Products**: Each subscription displays all subscribed products with quantities in cases
+- **Delay Pickups**: Delay next pickup by 1-4 weeks using dropdown selection
+- **Cancel Subscriptions**: Cancel active subscriptions with confirmation dialog
+
+**Technical Implementation**:
+- `subscription_items` table stores product associations with `subscription_id`, `product_id`, and `quantity`
+- Legacy `productId` field preserved in `subscriptions` table for backward compatibility
+- Atomic validation using PostgreSQL row-level locking (`SELECT ... FOR UPDATE`) prevents race conditions
+- Transactional migration successfully migrated 2 existing subscriptions to multi-product model
+- Frontend uses dialogs for adding/removing products with optimistic updates and cache invalidation
+- All operations validate user ownership to ensure security
+
+All retail-facing pages use "pickup" terminology instead of "delivery" (wholesale operations retain "delivery" terminology).
 
 ### Staff Portal
 
