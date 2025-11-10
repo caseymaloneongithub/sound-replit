@@ -1168,11 +1168,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Subscription not found" });
       }
       
-      await storage.removeSubscriptionItem(itemId);
+      // Remove item (atomic validation happens in storage layer)
+      await storage.removeSubscriptionItem(itemId, subscriptionId);
       res.json({ message: "Item removed successfully" });
     } catch (error: any) {
       console.error("Error removing subscription item:", error);
-      res.status(500).json({ message: "Error removing subscription item: " + error.message });
+      res.status(400).json({ message: error.message || "Error removing subscription item" });
     }
   });
 

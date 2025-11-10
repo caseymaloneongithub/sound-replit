@@ -83,7 +83,7 @@ export interface IStorage {
   
   getSubscriptionItems(subscriptionId: string): Promise<SubscriptionItem[]>;
   addSubscriptionItem(item: InsertSubscriptionItem): Promise<SubscriptionItem>;
-  removeSubscriptionItem(id: string): Promise<void>;
+  removeSubscriptionItem(id: string, subscriptionId: string): Promise<void>;
   updateSubscriptionItemQuantity(id: string, quantity: number): Promise<SubscriptionItem | undefined>;
   
   getWholesaleCustomers(): Promise<WholesaleCustomer[]>;
@@ -426,10 +426,51 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async removeSubscriptionItem(id: string): Promise<void> {
-    await db
-      .delete(subscriptionItems)
-      .where(eq(subscriptionItems.id, id));
+  async removeSubscriptionItem(id: string, subscriptionId: string): Promise<void> {
+    return await pool.connect().then(async (client) => {
+      try {
+        await client.query('BEGIN');
+        
+        // Lock all items for this subscription to prevent concurrent modifications
+        // Count items atomically with row-level locks
+        const countResult = await client.query(`
+          SELECT id, subscription_id
+          FROM subscription_items
+          WHERE subscription_id = $1
+          FOR UPDATE
+        `, [subscriptionId]);
+        
+        const items = countResult.rows;
+        
+        // Verify the item exists and belongs to this subscription
+        const targetItem = items.find(item => item.id === id);
+        if (!targetItem) {
+          throw new Error('Subscription item not found or does not belong to this subscription');
+        }
+        
+        // Check if this would leave zero items
+        if (items.length <= 1) {
+          throw new Error('Cannot remove the last product from a subscription. Cancel the subscription instead.');
+        }
+        
+        // Safe to delete - atomically delete and verify rowCount
+        const deleteResult = await client.query(`
+          DELETE FROM subscription_items
+          WHERE id = $1
+        `, [id]);
+        
+        if (deleteResult.rowCount === 0) {
+          throw new Error('Failed to remove subscription item - item may have been already removed');
+        }
+        
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    });
   }
 
   async updateSubscriptionItemQuantity(id: string, quantity: number): Promise<SubscriptionItem | undefined> {
