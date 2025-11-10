@@ -841,6 +841,79 @@ export class PostgresStorage implements IStorage {
       ]);
     }
   }
+
+  // Migration: Backfill existing subscriptions into subscription_items table
+  async migrateSubscriptionsToItems(dryRun: boolean = false): Promise<{ migrated: number; skipped: number }> {
+    console.log(`[MIGRATION] Starting migration${dryRun ? ' (DRY RUN)' : ''}...`);
+    
+    return await pool.connect().then(async (client) => {
+      let migrated = 0;
+      let skipped = 0;
+
+      try {
+        // Start transaction
+        await client.query('BEGIN');
+        console.log('[MIGRATION] Transaction started');
+
+        // Get all subscriptions with a product_id
+        const result = await client.query(`
+          SELECT id, product_id
+          FROM subscriptions
+          WHERE product_id IS NOT NULL
+        `);
+        
+        const subsToMigrate = result.rows;
+        console.log(`[MIGRATION] Found ${subsToMigrate.length} subscriptions with product_id`);
+
+        for (const sub of subsToMigrate) {
+          // Check if this subscription already has items
+          const existingItems = await client.query(`
+            SELECT id
+            FROM subscription_items
+            WHERE subscription_id = $1
+          `, [sub.id]);
+
+          if (existingItems.rows.length > 0) {
+            console.log(`[MIGRATION] Skipping subscription ${sub.id} - already has ${existingItems.rows.length} items`);
+            skipped++;
+            continue;
+          }
+
+          // Create subscription item from legacy product_id
+          if (!dryRun) {
+            await client.query(`
+              INSERT INTO subscription_items (subscription_id, product_id, quantity)
+              VALUES ($1, $2, $3)
+            `, [sub.id, sub.product_id, 1]);
+            console.log(`[MIGRATION] Migrated subscription ${sub.id} - added product ${sub.product_id}`);
+          } else {
+            console.log(`[MIGRATION] [DRY RUN] Would migrate subscription ${sub.id} - product ${sub.product_id}`);
+          }
+          migrated++;
+        }
+
+        if (dryRun) {
+          // Rollback dry run
+          await client.query('ROLLBACK');
+          console.log('[MIGRATION] [DRY RUN] Transaction rolled back');
+        } else {
+          // Commit real migration
+          await client.query('COMMIT');
+          console.log('[MIGRATION] Transaction committed');
+        }
+
+        console.log(`[MIGRATION] Complete: ${migrated} ${dryRun ? 'would be migrated' : 'migrated'}, ${skipped} skipped`);
+        return { migrated, skipped };
+      } catch (error) {
+        // Rollback on error
+        await client.query('ROLLBACK');
+        console.error('[MIGRATION] Transaction rolled back due to error:', error);
+        throw error;
+      } finally {
+        client.release();
+      }
+    });
+  }
 }
 
 export const storage = new PostgresStorage();

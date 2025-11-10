@@ -1037,6 +1037,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Cancel subscription
+  app.post("/api/my-subscriptions/:id/cancel", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      
+      // Verify subscription belongs to user
+      const subscription = await storage.getSubscription(subscriptionId);
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      // Check if already cancelled
+      if (subscription.status === 'cancelled') {
+        return res.status(400).json({ message: "Subscription is already cancelled" });
+      }
+      
+      const cancelled = await storage.cancelSubscription(subscriptionId);
+      res.json(cancelled);
+    } catch (error: any) {
+      console.error("Error cancelling subscription:", error);
+      res.status(500).json({ message: "Error cancelling subscription: " + error.message });
+    }
+  });
+
+  // Get subscription items
+  app.get("/api/my-subscriptions/:id/items", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      
+      // Verify subscription belongs to user
+      const subscription = await storage.getSubscription(subscriptionId);
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      const items = await storage.getSubscriptionItems(subscriptionId);
+      res.json(items);
+    } catch (error: any) {
+      console.error("Error fetching subscription items:", error);
+      res.status(500).json({ message: "Error fetching subscription items: " + error.message });
+    }
+  });
+
+  // Add product to subscription
+  app.post("/api/my-subscriptions/:id/items", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      
+      // Verify subscription belongs to user
+      const subscription = await storage.getSubscription(subscriptionId);
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      const itemSchema = z.object({
+        productId: z.string().uuid(),
+        quantity: z.number().int().positive().default(1),
+      });
+      
+      const validated = itemSchema.parse(req.body);
+      const item = await storage.addSubscriptionItem({
+        subscriptionId,
+        ...validated,
+      });
+      
+      res.json(item);
+    } catch (error: any) {
+      console.error("Error adding subscription item:", error);
+      res.status(400).json({ message: "Error adding subscription item: " + error.message });
+    }
+  });
+
+  // Remove product from subscription
+  app.delete("/api/my-subscriptions/:id/items/:itemId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      const itemId = req.params.itemId;
+      
+      // Verify subscription belongs to user
+      const subscription = await storage.getSubscription(subscriptionId);
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      await storage.removeSubscriptionItem(itemId);
+      res.json({ message: "Item removed successfully" });
+    } catch (error: any) {
+      console.error("Error removing subscription item:", error);
+      res.status(500).json({ message: "Error removing subscription item: " + error.message });
+    }
+  });
+
+  // Update subscription item quantity
+  app.patch("/api/my-subscriptions/:id/items/:itemId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      const itemId = req.params.itemId;
+      
+      // Verify subscription belongs to user
+      const subscription = await storage.getSubscription(subscriptionId);
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      const quantitySchema = z.object({
+        quantity: z.number().int().positive(),
+      });
+      
+      const validated = quantitySchema.parse(req.body);
+      const updated = await storage.updateSubscriptionItemQuantity(itemId, validated.quantity);
+      
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating subscription item:", error);
+      res.status(400).json({ message: "Error updating subscription item: " + error.message });
+    }
+  });
+
   // Wholesale customer routes (admin-only access)
   app.get("/api/wholesale/customers", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
