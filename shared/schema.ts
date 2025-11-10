@@ -91,6 +91,14 @@ export const subscriptions = pgTable("subscriptions", {
   status: text("status").notNull().default('active'), // 'active', 'paused', 'cancelled'
   startDate: timestamp("start_date").notNull().defaultNow(),
   nextDeliveryDate: timestamp("next_delivery_date"),
+  cancelledAt: timestamp("cancelled_at"),
+});
+
+export const subscriptionItems = pgTable("subscription_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  subscriptionId: varchar("subscription_id").notNull().references(() => subscriptions.id, { onDelete: 'cascade' }),
+  productId: varchar("product_id").notNull().references(() => products.id),
+  quantity: integer("quantity").notNull().default(1),
 });
 
 export const wholesaleCustomers = pgTable("wholesale_customers", {
@@ -137,7 +145,8 @@ export const insertUserSchema = createInsertSchema(users).omit({ id: true, creat
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
 export const insertSubscriptionPlanSchema = createInsertSchema(subscriptionPlans).omit({ id: true });
 export const insertCartItemSchema = createInsertSchema(cartItems).omit({ id: true });
-export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({ id: true, startDate: true });
+export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({ id: true, startDate: true, cancelledAt: true });
+export const insertSubscriptionItemSchema = createInsertSchema(subscriptionItems).omit({ id: true });
 export const insertWholesaleCustomerSchema = createInsertSchema(wholesaleCustomers).omit({ id: true });
 export const insertWholesaleOrderSchema = createInsertSchema(wholesaleOrders).omit({ id: true, orderDate: true });
 export const insertWholesaleOrderItemSchema = createInsertSchema(wholesaleOrderItems).omit({ id: true });
@@ -150,6 +159,7 @@ export type InsertProduct = z.infer<typeof insertProductSchema>;
 export type InsertSubscriptionPlan = z.infer<typeof insertSubscriptionPlanSchema>;
 export type InsertCartItem = z.infer<typeof insertCartItemSchema>;
 export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+export type InsertSubscriptionItem = z.infer<typeof insertSubscriptionItemSchema>;
 export type InsertWholesaleCustomer = z.infer<typeof insertWholesaleCustomerSchema>;
 export type InsertWholesaleOrder = z.infer<typeof insertWholesaleOrderSchema>;
 export type InsertWholesaleOrderItem = z.infer<typeof insertWholesaleOrderItemSchema>;
@@ -162,6 +172,7 @@ export type Product = typeof products.$inferSelect;
 export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;
 export type Subscription = typeof subscriptions.$inferSelect;
+export type SubscriptionItem = typeof subscriptionItems.$inferSelect;
 export type WholesaleCustomer = typeof wholesaleCustomers.$inferSelect;
 export type WholesaleOrder = typeof wholesaleOrders.$inferSelect;
 export type WholesaleOrderItem = typeof wholesaleOrderItems.$inferSelect;
