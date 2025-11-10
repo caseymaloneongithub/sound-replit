@@ -73,6 +73,7 @@ export interface IStorage {
   getSubscription(id: string): Promise<Subscription | undefined>;
   getUserSubscriptions(userId: string): Promise<Subscription[]>;
   getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined>;
+  getSubscriptionsByPickupDate(pickupDate: Date): Promise<Subscription[]>;
   createSubscription(subscription: InsertSubscription): Promise<Subscription>;
   updateSubscription(id: string, updates: Partial<Subscription>): Promise<Subscription | undefined>;
   updateSubscriptionByStripeId(stripeSubscriptionId: string, updates: Partial<Subscription>): Promise<Subscription | undefined>;
@@ -336,6 +337,26 @@ export class PostgresStorage implements IStorage {
   async getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined> {
     const result = await db.select().from(subscriptions).where(eq(subscriptions.stripeSubscriptionId, stripeSubscriptionId));
     return result[0];
+  }
+
+  async getSubscriptionsByPickupDate(pickupDate: Date): Promise<Subscription[]> {
+    const startOfDay = new Date(pickupDate);
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const endOfDay = new Date(pickupDate);
+    endOfDay.setUTCHours(23, 59, 59, 999);
+    
+    const result = await db
+      .select()
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.status, 'active'),
+          sql`${subscriptions.nextDeliveryDate} >= ${startOfDay}`,
+          sql`${subscriptions.nextDeliveryDate} <= ${endOfDay}`
+        )
+      )
+      .orderBy(subscriptions.nextDeliveryDate);
+    return result;
   }
 
   async createSubscription(subscription: InsertSubscription): Promise<Subscription> {

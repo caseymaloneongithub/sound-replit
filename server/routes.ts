@@ -1123,6 +1123,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/retail/pickup-report", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { date } = req.query;
+      if (!date || typeof date !== 'string') {
+        return res.status(400).json({ message: "Date parameter is required" });
+      }
+
+      // Parse YYYY-MM-DD format consistently in UTC to avoid timezone issues
+      const dateMatch = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!dateMatch) {
+        return res.status(400).json({ message: "Invalid date format. Expected YYYY-MM-DD" });
+      }
+
+      const [, year, month, day] = dateMatch;
+      const pickupDate = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day)));
+
+      const subscriptions = await storage.getSubscriptionsByPickupDate(pickupDate);
+      res.json(subscriptions);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching pickup report: " + error.message });
+    }
+  });
+
   app.post("/api/wholesale/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { order, items } = req.body;

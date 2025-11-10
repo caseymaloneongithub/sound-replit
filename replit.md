@@ -64,6 +64,9 @@ A unified management portal at `/staff-portal` for staff and admin users, consol
 - Generate daily delivery reports for logistics
 - Professional invoice generation with optional online payment (Stripe)
 
+**Retail Management**:
+- **Pickup Report**: Daily pickup schedule for retail subscriptions with date selection, summary statistics (total pickups, unique customers), and detailed customer/product information for logistics planning. Uses timezone-safe UTC-based date handling to ensure consistent reporting regardless of server or client timezone.
+
 The Staff Portal uses a sidebar navigation system that organizes features into sections: Overview, Wholesale, Inventory & Reports, and Administration. Wholesale customers have a separate self-service dashboard at `/wholesale-customer` for viewing orders and placing new orders independently.
 
 ### Development & Build Process
