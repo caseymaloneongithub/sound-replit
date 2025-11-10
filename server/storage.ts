@@ -3,6 +3,7 @@ import {
   type SubscriptionPlan, type InsertSubscriptionPlan,
   type CartItem, type InsertCartItem,
   type Subscription, type InsertSubscription,
+  type SubscriptionItem, type InsertSubscriptionItem,
   type WholesaleCustomer, type InsertWholesaleCustomer,
   type WholesaleOrder, type InsertWholesaleOrder,
   type WholesaleOrderItem, type InsertWholesaleOrderItem,
@@ -13,6 +14,7 @@ import {
   subscriptionPlans,
   cartItems,
   subscriptions,
+  subscriptionItems,
   wholesaleCustomers,
   wholesaleOrders,
   wholesaleOrderItems,
@@ -77,6 +79,12 @@ export interface IStorage {
   createSubscription(subscription: InsertSubscription): Promise<Subscription>;
   updateSubscription(id: string, updates: Partial<Subscription>): Promise<Subscription | undefined>;
   updateSubscriptionByStripeId(stripeSubscriptionId: string, updates: Partial<Subscription>): Promise<Subscription | undefined>;
+  cancelSubscription(id: string): Promise<Subscription | undefined>;
+  
+  getSubscriptionItems(subscriptionId: string): Promise<SubscriptionItem[]>;
+  addSubscriptionItem(item: InsertSubscriptionItem): Promise<SubscriptionItem>;
+  removeSubscriptionItem(id: string): Promise<void>;
+  updateSubscriptionItemQuantity(id: string, quantity: number): Promise<SubscriptionItem | undefined>;
   
   getWholesaleCustomers(): Promise<WholesaleCustomer[]>;
   getWholesaleCustomer(id: string): Promise<WholesaleCustomer | undefined>;
