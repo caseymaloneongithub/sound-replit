@@ -603,9 +603,8 @@ export class PostgresStorage implements IStorage {
       await db.insert(products).values([
       {
         name: "Island Hop",
-        description: "It's hoppy, tropical, and fresh, and is a great option for someone craving a cold beer without the buzz. This blend is made with grapefruit and Cascade hops -- ingredients known to support the immune and cardiovascular systems.",
+        description: "It's hoppy, tropical, and fresh, and is a great option for someone craving a cold beer without the buzz. This blend is made with grapefruit and Cascade hops -- ingredients known to support the immune and cardiovascular systems. 0.5% ABV.",
         flavor: "hoppy tropical",
-        abv: "0.5% ABV",
         ingredients: ["Organic green tea", "Grapefruit", "Cascade hops", "Raw cane sugar", "Live cultures"],
         retailPrice: "3.33",
         wholesalePrice: "2.50",
@@ -616,9 +615,8 @@ export class PostgresStorage implements IStorage {
       },
       {
         name: "Hummingbrew",
-        description: "This gorgeous bottle showcases the White Peony and English Breakfast teas that make our classic kombucha so tasty. This combo of black and white teas is known for their healing and immunity-boosting properties.",
+        description: "This gorgeous bottle showcases the White Peony and English Breakfast teas that make our classic kombucha so tasty. This combo of black and white teas is known for their healing and immunity-boosting properties. 0.5% ABV.",
         flavor: "classic tea",
-        abv: "0.5% ABV",
         ingredients: ["White Peony tea", "English Breakfast tea", "Raw cane sugar", "Live cultures"],
         retailPrice: "3.33",
         wholesalePrice: "2.50",
@@ -629,9 +627,8 @@ export class PostgresStorage implements IStorage {
       },
       {
         name: "Mist",
-        description: "Brewed with rose petals, giving it a pinkish color that shines through our new clear bottles. Natural energy booster Earl Grey is known for enhancing digestion and reducing stress.",
+        description: "Brewed with rose petals, giving it a pinkish color that shines through our new clear bottles. Natural energy booster Earl Grey is known for enhancing digestion and reducing stress. 0.5% ABV.",
         flavor: "floral earl grey",
-        abv: "0.5% ABV",
         ingredients: ["Earl Grey tea", "Rose petals", "Raw cane sugar", "Live cultures"],
         retailPrice: "3.33",
         wholesalePrice: "2.50",
@@ -642,9 +639,8 @@ export class PostgresStorage implements IStorage {
       },
       {
         name: "Northzest",
-        description: "It's Lemon Zest with a slight kick! Our Northzest brew is citrusy, spicy, and tart. Metabolism-boosting cayenne pairs with energizing black tea, creating a blend good for both mind and body.",
+        description: "It's Lemon Zest with a slight kick! Our Northzest brew is citrusy, spicy, and tart. Metabolism-boosting cayenne pairs with energizing black tea, creating a blend good for both mind and body. 0.5% ABV.",
         flavor: "citrus spicy",
-        abv: "0.5% ABV",
         ingredients: ["Black tea", "Lemon zest", "Cayenne pepper", "Raw cane sugar", "Live cultures"],
         retailPrice: "3.33",
         wholesalePrice: "2.50",
@@ -655,9 +651,8 @@ export class PostgresStorage implements IStorage {
       },
       {
         name: "Bonfire",
-        description: "A warm, spiced, and earthy brew. We've added an ancient medicinal herb, ashwagandha, which is an adaptogen that is believed to have natural healing properties for both mind and body.",
+        description: "A warm, spiced, and earthy brew. We've added an ancient medicinal herb, ashwagandha, which is an adaptogen that is believed to have natural healing properties for both mind and body. 0.5% ABV.",
         flavor: "warm spiced",
-        abv: "0.5% ABV",
         ingredients: ["Black tea", "Ashwagandha", "Warming spices", "Raw cane sugar", "Live cultures"],
         retailPrice: "3.33",
         wholesalePrice: "2.50",
@@ -668,9 +663,8 @@ export class PostgresStorage implements IStorage {
       },
       {
         name: "Sunbreak",
-        description: "Our best seller is bright, spicy, and juicy, and features powerful ashwaganda and medicinal herbs known to support digestive and brain health.",
+        description: "Our best seller is bright, spicy, and juicy, and features powerful ashwaganda and medicinal herbs known to support digestive and brain health. 0.5% ABV.",
         flavor: "bright spicy",
-        abv: "0.5% ABV",
         ingredients: ["Black tea", "Ashwagandha", "Medicinal herbs", "Raw cane sugar", "Live cultures"],
         retailPrice: "3.33",
         wholesalePrice: "2.50",
@@ -681,9 +675,8 @@ export class PostgresStorage implements IStorage {
       },
       {
         name: "Wildberry",
-        description: "This blend includes goji berries in addition to the blueberries and hibiscus flavors that have made it a crowd favorite. It's tart and fruity, and hard to believe there is zero fruit juice.",
+        description: "This blend includes goji berries in addition to the blueberries and hibiscus flavors that have made it a crowd favorite. It's tart and fruity, and hard to believe there is zero fruit juice. 0.5% ABV.",
         flavor: "berry",
-        abv: "0.5% ABV",
         ingredients: ["Black tea", "Goji berries", "Blueberries", "Hibiscus", "Raw cane sugar", "Live cultures"],
         retailPrice: "3.33",
         wholesalePrice: "2.50",
@@ -694,9 +687,8 @@ export class PostgresStorage implements IStorage {
       },
       {
         name: "Evergreen",
-        description: "Steeped with Matcha, it's dry, light, and crisp, and unlike anything else available. Matcha lovers will go nuts for this brew!",
+        description: "Steeped with Matcha, it's dry, light, and crisp, and unlike anything else available. Matcha lovers will go nuts for this brew! 0.5% ABV.",
         flavor: "matcha",
-        abv: "0.5% ABV",
         ingredients: ["Green tea", "Matcha", "Raw cane sugar", "Live cultures"],
         retailPrice: "3.33",
         wholesalePrice: "2.50",
@@ -704,6 +696,19 @@ export class PostgresStorage implements IStorage {
         inStock: true,
         stockQuantity: 165,
         lowStockThreshold: 50,
+      },
+      {
+        name: "Mixed Case",
+        description: "Can't decide on just one flavor? Get the best of all our brews with our Mixed Case! This variety pack includes 12 bottles featuring a selection of our most popular flavors. Perfect for trying new favorites or sharing with friends. Makes a great gift! 0.5% ABV.",
+        flavor: "variety pack",
+        ingredients: ["Assorted flavors", "Organic teas", "Raw cane sugar", "Live cultures"],
+        retailPrice: "3.33",
+        wholesalePrice: "2.50",
+        imageUrl: "/products/MixedCase.jpg",
+        imageUrls: ["/products/MixedCase.jpg"],
+        inStock: true,
+        stockQuantity: 100,
+        lowStockThreshold: 30,
       },
     ]);
 
