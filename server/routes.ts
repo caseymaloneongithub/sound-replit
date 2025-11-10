@@ -1249,6 +1249,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Retail customer routes (staff and admin access)
+  app.get("/api/retail/customers", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const searchQuery = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const customers = await storage.getRetailCustomers(searchQuery);
+      res.json(customers);
+    } catch (error: any) {
+      console.error("Error fetching retail customers:", error);
+      res.status(500).json({ message: "Error fetching retail customers: " + error.message });
+    }
+  });
+
   // Wholesale order routes (staff and admin access)
   app.get("/api/wholesale/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {

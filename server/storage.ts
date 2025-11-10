@@ -113,6 +113,16 @@ export interface IStorage {
   getWholesalePrice(customerId: string, productId: string): Promise<WholesalePricing | undefined>;
   setWholesalePrice(pricing: InsertWholesalePricing): Promise<WholesalePricing>;
   
+  getRetailCustomers(searchQuery?: string): Promise<Array<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phoneNumber: string;
+    subscriptionCount: number;
+    activeSubscriptionCount: number;
+  }>>;
+  
   seedData(): Promise<void>;
 }
 
@@ -880,6 +890,74 @@ export class PostgresStorage implements IStorage {
         },
       ]);
     }
+  }
+
+  async getRetailCustomers(searchQuery?: string): Promise<Array<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phoneNumber: string;
+    subscriptionCount: number;
+    activeSubscriptionCount: number;
+  }>> {
+    let query = db
+      .select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        phoneNumber: users.phoneNumber,
+        subscriptionCount: sql<number>`COUNT(${subscriptions.id})::int`,
+        activeSubscriptionCount: sql<number>`SUM(CASE WHEN ${subscriptions.status} = 'active' THEN 1 ELSE 0 END)::int`,
+      })
+      .from(users)
+      .leftJoin(subscriptions, eq(subscriptions.userId, users.id))
+      .where(eq(users.role, 'user'))
+      .groupBy(users.id, users.firstName, users.lastName, users.email, users.phoneNumber)
+      .orderBy(users.lastName, users.firstName);
+
+    // Apply search filter if provided
+    if (searchQuery && searchQuery.trim()) {
+      const searchTerm = `%${searchQuery.trim().toLowerCase()}%`;
+      query = db
+        .select({
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          email: users.email,
+          phoneNumber: users.phoneNumber,
+          subscriptionCount: sql<number>`COUNT(${subscriptions.id})::int`,
+          activeSubscriptionCount: sql<number>`SUM(CASE WHEN ${subscriptions.status} = 'active' THEN 1 ELSE 0 END)::int`,
+        })
+        .from(users)
+        .leftJoin(subscriptions, eq(subscriptions.userId, users.id))
+        .where(
+          and(
+            eq(users.role, 'user'),
+            sql`(
+              LOWER(${users.firstName}) LIKE ${searchTerm} OR 
+              LOWER(${users.lastName}) LIKE ${searchTerm} OR 
+              LOWER(${users.email}) LIKE ${searchTerm} OR
+              LOWER(${users.phoneNumber}) LIKE ${searchTerm}
+            )`
+          )
+        )
+        .groupBy(users.id, users.firstName, users.lastName, users.email, users.phoneNumber)
+        .orderBy(users.lastName, users.firstName);
+    }
+
+    const results = await query;
+    
+    return results.map(r => ({
+      id: r.id,
+      firstName: r.firstName,
+      lastName: r.lastName,
+      email: r.email,
+      phoneNumber: r.phoneNumber,
+      subscriptionCount: r.subscriptionCount || 0,
+      activeSubscriptionCount: r.activeSubscriptionCount || 0,
+    }));
   }
 
   // Migration: Backfill existing subscriptions into subscription_items table
