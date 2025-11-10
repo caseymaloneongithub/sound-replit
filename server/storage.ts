@@ -22,17 +22,16 @@ import {
   users,
   verificationCodes
 } from "@shared/schema";
-import { drizzle } from "drizzle-orm/neon-serverless";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
+import { db } from "./db";
 
 neonConfig.webSocketConstructor = ws;
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const db = drizzle(pool);
 
 const PostgresSessionStore = connectPg(session);
 
