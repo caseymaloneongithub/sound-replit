@@ -399,6 +399,48 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
+  async cancelSubscription(id: string): Promise<Subscription | undefined> {
+    const result = await db
+      .update(subscriptions)
+      .set({ 
+        status: 'cancelled',
+        cancelledAt: new Date()
+      })
+      .where(eq(subscriptions.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getSubscriptionItems(subscriptionId: string): Promise<SubscriptionItem[]> {
+    return await db
+      .select()
+      .from(subscriptionItems)
+      .where(eq(subscriptionItems.subscriptionId, subscriptionId));
+  }
+
+  async addSubscriptionItem(item: InsertSubscriptionItem): Promise<SubscriptionItem> {
+    const result = await db
+      .insert(subscriptionItems)
+      .values(item)
+      .returning();
+    return result[0];
+  }
+
+  async removeSubscriptionItem(id: string): Promise<void> {
+    await db
+      .delete(subscriptionItems)
+      .where(eq(subscriptionItems.id, id));
+  }
+
+  async updateSubscriptionItemQuantity(id: string, quantity: number): Promise<SubscriptionItem | undefined> {
+    const result = await db
+      .update(subscriptionItems)
+      .set({ quantity })
+      .where(eq(subscriptionItems.id, id))
+      .returning();
+    return result[0];
+  }
+
   async getWholesaleCustomers(): Promise<WholesaleCustomer[]> {
     return await db.select().from(wholesaleCustomers);
   }
