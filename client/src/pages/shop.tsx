@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Product } from "@shared/schema";
 import { Button } from "@/components/ui/button";
@@ -19,24 +19,35 @@ function ProductImageCarousel({ product }: { product: Product }) {
     ? product.imageUrls 
     : (product.imageUrl ? [product.imageUrl] : []);
 
+  // Clamp currentIndex when image count changes
+  useEffect(() => {
+    if (currentIndex >= images.length && images.length > 0) {
+      setCurrentIndex(images.length - 1);
+    }
+  }, [images.length, currentIndex]);
+
   const nextImage = () => {
-    setCurrentIndex((prev) => (prev + 1) % images.length);
+    if (images.length > 0) {
+      setCurrentIndex((prev) => (prev + 1) % images.length);
+    }
   };
 
   const prevImage = () => {
-    setCurrentIndex((prev) => (prev - 1 + images.length) % images.length);
+    if (images.length > 0) {
+      setCurrentIndex((prev) => (prev - 1 + images.length) % images.length);
+    }
   };
 
   if (images.length === 0) {
     return (
-      <div className="aspect-square bg-muted flex items-center justify-center">
+      <div className="aspect-square bg-muted flex items-center justify-center rounded-md">
         <p className="text-muted-foreground">No image available</p>
       </div>
     );
   }
 
   return (
-    <div className="relative aspect-square bg-card overflow-hidden group">
+    <div className="relative aspect-square bg-card overflow-hidden rounded-md group">
       <img 
         src={images[currentIndex]} 
         alt={`${product.name} - Image ${currentIndex + 1}`}
@@ -46,29 +57,33 @@ function ProductImageCarousel({ product }: { product: Product }) {
       
       {images.length > 1 && (
         <>
-          <button
+          <Button
+            size="icon"
+            variant="ghost"
             onClick={(e) => {
               e.preventDefault();
               prevImage();
             }}
-            className="absolute left-2 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-background p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-            data-testid={`button-prev-image-${product.id}`}
+            className="absolute left-2 top-1/2 -translate-y-1/2 bg-background/80 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity rounded-full"
+            data-testid={`button-prev-${product.id}`}
             type="button"
           >
             <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
             onClick={(e) => {
               e.preventDefault();
               nextImage();
             }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-background p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-            data-testid={`button-next-image-${product.id}`}
+            className="absolute right-2 top-1/2 -translate-y-1/2 bg-background/80 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity rounded-full"
+            data-testid={`button-next-${product.id}`}
             type="button"
           >
             <ChevronRight className="w-4 h-4" />
-          </button>
-          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
+          </Button>
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
             {images.map((_, index) => (
               <button
                 key={index}
@@ -76,13 +91,14 @@ function ProductImageCarousel({ product }: { product: Product }) {
                   e.preventDefault();
                   setCurrentIndex(index);
                 }}
-                className={`w-2 h-2 rounded-full transition-all ${
+                className={`h-2 rounded-full transition-all ${
                   index === currentIndex 
                     ? 'bg-primary w-4' 
-                    : 'bg-background/60'
+                    : 'bg-background/60 w-2'
                 }`}
-                data-testid={`dot-${product.id}-${index}`}
+                data-testid={`button-dot-${product.id}-${index}`}
                 type="button"
+                aria-label={`Go to image ${index + 1}`}
               />
             ))}
           </div>
