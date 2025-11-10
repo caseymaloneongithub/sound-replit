@@ -82,7 +82,14 @@ A unified management portal at `/staff-portal` for staff and admin users, consol
 - Professional invoice generation with optional online payment (Stripe)
 
 **Retail Management**:
+- **Customer Directory**: View and search all retail customers at `/retail/customers`. Displays customer contact information (name, email, phone) and subscription statistics (total subscriptions, active subscriptions). Features real-time search filtering by name, email, or phone number. Read-only access for staff to support customer service operations.
 - **Pickup Report**: Daily pickup schedule for retail subscriptions with date selection, summary statistics (total pickups, unique customers), and detailed customer/product information for logistics planning. Uses timezone-safe UTC-based date handling to ensure consistent reporting regardless of server or client timezone.
+
+**Technical Implementation**:
+- Retail customer data is aggregated via LEFT JOIN query combining users table (role='user') with subscriptions table
+- Search functionality uses PostgreSQL ILIKE for case-insensitive pattern matching across multiple fields
+- API endpoint `/api/retail/customers` protected by `isStaffOrAdmin` middleware
+- UI built with responsive card grid layout and loading/empty states
 
 The Staff Portal uses a sidebar navigation system that organizes features into sections: Overview, Wholesale, Inventory & Reports, and Administration. Wholesale customers have a separate self-service dashboard at `/wholesale-customer` for viewing orders and placing new orders independently.
 

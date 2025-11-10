@@ -951,10 +951,10 @@ export class PostgresStorage implements IStorage {
     
     return results.map(r => ({
       id: r.id,
-      firstName: r.firstName,
-      lastName: r.lastName,
-      email: r.email,
-      phoneNumber: r.phoneNumber,
+      firstName: r.firstName || '',
+      lastName: r.lastName || '',
+      email: r.email || '',
+      phoneNumber: r.phoneNumber || '',
       subscriptionCount: r.subscriptionCount || 0,
       activeSubscriptionCount: r.activeSubscriptionCount || 0,
     }));
