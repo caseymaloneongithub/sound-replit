@@ -30,6 +30,12 @@ interface InventoryFormData {
 
 export default function StaffPortal() {
   const { toast } = useToast();
+  
+  // Read tab from URL query parameter
+  const urlParams = new URLSearchParams(window.location.search);
+  const tabFromUrl = urlParams.get('tab') || 'orders';
+  const [activeTab, setActiveTab] = useState(tabFromUrl);
+  
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
   const [productForm, setProductForm] = useState<ProductFormData>({
     name: '',
