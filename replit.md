@@ -31,13 +31,13 @@ Supports username/password login and passwordless SMS code login (via Twilio), b
 Stripe is integrated for one-time purchases and recurring subscriptions. One-time cart purchases use **embedded checkout** with Stripe Payment Elements (on-site payment form), while subscription purchases use Stripe Checkout Sessions (redirect to Stripe). The system handles webhooks for payment confirmations and subscription lifecycle events. A "subscribe and save" model with flexible delivery frequencies is supported, with server-side validation preventing mixed carts.
 
 **Stripe Customer Sync** (Added November 2025):
-When retail customers register accounts, they are automatically created as Stripe customers. The `stripeCustomerId` is stored in the users table for seamless future transactions. Staff and admin accounts are excluded from Stripe sync as they do not make purchases. This integration:
-- Creates Stripe customers on registration with name, email, phone
+When retail customers register accounts, they are automatically created as Stripe customers. The `stripeCustomerId` is stored in the users table for seamless future transactions. This integration:
+- Creates Stripe customers automatically on registration for retail customers (role='user')
 - Stores userId in Stripe customer metadata for reference
 - Uses non-blocking approach - registration succeeds even if Stripe creation fails
 - Logs errors with context for monitoring and alerting
-- Supports retail customers (role='user') only
-- Excludes wholesale_customer, staff, admin, and super_admin accounts
+- **Wholesale customers** can have Stripe customer IDs when they pay by credit card, but these are created on-demand during checkout rather than automatically at registration
+- Staff and admin accounts never need Stripe customer IDs as they don't make purchases
 - **Backfill Tool**: Super admins can sync existing retail customers to Stripe via the User Management tab in Staff Portal with dry-run preview and live execution options
 
 **Embedded Cart Checkout Flow**:
