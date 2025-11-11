@@ -8,6 +8,7 @@ import { z } from "zod";
 import { sendVerificationCode, generateVerificationCode } from "./twilio";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
+import { createStripeCustomer } from "./stripeCustomer";
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -212,6 +213,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email,
         phone,
         address,
+      });
+
+      // Create Stripe customer (non-blocking - log errors but don't fail registration)
+      createStripeCustomer({
+        userId: user.id,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        firstName: contactName.split(' ')[0],
+        lastName: contactName.split(' ').slice(1).join(' ') || undefined,
+        username: user.username,
+      }).catch(error => {
+        console.error("[Wholesale Registration] Failed to create Stripe customer:", error);
       });
 
       res.status(201).json({ message: "Wholesale account created successfully" });

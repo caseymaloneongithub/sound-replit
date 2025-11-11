@@ -6,6 +6,7 @@ import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
+import { createStripeCustomer } from "./stripeCustomer";
 
 declare global {
   namespace Express {
@@ -130,6 +131,18 @@ export function setupAuth(app: Express) {
       const user = await storage.createUser({
         ...req.body,
         password: await hashPassword(password),
+      });
+
+      // Create Stripe customer (non-blocking - log errors but don't fail registration)
+      createStripeCustomer({
+        userId: user.id,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        username: user.username,
+      }).catch(error => {
+        console.error("[Registration] Failed to create Stripe customer:", error);
       });
 
       // Invalidate verification code after successful registration
