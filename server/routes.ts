@@ -1300,6 +1300,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({
           dryRun: true,
           message: `Dry run: ${userList.length} users would be processed`,
+          total: userList.length,
           users: userList,
         });
       }

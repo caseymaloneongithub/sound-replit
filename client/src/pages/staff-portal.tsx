@@ -124,6 +124,31 @@ export default function StaffPortal() {
     },
   });
 
+  const [backfillResults, setBackfillResults] = useState<any>(null);
+
+  const backfillStripeCustomersMutation = useMutation({
+    mutationFn: async ({ dryRun }: { dryRun: boolean }) => {
+      return await apiRequest('POST', '/api/admin/backfill-stripe-customers', { dryRun });
+    },
+    onSuccess: (data) => {
+      setBackfillResults(data);
+      if (!data.dryRun) {
+        queryClient.invalidateQueries({ queryKey: ['/api/staff/users'] });
+      }
+      toast({
+        title: data.dryRun ? "Dry Run Complete" : "Backfill Complete",
+        description: data.message,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to backfill Stripe customers",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleEditProduct = (product: Product) => {
     setEditingProduct(product.id);
     setProductForm({
@@ -514,6 +539,87 @@ export default function StaffPortal() {
 
           {user?.role === 'super_admin' && (
             <TabsContent value="users" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Stripe Customer Sync</CardTitle>
+                  <CardDescription>
+                    Create Stripe customer records for existing users who don't have them yet
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="flex gap-2 flex-wrap">
+                      <Button
+                        onClick={() => backfillStripeCustomersMutation.mutate({ dryRun: true })}
+                        variant="outline"
+                        disabled={backfillStripeCustomersMutation.isPending}
+                        data-testid="button-stripe-dry-run"
+                      >
+                        {backfillStripeCustomersMutation.isPending ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            Processing...
+                          </>
+                        ) : (
+                          'Preview (Dry Run)'
+                        )}
+                      </Button>
+                      <Button
+                        onClick={() => backfillStripeCustomersMutation.mutate({ dryRun: false })}
+                        disabled={backfillStripeCustomersMutation.isPending}
+                        data-testid="button-stripe-backfill"
+                      >
+                        {backfillStripeCustomersMutation.isPending ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            Processing...
+                          </>
+                        ) : (
+                          'Sync to Stripe'
+                        )}
+                      </Button>
+                    </div>
+                    
+                    {backfillResults && (
+                      <div className="p-3 border rounded-md bg-muted/50">
+                        <p className="font-semibold mb-2">
+                          {backfillResults.dryRun ? 'Dry Run Results:' : 'Backfill Results:'}
+                        </p>
+                        <div className="text-sm space-y-1">
+                          <p>Total users: {backfillResults.total}</p>
+                          {!backfillResults.dryRun && (
+                            <>
+                              <p className="text-green-600">Successful: {backfillResults.successful}</p>
+                              <p className="text-red-600">Failed: {backfillResults.failed}</p>
+                            </>
+                          )}
+                          {backfillResults.errors && backfillResults.errors.length > 0 && (
+                            <div className="mt-2">
+                              <p className="font-semibold text-red-600">Errors:</p>
+                              {backfillResults.errors.map((err: any, idx: number) => (
+                                <p key={idx} className="text-xs text-red-600">
+                                  {err.username}: {err.error}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                          {backfillResults.users && backfillResults.users.length > 0 && (
+                            <div className="mt-2">
+                              <p className="font-semibold">Users to sync:</p>
+                              {backfillResults.users.map((u: any, idx: number) => (
+                                <p key={idx} className="text-xs">
+                                  {u.username} ({u.email}) - {u.role}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
               {usersLoading ? (
                 <div className="flex items-center justify-center py-12 gap-2">
                   <Loader2 className="w-6 h-6 animate-spin" />
