@@ -23,6 +23,13 @@ export async function createStripeCustomer(params: CreateStripeCustomerParams): 
   try {
     const { userId, email, phoneNumber, firstName, lastName, username } = params;
 
+    // Idempotency guard: Skip if user already has a Stripe customer ID
+    const existingUser = await storage.getUser(userId);
+    if (existingUser?.stripeCustomerId) {
+      console.log(`[Stripe Customer] User ${userId} already has Stripe customer ID ${existingUser.stripeCustomerId} - skipping creation`);
+      return existingUser.stripeCustomerId;
+    }
+
     const name = firstName && lastName 
       ? `${firstName} ${lastName}`.trim()
       : firstName || lastName || username || "Customer";

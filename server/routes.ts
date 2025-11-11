@@ -1274,6 +1274,107 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Backfill Stripe customer IDs for existing users (super admin only)
+  app.post("/api/admin/backfill-stripe-customers", isAuthenticated, isSuperAdmin, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun === true;
+      const actor = req.user?.username || 'unknown';
+      
+      console.log(`[Stripe Backfill] Starting backfill process (actor: ${actor}, dryRun: ${dryRun}, timestamp: ${new Date().toISOString()})...`);
+      
+      // Get all users without Stripe customer IDs
+      const usersWithoutStripe = await storage.getUsersWithoutStripeId();
+      
+      console.log(`[Stripe Backfill] Found ${usersWithoutStripe.length} users without Stripe customer IDs`);
+      
+      // Dry run mode - return projected user list without invoking Stripe
+      if (dryRun) {
+        const userList = usersWithoutStripe.map(u => ({
+          userId: u.id,
+          username: u.username,
+          email: u.email,
+          role: u.role,
+        }));
+        
+        console.log(`[Stripe Backfill] Dry run complete - ${userList.length} users would be processed`);
+        return res.json({
+          dryRun: true,
+          message: `Dry run: ${userList.length} users would be processed`,
+          users: userList,
+        });
+      }
+      
+      const results = {
+        total: usersWithoutStripe.length,
+        successful: 0,
+        failed: 0,
+        errors: [] as { userId: string; username: string; error: string }[],
+      };
+      
+      // Process each user
+      for (const user of usersWithoutStripe) {
+        try {
+          console.log(`[Stripe Backfill] Processing user ${user.username} (${user.id})...`);
+          
+          // Determine name based on role
+          let firstName = user.username;
+          let lastName: string | undefined = undefined;
+          
+          // For wholesale customers, try to get business name
+          if (user.role === 'wholesale_customer') {
+            const wholesaleCustomer = await storage.getWholesaleCustomerByUserId(user.id);
+            if (wholesaleCustomer?.contactName) {
+              const nameParts = wholesaleCustomer.contactName.split(' ');
+              firstName = nameParts[0];
+              lastName = nameParts.slice(1).join(' ') || undefined;
+            }
+          }
+          
+          // Create Stripe customer
+          const stripeCustomerId = await createStripeCustomer({
+            userId: user.id,
+            email: user.email,
+            phoneNumber: user.phoneNumber,
+            firstName,
+            lastName,
+            username: user.username,
+          });
+          
+          if (stripeCustomerId) {
+            results.successful++;
+            console.log(`[Stripe Backfill] ✓ Created Stripe customer for ${user.username}: ${stripeCustomerId}`);
+          } else {
+            results.failed++;
+            results.errors.push({
+              userId: user.id,
+              username: user.username,
+              error: "Stripe customer creation returned null",
+            });
+            console.log(`[Stripe Backfill] ✗ Failed to create Stripe customer for ${user.username}`);
+          }
+        } catch (error: any) {
+          results.failed++;
+          results.errors.push({
+            userId: user.id,
+            username: user.username,
+            error: error.message || "Unknown error",
+          });
+          console.error(`[Stripe Backfill] ✗ Error creating Stripe customer for ${user.username}:`, error);
+        }
+      }
+      
+      console.log(`[Stripe Backfill] Complete: ${results.successful} successful, ${results.failed} failed`);
+      
+      res.json({
+        message: `Backfill complete: ${results.successful} successful, ${results.failed} failed`,
+        ...results,
+      });
+    } catch (error: any) {
+      console.error("[Stripe Backfill] Error during backfill:", error);
+      res.status(500).json({ message: "Error during backfill: " + error.message });
+    }
+  });
+
   // Wholesale order routes (staff and admin access)
   app.get("/api/wholesale/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {

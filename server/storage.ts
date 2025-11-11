@@ -46,6 +46,7 @@ export interface IStorage {
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   updateUserStripeId(id: string, stripeCustomerId: string): Promise<User | undefined>;
+  getUsersWithoutStripeId(): Promise<User[]>;
   
   createVerificationCode(code: InsertVerificationCode): Promise<VerificationCode>;
   getLatestVerificationCode(phoneNumber: string): Promise<VerificationCode | undefined>;
@@ -192,6 +193,14 @@ export class PostgresStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return result[0];
+  }
+
+  async getUsersWithoutStripeId(): Promise<User[]> {
+    const result = await db
+      .select()
+      .from(users)
+      .where(sql`${users.stripeCustomerId} IS NULL`);
+    return result;
   }
 
   async createVerificationCode(codeData: InsertVerificationCode): Promise<VerificationCode> {
