@@ -558,7 +558,7 @@ export default function StaffPortal() {
                 <CardHeader>
                   <CardTitle>Stripe Customer Sync</CardTitle>
                   <CardDescription>
-                    Create Stripe customer records for existing users who don't have them yet
+                    Create Stripe customer records for retail and wholesale customers who don't have them yet
                   </CardDescription>
                 </CardHeader>
                 <CardContent>

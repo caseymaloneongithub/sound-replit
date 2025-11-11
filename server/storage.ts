@@ -22,7 +22,7 @@ import {
   users,
   verificationCodes
 } from "@shared/schema";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, or, desc, sql } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import session from "express-session";
@@ -199,7 +199,15 @@ export class PostgresStorage implements IStorage {
     const result = await db
       .select()
       .from(users)
-      .where(sql`${users.stripeCustomerId} IS NULL`);
+      .where(
+        and(
+          sql`${users.stripeCustomerId} IS NULL`,
+          or(
+            eq(users.role, 'user'),
+            eq(users.role, 'wholesale_customer')
+          )
+        )
+      );
     return result;
   }
 
