@@ -37,6 +37,7 @@ When retail or wholesale customers register accounts, they are automatically cre
 - Uses non-blocking approach - registration succeeds even if Stripe creation fails
 - Logs errors with context for monitoring and alerting
 - Supports both retail and wholesale customer types
+- **Backfill Tool**: Super admins can sync existing users to Stripe via the User Management tab in Staff Portal with dry-run preview and live execution options
 
 **Embedded Cart Checkout Flow**:
 - Users navigate from cart drawer to `/cart-checkout` page
