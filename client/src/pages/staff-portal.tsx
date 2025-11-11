@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useSearch } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,10 +32,18 @@ interface InventoryFormData {
 export default function StaffPortal() {
   const { toast } = useToast();
   
-  // Read tab from URL query parameter
-  const urlParams = new URLSearchParams(window.location.search);
+  // Read tab from URL query parameter using wouter's useSearch hook
+  const searchString = useSearch();
+  const urlParams = new URLSearchParams(searchString);
   const tabFromUrl = urlParams.get('tab') || 'orders';
   const [activeTab, setActiveTab] = useState(tabFromUrl);
+  
+  // Update tab when URL search params change
+  useEffect(() => {
+    const params = new URLSearchParams(searchString);
+    const tab = params.get('tab') || 'orders';
+    setActiveTab(tab);
+  }, [searchString]);
   
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
   const [productForm, setProductForm] = useState<ProductFormData>({
@@ -258,7 +267,7 @@ export default function StaffPortal() {
           </p>
         </div>
 
-        <Tabs defaultValue="orders" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
             <TabsTrigger value="orders" data-testid="tab-orders">
               <ShoppingCart className="w-4 h-4 mr-2" />
