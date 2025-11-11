@@ -45,6 +45,7 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
+  updateUserStripeId(id: string, stripeCustomerId: string): Promise<User | undefined>;
   
   createVerificationCode(code: InsertVerificationCode): Promise<VerificationCode>;
   getLatestVerificationCode(phoneNumber: string): Promise<VerificationCode | undefined>;
@@ -174,6 +175,18 @@ export class PostgresStorage implements IStorage {
       .set({ 
         role, 
         isAdmin,
+        updatedAt: new Date() 
+      })
+      .where(eq(users.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async updateUserStripeId(id: string, stripeCustomerId: string): Promise<User | undefined> {
+    const result = await db
+      .update(users)
+      .set({ 
+        stripeCustomerId,
         updatedAt: new Date() 
       })
       .where(eq(users.id, id))
