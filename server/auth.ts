@@ -133,17 +133,19 @@ export function setupAuth(app: Express) {
         password: await hashPassword(password),
       });
 
-      // Create Stripe customer (non-blocking - log errors but don't fail registration)
-      createStripeCustomer({
-        userId: user.id,
-        email: user.email,
-        phoneNumber: user.phoneNumber,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        username: user.username,
-      }).catch(error => {
-        console.error("[Registration] Failed to create Stripe customer:", error);
-      });
+      // Create Stripe customer for retail customers only (non-blocking - log errors but don't fail registration)
+      if (user.role === 'user') {
+        createStripeCustomer({
+          userId: user.id,
+          email: user.email,
+          phoneNumber: user.phoneNumber,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          username: user.username,
+        }).catch(error => {
+          console.error("[Registration] Failed to create Stripe customer:", error);
+        });
+      }
 
       // Invalidate verification code after successful registration
       await storage.markVerificationCodeAsVerified(verificationCode.id);

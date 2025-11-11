@@ -202,10 +202,7 @@ export class PostgresStorage implements IStorage {
       .where(
         and(
           sql`${users.stripeCustomerId} IS NULL`,
-          or(
-            eq(users.role, 'user'),
-            eq(users.role, 'wholesale_customer')
-          )
+          eq(users.role, 'user')
         )
       );
     return result;
