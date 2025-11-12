@@ -102,6 +102,7 @@ export const subscriptions = pgTable("subscriptions", {
   subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
   stripeSubscriptionId: text("stripe_subscription_id"),
   stripeCustomerId: text("stripe_customer_id"),
+  stripePaymentMethodId: text("stripe_payment_method_id"), // For local subscription management
   status: text("status").notNull().default('active'), // 'active', 'paused', 'cancelled'
   startDate: timestamp("start_date").notNull().defaultNow(),
   nextDeliveryDate: timestamp("next_delivery_date"),
