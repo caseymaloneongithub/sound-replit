@@ -1062,6 +1062,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         case 'checkout.session.completed': {
           const session = event.data.object as Stripe.Checkout.Session;
           
+          // Handle cart purchases
           if (session.metadata?.type === 'cart_purchase') {
             const sessionId = session.metadata.sessionId;
             if (sessionId) {
@@ -1071,6 +1072,116 @@ export async function registerRoutes(app: Express): Promise<Server> {
             break;
           }
           
+          // Handle subscription setup (new local management flow)
+          if (session.metadata?.type === 'subscription_setup') {
+            // Check for existing subscription with this session ID (idempotency)
+            const existing = await storage.getSubscriptionBySessionId(session.id);
+            if (existing) {
+              console.log(`[WEBHOOK] Subscription already exists for session ${session.id}, skipping`);
+              break;
+            }
+
+            if (!session.setup_intent) {
+              console.error("No setup intent in subscription setup session");
+              break;
+            }
+
+            // Retrieve setup intent to get payment method
+            const setupIntent = await stripe.setupIntents.retrieve(session.setup_intent as string);
+            if (!setupIntent.payment_method) {
+              console.error("No payment method in setup intent");
+              break;
+            }
+
+            // Parse subscription items from metadata
+            const subscriptionItems = JSON.parse(session.metadata.subscriptionItems || '[]');
+            if (subscriptionItems.length === 0) {
+              console.error("No subscription items in metadata");
+              break;
+            }
+
+            const firstItem = subscriptionItems[0];
+            const frequency = firstItem.subscriptionFrequency || 'weekly';
+            const daysUntilNext = 
+              frequency === 'weekly' ? 7 :
+              frequency === 'bi-weekly' ? 14 :
+              28;
+
+            const nextDate = new Date();
+            nextDate.setDate(nextDate.getDate() + daysUntilNext);
+
+            // Get customer details
+            const customer = session.customer_details;
+            if (!customer?.email) {
+              console.error("No customer email in session");
+              break;
+            }
+
+            // Create or get Stripe customer
+            let stripeCustomerId = session.customer as string;
+            if (!stripeCustomerId && customer.email) {
+              const stripeCustomer = await stripe.customers.create({
+                email: customer.email,
+                name: customer.name || undefined,
+                payment_method: setupIntent.payment_method as string,
+                invoice_settings: {
+                  default_payment_method: setupIntent.payment_method as string,
+                },
+              });
+              stripeCustomerId = stripeCustomer.id;
+            } else if (stripeCustomerId) {
+              // Attach payment method to existing customer
+              await stripe.paymentMethods.attach(setupIntent.payment_method as string, {
+                customer: stripeCustomerId,
+              });
+              await stripe.customers.update(stripeCustomerId, {
+                invoice_settings: {
+                  default_payment_method: setupIntent.payment_method as string,
+                },
+              });
+            }
+
+            // Create locally-managed subscription
+            const subscriptionData: any = {
+              customerName: customer.name || 'Unknown',
+              customerEmail: customer.email,
+              customerPhone: customer.phone || '',
+              stripeCheckoutSessionId: session.id, // For idempotency
+              stripeCustomerId,
+              stripePaymentMethodId: setupIntent.payment_method as string,
+              billingType: 'local_managed',
+              subscriptionFrequency: frequency,
+              status: 'active',
+              nextChargeAt: nextDate,
+              nextDeliveryDate: nextDate,
+              retryCount: 0,
+            };
+
+            if (session.metadata?.userId) {
+              subscriptionData.userId = session.metadata.userId;
+            }
+
+            const newSubscription = await storage.createSubscription(subscriptionData);
+            
+            // Create subscription items
+            for (const item of subscriptionItems) {
+              await storage.addSubscriptionItem({
+                subscriptionId: newSubscription.id,
+                productId: item.productId,
+                quantity: item.quantity,
+              });
+            }
+
+            // Clear cart
+            if (session.metadata.sessionId) {
+              await storage.clearCart(session.metadata.sessionId);
+            }
+
+            console.log(`[WEBHOOK] Created locally-managed subscription ${newSubscription.id} with payment method ${setupIntent.payment_method}`);
+            break;
+          }
+          
+          // Handle legacy Stripe-managed subscriptions
           if (!session.subscription) {
             console.error("No subscription ID in checkout session");
             break;

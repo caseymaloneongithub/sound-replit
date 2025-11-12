@@ -96,6 +96,7 @@ export interface IStorage {
   getSubscription(id: string): Promise<Subscription | undefined>;
   getUserSubscriptions(userId: string): Promise<Subscription[]>;
   getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined>;
+  getSubscriptionBySessionId(sessionId: string): Promise<Subscription | undefined>;
   getSubscriptionsByPickupDate(pickupDate: Date): Promise<Subscription[]>;
   createSubscription(subscription: InsertSubscription): Promise<Subscription>;
   updateSubscription(id: string, updates: Partial<Subscription>): Promise<Subscription | undefined>;
@@ -627,6 +628,11 @@ export class PostgresStorage implements IStorage {
 
   async getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined> {
     const result = await db.select().from(subscriptions).where(eq(subscriptions.stripeSubscriptionId, stripeSubscriptionId));
+    return result[0];
+  }
+
+  async getSubscriptionBySessionId(sessionId: string): Promise<Subscription | undefined> {
+    const result = await db.select().from(subscriptions).where(eq(subscriptions.stripeCheckoutSessionId, sessionId));
     return result[0];
   }
 

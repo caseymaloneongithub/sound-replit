@@ -208,14 +208,28 @@ export async function runDailyBilling() {
       return;
     }
 
-    // Process each subscription
+    // Process each subscription with atomic lock acquisition
     for (const subscription of dueSubscriptions) {
       try {
-        // Set processing lock to prevent concurrent runs
-        await db
+        // Atomically acquire lock using conditional update
+        const lockResult = await db
           .update(subscriptions)
           .set({ processingLock: true })
-          .where(eq(subscriptions.id, subscription.id));
+          .where(
+            and(
+              eq(subscriptions.id, subscription.id),
+              eq(subscriptions.processingLock, false), // Only update if not already locked
+              eq(subscriptions.status, 'active'),
+              lte(subscriptions.nextChargeAt, now)
+            )
+          )
+          .returning({ id: subscriptions.id });
+
+        if (lockResult.length === 0) {
+          // Another process already acquired the lock, skip
+          console.log(`[BILLING] Subscription ${subscription.id} already being processed, skipping`);
+          continue;
+        }
 
         // Get subscription items
         const items = await db

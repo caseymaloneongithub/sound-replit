@@ -101,6 +101,7 @@ export const subscriptions = pgTable("subscriptions", {
   productId: varchar("product_id").references(() => products.id),
   subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
   stripeSubscriptionId: text("stripe_subscription_id"),
+  stripeCheckoutSessionId: text("stripe_checkout_session_id").unique(), // For idempotency
   stripeCustomerId: text("stripe_customer_id"),
   stripePaymentMethodId: text("stripe_payment_method_id"), // For local subscription management
   status: text("status").notNull().default('active'), // 'active', 'paused', 'cancelled'
