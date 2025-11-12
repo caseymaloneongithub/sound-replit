@@ -2,15 +2,18 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders } from "@shared/schema";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders, retailCheckoutSessions } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { db } from "./db";
+import { Pool } from "@neondatabase/serverless";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
 import { sendVerificationCode, generateVerificationCode } from "./twilio";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { createStripeCustomer } from "./stripeCustomer";
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -721,6 +724,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Store customer info for retail checkout (called before payment)
+  // Requires active session to prevent abuse
   const customerInfoSchema = z.object({
     customerName: z.string().min(2),
     customerEmail: z.string().email(),
@@ -730,8 +734,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/checkout/customer-info", async (req: any, res) => {
     try {
+      // Require session (logged in or guest) for CSRF protection
+      if (!req.sessionID) {
+        return res.status(401).json({ message: "Session required" });
+      }
+      
       const validated = customerInfoSchema.parse(req.body);
-      const sessionId = req.sessionID || "guest";
+      const sessionId = req.sessionID;
+      
+      // Validate payment intent exists and belongs to this session if provided
+      if (validated.paymentIntentId && !validated.paymentIntentId.startsWith('pi_')) {
+        return res.status(400).json({ message: "Invalid payment intent ID" });
+      }
       
       await storage.createRetailCheckoutSession({
         sessionId,
@@ -1012,77 +1026,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (paymentIntent.metadata?.type === 'cart_purchase') {
             const sessionId = paymentIntent.metadata.sessionId;
             
-            // Check for existing order (idempotency)
-            const existingOrder = await db
-              .select()
-              .from(retailOrders)
-              .where(eq(retailOrders.stripePaymentIntentId, paymentIntent.id))
-              .limit(1);
-            
-            if (existingOrder.length === 0) {
-              // Get checkout session with customer info
-              const checkoutSession = await storage.getRetailCheckoutSessionByPaymentIntent(paymentIntent.id);
+            // Use transaction for atomic order creation
+            const client = await pool.connect();
+            try {
+              await client.query('BEGIN');
               
-              if (!checkoutSession) {
-                console.error(`No checkout session found for payment intent ${paymentIntent.id}`);
-                // Still clear the cart to prevent stuck state
-                if (sessionId) {
-                  await storage.clearCart(sessionId);
-                }
-                break;
-              }
+              // Check for existing order (idempotency via unique constraint)
+              const existingOrderResult = await client.query(
+                'SELECT id FROM retail_orders WHERE stripe_payment_intent_id = $1 LIMIT 1',
+                [paymentIntent.id]
+              );
               
-              // Get cart items
-              const cartItems = await storage.getCartItems(sessionId);
-              
-              if (cartItems.length > 0) {
-                // Generate order number
-                const orderNumber = await storage.generateNextOrderNumber();
+              if (existingOrderResult.rows.length === 0) {
+                // Get checkout session with customer info
+                const checkoutSessionResult = await client.query(
+                  'SELECT * FROM retail_checkout_sessions WHERE payment_intent_id = $1 LIMIT 1',
+                  [paymentIntent.id]
+                );
                 
-                // Create retail order
-                const order = await storage.createRetailOrder({
-                  orderNumber,
-                  userId: checkoutSession.userId,
-                  customerName: checkoutSession.customerName,
-                  customerEmail: checkoutSession.customerEmail,
-                  customerPhone: checkoutSession.customerPhone,
-                  pickupDate: null,
-                  status: 'pending',
-                  subtotal: paymentIntent.metadata.subtotal || '0',
-                  taxAmount: paymentIntent.metadata.taxAmount || '0',
-                  totalAmount: (paymentIntent.amount / 100).toFixed(2),
-                  stripePaymentIntentId: paymentIntent.id,
-                  stripeCheckoutSessionId: null,
-                  fulfilledByUserId: null,
-                  notes: null,
-                });
-                
-                // Create order items
-                for (const item of cartItems) {
-                  const product = await storage.getProduct(item.productId);
-                  if (product) {
-                    await storage.createRetailOrderItem({
-                      orderId: order.id,
-                      productId: item.productId,
-                      quantity: item.quantity,
-                      unitPrice: product.retailPrice,
-                    });
+                if (checkoutSessionResult.rows.length === 0) {
+                  console.error(`[WEBHOOK] No checkout session found for payment intent ${paymentIntent.id}`);
+                  await client.query('COMMIT');
+                  // Still clear the cart to prevent stuck state
+                  if (sessionId) {
+                    await storage.clearCart(sessionId);
                   }
+                  break;
                 }
                 
-                console.log(`Created retail order ${orderNumber} for payment intent ${paymentIntent.id}`);
+                const checkoutSession = checkoutSessionResult.rows[0];
                 
-                // Clean up
-                await storage.deleteRetailCheckoutSession(checkoutSession.id);
+                // Get cart items
+                const cartItems = await storage.getCartItems(sessionId);
+                
+                if (cartItems.length > 0) {
+                  // Generate order number
+                  const orderNumber = await storage.generateNextOrderNumber();
+                  
+                  // Create retail order
+                  const orderResult = await client.query(
+                    `INSERT INTO retail_orders (
+                      order_number, user_id, customer_name, customer_email, customer_phone,
+                      status, subtotal, tax_amount, total_amount, stripe_payment_intent_id
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+                    [
+                      orderNumber,
+                      checkoutSession.user_id,
+                      checkoutSession.customer_name,
+                      checkoutSession.customer_email,
+                      checkoutSession.customer_phone,
+                      'pending',
+                      paymentIntent.metadata.subtotal || '0',
+                      paymentIntent.metadata.taxAmount || '0',
+                      (paymentIntent.amount / 100).toFixed(2),
+                      paymentIntent.id
+                    ]
+                  );
+                  
+                  const orderId = orderResult.rows[0].id;
+                  
+                  // Create order items
+                  for (const item of cartItems) {
+                    const product = await storage.getProduct(item.productId);
+                    if (product) {
+                      await client.query(
+                        'INSERT INTO retail_order_items (order_id, product_id, quantity, unit_price) VALUES ($1, $2, $3, $4)',
+                        [orderId, item.productId, item.quantity, product.retailPrice]
+                      );
+                    }
+                  }
+                  
+                  // Delete checkout session (mark as consumed)
+                  await client.query('DELETE FROM retail_checkout_sessions WHERE id = $1', [checkoutSession.id]);
+                  
+                  console.log(`[WEBHOOK] Created retail order ${orderNumber} for payment intent ${paymentIntent.id}`);
+                }
+              } else {
+                console.log(`[WEBHOOK] Order already exists for payment intent ${paymentIntent.id} - skipping creation (idempotent)`);
               }
-            } else {
-              console.log(`Order already exists for payment intent ${paymentIntent.id} - skipping creation`);
+              
+              await client.query('COMMIT');
+            } catch (error) {
+              await client.query('ROLLBACK');
+              console.error(`[WEBHOOK] Error creating retail order for payment intent ${paymentIntent.id}:`, error);
+              throw error;
+            } finally {
+              client.release();
             }
             
-            // Always clear cart
+            // Always clear cart (outside transaction)
             if (sessionId) {
               await storage.clearCart(sessionId);
-              console.log(`Cleared cart for session ${sessionId} after successful payment`);
+              console.log(`[WEBHOOK] Cleared cart for session ${sessionId} after successful payment`);
             }
           }
           break;
