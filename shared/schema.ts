@@ -58,6 +58,19 @@ export const products = pgTable("products", {
   lowStockThreshold: integer("low_stock_threshold").notNull().default(50),
 });
 
+export const inventoryAdjustments = pgTable("inventory_adjustments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  productId: varchar("product_id").notNull().references(() => products.id),
+  quantity: integer("quantity").notNull(), // Can be positive (production) or negative (fulfillment)
+  reason: text("reason").notNull(), // 'production', 'fulfillment', 'manual', 'correction'
+  staffUserId: varchar("staff_user_id").references(() => users.id),
+  orderId: varchar("order_id"), // For fulfillment tracking (retail or wholesale)
+  orderType: text("order_type"), // 'retail' or 'wholesale'
+  batchMetadata: text("batch_metadata"), // JSON string for production batch info
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const subscriptionPlans = pgTable("subscription_plans", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -201,6 +214,7 @@ export const insertSubscriptionPlanSchema = createInsertSchema(subscriptionPlans
 export const insertCartItemSchema = createInsertSchema(cartItems).omit({ id: true });
 export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({ id: true, startDate: true, cancelledAt: true });
 export const insertSubscriptionItemSchema = createInsertSchema(subscriptionItems).omit({ id: true });
+export const insertInventoryAdjustmentSchema = createInsertSchema(inventoryAdjustments).omit({ id: true, createdAt: true });
 export const insertRetailCheckoutSessionSchema = createInsertSchema(retailCheckoutSessions).omit({ id: true, createdAt: true });
 export const insertRetailOrderSchema = createInsertSchema(retailOrders).omit({ id: true, orderDate: true, fulfilledAt: true });
 export const insertRetailOrderItemSchema = createInsertSchema(retailOrderItems).omit({ id: true });
@@ -214,6 +228,7 @@ export const insertImpersonationLogSchema = createInsertSchema(impersonationLogs
 // Insert types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertProduct = z.infer<typeof insertProductSchema>;
+export type InsertInventoryAdjustment = z.infer<typeof insertInventoryAdjustmentSchema>;
 export type InsertSubscriptionPlan = z.infer<typeof insertSubscriptionPlanSchema>;
 export type InsertCartItem = z.infer<typeof insertCartItemSchema>;
 export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
@@ -231,6 +246,7 @@ export type InsertImpersonationLog = z.infer<typeof insertImpersonationLogSchema
 // Select types
 export type User = typeof users.$inferSelect;
 export type Product = typeof products.$inferSelect;
+export type InventoryAdjustment = typeof inventoryAdjustments.$inferSelect;
 export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;
 export type Subscription = typeof subscriptions.$inferSelect;
