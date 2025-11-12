@@ -1305,19 +1305,70 @@ export class PostgresStorage implements IStorage {
   }
 
   async updateRetailOrderStatus(id: string, status: string, userId?: string): Promise<RetailOrder | undefined> {
-    const updates: any = { status };
-    
     if (status === 'fulfilled' && userId) {
-      updates.fulfilledAt = new Date();
-      updates.fulfilledByUserId = userId;
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const orderItems = await db
+          .select()
+          .from(retailOrderItems)
+          .where(eq(retailOrderItems.orderId, id));
+
+        for (const item of orderItems) {
+          const productResult = await client.query(
+            'SELECT stock_quantity FROM products WHERE id = $1 FOR UPDATE',
+            [item.productId]
+          );
+
+          if (productResult.rows.length === 0) {
+            throw new Error(`Product not found: ${item.productId}`);
+          }
+
+          const currentStock = productResult.rows[0].stock_quantity;
+          const newStock = currentStock - item.quantity;
+
+          if (newStock < 0) {
+            throw new Error(`Insufficient stock for product ${item.productId}. Required: ${item.quantity}, Available: ${currentStock}`);
+          }
+
+          await client.query(
+            'UPDATE products SET stock_quantity = $1, in_stock = $2 WHERE id = $3',
+            [newStock, newStock > 0, item.productId]
+          );
+
+          await client.query(
+            `INSERT INTO inventory_adjustments 
+            (product_id, quantity, reason, staff_user_id, order_id, order_type)
+            VALUES ($1, $2, $3, $4, $5, $6)`,
+            [item.productId, -item.quantity, 'fulfillment', userId, id, 'retail']
+          );
+        }
+
+        await client.query(
+          'UPDATE retail_orders SET status = $1, fulfilled_at = $2, fulfilled_by_user_id = $3 WHERE id = $4',
+          [status, new Date(), userId, id]
+        );
+
+        await client.query('COMMIT');
+
+        const updatedOrder = await this.getRetailOrder(id);
+        return updatedOrder;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else {
+      const updates: any = { status };
+      const result = await db
+        .update(retailOrders)
+        .set(updates)
+        .where(eq(retailOrders.id, id))
+        .returning();
+      return result[0];
     }
-    
-    const result = await db
-      .update(retailOrders)
-      .set(updates)
-      .where(eq(retailOrders.id, id))
-      .returning();
-    return result[0];
   }
 
   async generateNextOrderNumber(): Promise<string> {
