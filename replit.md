@@ -82,7 +82,17 @@ A unified management portal at `/staff-portal` for staff and admin users, consol
 
 **Admin Features**:
 - **Product Specs Tab**: Edit product details, pricing, and thresholds
-- **User Management Tab** (super_admin only): Manage user roles
+- **User Management Tab** (super_admin only): Manage user roles and impersonate users
+
+**User Impersonation** (Added November 2025):
+Super admins can securely impersonate any user account to troubleshoot issues or provide customer support. This session-based feature includes:
+- **Access**: Only super admins can initiate impersonation
+- **Privilege Preservation**: Admins maintain their elevated privileges while viewing as another user
+- **Visual Indicator**: Bright yellow banner at top of page shows "Viewing as [username]" with easy exit button
+- **Audit Trail**: Full logging of all impersonation sessions with IP address, user agent, start time, and end time
+- **Security**: Blocks self-impersonation, validates target user exists, uses original admin identity for all permission checks
+- **Session Management**: Automatic cleanup on logout, transaction-wrapped operations prevent lingering sessions
+- **Technical**: Stored in `impersonation_logs` table with partial index on active sessions for performance
 
 **Wholesale Management** (dedicated pages accessible via sidebar):
 - Create and manage wholesale customer accounts with client-specific pricing overrides
