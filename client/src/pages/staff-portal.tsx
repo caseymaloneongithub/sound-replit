@@ -15,6 +15,7 @@ import { Package, ShoppingCart, Settings, AlertCircle, Loader2, Users, Eye } fro
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
+import { InventoryTab } from "@/components/staff/inventory-tab";
 import type { Product, WholesaleOrder, WholesaleCustomer, User } from "@shared/schema";
 
 interface ProductFormData {
@@ -394,65 +395,7 @@ export default function StaffPortal() {
           </TabsContent>
 
           <TabsContent value="inventory" className="space-y-4">
-            {productsLoading ? (
-              <div className="flex items-center justify-center py-12 gap-2">
-                <Loader2 className="w-6 h-6 animate-spin" />
-                <span className="text-muted-foreground">Loading inventory...</span>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {products.map((product) => {
-                  const formData = inventoryForms[product.id];
-                  
-                  return (
-                    <Card key={product.id} data-testid={`card-inventory-${product.id}`}>
-                      <CardHeader>
-                        <CardTitle className="text-lg">{product.name}</CardTitle>
-                        <CardDescription>
-                          Stock: {product.stockQuantity} bottles
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-4">
-                          <div>
-                            <Label>Update Stock Quantity</Label>
-                            <div className="flex gap-2 mt-1">
-                              <Input
-                                type="number"
-                                value={formData?.stockQuantity ?? product.stockQuantity}
-                                onChange={(e) => {
-                                  const value = parseInt(e.target.value) || 0;
-                                  setInventoryForms(prev => ({
-                                    ...prev,
-                                    [product.id]: { stockQuantity: value },
-                                  }));
-                                }}
-                                data-testid={`input-stock-${product.id}`}
-                              />
-                              <Button
-                                onClick={() => handleUpdateInventory(product.id)}
-                                disabled={updateProductMutation.isPending || formData?.stockQuantity === product.stockQuantity}
-                                data-testid={`button-update-stock-${product.id}`}
-                              >
-                                {updateProductMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Update'}
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant={product.inStock ? "default" : "destructive"}>
-                              {product.inStock ? 'In Stock' : 'Out of Stock'}
-                            </Badge>
-                            {product.stockQuantity <= product.lowStockThreshold && (
-                              <Badge variant="secondary">Low Stock</Badge>
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
+            <InventoryTab products={products} isLoading={productsLoading} />
           </TabsContent>
 
           {user?.isAdmin && (
