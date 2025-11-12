@@ -66,9 +66,28 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
     },
   });
 
-  const handleCustomerInfo = (data: CustomerForm) => {
-    setCustomerInfo(data);
-    setStep('payment');
+  const handleCustomerInfo = async (data: CustomerForm) => {
+    try {
+      // Extract payment intent ID from client secret
+      const paymentIntentId = paymentInfo.clientSecret.split('_secret_')[0];
+      
+      // Store customer info on the server
+      await apiRequest("POST", "/api/checkout/customer-info", {
+        customerName: data.customerName,
+        customerEmail: data.customerEmail,
+        customerPhone: data.customerPhone,
+        paymentIntentId,
+      });
+      
+      setCustomerInfo(data);
+      setStep('payment');
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save customer information",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
