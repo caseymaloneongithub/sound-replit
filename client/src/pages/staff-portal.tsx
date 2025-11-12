@@ -177,9 +177,11 @@ export default function StaffPortal() {
 
   const impersonateMutation = useMutation({
     mutationFn: async (userId: string) => {
-      const response = await fetch(`/api/admin/impersonate/${userId}`, {
+      const response = await fetch('/api/impersonate/start', {
         method: 'POST',
         credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserId: userId }),
       });
       if (!response.ok) {
         const error = await response.json();

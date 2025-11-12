@@ -22,7 +22,7 @@ export function ImpersonationBanner() {
 
   const stopImpersonationMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch("/api/admin/stop-impersonation", {
+      const response = await fetch("/api/impersonate/stop", {
         method: "POST",
         credentials: "include",
       });

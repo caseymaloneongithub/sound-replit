@@ -1918,13 +1918,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/impersonate/:userId", isAuthenticated, isSuperAdmin, async (req: any, res) => {
+  app.post("/api/impersonate/start", isAuthenticated, isSuperAdmin, async (req: any, res) => {
     try {
-      const targetUserId = req.params.userId;
+      const { targetUserId } = req.body;
       const originalUser = req.originalUser || req.user;
       
       if (!originalUser) {
         return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      if (!targetUserId) {
+        return res.status(400).json({ message: "Target user ID is required" });
       }
       
       if (targetUserId === originalUser.id) {
@@ -1966,7 +1970,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/stop-impersonation", isAuthenticated, async (req: any, res) => {
+  app.post("/api/impersonate/stop", isAuthenticated, async (req: any, res) => {
     try {
       if (!req.session?.impersonation) {
         return res.status(400).json({ message: "Not currently impersonating" });

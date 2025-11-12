@@ -217,36 +217,51 @@ export class PostgresStorage implements IStorage {
   }
 
   async startImpersonation(adminUserId: string, impersonatedUserId: string, ipAddress?: string, userAgent?: string): Promise<ImpersonationLog> {
-    return await db.transaction(async (tx) => {
-      const activeLog = await tx
-        .select()
-        .from(impersonationLogs)
-        .where(
-          and(
-            eq(impersonationLogs.adminUserId, adminUserId),
-            sql`${impersonationLogs.endedAt} IS NULL`
-          )
-        )
-        .limit(1);
-
-      if (activeLog.length > 0) {
-        await tx
-          .update(impersonationLogs)
-          .set({ endedAt: new Date() })
-          .where(eq(impersonationLogs.id, activeLog[0].id));
+    return await pool.connect().then(async (client) => {
+      try {
+        await client.query('BEGIN');
+        
+        // Find any active impersonation logs for this admin
+        const activeLogResult = await client.query(`
+          SELECT id FROM impersonation_logs
+          WHERE admin_user_id = $1 AND ended_at IS NULL
+          LIMIT 1
+        `, [adminUserId]);
+        
+        // Close any active sessions
+        if (activeLogResult.rows.length > 0) {
+          await client.query(`
+            UPDATE impersonation_logs
+            SET ended_at = NOW()
+            WHERE id = $1
+          `, [activeLogResult.rows[0].id]);
+        }
+        
+        // Create new impersonation log
+        const result = await client.query(`
+          INSERT INTO impersonation_logs (admin_user_id, impersonated_user_id, ip_address, user_agent)
+          VALUES ($1, $2, $3, $4)
+          RETURNING id, admin_user_id, impersonated_user_id, ip_address, user_agent, started_at, ended_at
+        `, [adminUserId, impersonatedUserId, ipAddress, userAgent]);
+        
+        await client.query('COMMIT');
+        
+        const row = result.rows[0];
+        return {
+          id: row.id,
+          adminUserId: row.admin_user_id,
+          impersonatedUserId: row.impersonated_user_id,
+          ipAddress: row.ip_address,
+          userAgent: row.user_agent,
+          startedAt: row.started_at,
+          endedAt: row.ended_at,
+        };
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
       }
-
-      const result = await tx
-        .insert(impersonationLogs)
-        .values({
-          adminUserId,
-          impersonatedUserId,
-          ipAddress,
-          userAgent,
-        })
-        .returning();
-
-      return result[0];
     });
   }
 
