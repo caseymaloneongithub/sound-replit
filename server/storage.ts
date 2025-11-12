@@ -1390,16 +1390,60 @@ export class PostgresStorage implements IStorage {
   }
 
   async updateWholesaleOrderFulfillment(id: string, userId: string): Promise<WholesaleOrder | undefined> {
-    const result = await db
-      .update(wholesaleOrders)
-      .set({ 
-        status: 'fulfilled',
-        fulfilledAt: new Date(),
-        fulfilledByUserId: userId 
-      })
-      .where(eq(wholesaleOrders.id, id))
-      .returning();
-    return result[0];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const orderItems = await db
+        .select()
+        .from(wholesaleOrderItems)
+        .where(eq(wholesaleOrderItems.orderId, id));
+
+      for (const item of orderItems) {
+        const productResult = await client.query(
+          'SELECT stock_quantity FROM products WHERE id = $1 FOR UPDATE',
+          [item.productId]
+        );
+
+        if (productResult.rows.length === 0) {
+          throw new Error(`Product not found: ${item.productId}`);
+        }
+
+        const currentStock = productResult.rows[0].stock_quantity;
+        const newStock = currentStock - item.quantity;
+
+        if (newStock < 0) {
+          throw new Error(`Insufficient stock for product ${item.productId}. Required: ${item.quantity}, Available: ${currentStock}`);
+        }
+
+        await client.query(
+          'UPDATE products SET stock_quantity = $1, in_stock = $2 WHERE id = $3',
+          [newStock, newStock > 0, item.productId]
+        );
+
+        await client.query(
+          `INSERT INTO inventory_adjustments 
+          (product_id, quantity, reason, staff_user_id, order_id, order_type)
+          VALUES ($1, $2, $3, $4, $5, $6)`,
+          [item.productId, -item.quantity, 'fulfillment', userId, id, 'wholesale']
+        );
+      }
+
+      await client.query(
+        'UPDATE wholesale_orders SET status = $1, fulfilled_at = $2, fulfilled_by_user_id = $3 WHERE id = $4',
+        ['fulfilled', new Date(), userId, id]
+      );
+
+      await client.query('COMMIT');
+
+      const updatedOrder = await this.getWholesaleOrder(id);
+      return updatedOrder;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Migration: Backfill existing subscriptions into subscription_items table
