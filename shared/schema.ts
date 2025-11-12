@@ -104,6 +104,11 @@ export const subscriptions = pgTable("subscriptions", {
   stripeCustomerId: text("stripe_customer_id"),
   stripePaymentMethodId: text("stripe_payment_method_id"), // For local subscription management
   status: text("status").notNull().default('active'), // 'active', 'paused', 'cancelled'
+  billingType: text("billing_type").notNull().default('stripe_managed'), // 'stripe_managed' or 'local_managed'
+  nextChargeAt: timestamp("next_charge_at"), // When to charge next (for local_managed)
+  retryCount: integer("retry_count").notNull().default(0), // Payment retry attempts
+  lastPaymentIntentId: text("last_payment_intent_id"), // Track last charge attempt
+  processingLock: boolean("processing_lock").notNull().default(false), // Prevent concurrent processing
   startDate: timestamp("start_date").notNull().defaultNow(),
   nextDeliveryDate: timestamp("next_delivery_date"),
   cancelledAt: timestamp("cancelled_at"),
