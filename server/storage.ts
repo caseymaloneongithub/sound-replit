@@ -4,6 +4,8 @@ import {
   type CartItem, type InsertCartItem,
   type Subscription, type InsertSubscription,
   type SubscriptionItem, type InsertSubscriptionItem,
+  type RetailOrder, type InsertRetailOrder,
+  type RetailOrderItem, type InsertRetailOrderItem,
   type WholesaleCustomer, type InsertWholesaleCustomer,
   type WholesaleOrder, type InsertWholesaleOrder,
   type WholesaleOrderItem, type InsertWholesaleOrderItem,
@@ -16,6 +18,8 @@ import {
   cartItems,
   subscriptions,
   subscriptionItems,
+  retailOrders,
+  retailOrderItems,
   wholesaleCustomers,
   wholesaleOrders,
   wholesaleOrderItems,
@@ -132,6 +136,19 @@ export interface IStorage {
     subscriptionCount: number;
     activeSubscriptionCount: number;
   }>>;
+  
+  getRetailOrders(): Promise<RetailOrder[]>;
+  getRetailOrder(id: string): Promise<RetailOrder | undefined>;
+  getRetailOrdersByUserId(userId: string): Promise<RetailOrder[]>;
+  getRetailOrderWithDetails(id: string): Promise<{
+    order: RetailOrder;
+    items: Array<RetailOrderItem & { product: Product }>;
+  } | undefined>;
+  createRetailOrder(order: InsertRetailOrder): Promise<RetailOrder>;
+  createRetailOrderItem(item: InsertRetailOrderItem): Promise<RetailOrderItem>;
+  updateRetailOrderStatus(id: string, status: string, userId?: string): Promise<RetailOrder | undefined>;
+  generateNextOrderNumber(): Promise<string>;
+  updateWholesaleOrderFulfillment(id: string, userId: string): Promise<WholesaleOrder | undefined>;
   
   seedData(): Promise<void>;
 }
@@ -1084,6 +1101,109 @@ export class PostgresStorage implements IStorage {
       subscriptionCount: r.subscriptionCount || 0,
       activeSubscriptionCount: r.activeSubscriptionCount || 0,
     }));
+  }
+
+  async getRetailOrders(): Promise<RetailOrder[]> {
+    return await db.select().from(retailOrders).orderBy(desc(retailOrders.orderDate));
+  }
+
+  async getRetailOrder(id: string): Promise<RetailOrder | undefined> {
+    const result = await db.select().from(retailOrders).where(eq(retailOrders.id, id));
+    return result[0];
+  }
+
+  async getRetailOrdersByUserId(userId: string): Promise<RetailOrder[]> {
+    return await db.select().from(retailOrders).where(eq(retailOrders.userId, userId)).orderBy(desc(retailOrders.orderDate));
+  }
+
+  async getRetailOrderWithDetails(id: string): Promise<{
+    order: RetailOrder;
+    items: Array<RetailOrderItem & { product: Product }>;
+  } | undefined> {
+    const order = await this.getRetailOrder(id);
+    if (!order) return undefined;
+
+    const items = await db
+      .select({
+        id: retailOrderItems.id,
+        orderId: retailOrderItems.orderId,
+        productId: retailOrderItems.productId,
+        quantity: retailOrderItems.quantity,
+        unitPrice: retailOrderItems.unitPrice,
+        product: products,
+      })
+      .from(retailOrderItems)
+      .innerJoin(products, eq(products.id, retailOrderItems.productId))
+      .where(eq(retailOrderItems.orderId, id));
+
+    return {
+      order,
+      items: items.map(item => ({
+        id: item.id,
+        orderId: item.orderId,
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        product: item.product,
+      })),
+    };
+  }
+
+  async createRetailOrder(order: InsertRetailOrder): Promise<RetailOrder> {
+    const result = await db.insert(retailOrders).values(order).returning();
+    return result[0];
+  }
+
+  async createRetailOrderItem(item: InsertRetailOrderItem): Promise<RetailOrderItem> {
+    const result = await db.insert(retailOrderItems).values(item).returning();
+    return result[0];
+  }
+
+  async updateRetailOrderStatus(id: string, status: string, userId?: string): Promise<RetailOrder | undefined> {
+    const updates: any = { status };
+    
+    if (status === 'fulfilled' && userId) {
+      updates.fulfilledAt = new Date();
+      updates.fulfilledByUserId = userId;
+    }
+    
+    const result = await db
+      .update(retailOrders)
+      .set(updates)
+      .where(eq(retailOrders.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async generateNextOrderNumber(): Promise<string> {
+    const currentYear = new Date().getFullYear();
+    const result = await db
+      .select()
+      .from(retailOrders)
+      .where(sql`EXTRACT(YEAR FROM ${retailOrders.orderDate}) = ${currentYear}`)
+      .orderBy(desc(retailOrders.orderNumber));
+    
+    if (result.length === 0) {
+      return `RO-${currentYear}-0001`;
+    }
+    
+    const lastOrder = result[0].orderNumber;
+    const match = lastOrder.match(/RO-\d{4}-(\d{4})/);
+    const nextNumber = match ? parseInt(match[1]) + 1 : 1;
+    return `RO-${currentYear}-${String(nextNumber).padStart(4, '0')}`;
+  }
+
+  async updateWholesaleOrderFulfillment(id: string, userId: string): Promise<WholesaleOrder | undefined> {
+    const result = await db
+      .update(wholesaleOrders)
+      .set({ 
+        status: 'fulfilled',
+        fulfilledAt: new Date(),
+        fulfilledByUserId: userId 
+      })
+      .where(eq(wholesaleOrders.id, id))
+      .returning();
+    return result[0];
   }
 
   // Migration: Backfill existing subscriptions into subscription_items table
