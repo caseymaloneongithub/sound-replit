@@ -1860,17 +1860,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Staff portal routes
-  // Update wholesale order status
-  app.patch("/api/staff/orders/:id/status", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+  // Retail orders routes (staff and admin access)
+  app.get("/api/retail/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const orders = await storage.getRetailOrders();
+      res.json(orders);
+    } catch (error: any) {
+      console.error("Error fetching retail orders:", error);
+      res.status(500).json({ message: "Failed to fetch retail orders" });
+    }
+  });
+
+  app.patch("/api/retail/orders/:id/status", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const statusSchema = z.object({
-        status: z.enum(['pending', 'processing', 'shipped', 'delivered']),
+        status: z.enum(['pending', 'ready_for_pickup', 'fulfilled', 'cancelled']),
       });
       
       const parsed = statusSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid status value" });
+      }
+      
+      const userId = parsed.data.status === 'fulfilled' ? req.user?.id : undefined;
+      const order = await storage.updateRetailOrderStatus(req.params.id, parsed.data.status, userId);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+      
+      res.json(order);
+    } catch (error: any) {
+      console.error("Error updating retail order status:", error);
+      res.status(500).json({ message: "Failed to update retail order status" });
+    }
+  });
+
+  // Staff portal routes
+  // Update wholesale order status
+  app.patch("/api/staff/orders/:id/status", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const statusSchema = z.object({
+        status: z.enum(['pending', 'processing', 'shipped', 'delivered', 'fulfilled']),
+      });
+      
+      const parsed = statusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid status value" });
+      }
+      
+      // If setting to fulfilled, call special fulfillment method
+      if (parsed.data.status === 'fulfilled' && req.user?.id) {
+        const order = await storage.updateWholesaleOrderFulfillment(req.params.id, req.user.id);
+        if (!order) {
+          return res.status(404).json({ message: "Order not found" });
+        }
+        return res.json(order);
       }
       
       const order = await storage.updateWholesaleOrderStatus(req.params.id, parsed.data.status);
