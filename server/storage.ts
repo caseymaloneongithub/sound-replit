@@ -4,6 +4,7 @@ import {
   type CartItem, type InsertCartItem,
   type Subscription, type InsertSubscription,
   type SubscriptionItem, type InsertSubscriptionItem,
+  type RetailCheckoutSession, type InsertRetailCheckoutSession,
   type RetailOrder, type InsertRetailOrder,
   type RetailOrderItem, type InsertRetailOrderItem,
   type WholesaleCustomer, type InsertWholesaleCustomer,
@@ -18,6 +19,7 @@ import {
   cartItems,
   subscriptions,
   subscriptionItems,
+  retailCheckoutSessions,
   retailOrders,
   retailOrderItems,
   wholesaleCustomers,
@@ -136,6 +138,10 @@ export interface IStorage {
     subscriptionCount: number;
     activeSubscriptionCount: number;
   }>>;
+  
+  createRetailCheckoutSession(session: InsertRetailCheckoutSession): Promise<RetailCheckoutSession>;
+  getRetailCheckoutSessionByPaymentIntent(paymentIntentId: string): Promise<RetailCheckoutSession | undefined>;
+  deleteRetailCheckoutSession(id: string): Promise<void>;
   
   getRetailOrders(): Promise<RetailOrder[]>;
   getRetailOrder(id: string): Promise<RetailOrder | undefined>;
@@ -1101,6 +1107,20 @@ export class PostgresStorage implements IStorage {
       subscriptionCount: r.subscriptionCount || 0,
       activeSubscriptionCount: r.activeSubscriptionCount || 0,
     }));
+  }
+
+  async createRetailCheckoutSession(session: InsertRetailCheckoutSession): Promise<RetailCheckoutSession> {
+    const result = await db.insert(retailCheckoutSessions).values(session).returning();
+    return result[0];
+  }
+
+  async getRetailCheckoutSessionByPaymentIntent(paymentIntentId: string): Promise<RetailCheckoutSession | undefined> {
+    const result = await db.select().from(retailCheckoutSessions).where(eq(retailCheckoutSessions.paymentIntentId, paymentIntentId));
+    return result[0];
+  }
+
+  async deleteRetailCheckoutSession(id: string): Promise<void> {
+    await db.delete(retailCheckoutSessions).where(eq(retailCheckoutSessions.id, id));
   }
 
   async getRetailOrders(): Promise<RetailOrder[]> {

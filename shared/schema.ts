@@ -113,6 +113,17 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   allowOnlinePayment: boolean("allow_online_payment").notNull().default(false),
 });
 
+export const retailCheckoutSessions = pgTable("retail_checkout_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: text("session_id").notNull(),
+  paymentIntentId: text("payment_intent_id"),
+  customerName: text("customer_name").notNull(),
+  customerEmail: text("customer_email").notNull(),
+  customerPhone: text("customer_phone").notNull(),
+  userId: varchar("user_id").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const retailOrders = pgTable("retail_orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orderNumber: text("order_number").notNull().unique(),
@@ -126,7 +137,7 @@ export const retailOrders = pgTable("retail_orders", {
   subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull(),
   taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).notNull().default('0'),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
-  stripePaymentIntentId: text("stripe_payment_intent_id"),
+  stripePaymentIntentId: text("stripe_payment_intent_id").unique(),
   stripeCheckoutSessionId: text("stripe_checkout_session_id"),
   fulfilledAt: timestamp("fulfilled_at"),
   fulfilledByUserId: varchar("fulfilled_by_user_id").references(() => users.id),
@@ -190,6 +201,7 @@ export const insertSubscriptionPlanSchema = createInsertSchema(subscriptionPlans
 export const insertCartItemSchema = createInsertSchema(cartItems).omit({ id: true });
 export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({ id: true, startDate: true, cancelledAt: true });
 export const insertSubscriptionItemSchema = createInsertSchema(subscriptionItems).omit({ id: true });
+export const insertRetailCheckoutSessionSchema = createInsertSchema(retailCheckoutSessions).omit({ id: true, createdAt: true });
 export const insertRetailOrderSchema = createInsertSchema(retailOrders).omit({ id: true, orderDate: true, fulfilledAt: true });
 export const insertRetailOrderItemSchema = createInsertSchema(retailOrderItems).omit({ id: true });
 export const insertWholesaleCustomerSchema = createInsertSchema(wholesaleCustomers).omit({ id: true });
@@ -206,6 +218,7 @@ export type InsertSubscriptionPlan = z.infer<typeof insertSubscriptionPlanSchema
 export type InsertCartItem = z.infer<typeof insertCartItemSchema>;
 export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
 export type InsertSubscriptionItem = z.infer<typeof insertSubscriptionItemSchema>;
+export type InsertRetailCheckoutSession = z.infer<typeof insertRetailCheckoutSessionSchema>;
 export type InsertRetailOrder = z.infer<typeof insertRetailOrderSchema>;
 export type InsertRetailOrderItem = z.infer<typeof insertRetailOrderItemSchema>;
 export type InsertWholesaleCustomer = z.infer<typeof insertWholesaleCustomerSchema>;
@@ -222,6 +235,7 @@ export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;
 export type Subscription = typeof subscriptions.$inferSelect;
 export type SubscriptionItem = typeof subscriptionItems.$inferSelect;
+export type RetailCheckoutSession = typeof retailCheckoutSessions.$inferSelect;
 export type RetailOrder = typeof retailOrders.$inferSelect;
 export type RetailOrderItem = typeof retailOrderItems.$inferSelect;
 export type WholesaleCustomer = typeof wholesaleCustomers.$inferSelect;

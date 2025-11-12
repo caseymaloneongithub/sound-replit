@@ -2,7 +2,9 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema } from "@shared/schema";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders } from "@shared/schema";
+import { eq } from "drizzle-orm";
+import { db } from "./db";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
 import { sendVerificationCode, generateVerificationCode } from "./twilio";
@@ -718,6 +720,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Store customer info for retail checkout (called before payment)
+  const customerInfoSchema = z.object({
+    customerName: z.string().min(2),
+    customerEmail: z.string().email(),
+    customerPhone: z.string().min(10),
+    paymentIntentId: z.string().optional(),
+  });
+
+  app.post("/api/checkout/customer-info", async (req: any, res) => {
+    try {
+      const validated = customerInfoSchema.parse(req.body);
+      const sessionId = req.sessionID || "guest";
+      
+      await storage.createRetailCheckoutSession({
+        sessionId,
+        paymentIntentId: validated.paymentIntentId || null,
+        customerName: validated.customerName,
+        customerEmail: validated.customerEmail,
+        customerPhone: validated.customerPhone,
+        userId: req.user?.id || null,
+      });
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error storing customer info:", error);
+      res.status(500).json({ message: "Error storing customer info: " + error.message });
+    }
+  });
+
   // Create Stripe Payment Intent for embedded cart checkout
   app.post("/api/create-cart-payment-intent", async (req: any, res) => {
     try {
@@ -980,6 +1011,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Handle cart purchase payments
           if (paymentIntent.metadata?.type === 'cart_purchase') {
             const sessionId = paymentIntent.metadata.sessionId;
+            
+            // Check for existing order (idempotency)
+            const existingOrder = await db
+              .select()
+              .from(retailOrders)
+              .where(eq(retailOrders.stripePaymentIntentId, paymentIntent.id))
+              .limit(1);
+            
+            if (existingOrder.length === 0) {
+              // Get checkout session with customer info
+              const checkoutSession = await storage.getRetailCheckoutSessionByPaymentIntent(paymentIntent.id);
+              
+              if (!checkoutSession) {
+                console.error(`No checkout session found for payment intent ${paymentIntent.id}`);
+                // Still clear the cart to prevent stuck state
+                if (sessionId) {
+                  await storage.clearCart(sessionId);
+                }
+                break;
+              }
+              
+              // Get cart items
+              const cartItems = await storage.getCartItems(sessionId);
+              
+              if (cartItems.length > 0) {
+                // Generate order number
+                const orderNumber = await storage.generateNextOrderNumber();
+                
+                // Create retail order
+                const order = await storage.createRetailOrder({
+                  orderNumber,
+                  userId: checkoutSession.userId,
+                  customerName: checkoutSession.customerName,
+                  customerEmail: checkoutSession.customerEmail,
+                  customerPhone: checkoutSession.customerPhone,
+                  pickupDate: null,
+                  status: 'pending',
+                  subtotal: paymentIntent.metadata.subtotal || '0',
+                  taxAmount: paymentIntent.metadata.taxAmount || '0',
+                  totalAmount: (paymentIntent.amount / 100).toFixed(2),
+                  stripePaymentIntentId: paymentIntent.id,
+                  stripeCheckoutSessionId: null,
+                  fulfilledByUserId: null,
+                  notes: null,
+                });
+                
+                // Create order items
+                for (const item of cartItems) {
+                  const product = await storage.getProduct(item.productId);
+                  if (product) {
+                    await storage.createRetailOrderItem({
+                      orderId: order.id,
+                      productId: item.productId,
+                      quantity: item.quantity,
+                      unitPrice: product.retailPrice,
+                    });
+                  }
+                }
+                
+                console.log(`Created retail order ${orderNumber} for payment intent ${paymentIntent.id}`);
+                
+                // Clean up
+                await storage.deleteRetailCheckoutSession(checkoutSession.id);
+              }
+            } else {
+              console.log(`Order already exists for payment intent ${paymentIntent.id} - skipping creation`);
+            }
+            
+            // Always clear cart
             if (sessionId) {
               await storage.clearCart(sessionId);
               console.log(`Cleared cart for session ${sessionId} after successful payment`);
