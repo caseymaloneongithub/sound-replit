@@ -10,6 +10,7 @@ import {
   type WholesalePricing, type InsertWholesalePricing,
   type User, type InsertUser,
   type VerificationCode, type InsertVerificationCode,
+  type ImpersonationLog, type InsertImpersonationLog,
   products,
   subscriptionPlans,
   cartItems,
@@ -20,7 +21,8 @@ import {
   wholesaleOrderItems,
   wholesalePricing,
   users,
-  verificationCodes
+  verificationCodes,
+  impersonationLogs
 } from "@shared/schema";
 import { eq, and, or, desc, sql } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
@@ -47,6 +49,10 @@ export interface IStorage {
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   updateUserStripeId(id: string, stripeCustomerId: string): Promise<User | undefined>;
   getUsersWithoutStripeId(): Promise<User[]>;
+  
+  startImpersonation(adminUserId: string, impersonatedUserId: string): Promise<ImpersonationLog>;
+  endImpersonation(logId: string): Promise<void>;
+  getActiveImpersonation(adminUserId: string): Promise<ImpersonationLog | undefined>;
   
   createVerificationCode(code: InsertVerificationCode): Promise<VerificationCode>;
   getLatestVerificationCode(phoneNumber: string): Promise<VerificationCode | undefined>;

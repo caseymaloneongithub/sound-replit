@@ -141,6 +141,18 @@ export const wholesalePricing = pgTable("wholesale_pricing", {
   uniqueCustomerProduct: unique().on(table.customerId, table.productId),
 }));
 
+export const impersonationLogs = pgTable("impersonation_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  adminUserId: varchar("admin_user_id").notNull().references(() => users.id),
+  impersonatedUserId: varchar("impersonated_user_id").notNull().references(() => users.id),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  endedAt: timestamp("ended_at"),
+}, (table) => ({
+  activeImpersonationIdx: index("active_impersonation_idx").on(table.adminUserId).where(sql`${table.endedAt} IS NULL`),
+}));
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, isAdmin: true, role: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
@@ -153,6 +165,7 @@ export const insertWholesaleOrderSchema = createInsertSchema(wholesaleOrders).om
 export const insertWholesaleOrderItemSchema = createInsertSchema(wholesaleOrderItems).omit({ id: true });
 export const insertWholesalePricingSchema = createInsertSchema(wholesalePricing).omit({ id: true });
 export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
+export const insertImpersonationLogSchema = createInsertSchema(impersonationLogs).omit({ id: true, startedAt: true });
 
 // Insert types
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -166,6 +179,7 @@ export type InsertWholesaleOrder = z.infer<typeof insertWholesaleOrderSchema>;
 export type InsertWholesaleOrderItem = z.infer<typeof insertWholesaleOrderItemSchema>;
 export type InsertWholesalePricing = z.infer<typeof insertWholesalePricingSchema>;
 export type InsertVerificationCode = z.infer<typeof insertVerificationCodeSchema>;
+export type InsertImpersonationLog = z.infer<typeof insertImpersonationLogSchema>;
 
 // Select types
 export type User = typeof users.$inferSelect;
@@ -179,3 +193,4 @@ export type WholesaleOrder = typeof wholesaleOrders.$inferSelect;
 export type WholesaleOrderItem = typeof wholesaleOrderItems.$inferSelect;
 export type WholesalePricing = typeof wholesalePricing.$inferSelect;
 export type VerificationCode = typeof verificationCodes.$inferSelect;
+export type ImpersonationLog = typeof impersonationLogs.$inferSelect;
