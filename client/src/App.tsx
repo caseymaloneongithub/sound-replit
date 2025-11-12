@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/use-auth";
 import { Navbar } from "@/components/layout/navbar";
+import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
 import { StaffProtectedRoute, WholesaleCustomerProtectedRoute } from "@/lib/protected-route";
 import AuthPage from "@/pages/auth-page";
 import WholesaleRegister from "@/pages/wholesale-register";
@@ -85,6 +86,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <AuthProvider>
+          <ImpersonationBanner />
           <Toaster />
           <Router />
         </AuthProvider>
