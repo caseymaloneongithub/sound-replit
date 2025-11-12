@@ -1912,6 +1912,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/admin/impersonate/:userId", isAuthenticated, isSuperAdmin, async (req: any, res) => {
+    try {
+      const targetUserId = req.params.userId;
+      const originalUser = req.originalUser || req.user;
+      
+      if (!originalUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      if (targetUserId === originalUser.id) {
+        return res.status(400).json({ message: "Cannot impersonate yourself" });
+      }
+      
+      const targetUser = await storage.getUser(targetUserId);
+      if (!targetUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+      const userAgent = req.headers['user-agent'];
+      
+      const log = await storage.startImpersonation(
+        originalUser.id,
+        targetUserId,
+        typeof ipAddress === 'string' ? ipAddress : ipAddress?.[0],
+        userAgent
+      );
+      
+      req.session!.impersonation = {
+        originalUserId: originalUser.id,
+        impersonatedUserId: targetUserId,
+        logId: log.id,
+      };
+      
+      await new Promise<void>((resolve, reject) => {
+        req.session!.save((err: any) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      res.json({ success: true, impersonatedUser: targetUser });
+    } catch (error: any) {
+      console.error("Error starting impersonation:", error);
+      res.status(500).json({ message: "Failed to start impersonation" });
+    }
+  });
+
+  app.post("/api/admin/stop-impersonation", isAuthenticated, async (req: any, res) => {
+    try {
+      if (!req.session?.impersonation) {
+        return res.status(400).json({ message: "Not currently impersonating" });
+      }
+      
+      await storage.endImpersonation(req.session.impersonation.logId);
+      delete req.session.impersonation;
+      
+      await new Promise<void>((resolve, reject) => {
+        req.session!.save((err: any) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error stopping impersonation:", error);
+      res.status(500).json({ message: "Failed to stop impersonation" });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;

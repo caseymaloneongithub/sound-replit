@@ -11,6 +11,19 @@ import { createStripeCustomer } from "./stripeCustomer";
 declare global {
   namespace Express {
     interface User extends SelectUser {}
+    interface Request {
+      originalUser?: SelectUser;
+    }
+  }
+}
+
+declare module 'express-session' {
+  interface SessionData {
+    impersonation?: {
+      originalUserId: string;
+      impersonatedUserId: string;
+      logId: string;
+    };
   }
 }
 
@@ -85,6 +98,20 @@ export function setupAuth(app: Express) {
     } catch (error) {
       done(error);
     }
+  });
+
+  app.use(async (req, res, next) => {
+    if (req.session?.impersonation && req.user) {
+      req.originalUser = req.user;
+      
+      const impersonatedUser = await storage.getUser(req.session.impersonation.impersonatedUserId);
+      if (impersonatedUser) {
+        req.user = impersonatedUser;
+      } else {
+        delete req.session.impersonation;
+      }
+    }
+    next();
   });
 
   app.post("/api/register", async (req, res, next) => {
@@ -177,7 +204,12 @@ export function setupAuth(app: Express) {
     })(req, res, next);
   });
 
-  app.post("/api/logout", (req, res, next) => {
+  app.post("/api/logout", async (req, res, next) => {
+    if (req.session?.impersonation) {
+      await storage.endImpersonation(req.session.impersonation.logId);
+      delete req.session.impersonation;
+    }
+    
     req.logout((err) => {
       if (err) return next(err);
       res.sendStatus(200);
@@ -188,8 +220,22 @@ export function setupAuth(app: Express) {
     if (!req.isAuthenticated() || !req.user) {
       return res.sendStatus(401);
     }
-    // Don't send password back
+    
     const { password, ...userWithoutPassword } = req.user;
+    
+    if (req.session?.impersonation && req.originalUser) {
+      return res.json({
+        ...userWithoutPassword,
+        impersonation: {
+          isImpersonating: true,
+          originalUser: {
+            id: req.originalUser.id,
+            username: req.originalUser.username,
+          },
+        },
+      });
+    }
+    
     res.json(userWithoutPassword);
   });
 }
