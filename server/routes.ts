@@ -1440,6 +1440,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         case 'payment_intent.succeeded': {
           const paymentIntent = event.data.object as Stripe.PaymentIntent;
           
+          // Handle subscription renewal payments (locally-managed subscriptions)
+          if (paymentIntent.metadata?.type === 'subscription_renewal') {
+            console.log(`[WEBHOOK] Processing successful subscription renewal payment ${paymentIntent.id}`);
+            
+            const { finalizeSubscriptionCharge } = await import('./billing-cron');
+            const success = await finalizeSubscriptionCharge(paymentIntent.id);
+            
+            if (success) {
+              console.log(`[WEBHOOK] ✅ Successfully finalized subscription charge for PaymentIntent ${paymentIntent.id}`);
+            } else {
+              console.error(`[WEBHOOK] ❌ Failed to finalize subscription charge for PaymentIntent ${paymentIntent.id}`);
+            }
+            break;
+          }
+          
           // Handle cart purchase payments
           if (paymentIntent.metadata?.type === 'cart_purchase') {
             const sessionId = paymentIntent.metadata.sessionId;
@@ -1536,6 +1551,121 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (sessionId) {
               await storage.clearCart(sessionId);
               console.log(`[WEBHOOK] Cleared cart for session ${sessionId} after successful payment`);
+            }
+          }
+          break;
+        }
+        case 'payment_intent.processing': {
+          const paymentIntent = event.data.object as Stripe.PaymentIntent;
+          
+          // Only handle subscription renewals
+          if (paymentIntent.metadata?.type === 'subscription_renewal' && paymentIntent.metadata?.subscriptionId) {
+            console.log(`[WEBHOOK] PaymentIntent ${paymentIntent.id} is processing for subscription ${paymentIntent.metadata.subscriptionId}`);
+            
+            // Update subscription status to awaiting_confirmation
+            await db
+              .update(subscriptions)
+              .set({
+                billingStatus: 'awaiting_confirmation',
+                lastPaymentIntentId: paymentIntent.id,
+                processingLock: false,
+              })
+              .where(eq(subscriptions.id, paymentIntent.metadata.subscriptionId));
+          }
+          break;
+        }
+        case 'payment_intent.requires_action': {
+          const paymentIntent = event.data.object as Stripe.PaymentIntent;
+          
+          // Only handle subscription renewals
+          if (paymentIntent.metadata?.type === 'subscription_renewal' && paymentIntent.metadata?.subscriptionId) {
+            console.log(`[WEBHOOK] PaymentIntent ${paymentIntent.id} requires customer action for subscription ${paymentIntent.metadata.subscriptionId}`);
+            
+            // Update subscription status to awaiting_auth
+            await db
+              .update(subscriptions)
+              .set({
+                billingStatus: 'awaiting_auth',
+                lastPaymentIntentId: paymentIntent.id,
+                processingLock: false,
+              })
+              .where(eq(subscriptions.id, paymentIntent.metadata.subscriptionId));
+            
+            // TODO: Send customer email with link to complete authentication
+            console.warn(`[WEBHOOK] ⚠️ Customer authentication required for subscription ${paymentIntent.metadata.subscriptionId}`);
+          }
+          break;
+        }
+        case 'payment_intent.payment_failed': {
+          const paymentIntent = event.data.object as Stripe.PaymentIntent;
+          
+          // Only handle subscription renewals
+          if (paymentIntent.metadata?.type === 'subscription_renewal' && paymentIntent.metadata?.subscriptionId) {
+            console.error(`[WEBHOOK] Payment failed for subscription ${paymentIntent.metadata.subscriptionId}`);
+            
+            const subscription = await storage.getSubscription(paymentIntent.metadata.subscriptionId);
+            if (!subscription) {
+              console.error(`[WEBHOOK] Subscription ${paymentIntent.metadata.subscriptionId} not found`);
+              break;
+            }
+            
+            // Increment retry count and schedule next attempt
+            const newRetryCount = subscription.retryCount + 1;
+            const MAX_RETRY_ATTEMPTS = 3;
+            
+            // Schedule next retry attempt (1 day from now if under max retries)
+            let nextChargeAt: Date | undefined;
+            if (newRetryCount < MAX_RETRY_ATTEMPTS) {
+              nextChargeAt = new Date();
+              nextChargeAt.setDate(nextChargeAt.getDate() + 1); // Retry tomorrow
+            }
+            
+            await db
+              .update(subscriptions)
+              .set({
+                retryCount: newRetryCount,
+                billingStatus: newRetryCount >= MAX_RETRY_ATTEMPTS ? 'retrying' : 'active',
+                nextChargeAt: nextChargeAt || subscription.nextChargeAt,
+                lastPaymentIntentId: paymentIntent.id,
+                processingLock: false,
+                status: newRetryCount >= MAX_RETRY_ATTEMPTS ? 'paused' : subscription.status,
+              })
+              .where(eq(subscriptions.id, subscription.id));
+            
+            if (newRetryCount >= MAX_RETRY_ATTEMPTS) {
+              console.error(`[WEBHOOK] Subscription ${subscription.id} paused after ${MAX_RETRY_ATTEMPTS} failed attempts`);
+            }
+            
+            // Send failure notifications
+            const { sendPaymentFailureEmail, sendStaffPaymentFailureNotification } = await import('./email');
+            const items = await storage.getSubscriptionItems(subscription.id);
+            const itemsList = await Promise.all(items.map(async (item) => {
+              const product = await storage.getProduct(item.productId);
+              return {
+                productName: product?.name || 'Unknown Product',
+                quantity: item.quantity,
+              };
+            }));
+            
+            try {
+              await Promise.all([
+                sendPaymentFailureEmail({
+                  customerEmail: subscription.customerEmail,
+                  customerName: subscription.customerName,
+                  subscriptionItems: itemsList,
+                  amount: paymentIntent.amount / 100,
+                  errorMessage: paymentIntent.last_payment_error?.message || 'Payment failed',
+                }),
+                sendStaffPaymentFailureNotification({
+                  customerEmail: subscription.customerEmail,
+                  customerName: subscription.customerName,
+                  subscriptionItems: itemsList,
+                  amount: paymentIntent.amount / 100,
+                  errorMessage: paymentIntent.last_payment_error?.message || 'Payment failed',
+                }),
+              ]);
+            } catch (emailError) {
+              console.error('[WEBHOOK] Failed to send payment failure emails:', emailError);
             }
           }
           break;

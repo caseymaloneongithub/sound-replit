@@ -10,35 +10,80 @@ const stripe = process.env.STRIPE_SECRET_KEY
   : null;
 
 const MAX_RETRY_ATTEMPTS = 3;
+const CASE_PRICE_WITH_DISCOUNT = 54.00; // $60 - 10% subscription discount
 
-async function processSubscriptionBilling(subscription: any, items: any[]) {
-  if (!stripe) {
-    console.error('[BILLING] Stripe not configured');
-    return false;
-  }
-
-  // Calculate total amount
-  const CASE_PRICE_WITH_DISCOUNT = 54.00; // $60 - 10% subscription discount
-  const totalAmount = items.reduce((sum, item) => sum + (CASE_PRICE_WITH_DISCOUNT * item.quantity), 0);
-  const amountInCents = Math.round(totalAmount * 100);
-
+/**
+ * Idempotent function to finalize subscription charge by creating order
+ * Can be called from both cron (synchronous) and webhooks (asynchronous)
+ */
+export async function finalizeSubscriptionCharge(paymentIntentId: string): Promise<boolean> {
   try {
-    // Create PaymentIntent with stored payment method
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: amountInCents,
-      currency: 'usd',
-      customer: subscription.stripeCustomerId,
-      payment_method: subscription.stripePaymentMethodId,
-      off_session: true,
-      confirm: true,
-      metadata: {
-        subscriptionId: subscription.id,
-        type: 'subscription_renewal',
-      },
-    });
+    if (!stripe) {
+      console.error('[BILLING] Stripe not configured');
+      return false;
+    }
 
-    if (paymentIntent.status === 'succeeded') {
-      // Payment successful - create order and deduct inventory
+    // Check if order already exists for this payment intent (idempotency)
+    const existing = await db
+      .select()
+      .from(retailOrders)
+      .where(eq(retailOrders.stripePaymentIntentId, paymentIntentId))
+      .limit(1);
+
+    if (existing.length > 0) {
+      console.log(`[BILLING] Order already exists for PaymentIntent ${paymentIntentId}, skipping`);
+      return true;
+    }
+
+    // Get payment intent from Stripe
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    
+    if (paymentIntent.status !== 'succeeded') {
+      console.warn(`[BILLING] PaymentIntent ${paymentIntentId} status is ${paymentIntent.status}, cannot finalize`);
+      return false;
+    }
+
+    // Check if payment has been refunded (critical safety check)
+    if (paymentIntent.amount_refunded > 0) {
+      console.error(`[BILLING] PaymentIntent ${paymentIntentId} has been refunded (${paymentIntent.amount_refunded}/${paymentIntent.amount}), cannot finalize`);
+      return false;
+    }
+
+    const subscriptionId = paymentIntent.metadata.subscriptionId;
+    if (!subscriptionId) {
+      console.error(`[BILLING] No subscriptionId in PaymentIntent ${paymentIntentId} metadata`);
+      return false;
+    }
+
+    // Get subscription and items
+    const subscription = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, subscriptionId))
+      .limit(1);
+
+    if (subscription.length === 0) {
+      console.error(`[BILLING] Subscription ${subscriptionId} not found`);
+      return false;
+    }
+
+    const sub = subscription[0];
+    const items = await db
+      .select({
+        id: subscriptionItems.id,
+        subscriptionId: subscriptionItems.subscriptionId,
+        productId: subscriptionItems.productId,
+        quantity: subscriptionItems.quantity,
+        product: products,
+      })
+      .from(subscriptionItems)
+      .leftJoin(products, eq(subscriptionItems.productId, products.id))
+      .where(eq(subscriptionItems.subscriptionId, sub.id));
+
+    const totalAmount = items.reduce((sum, item) => sum + (CASE_PRICE_WITH_DISCOUNT * item.quantity), 0);
+
+    try {
+      // Create order in transaction
       await db.transaction(async (tx) => {
         // Generate order number
         const orderCount = await tx.select({ count: sql<number>`count(*)` }).from(retailOrders);
@@ -47,16 +92,16 @@ async function processSubscriptionBilling(subscription: any, items: any[]) {
         // Create retail order
         const [newOrder] = await tx.insert(retailOrders).values({
           orderNumber,
-          customerName: subscription.customerName,
-          customerEmail: subscription.customerEmail,
-          customerPhone: subscription.customerPhone,
+          customerName: sub.customerName,
+          customerEmail: sub.customerEmail,
+          customerPhone: sub.customerPhone,
           status: 'pending',
           subtotal: totalAmount.toFixed(2),
           taxAmount: '0',
           totalAmount: totalAmount.toFixed(2),
-          stripePaymentIntentId: paymentIntent.id,
+          stripePaymentIntentId: paymentIntentId,
           isSubscriptionOrder: true,
-          userId: subscription.userId,
+          userId: sub.userId,
         }).returning();
 
         // Create order items and deduct inventory
@@ -98,8 +143,8 @@ async function processSubscriptionBilling(subscription: any, items: any[]) {
 
         // Update subscription - calculate next charge date
         const daysUntilNext = 
-          subscription.subscriptionFrequency === 'weekly' ? 7 :
-          subscription.subscriptionFrequency === 'bi-weekly' ? 14 :
+          sub.subscriptionFrequency === 'weekly' ? 7 :
+          sub.subscriptionFrequency === 'bi-weekly' ? 14 :
           28;
 
         const nextDate = new Date();
@@ -109,7 +154,7 @@ async function processSubscriptionBilling(subscription: any, items: any[]) {
         await tx
           .select()
           .from(subscriptions)
-          .where(eq(subscriptions.id, subscription.id))
+          .where(eq(subscriptions.id, sub.id))
           .for('update');
 
         await tx
@@ -117,18 +162,132 @@ async function processSubscriptionBilling(subscription: any, items: any[]) {
           .set({
             nextChargeAt: nextDate,
             nextDeliveryDate: nextDate,
+            billingStatus: 'active',
             retryCount: 0,
-            lastPaymentIntentId: paymentIntent.id,
+            lastPaymentIntentId: paymentIntentId,
             processingLock: false,
           })
-          .where(eq(subscriptions.id, subscription.id));
+          .where(eq(subscriptions.id, sub.id));
 
-        console.log(`[BILLING] ✅ Successfully charged subscription ${subscription.id} - Order ${orderNumber} created`);
+        console.log(`[BILLING] ✅ Finalized charge for subscription ${sub.id} - Order ${orderNumber} created`);
       });
 
       return true;
+    } catch (orderError: any) {
+      // COMPENSATING ROLLBACK: Refund the payment if order creation fails
+      console.error(`[BILLING] Order creation failed after successful payment, initiating refund:`, orderError.message);
+      
+      try {
+        const refund = await stripe!.refunds.create({
+          payment_intent: paymentIntentId,
+          reason: 'requested_by_customer',
+          metadata: {
+            reason: 'order_creation_failed',
+            subscriptionId: sub.id,
+            error: orderError.message,
+          },
+        });
+
+        // Update subscription with refund info
+        await db
+          .update(subscriptions)
+          .set({
+            lastRefundId: refund.id,
+            billingStatus: 'retrying',
+            processingLock: false,
+          })
+          .where(eq(subscriptions.id, sub.id));
+
+        console.error(`[BILLING] ⚠️ Refund ${refund.id} created for failed order - Manual review required`);
+        
+        return false;
+      } catch (refundError: any) {
+        console.error(`[BILLING] 🚨 CRITICAL: Failed to refund payment ${paymentIntentId}:`, refundError.message);
+        console.error(`[BILLING] 🚨 Manual intervention required for subscription ${sub.id}`);
+        
+        return false;
+      }
+    }
+  } catch (error: any) {
+    console.error(`[BILLING] Error in finalizeSubscriptionCharge:`, error.message);
+    return false;
+  }
+}
+
+async function processSubscriptionBilling(subscription: any, items: any[]) {
+  if (!stripe) {
+    console.error('[BILLING] Stripe not configured');
+    return false;
+  }
+
+  // Calculate total amount
+  const totalAmount = items.reduce((sum, item) => sum + (CASE_PRICE_WITH_DISCOUNT * item.quantity), 0);
+  const amountInCents = Math.round(totalAmount * 100);
+
+  try {
+    // Create PaymentIntent with stored payment method
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amountInCents,
+      currency: 'usd',
+      customer: subscription.stripeCustomerId,
+      payment_method: subscription.stripePaymentMethodId,
+      off_session: true,
+      confirm: true,
+      metadata: {
+        subscriptionId: subscription.id,
+        type: 'subscription_renewal',
+      },
+    });
+
+    // Handle different payment states
+    if (paymentIntent.status === 'succeeded') {
+      // Payment successful - finalize immediately
+      return await finalizeSubscriptionCharge(paymentIntent.id);
+    } else if (paymentIntent.status === 'requires_action') {
+      // Customer needs to complete 3D Secure authentication
+      console.log(`[BILLING] Payment requires authentication for subscription ${subscription.id}`);
+      
+      await db
+        .update(subscriptions)
+        .set({
+          billingStatus: 'awaiting_auth',
+          lastPaymentIntentId: paymentIntent.id,
+          processingLock: false,
+        })
+        .where(eq(subscriptions.id, subscription.id));
+
+      // TODO: Send customer email with link to complete authentication
+      console.warn(`[BILLING] ⚠️ Customer authentication required for subscription ${subscription.id} - PaymentIntent ${paymentIntent.id}`);
+      
+      return false; // Don't increment retry count
+    } else if (paymentIntent.status === 'processing') {
+      // Payment is being processed asynchronously
+      console.log(`[BILLING] Payment processing asynchronously for subscription ${subscription.id}`);
+      
+      await db
+        .update(subscriptions)
+        .set({
+          billingStatus: 'awaiting_confirmation',
+          lastPaymentIntentId: paymentIntent.id,
+          processingLock: false,
+        })
+        .where(eq(subscriptions.id, subscription.id));
+
+      // Webhook will finalize when processing completes
+      return false; // Don't increment retry count
     } else {
+      // Other statuses (requires_payment_method, canceled, etc.)
       console.warn(`[BILLING] Payment intent ${paymentIntent.id} status: ${paymentIntent.status}`);
+      
+      // Update subscription with payment attempt
+      await db
+        .update(subscriptions)
+        .set({
+          lastPaymentIntentId: paymentIntent.id,
+          processingLock: false,
+        })
+        .where(eq(subscriptions.id, subscription.id));
+      
       return false;
     }
   } catch (error: any) {
@@ -167,6 +326,7 @@ async function processSubscriptionBilling(subscription: any, items: any[]) {
       .update(subscriptions)
       .set({
         retryCount: newRetryCount,
+        billingStatus: newRetryCount >= MAX_RETRY_ATTEMPTS ? 'retrying' : 'active',
         lastPaymentIntentId: error.payment_intent?.id || null,
         processingLock: false,
         // If max retries reached, pause the subscription
@@ -189,6 +349,8 @@ export async function runDailyBilling() {
     const now = new Date();
 
     // Find all locally-managed subscriptions that are due for billing
+    // IMPORTANT: Only select subscriptions with billingStatus='active' to avoid
+    // creating duplicate PaymentIntents for subscriptions in awaiting states
     const dueSubscriptions = await db
       .select()
       .from(subscriptions)
@@ -196,6 +358,7 @@ export async function runDailyBilling() {
         and(
           eq(subscriptions.billingType, 'local_managed'),
           eq(subscriptions.status, 'active'),
+          eq(subscriptions.billingStatus, 'active'),
           lte(subscriptions.nextChargeAt, now),
           eq(subscriptions.processingLock, false)
         )
@@ -220,6 +383,7 @@ export async function runDailyBilling() {
               eq(subscriptions.id, subscription.id),
               eq(subscriptions.processingLock, false), // Only update if not already locked
               eq(subscriptions.status, 'active'),
+              eq(subscriptions.billingStatus, 'active'), // Only process if billing status is active
               lte(subscriptions.nextChargeAt, now)
             )
           )
