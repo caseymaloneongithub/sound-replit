@@ -279,82 +279,20 @@ export default function Shop() {
                           <Badge variant="secondary" className="w-fit">
                             10% off with subscription
                           </Badge>
+                          <p className="text-sm text-muted-foreground">
+                            Choose your delivery frequency and manage your subscription anytime
+                          </p>
                         </div>
                         
-                        <div className="grid grid-cols-3 gap-2">
-                          <Button 
-                            variant="outline"
-                            className="rounded-full gap-2" 
-                            size="sm"
-                            disabled={!product.inStock || addToCartMutation.isPending}
-                            onClick={() => addToCartMutation.mutate({ 
-                              productId: product.id, 
-                              isSubscription: true,
-                              subscriptionFrequency: 'weekly'
-                            })}
-                            data-testid={`button-subscribe-weekly-${product.id}`}
-                          >
-                            {addedToCart.has(weeklyKey) ? (
-                              <>
-                                <Check className="w-3 h-3" />
-                                Added!
-                              </>
-                            ) : (
-                              <>
-                                <Repeat className="w-3 h-3" />
-                                Weekly
-                              </>
-                            )}
-                          </Button>
-                          <Button 
-                            variant="outline"
-                            className="rounded-full gap-2" 
-                            size="sm"
-                            disabled={!product.inStock || addToCartMutation.isPending}
-                            onClick={() => addToCartMutation.mutate({ 
-                              productId: product.id, 
-                              isSubscription: true,
-                              subscriptionFrequency: 'bi-weekly'
-                            })}
-                            data-testid={`button-subscribe-biweekly-${product.id}`}
-                          >
-                            {addedToCart.has(biweeklyKey) ? (
-                              <>
-                                <Check className="w-3 h-3" />
-                                Added!
-                              </>
-                            ) : (
-                              <>
-                                <Repeat className="w-3 h-3" />
-                                Bi-Weekly
-                              </>
-                            )}
-                          </Button>
-                          <Button 
-                            variant="outline"
-                            className="rounded-full gap-2" 
-                            size="sm"
-                            disabled={!product.inStock || addToCartMutation.isPending}
-                            onClick={() => addToCartMutation.mutate({ 
-                              productId: product.id, 
-                              isSubscription: true,
-                              subscriptionFrequency: 'every-4-weeks'
-                            })}
-                            data-testid={`button-subscribe-every4weeks-${product.id}`}
-                          >
-                            {addedToCart.has(every4weeksKey) ? (
-                              <>
-                                <Check className="w-3 h-3" />
-                                Added!
-                              </>
-                            ) : (
-                              <>
-                                <Repeat className="w-3 h-3" />
-                                Every 4 Weeks
-                              </>
-                            )}
-                          </Button>
-                        </div>
+                        <Button 
+                          className="w-full rounded-full gap-2" 
+                          disabled={!product.inStock}
+                          onClick={() => window.location.href = `/subscribe/${product.id}`}
+                          data-testid={`button-subscribe-${product.id}`}
+                        >
+                          <Repeat className="w-4 h-4" />
+                          {product.inStock ? 'Subscribe Now' : 'Out of Stock'}
+                        </Button>
                       </TabsContent>
                     </Tabs>
                   </CardContent>

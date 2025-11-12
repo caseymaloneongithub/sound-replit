@@ -61,14 +61,15 @@ export function CartDrawer() {
   });
 
   const handleCheckout = () => {
-    // Check if cart has subscriptions - those need the old flow
+    // Check if cart has subscriptions - those are not supported via cart checkout
     const hasSubscription = cartItems.some(item => item.isSubscription);
     
     if (hasSubscription) {
-      // Keep old redirect flow for subscriptions since Payment Intents don't support them
+      // Show helpful message - subscriptions should be set up via /subscribe page
       toast({
-        title: "Subscription checkout",
-        description: "Subscriptions require a different checkout process",
+        title: "Cannot checkout with subscriptions",
+        description: "Please remove subscription items from your cart. Subscriptions are managed separately via the Subscribe page.",
+        variant: "destructive",
       });
       return;
     }
