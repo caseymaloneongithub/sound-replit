@@ -1,5 +1,6 @@
 import { 
   type Product, type InsertProduct,
+  type InventoryAdjustment, type InsertInventoryAdjustment,
   type SubscriptionPlan, type InsertSubscriptionPlan,
   type CartItem, type InsertCartItem,
   type Subscription, type InsertSubscription,
@@ -15,6 +16,7 @@ import {
   type VerificationCode, type InsertVerificationCode,
   type ImpersonationLog, type InsertImpersonationLog,
   products,
+  inventoryAdjustments,
   subscriptionPlans,
   cartItems,
   subscriptions,
@@ -75,6 +77,10 @@ export interface IStorage {
   updateProduct(id: string, updates: Partial<InsertProduct>): Promise<Product | undefined>;
   updateProductStock(id: string, stockQuantity: number): Promise<Product | undefined>;
   getLowStockProducts(): Promise<Product[]>;
+  
+  createInventoryAdjustment(adjustment: InsertInventoryAdjustment): Promise<InventoryAdjustment>;
+  getInventoryAdjustments(filters?: { productId?: string; reason?: string; limit?: number }): Promise<Array<InventoryAdjustment & { productName: string }>>;
+  checkStockAvailability(productId: string, requiredQuantity: number): Promise<{ available: boolean; currentStock: number; deficit?: number }>;
   
   getSubscriptionPlans(): Promise<SubscriptionPlan[]>;
   getSubscriptionPlan(id: string): Promise<SubscriptionPlan | undefined>;
@@ -419,6 +425,125 @@ export class PostgresStorage implements IStorage {
   async getLowStockProducts(): Promise<Product[]> {
     const allProducts = await db.select().from(products);
     return allProducts.filter(p => p.stockQuantity <= p.lowStockThreshold);
+  }
+
+  async createInventoryAdjustment(adjustment: InsertInventoryAdjustment): Promise<InventoryAdjustment> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const productResult = await client.query(
+        'SELECT stock_quantity FROM products WHERE id = $1 FOR UPDATE',
+        [adjustment.productId]
+      );
+
+      if (productResult.rows.length === 0) {
+        throw new Error('Product not found');
+      }
+
+      const currentStock = productResult.rows[0].stock_quantity;
+      const newStock = currentStock + adjustment.quantity;
+
+      await client.query(
+        'UPDATE products SET stock_quantity = $1, in_stock = $2 WHERE id = $3',
+        [newStock, newStock > 0, adjustment.productId]
+      );
+
+      const adjustmentResult = await client.query(
+        `INSERT INTO inventory_adjustments 
+        (product_id, quantity, reason, staff_user_id, order_id, order_type, batch_metadata, notes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING *`,
+        [
+          adjustment.productId,
+          adjustment.quantity,
+          adjustment.reason,
+          adjustment.staffUserId || null,
+          adjustment.orderId || null,
+          adjustment.orderType || null,
+          adjustment.batchMetadata || null,
+          adjustment.notes || null
+        ]
+      );
+
+      await client.query('COMMIT');
+
+      const row = adjustmentResult.rows[0];
+      return {
+        id: row.id,
+        productId: row.product_id,
+        quantity: row.quantity,
+        reason: row.reason,
+        staffUserId: row.staff_user_id,
+        orderId: row.order_id,
+        orderType: row.order_type,
+        batchMetadata: row.batch_metadata,
+        notes: row.notes,
+        createdAt: row.created_at
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getInventoryAdjustments(filters?: { productId?: string; reason?: string; limit?: number }): Promise<Array<InventoryAdjustment & { productName: string }>> {
+    let query = sql`
+      SELECT 
+        ia.*,
+        p.name as product_name
+      FROM inventory_adjustments ia
+      JOIN products p ON ia.product_id = p.id
+      WHERE 1=1
+    `;
+
+    if (filters?.productId) {
+      query = sql`${query} AND ia.product_id = ${filters.productId}`;
+    }
+
+    if (filters?.reason) {
+      query = sql`${query} AND ia.reason = ${filters.reason}`;
+    }
+
+    query = sql`${query} ORDER BY ia.created_at DESC`;
+
+    if (filters?.limit) {
+      query = sql`${query} LIMIT ${filters.limit}`;
+    }
+
+    const result = await db.execute(query);
+    
+    return result.rows.map((row: any) => ({
+      id: row.id,
+      productId: row.product_id,
+      quantity: row.quantity,
+      reason: row.reason,
+      staffUserId: row.staff_user_id,
+      orderId: row.order_id,
+      orderType: row.order_type,
+      batchMetadata: row.batch_metadata,
+      notes: row.notes,
+      createdAt: row.created_at,
+      productName: row.product_name
+    }));
+  }
+
+  async checkStockAvailability(productId: string, requiredQuantity: number): Promise<{ available: boolean; currentStock: number; deficit?: number }> {
+    const product = await this.getProduct(productId);
+    if (!product) {
+      throw new Error('Product not found');
+    }
+
+    const available = product.stockQuantity >= requiredQuantity;
+    const deficit = available ? undefined : requiredQuantity - product.stockQuantity;
+
+    return {
+      available,
+      currentStock: product.stockQuantity,
+      deficit
+    };
   }
 
   async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
