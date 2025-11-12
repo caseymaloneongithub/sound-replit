@@ -2,7 +2,7 @@
 
 ## Overview
 
-Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacific Northwest kombucha brewery. The platform facilitates retail product and subscription purchases, and wholesale orders for business clients. Key capabilities include product browsing, subscription management, Stripe payment integration, comprehensive inventory tracking, wholesale customer management, delivery scheduling, daily delivery reporting, and an admin dashboard. The business aims to provide a seamless online experience for purchasing artisanal kombucha, expanding market reach, and streamlining B2B operations.
+Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacific Northwest kombucha brewery. The platform facilitates retail product and subscription purchases, and wholesale orders for business clients. Key capabilities include product browsing, subscription management, Stripe payment integration, comprehensive inventory tracking, retail order tracking with fulfillment management, wholesale customer management, delivery scheduling, daily delivery reporting, and an admin dashboard. The business aims to provide a seamless online experience for purchasing artisanal kombucha, expanding market reach, and streamlining B2B operations.
 
 ## User Preferences
 
@@ -51,6 +51,35 @@ When retail customers register accounts, they are automatically created as Strip
 
 **Sales Tax**: 10.35% (6.5% WA State + 3.85% Seattle) is automatically calculated and applied to retail one-time purchases only (subscription items are tax-exempt). Tax is included in the Payment Intent amount for embedded checkout and added as a separate line item for Stripe Checkout Sessions. Both frontend cart display and backend checkout use actual product prices from the database (`product.retailPrice`) to ensure pricing consistency.
 
+### Retail Order Tracking
+
+**Order Creation Flow** (Added November 2025):
+When customers complete one-time cart purchases via embedded checkout, the system creates comprehensive order records for staff tracking and fulfillment:
+
+**Secure Two-Phase Order Creation**:
+1. Customer submits their contact information (name, email, phone) on the checkout page
+2. Frontend calls `/api/checkout/customer-info` to securely store this data server-side, linked to the Stripe Payment Intent ID
+3. Customer completes payment using Stripe Payment Element (embedded)
+4. Stripe webhook (`payment_intent.succeeded`) retrieves the stored customer info and creates the retail order atomically
+5. Webhook clears the cart and deletes the temporary checkout session record
+
+**Order Data Model**:
+- `retail_orders` table: Stores order header with unique order number (e.g., RO-2025-001), customer details, pricing breakdown (subtotal, tax, total), order date, pickup date, status, fulfillment metadata
+- `retail_order_items` table: Line items with product ID, quantity, and unit price snapshot
+- `retail_checkout_sessions` table: Temporary storage for customer info during checkout, keyed by payment intent ID
+
+**Order Status Workflow**:
+Orders progress through four states: `pending` → `ready_for_pickup` → `fulfilled` (terminal) or `cancelled` (terminal). Staff can update order status via the Retail Orders page at `/retail/orders`. When an order is marked as `fulfilled`, the system automatically records the fulfillment timestamp and the staff user ID for audit purposes.
+
+**Idempotency & Error Handling**:
+- Webhook checks for existing orders by Stripe payment intent ID before creating duplicates
+- Unique constraint on `stripePaymentIntentId` prevents race conditions
+- Cart always clears after successful payment, even if order creation fails (prevents stuck carts)
+- Checkout session cleanup happens after order creation to maintain data integrity
+
+**Staff Portal Integration**:
+The Retail Orders page (`/retail/orders`) displays all retail orders with customer details, order contents, pricing breakdown, and status management. Staff can update order status through a dropdown selector. Terminal states (`fulfilled`, `cancelled`) lock the status to prevent accidental changes.
+
 ### Subscription Management
 
 **Multi-Product Subscriptions** (Updated November 2025):
@@ -97,9 +126,10 @@ Super admins can securely impersonate any user account to troubleshoot issues or
 **Wholesale Management** (dedicated pages accessible via sidebar):
 - Create and manage wholesale customer accounts with client-specific pricing overrides
 - Place orders on behalf of wholesale customers
-- Manage wholesale orders with delivery scheduling
+- Manage wholesale orders with delivery scheduling and fulfillment tracking
 - Generate daily delivery reports for logistics
 - Professional invoice generation with optional online payment (Stripe)
+- **Order Fulfillment**: Wholesale orders now support 'fulfilled' status in addition to standard workflow states (pending → processing → shipped → delivered → fulfilled). When marked as fulfilled, the system records the fulfillment timestamp and staff user ID for audit purposes, matching the retail order fulfillment pattern.
 
 **Retail Management**:
 - **Customer Directory**: View and search all retail customers at `/retail/customers`. Displays customer contact information (name, email, phone) and subscription statistics (total subscriptions, active subscriptions). Features real-time search filtering by name, email, or phone number. Read-only access for staff to support customer service operations.
