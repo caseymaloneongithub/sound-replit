@@ -23,11 +23,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Admin middleware - checks if user is an admin
   const isAdmin = async (req: any, res: any, next: any) => {
     try {
-      if (!req.user) {
+      const effectiveUser = req.originalUser || req.user;
+      
+      if (!effectiveUser) {
         return res.status(401).json({ message: "Unauthorized - please log in" });
       }
       
-      if (!req.user.isAdmin) {
+      if (!effectiveUser.isAdmin) {
         return res.status(403).json({ message: "Forbidden: Admin access required" });
       }
       
@@ -41,11 +43,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Super admin middleware - checks if user is a super admin
   const isSuperAdmin = async (req: any, res: any, next: any) => {
     try {
-      if (!req.user) {
+      const effectiveUser = req.originalUser || req.user;
+      
+      if (!effectiveUser) {
         return res.status(401).json({ message: "Unauthorized - please log in" });
       }
       
-      if (req.user.role !== 'super_admin') {
+      if (effectiveUser.role !== 'super_admin') {
         return res.status(403).json({ message: "Forbidden: Super admin access required" });
       }
       
@@ -59,11 +63,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Staff or admin middleware - checks if user is staff, admin, or super admin
   const isStaffOrAdmin = async (req: any, res: any, next: any) => {
     try {
-      if (!req.user) {
+      const effectiveUser = req.originalUser || req.user;
+      
+      if (!effectiveUser) {
         return res.status(401).json({ message: "Unauthorized - please log in" });
       }
       
-      if (!['staff', 'admin', 'super_admin'].includes(req.user.role)) {
+      if (!['staff', 'admin', 'super_admin'].includes(effectiveUser.role)) {
         return res.status(403).json({ message: "Forbidden: Staff or admin access required" });
       }
       

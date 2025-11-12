@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useSearch } from "wouter";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StaffLayout } from "@/components/staff/staff-layout";
@@ -11,9 +11,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Package, ShoppingCart, Settings, AlertCircle, Loader2, Users } from "lucide-react";
+import { Package, ShoppingCart, Settings, AlertCircle, Loader2, Users, Eye } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import type { Product, WholesaleOrder, WholesaleCustomer, User } from "@shared/schema";
 
 interface ProductFormData {
@@ -28,6 +29,16 @@ interface ProductFormData {
 interface InventoryFormData {
   stockQuantity: number;
 }
+
+type UserWithImpersonation = User & {
+  impersonation?: {
+    isImpersonating: boolean;
+    originalUser: {
+      id: string;
+      username: string;
+    };
+  };
+};
 
 export default function StaffPortal() {
   const { toast } = useToast();
@@ -56,7 +67,7 @@ export default function StaffPortal() {
   });
   const [inventoryForms, setInventoryForms] = useState<Record<string, InventoryFormData>>({});
 
-  const { data: user, isLoading: userLoading, error: userError } = useQuery<any>({
+  const { data: user, isLoading: userLoading, error: userError } = useQuery<UserWithImpersonation>({
     queryKey: ['/api/user'],
     retry: false,
   });
@@ -159,6 +170,31 @@ export default function StaffPortal() {
       toast({
         title: "Error",
         description: error.message || "Failed to backfill Stripe customers",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const impersonateMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const response = await fetch(`/api/admin/impersonate/${userId}`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to impersonate user');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/user'] });
+      window.location.href = '/shop';
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to impersonate user",
         variant: "destructive",
       });
     },
@@ -695,6 +731,23 @@ export default function StaffPortal() {
                           )}
                         </div>
                       </CardContent>
+                      <CardFooter>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => impersonateMutation.mutate(u.id)}
+                          disabled={
+                            u.id === user?.id ||
+                            user?.impersonation?.isImpersonating ||
+                            impersonateMutation.isPending
+                          }
+                          data-testid={`button-impersonate-${u.id}`}
+                          className="w-full"
+                        >
+                          <Eye className="w-4 h-4 mr-2" />
+                          {impersonateMutation.isPending ? "Impersonating..." : "Impersonate"}
+                        </Button>
+                      </CardFooter>
                     </Card>
                   ))}
                 </div>
