@@ -50,9 +50,11 @@ export interface IStorage {
   updateUserStripeId(id: string, stripeCustomerId: string): Promise<User | undefined>;
   getUsersWithoutStripeId(): Promise<User[]>;
   
-  startImpersonation(adminUserId: string, impersonatedUserId: string): Promise<ImpersonationLog>;
+  startImpersonation(adminUserId: string, impersonatedUserId: string, ipAddress?: string, userAgent?: string): Promise<ImpersonationLog>;
   endImpersonation(logId: string): Promise<void>;
   getActiveImpersonation(adminUserId: string): Promise<ImpersonationLog | undefined>;
+  getImpersonationLogById(logId: string): Promise<ImpersonationLog | undefined>;
+  listImpersonationLogs(adminUserId?: string): Promise<ImpersonationLog[]>;
   
   createVerificationCode(code: InsertVerificationCode): Promise<VerificationCode>;
   getLatestVerificationCode(phoneNumber: string): Promise<VerificationCode | undefined>;
@@ -212,6 +214,82 @@ export class PostgresStorage implements IStorage {
         )
       );
     return result;
+  }
+
+  async startImpersonation(adminUserId: string, impersonatedUserId: string, ipAddress?: string, userAgent?: string): Promise<ImpersonationLog> {
+    return await db.transaction(async (tx) => {
+      const activeLog = await tx
+        .select()
+        .from(impersonationLogs)
+        .where(
+          and(
+            eq(impersonationLogs.adminUserId, adminUserId),
+            sql`${impersonationLogs.endedAt} IS NULL`
+          )
+        )
+        .limit(1);
+
+      if (activeLog.length > 0) {
+        await tx
+          .update(impersonationLogs)
+          .set({ endedAt: new Date() })
+          .where(eq(impersonationLogs.id, activeLog[0].id));
+      }
+
+      const result = await tx
+        .insert(impersonationLogs)
+        .values({
+          adminUserId,
+          impersonatedUserId,
+          ipAddress,
+          userAgent,
+        })
+        .returning();
+
+      return result[0];
+    });
+  }
+
+  async endImpersonation(logId: string): Promise<void> {
+    await db
+      .update(impersonationLogs)
+      .set({ endedAt: new Date() })
+      .where(eq(impersonationLogs.id, logId));
+  }
+
+  async getActiveImpersonation(adminUserId: string): Promise<ImpersonationLog | undefined> {
+    const result = await db
+      .select()
+      .from(impersonationLogs)
+      .where(
+        and(
+          eq(impersonationLogs.adminUserId, adminUserId),
+          sql`${impersonationLogs.endedAt} IS NULL`
+        )
+      )
+      .limit(1);
+    
+    return result[0];
+  }
+
+  async getImpersonationLogById(logId: string): Promise<ImpersonationLog | undefined> {
+    const result = await db
+      .select()
+      .from(impersonationLogs)
+      .where(eq(impersonationLogs.id, logId))
+      .limit(1);
+    
+    return result[0];
+  }
+
+  async listImpersonationLogs(adminUserId?: string): Promise<ImpersonationLog[]> {
+    const query = db.select().from(impersonationLogs);
+    
+    if (adminUserId) {
+      return await query.where(eq(impersonationLogs.adminUserId, adminUserId)).orderBy(desc(impersonationLogs.startedAt));
+    }
+    
+    return await query.orderBy(desc(impersonationLogs.startedAt));
   }
 
   async createVerificationCode(codeData: InsertVerificationCode): Promise<VerificationCode> {
