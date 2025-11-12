@@ -616,6 +616,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Create subscription for a single product (new multi-product subscription flow)
+  app.post("/api/create-product-subscription", isAuthenticated, async (req: any, res) => {
+    try {
+      if (!stripe) {
+        return res.status(503).json({ message: "Payment processing is not configured" });
+      }
+
+      const { productId, quantity, frequency } = req.body;
+
+      if (!productId || !quantity || !frequency) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+
+      const product = await storage.getProduct(productId);
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+
+      // Calculate subscription price (10% discount)
+      const basePrice = parseFloat(product.retailPrice);
+      const subscriptionPrice = basePrice * 0.9;
+      const unitAmountCents = Math.round(subscriptionPrice * 100);
+
+      // Map frequency to Stripe interval
+      const intervalCount = 
+        frequency === 'weekly' ? 1 :
+        frequency === 'bi-weekly' ? 2 :
+        4; // every-4-weeks
+
+      const baseUrl = process.env.REPL_SLUG 
+        ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
+        : 'http://localhost:5000';
+
+      const imageUrl = product.imageUrl?.startsWith('http') 
+        ? product.imageUrl 
+        : product.imageUrl 
+          ? `${baseUrl}${product.imageUrl}` 
+          : undefined;
+
+      // Create Stripe Checkout Session for subscription
+      const session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        customer: req.user.stripeCustomerId || undefined,
+        customer_email: req.user.stripeCustomerId ? undefined : req.user.email,
+        line_items: [{
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: `${product.name} - Case of 12`,
+              description: `${frequency} subscription`,
+              images: imageUrl ? [imageUrl] : [],
+            },
+            unit_amount: unitAmountCents,
+            recurring: {
+              interval: 'week',
+              interval_count: intervalCount,
+            },
+          },
+          quantity: quantity,
+        }],
+        success_url: `${baseUrl}/subscription-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}/product-subscribe/${productId}`,
+        metadata: {
+          userId: req.user.id,
+          productId: productId,
+          frequency: frequency,
+          quantity: quantity.toString(),
+          type: 'product_subscription',
+        },
+      });
+
+      res.json({ url: session.url, sessionId: session.id });
+    } catch (error: any) {
+      console.error("Product subscription error:", error);
+      res.status(500).json({ message: "Error creating subscription: " + error.message });
+    }
+  });
+
   // Create Stripe checkout session for cart purchases (one-time or subscription)
   app.post("/api/create-cart-checkout", async (req: any, res) => {
     try {

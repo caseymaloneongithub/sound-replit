@@ -13,6 +13,7 @@ import WholesaleCustomerDashboard from "@/pages/wholesale-customer-dashboard";
 import Shop from "@/pages/shop";
 import MySubscriptions from "@/pages/my-subscriptions";
 import Subscribe from "@/pages/subscribe";
+import ProductSubscribe from "@/pages/product-subscribe";
 import Checkout from "@/pages/checkout";
 import CartCheckout from "@/pages/cart-checkout";
 import CheckoutSuccess from "@/pages/checkout-success";
@@ -45,6 +46,7 @@ function Router() {
       <Route path="/subscriptions" component={() => <Redirect to="/my-subscriptions" />} />
       <Route path="/my-subscriptions" component={MySubscriptions} />
       <Route path="/subscribe/:id" component={Subscribe} />
+      <Route path="/product-subscribe/:id" component={ProductSubscribe} />
       <Route path="/checkout" component={Checkout} />
       <Route path="/cart-checkout" component={CartCheckout} />
       <Route path="/checkout/success" component={CheckoutSuccess} />

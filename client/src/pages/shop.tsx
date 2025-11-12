@@ -287,7 +287,7 @@ export default function Shop() {
                         <Button 
                           className="w-full rounded-full gap-2" 
                           disabled={!product.inStock}
-                          onClick={() => window.location.href = `/subscribe/${product.id}`}
+                          onClick={() => window.location.href = `/product-subscribe/${product.id}`}
                           data-testid={`button-subscribe-${product.id}`}
                         >
                           <Repeat className="w-4 h-4" />
