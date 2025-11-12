@@ -542,6 +542,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Inventory routes (staff only)
+  app.post("/api/inventory/production", isStaffOrAdmin, async (req: any, res) => {
+    try {
+      const { productId, quantity, batchNumber, productionDate, notes } = req.body;
+      const effectiveUser = req.originalUser || req.user;
+      
+      if (!productId || !quantity) {
+        return res.status(400).json({ message: "Product ID and quantity are required" });
+      }
+      
+      if (quantity <= 0) {
+        return res.status(400).json({ message: "Quantity must be positive for production" });
+      }
+      
+      const batchMetadata = JSON.stringify({
+        batchNumber: batchNumber || null,
+        productionDate: productionDate || new Date().toISOString(),
+      });
+      
+      const adjustment = await storage.createInventoryAdjustment({
+        productId,
+        quantity,
+        reason: 'production',
+        staffUserId: effectiveUser.id,
+        batchMetadata,
+        notes: notes || null,
+      });
+      
+      res.json(adjustment);
+    } catch (error: any) {
+      console.error("Error recording production:", error);
+      res.status(500).json({ message: "Error recording production: " + error.message });
+    }
+  });
+  
+  app.get("/api/inventory/adjustments", isStaffOrAdmin, async (req: any, res) => {
+    try {
+      const { productId, reason, limit } = req.query;
+      
+      const filters: any = {};
+      if (productId) filters.productId = productId as string;
+      if (reason) filters.reason = reason as string;
+      if (limit) filters.limit = parseInt(limit as string);
+      
+      const adjustments = await storage.getInventoryAdjustments(filters);
+      res.json(adjustments);
+    } catch (error: any) {
+      console.error("Error fetching inventory adjustments:", error);
+      res.status(500).json({ message: "Error fetching inventory adjustments: " + error.message });
+    }
+  });
+
   // Subscription plan routes
   app.get("/api/subscription-plans", async (req, res) => {
     try {
