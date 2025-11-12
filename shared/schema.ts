@@ -152,6 +152,8 @@ export const retailOrders = pgTable("retail_orders", {
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
   stripePaymentIntentId: text("stripe_payment_intent_id").unique(),
   stripeCheckoutSessionId: text("stripe_checkout_session_id"),
+  stripeInvoiceId: text("stripe_invoice_id").unique(),
+  isSubscriptionOrder: boolean("is_subscription_order").notNull().default(false),
   fulfilledAt: timestamp("fulfilled_at"),
   fulfilledByUserId: varchar("fulfilled_by_user_id").references(() => users.id),
   notes: text("notes"),

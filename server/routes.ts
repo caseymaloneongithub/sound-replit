@@ -2,8 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders, retailCheckoutSessions } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, inventoryAdjustments, subscriptions } from "@shared/schema";
+import { eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
 import { setupAuth, isAuthenticated } from "./auth";
@@ -1147,6 +1147,183 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           await storage.updateSubscriptionByStripeId(subscription.id, { status });
           console.log(`Updated subscription ${subscription.id} to status ${status}`);
+          break;
+        }
+        case 'invoice.payment_succeeded': {
+          const invoice = event.data.object as any;
+          
+          // Only process subscription invoices (not one-time payments)
+          const subscriptionId = invoice.subscription as string | null;
+          if (!subscriptionId) {
+            break;
+          }
+          
+          // Skip the initial invoice (already handled by checkout.session.completed)
+          if (invoice.billing_reason === 'subscription_create') {
+            console.log(`[WEBHOOK] Skipping initial subscription invoice ${invoice.id}`);
+            break;
+          }
+          
+          console.log(`[WEBHOOK] Processing subscription renewal invoice ${invoice.id} for subscription ${subscriptionId}`);
+          
+          // Get the subscription from our database
+          const subscription = await storage.getSubscriptionByStripeId(subscriptionId);
+          
+          if (!subscription) {
+            console.error(`[WEBHOOK] Subscription not found for Stripe ID ${subscriptionId}`);
+            break;
+          }
+          
+          if (subscription.status !== 'active') {
+            console.log(`[WEBHOOK] Subscription ${subscription.id} is not active (status: ${subscription.status}), skipping order creation`);
+            break;
+          }
+          
+          // Get subscription items (products and quantities) - outside transaction
+          const subscriptionItems = await storage.getSubscriptionItems(subscription.id);
+          
+          if (subscriptionItems.length === 0) {
+            console.error(`[WEBHOOK] No items found for subscription ${subscription.id}`);
+            break;
+          }
+          
+          // Use db.transaction for atomic order creation with inventory deduction
+          try {
+            await db.transaction(async (tx) => {
+              // Check for existing order for this invoice (idempotency)
+              const existingOrders = await tx
+                .select({ id: retailOrders.id })
+                .from(retailOrders)
+                .where(eq(retailOrders.stripeInvoiceId, invoice.id))
+                .limit(1);
+              
+              if (existingOrders.length > 0) {
+                console.log(`[WEBHOOK] Order already exists for invoice ${invoice.id} - skipping creation (idempotent)`);
+                return;
+              }
+              
+              // Generate order number
+              const maxOrderResult = await tx
+                .select({ maxNumber: sql<string>`COALESCE(MAX(CAST(SUBSTRING(order_number FROM 4) AS INTEGER)), 0)` })
+                .from(retailOrders)
+                .where(sql`order_number ~ '^ORD[0-9]+$'`);
+              
+              const nextNumber = parseInt(maxOrderResult[0]?.maxNumber || '0') + 1;
+              const orderNumber = `ORD${String(nextNumber).padStart(6, '0')}`;
+              
+              // Get products and calculate total (need to fetch within transaction for consistency)
+              const productIds = subscriptionItems.map(item => item.productId);
+              const productsList = await tx
+                .select()
+                .from(products)
+                .where(sql`${products.id} = ANY(${productIds})`);
+              
+              const productsMap = new Map(productsList.map(p => [p.id, p]));
+              
+              let subtotal = 0;
+              for (const item of subscriptionItems) {
+                const product = productsMap.get(item.productId);
+                if (product) {
+                  // Subscription price is retail price * 0.9
+                  const itemPrice = parseFloat(product.retailPrice) * 0.9 * item.quantity;
+                  subtotal += itemPrice;
+                }
+              }
+              
+              // Create retail order
+              const [newOrder] = await tx.insert(retailOrders).values({
+                orderNumber,
+                userId: subscription.userId,
+                customerName: subscription.customerName,
+                customerEmail: subscription.customerEmail,
+                customerPhone: subscription.customerPhone || '',
+                status: 'pending',
+                subtotal: subtotal.toFixed(2),
+                taxAmount: '0.00', // No tax on subscriptions
+                totalAmount: subtotal.toFixed(2),
+                stripeInvoiceId: invoice.id,
+                isSubscriptionOrder: true,
+              }).returning();
+              
+              // Create order items and deduct inventory
+              for (const item of subscriptionItems) {
+                const product = productsMap.get(item.productId);
+                if (product) {
+                  const itemPrice = parseFloat(product.retailPrice) * 0.9;
+                  
+                  // Create order item
+                  await tx.insert(retailOrderItems).values({
+                    orderId: newOrder.id,
+                    productId: item.productId,
+                    quantity: item.quantity,
+                    unitPrice: itemPrice.toFixed(2),
+                  });
+                  
+                  // Deduct inventory with pessimistic locking
+                  const [productWithLock] = await tx
+                    .select()
+                    .from(products)
+                    .where(eq(products.id, item.productId))
+                    .for('update');
+                  
+                  if (!productWithLock) {
+                    throw new Error(`Product ${item.productId} not found`);
+                  }
+                  
+                  const currentStock = productWithLock.stockQuantity;
+                  const newStock = currentStock - item.quantity;
+                  
+                  if (newStock < 0) {
+                    console.warn(`[WEBHOOK] Insufficient inventory for product ${item.productId}. Current: ${currentStock}, Needed: ${item.quantity}`);
+                    // Continue anyway - staff will handle this
+                  }
+                  
+                  // Update product stock
+                  await tx
+                    .update(products)
+                    .set({ stockQuantity: newStock })
+                    .where(eq(products.id, item.productId));
+                  
+                  // Record inventory adjustment
+                  await tx.insert(inventoryAdjustments).values({
+                    productId: item.productId,
+                    reason: 'fulfillment',
+                    quantity: -item.quantity,
+                    notes: `Auto-deducted for subscription order ${orderNumber}`,
+                    orderId: newOrder.id,
+                    orderType: 'retail',
+                  });
+                }
+              }
+              
+              // Update subscription's next delivery date with pessimistic lock
+              const daysUntilNext = 
+                subscription.subscriptionFrequency === 'weekly' ? 7 :
+                subscription.subscriptionFrequency === 'bi-weekly' ? 14 :
+                28; // every-4-weeks
+              
+              const nextDate = new Date();
+              nextDate.setDate(nextDate.getDate() + daysUntilNext);
+              
+              // Lock subscription row before updating
+              await tx
+                .select()
+                .from(subscriptions)
+                .where(eq(subscriptions.id, subscription.id))
+                .for('update');
+              
+              await tx
+                .update(subscriptions)
+                .set({ nextDeliveryDate: nextDate })
+                .where(eq(subscriptions.id, subscription.id));
+              
+              console.log(`[WEBHOOK] ✅ Created subscription order ${orderNumber} for invoice ${invoice.id} and deducted inventory`);
+            });
+          } catch (error) {
+            console.error(`[WEBHOOK] Error creating subscription order for invoice ${invoice.id}:`, error);
+            throw error;
+          }
+          
           break;
         }
         case 'payment_intent.succeeded': {
