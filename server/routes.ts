@@ -6,7 +6,8 @@ import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesal
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
-import { toZonedTime, fromZonedTime } from "date-fns-tz";
+import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
+import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
 import { sendVerificationCode, generateVerificationCode } from "./twilio";
@@ -1808,55 +1809,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
         
+        // Validate that next delivery date exists
+        if (!subscription.nextDeliveryDate) {
+          return res.status(422).json({
+            message: "Cannot move pickup earlier - no scheduled delivery date found."
+          });
+        }
+        
         // Get current scheduled delivery date
-        const currentDate = subscription.nextDeliveryDate 
-          ? new Date(subscription.nextDeliveryDate)
-          : new Date();
+        const currentDate = new Date(subscription.nextDeliveryDate);
         
-        // Convert current delivery date to Pacific timezone
-        // toZonedTime stores the Pacific time in UTC components
-        const currentDatePacific = toZonedTime(currentDate, BREWERY_TIMEZONE);
+        // Validate date is valid
+        if (isNaN(currentDate.getTime())) {
+          return res.status(422).json({
+            message: "Cannot move pickup earlier - invalid delivery date."
+          });
+        }
         
-        // Extract Pacific wall-clock components using getUTC* methods
-        const year = currentDatePacific.getUTCFullYear();
-        const month = currentDatePacific.getUTCMonth();
-        const day = currentDatePacific.getUTCDate();
-        const hours = currentDatePacific.getUTCHours();
-        const minutes = currentDatePacific.getUTCMinutes();
-        const seconds = currentDatePacific.getUTCSeconds();
-        const ms = currentDatePacific.getUTCMilliseconds();
+        // Pickup dates have no specific time component - DST is not a concern
+        // "Next week" means 7 days from TODAY, not from current pickup
         
-        // Create Date representing Pacific wall-clock + 7 days
-        const nextWeekWallClock = new Date(Date.UTC(year, month, day + 7, hours, minutes, seconds, ms));
+        // Normalize current pickup to Pacific date (ignore any time component for comparison)
+        const currentPickupDateStr = formatInTimeZone(currentDate, BREWERY_TIMEZONE, "yyyy-MM-dd");
         
-        // Create Date representing Pacific wall-clock + 48 hours from now
-        const nowYear = nowPacific.getUTCFullYear();
-        const nowMonth = nowPacific.getUTCMonth();
-        const nowDay = nowPacific.getUTCDate();
-        const nowHours = nowPacific.getUTCHours();
-        const nowMinutes = nowPacific.getUTCMinutes();
-        const minWallClock = new Date(Date.UTC(nowYear, nowMonth, nowDay, nowHours + 48, nowMinutes));
+        // Calculate "next week" as 7 days from TODAY in Pacific timezone
+        const todayPacific = toZonedTime(now, BREWERY_TIMEZONE);
+        const nextWeekPacific = addDays(todayPacific, 7);
+        const nextWeekPacificStr = formatInTimeZone(nextWeekPacific, BREWERY_TIMEZONE, "yyyy-MM-dd");
         
-        // Validate minimum lead time (comparing wall-clock times)
-        if (nextWeekWallClock < minWallClock) {
+        // Verify that next week is EARLIER than current pickup (date-only comparison)
+        if (nextWeekPacificStr >= currentPickupDateStr) {
+          return res.status(400).json({
+            message: "Cannot move pickup to next week - your pickup is already scheduled for next week or sooner."
+          });
+        }
+        
+        // Convert Pacific midnight to UTC for storage
+        const nextWeekUTC = fromZonedTime(`${nextWeekPacificStr}T00:00:00`, BREWERY_TIMEZONE);
+        
+        // Validate 48-hour minimum lead time
+        // Add 48 hours in Pacific timezone, then compare UTC timestamps
+        const nowPlus48Pacific = addHours(nowPacific, 48);
+        const minLeadTimeUTC = fromZonedTime(nowPlus48Pacific, BREWERY_TIMEZONE);
+        
+        if (nextWeekUTC < minLeadTimeUTC) {
           return res.status(400).json({
             message: "Cannot move pickup to a date less than 48 hours away."
           });
         }
         
-        // Check if already scheduled for next week (within 0-7 days from now)
-        const currentWallClock = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
-        const nowWallClock = new Date(Date.UTC(nowYear, nowMonth, nowDay, nowHours, nowMinutes));
-        const daysUntilCurrent = Math.floor((currentWallClock.getTime() - nowWallClock.getTime()) / (1000 * 60 * 60 * 24));
-        if (daysUntilCurrent >= 0 && daysUntilCurrent < 7) {
-          return res.status(400).json({
-            message: "Your pickup is already scheduled for next week or sooner."
-          });
-        }
+        // Note: No need for "already next week" check because:
+        // 1. The "move earlier" check ensures next week < current pickup
+        // 2. The "48-hour minimum" check ensures adequate lead time
+        // Together, these prevent moving to dates that are too soon
         
-        // Convert Pacific wall-clock time back to actual UTC for storage
-        // fromZonedTime treats the Date as Pacific time and converts to UTC
-        const nextWeekDeliveryUTC = fromZonedTime(nextWeekWallClock, BREWERY_TIMEZONE);
+        const nextWeekDeliveryUTC = nextWeekUTC;
         
         // Update both dates together to keep them in sync
         updates.nextDeliveryDate = nextWeekDeliveryUTC;

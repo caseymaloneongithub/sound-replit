@@ -29,7 +29,9 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
         -   **Frequency Changes**: Switch between weekly, bi-weekly, or every-4-weeks delivery. New cadence applies after next successful charge.
         -   **Product Management**: Add/remove products or change product selection. Changes take effect on next scheduled delivery.
         -   **Delay Pickup**: Postpone next delivery by 1-12 weeks using declarative server-controlled adjustments. Server synchronizes both `nextDeliveryDate` and `nextChargeAt` to prevent billing inconsistencies.
-        -   **Security**: All edits require `status='active'`, `billingStatus='active'`, and `processingLock=false`. Server controls all date calculations; client sends declarative inputs (`weeksToDelay`) not absolute dates.
+        -   **Advance Pickup**: Move pickup earlier to next week with Friday cutoff (Pacific timezone). Only allowed Monday-Thursday, requires 48-hour minimum lead time, validates if already scheduled for next week. Mutually exclusive with delay action.
+        -   **Pickup Date Model**: Pickup dates track the DATE only (no specific time component), so DST transitions do not affect scheduling. Simple date arithmetic is used (+7 days, etc.).
+        -   **Security**: All edits require `status='active'`, `billingStatus='active'`, and `processingLock=false`. Server controls all date calculations; client sends declarative inputs (`weeksToDelay: 1-12`, `advanceToNextWeek: boolean`) not absolute dates.
     -   **Local Subscription Billing System**: Subscriptions are managed locally with Stripe used only as a payment processor (not Stripe Subscriptions). Daily cron job runs at 4 AM to charge customers using saved payment methods via PaymentIntents. System handles:
         -   **Async Payment Processing**: Supports 3D Secure authentication (`requires_action`), bank processing delays (`processing`), and synchronous payments (`succeeded`)
         -   **Atomic Operations**: Lock acquisition, inventory deduction, and order creation in single transaction
