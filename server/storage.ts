@@ -670,6 +670,12 @@ export class PostgresStorage implements IStorage {
     if (updates.productId !== undefined) {
       allowedUpdates.productId = updates.productId;
     }
+    if (updates.subscriptionFrequency !== undefined) {
+      allowedUpdates.subscriptionFrequency = updates.subscriptionFrequency;
+    }
+    if (updates.nextChargeAt !== undefined) {
+      allowedUpdates.nextChargeAt = updates.nextChargeAt;
+    }
     
     const result = await db
       .update(subscriptions)

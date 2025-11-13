@@ -1730,7 +1730,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update subscription (delay delivery, change product)
+  // Update subscription (delay delivery, change product, change frequency)
   app.patch("/api/my-subscriptions/:id", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
@@ -1745,12 +1745,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updateSchema = z.object({
         productId: z.string().uuid().optional(),
         nextDeliveryDate: z.string().datetime().transform(str => new Date(str)).optional(),
+        subscriptionFrequency: z.enum(['weekly', 'bi-weekly', 'every-4-weeks']).optional(),
       });
       
       const validated = updateSchema.parse(req.body);
-      const updated = await storage.updateSubscription(subscriptionId, validated);
       
-      res.json(updated);
+      // If changing frequency, validate billing state and recalculate next charge date
+      if (validated.subscriptionFrequency && validated.subscriptionFrequency !== subscription.subscriptionFrequency) {
+        // Only allow frequency changes when not in the middle of payment processing
+        if (subscription.billingStatus !== 'active') {
+          return res.status(400).json({ 
+            message: "Cannot change frequency while payment is in progress. Please try again later." 
+          });
+        }
+        
+        if (subscription.processingLock) {
+          return res.status(400).json({ 
+            message: "Subscription is currently being processed. Please try again in a moment." 
+          });
+        }
+        
+        // Recalculate nextChargeAt based on new frequency
+        const frequencyDays: Record<string, number> = {
+          'weekly': 7,
+          'bi-weekly': 14,
+          'every-4-weeks': 28,
+        };
+        
+        const daysToAdd = frequencyDays[validated.subscriptionFrequency];
+        const newNextChargeAt = new Date();
+        newNextChargeAt.setDate(newNextChargeAt.getDate() + daysToAdd);
+        
+        // Also update nextDeliveryDate to match new schedule
+        validated.nextDeliveryDate = newNextChargeAt;
+        
+        // Add nextChargeAt to updates (requires updating storage interface if not already supported)
+        const updates = {
+          ...validated,
+          nextChargeAt: newNextChargeAt,
+        };
+        
+        const updated = await storage.updateSubscription(subscriptionId, updates);
+        res.json(updated);
+      } else {
+        // Normal update without frequency change
+        const updated = await storage.updateSubscription(subscriptionId, validated);
+        res.json(updated);
+      }
     } catch (error: any) {
       console.error("Error updating subscription:", error);
       res.status(400).json({ message: "Error updating subscription: " + error.message });
