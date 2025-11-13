@@ -35,8 +35,10 @@ export async function finalizeSubscriptionCharge(paymentIntentId: string): Promi
       return true;
     }
 
-    // Get payment intent from Stripe
-    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    // Get payment intent from Stripe with charges expanded
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId, {
+      expand: ['latest_charge']
+    });
     
     if (paymentIntent.status !== 'succeeded') {
       console.warn(`[BILLING] PaymentIntent ${paymentIntentId} status is ${paymentIntent.status}, cannot finalize`);
@@ -44,8 +46,18 @@ export async function finalizeSubscriptionCharge(paymentIntentId: string): Promi
     }
 
     // Check if payment has been refunded (critical safety check)
-    if (paymentIntent.amount_refunded > 0) {
-      console.error(`[BILLING] PaymentIntent ${paymentIntentId} has been refunded (${paymentIntent.amount_refunded}/${paymentIntent.amount}), cannot finalize`);
+    const latestCharge = paymentIntent.latest_charge;
+    const refundedAmount =
+      latestCharge && typeof latestCharge === 'object' && 'amount_refunded' in latestCharge
+        ? latestCharge.amount_refunded ?? 0
+        : 0;
+    const isRefunded =
+      latestCharge && typeof latestCharge === 'object' && 'refunded' in latestCharge
+        ? latestCharge.refunded === true || refundedAmount > 0
+        : false;
+    
+    if (isRefunded) {
+      console.error(`[BILLING] PaymentIntent ${paymentIntentId} has been refunded (${refundedAmount}/${paymentIntent.amount}), cannot finalize`);
       return false;
     }
 
@@ -68,6 +80,19 @@ export async function finalizeSubscriptionCharge(paymentIntentId: string): Promi
     }
 
     const sub = subscription[0];
+
+    // Check if this PaymentIntent was already refunded by us (prevent Stripe retry duplicates)
+    if (sub.lastPaymentIntentId === paymentIntentId && sub.lastRefundedAt) {
+      const paymentIntentCreatedMs = paymentIntent.created * 1000;
+      const lastRefundedMs = new Date(sub.lastRefundedAt).valueOf();
+      
+      // If PaymentIntent was created before we refunded it, skip processing
+      if (paymentIntentCreatedMs <= lastRefundedMs) {
+        console.warn(`[BILLING] PaymentIntent ${paymentIntentId} was already refunded on ${sub.lastRefundedAt}, skipping`);
+        return false;
+      }
+    }
+
     const items = await db
       .select({
         id: subscriptionItems.id,
@@ -165,6 +190,7 @@ export async function finalizeSubscriptionCharge(paymentIntentId: string): Promi
             billingStatus: 'active',
             retryCount: 0,
             lastPaymentIntentId: paymentIntentId,
+            lastRefundedAt: null, // Clear refund marker on successful fulfillment
             processingLock: false,
           })
           .where(eq(subscriptions.id, sub.id));
@@ -188,12 +214,21 @@ export async function finalizeSubscriptionCharge(paymentIntentId: string): Promi
           },
         });
 
-        // Update subscription with refund info
+        // Schedule retry for tomorrow (compensating rollback recovery)
+        const nextRetry = new Date();
+        nextRetry.setDate(nextRetry.getDate() + 1);
+
+        // Update subscription with refund info and schedule retry
+        const newRetryCount = Math.min((sub.retryCount || 0) + 1, MAX_RETRY_ATTEMPTS);
+        
         await db
           .update(subscriptions)
           .set({
             lastRefundId: refund.id,
-            billingStatus: 'retrying',
+            lastRefundedAt: new Date(),
+            billingStatus: 'active', // Keep active so cron can retry
+            nextChargeAt: nextRetry,
+            retryCount: newRetryCount,
             processingLock: false,
           })
           .where(eq(subscriptions.id, sub.id));

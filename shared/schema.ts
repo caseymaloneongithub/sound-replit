@@ -111,6 +111,7 @@ export const subscriptions = pgTable("subscriptions", {
   retryCount: integer("retry_count").notNull().default(0), // Payment retry attempts
   lastPaymentIntentId: text("last_payment_intent_id"), // Track last charge attempt
   lastRefundId: text("last_refund_id"), // Track last refund for failed fulfillment
+  lastRefundedAt: timestamp("last_refunded_at"), // When we refunded lastPaymentIntentId
   processingLock: boolean("processing_lock").notNull().default(false), // Prevent concurrent processing
   startDate: timestamp("start_date").notNull().defaultNow(),
   nextDeliveryDate: timestamp("next_delivery_date"),
