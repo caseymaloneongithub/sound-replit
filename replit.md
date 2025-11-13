@@ -24,7 +24,16 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   **Authentication & Authorization**: Supports username/password and passwordless SMS code login (Twilio) via Passport.js. Registration requires SMS verification. A role-based authorization system defines 'user', 'wholesale_customer', 'staff', 'admin', and 'super_admin' levels with granular API route protection. Separate portals exist for retail, wholesale, and staff/admin.
 -   **Payment Processing**: Stripe is integrated for one-time purchases (embedded checkout) and recurring subscriptions (Stripe Checkout Sessions). Webhooks handle payment confirmations and subscription lifecycle events. Sales tax (10.35%) is applied to retail one-time purchases only. Retail customers are automatically created as Stripe customers upon registration.
 -   **Retail Order Tracking**: Secure two-phase order creation workflow where customer info is stored then linked to `payment_intent.succeeded` webhook for atomic order creation. Orders have statuses (`pending` → `ready_for_pickup` → `fulfilled`/`cancelled`) managed by staff.
--   **Subscription Management**: Supports multi-product subscriptions with flexible quantities. Customers can add/remove products, delay pickups, and cancel subscriptions. **Automated Order Creation**: When Stripe charges customers for subscription renewals, the system automatically creates pickup orders via the `invoice.payment_succeeded` webhook. The webhook handler performs all operations within a single atomic database transaction with pessimistic row-level locking (SELECT FOR UPDATE) on both product inventory and subscription records to ensure data consistency under concurrent load. For each renewal, it: (1) creates a retail order with `isSubscriptionOrder: true`, (2) deducts inventory for all subscription items, (3) records inventory adjustments in the ledger with order tracking, (4) updates the subscription's next delivery date based on frequency, (5) ensures idempotency via unique constraint on `stripe_invoice_id`. If inventory is insufficient, the order still proceeds with a warning logged for staff review.
+-   **Subscription Management**: Supports multi-product subscriptions with flexible quantities. Customers can add/remove products, delay pickups, and cancel subscriptions.
+    -   **Local Subscription Billing System**: Subscriptions are managed locally with Stripe used only as a payment processor (not Stripe Subscriptions). Daily cron job runs at 4 AM to charge customers using saved payment methods via PaymentIntents. System handles:
+        -   **Async Payment Processing**: Supports 3D Secure authentication (`requires_action`), bank processing delays (`processing`), and synchronous payments (`succeeded`)
+        -   **Atomic Operations**: Lock acquisition, inventory deduction, and order creation in single transaction
+        -   **Idempotency**: Multiple safety checks prevent duplicate charges and orders
+        -   **Compensating Rollback**: Auto-refunds if payment succeeds but order creation fails, schedules retry for next day
+        -   **Retry Logic**: Failed payments retry up to 3 times with +1 day intervals, customer & staff notifications
+        -   **Stale State Detection**: Hourly cron reconciles with Stripe for subscriptions stuck in awaiting states (missed webhooks)
+        -   **Billing States**: `active` (ready for billing), `awaiting_auth` (3D Secure pending), `awaiting_confirmation` (bank processing), `retrying` (after failures)
+    -   **Automated Order Creation**: When payments succeed (either synchronously or via webhook), system atomically: (1) creates retail order with `isSubscriptionOrder: true`, (2) deducts inventory with row-level locking, (3) records adjustments in ledger, (4) updates next charge date, (5) clears retry counters. Refund safety checks prevent order creation for refunded PaymentIntents.
 -   **Inventory Management System**: Staff can record production batches, increasing stock with an audit trail in an `inventory_adjustments` ledger. All inventory updates use atomic PostgreSQL transactions with pessimistic locking. Fulfillment automatically deducts inventory and records adjustments.
 -   **Staff Portal**: Unified management portal at `/staff-portal` for staff and admin users. Includes order management (retail and wholesale), inventory management (production recording, stock overview, adjustments ledger), and admin features (product specs, user management). Super admins can impersonate users with an audit trail and visual indicator.
     -   **Wholesale Management**: Create/manage wholesale accounts, place orders, delivery scheduling, generate daily delivery reports, and professional invoice generation. Supports 'fulfilled' status for orders.
@@ -59,3 +68,37 @@ Uses `npm run dev` for development (tsx server with Vite middleware) and `npm ru
 -   `TWILIO_ACCOUNT_SID`
 -   `TWILIO_AUTH_TOKEN`
 -   `TWILIO_PHONE_NUMBER`
+-   `GMAIL_USER`
+-   `GMAIL_APP_PASSWORD`
+
+## Operational Notes
+
+### Subscription Billing System
+
+**Daily Billing Cron** (4:00 AM):
+- Automatically charges all due subscriptions
+- Only processes subscriptions with `billingStatus='active'` to prevent duplicate charges
+- Handles synchronous and asynchronous payments
+
+**Hourly Stale State Detection**:
+- Checks for subscriptions stuck in `awaiting_auth` (>15 minutes) or `awaiting_confirmation` (>2 hours)
+- Reconciles with Stripe to determine actual payment status
+- Automatically recovers from missed webhooks
+- Sends customer/staff notifications as needed
+
+**Compensating Rollback**:
+- If payment succeeds but order creation fails (e.g., database error), system automatically:
+  1. Refunds the customer via Stripe
+  2. Logs critical error for manual review
+  3. Schedules automatic retry for next day
+  4. Prevents duplicate charges if Stripe retries the same PaymentIntent
+
+**Manual Intervention Scenarios**:
+1. **Exhausted Retries** (3 failed attempts): Subscription paused, customer notified, staff alerted. Requires manual review of payment method and customer contact.
+2. **Refund After Failed Fulfillment**: Check server logs for `[BILLING] ⚠️ Refund` messages. Review inventory levels and database state before retry.
+3. **Stale Processing (>2 hours)**: Staff receives email notification. Check Stripe dashboard and contact customer's bank if needed.
+
+**Monitoring**:
+- Watch for `[BILLING]` and `[STALE_CHECK]` log entries
+- Critical errors logged with 🚨 emoji require immediate attention
+- All refunds logged with ⚠️ emoji for manual review
