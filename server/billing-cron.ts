@@ -470,6 +470,155 @@ export async function runDailyBilling() {
   }
 }
 
+/**
+ * Check for stale awaiting states and attempt recovery
+ * Runs hourly to detect subscriptions stuck in awaiting_auth or awaiting_confirmation
+ */
+async function checkStaleAwaitingStates() {
+  if (!stripe) {
+    console.error('[STALE_CHECK] Stripe not configured');
+    return;
+  }
+
+  console.log('[STALE_CHECK] Checking for stale awaiting states...');
+
+  try {
+    const now = new Date();
+    const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
+    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+
+    // Find subscriptions in awaiting_auth (older than 15 minutes)
+    const staleAuth = await db
+      .select()
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.billingType, 'local_managed'),
+          eq(subscriptions.billingStatus, 'awaiting_auth'),
+          lte(subscriptions.nextChargeAt, fifteenMinutesAgo)
+        )
+      );
+
+    // Find subscriptions in awaiting_confirmation (older than 2 hours)
+    const staleConfirmation = await db
+      .select()
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.billingType, 'local_managed'),
+          eq(subscriptions.billingStatus, 'awaiting_confirmation'),
+          lte(subscriptions.nextChargeAt, twoHoursAgo)
+        )
+      );
+
+    console.log(`[STALE_CHECK] Found ${staleAuth.length} stale auth and ${staleConfirmation.length} stale confirmation states`);
+
+    // Process stale auth subscriptions
+    for (const sub of staleAuth) {
+      try {
+        console.log(`[STALE_CHECK] Processing stale auth for subscription ${sub.id}`);
+
+        // Check PaymentIntent status with Stripe
+        if (sub.lastPaymentIntentId) {
+          const paymentIntent = await stripe.paymentIntents.retrieve(sub.lastPaymentIntentId);
+          
+          if (paymentIntent.status === 'succeeded') {
+            // Payment succeeded but webhook was missed - finalize now
+            console.log(`[STALE_CHECK] Payment succeeded, finalizing now`);
+            await finalizeSubscriptionCharge(sub.lastPaymentIntentId);
+            continue;
+          } else if (paymentIntent.status === 'requires_action') {
+            // Still waiting for customer action - notify and extend deadline
+            console.log(`[STALE_CHECK] Still waiting for customer action, sending reminder`);
+            await sendPaymentFailureEmail({
+              customerEmail: sub.customerEmail,
+              customerName: sub.customerName,
+              subscriptionItems: [],
+              amount: 0,
+              errorMessage: 'Your payment requires additional authentication. Please check your email or bank app to complete the payment.'
+            });
+          }
+        }
+
+        // Schedule retry for next business day
+        const nextRetry = new Date();
+        nextRetry.setDate(nextRetry.getDate() + 1);
+
+        await db
+          .update(subscriptions)
+          .set({
+            billingStatus: 'active', // Reset to active for retry
+            nextChargeAt: nextRetry,
+            retryCount: Math.min((sub.retryCount || 0) + 1, MAX_RETRY_ATTEMPTS),
+            processingLock: false,
+          })
+          .where(eq(subscriptions.id, sub.id));
+
+      } catch (error: any) {
+        console.error(`[STALE_CHECK] Error processing stale auth ${sub.id}:`, error.message);
+      }
+    }
+
+    // Process stale confirmation subscriptions
+    for (const sub of staleConfirmation) {
+      try {
+        console.log(`[STALE_CHECK] Processing stale confirmation for subscription ${sub.id}`);
+
+        // Check PaymentIntent status with Stripe
+        if (sub.lastPaymentIntentId) {
+          const paymentIntent = await stripe.paymentIntents.retrieve(sub.lastPaymentIntentId);
+          
+          if (paymentIntent.status === 'succeeded') {
+            // Payment succeeded but webhook was missed - finalize now
+            console.log(`[STALE_CHECK] Payment succeeded, finalizing now`);
+            await finalizeSubscriptionCharge(sub.lastPaymentIntentId);
+            continue;
+          } else if (paymentIntent.status === 'processing') {
+            // Still processing - notify staff
+            console.log(`[STALE_CHECK] Still processing after 2 hours, notifying staff`);
+            await sendStaffPaymentFailureNotification({
+              customerEmail: sub.customerEmail,
+              customerName: sub.customerName,
+              subscriptionItems: [],
+              amount: 0,
+              errorMessage: `Payment for subscription ${sub.id} has been processing for over 2 hours. Manual review required.`
+            });
+          } else if (paymentIntent.status === 'requires_payment_method') {
+            // Payment failed - schedule retry
+            console.log(`[STALE_CHECK] Payment failed, scheduling retry`);
+            const nextRetry = new Date();
+            nextRetry.setDate(nextRetry.getDate() + 1);
+
+            await db
+              .update(subscriptions)
+              .set({
+                billingStatus: 'active',
+                nextChargeAt: nextRetry,
+                retryCount: Math.min((sub.retryCount || 0) + 1, MAX_RETRY_ATTEMPTS),
+                processingLock: false,
+              })
+              .where(eq(subscriptions.id, sub.id));
+
+            await sendPaymentFailureEmail({
+              customerEmail: sub.customerEmail,
+              customerName: sub.customerName,
+              subscriptionItems: [],
+              amount: 0,
+              errorMessage: 'Your subscription payment could not be processed. We will retry tomorrow.'
+            });
+          }
+        }
+      } catch (error: any) {
+        console.error(`[STALE_CHECK] Error processing stale confirmation ${sub.id}:`, error.message);
+      }
+    }
+
+    console.log('[STALE_CHECK] Stale state check completed');
+  } catch (error: any) {
+    console.error('[STALE_CHECK] Fatal error in stale state check:', error.message);
+  }
+}
+
 // Schedule daily billing at 4:00 AM Pacific Time
 // Using cron: '0 4 * * *' runs at 4:00 AM server time
 export function startBillingCron() {
@@ -479,6 +628,12 @@ export function startBillingCron() {
   cron.schedule('0 4 * * *', async () => {
     console.log('[BILLING] Cron triggered at 4:00 AM');
     await runDailyBilling();
+  });
+
+  // Run stale state check every hour
+  cron.schedule('0 * * * *', async () => {
+    console.log('[STALE_CHECK] Hourly stale state check triggered');
+    await checkStaleAwaitingStates();
   });
 
   // Also run on startup to catch any missed billings
