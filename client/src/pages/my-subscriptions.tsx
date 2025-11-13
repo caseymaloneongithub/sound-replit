@@ -180,6 +180,13 @@ export default function MySubscriptions() {
     });
   };
 
+  const handleMoveToNextWeek = (subscriptionId: string) => {
+    updateSubscriptionMutation.mutate({
+      subscriptionId,
+      updates: { advanceToNextWeek: true },
+    });
+  };
+
   const handleAddProduct = () => {
     if (!selectedNewProduct || !addProductDialog.subscriptionId) {
       toast({
@@ -405,6 +412,22 @@ export default function MySubscriptions() {
                             Update
                           </Button>
                         </div>
+                      </div>
+
+                      <div>
+                        <div className="text-sm font-medium mb-3">Move Pickup Earlier</div>
+                        <div className="text-xs text-muted-foreground mb-2">
+                          Available Monday through Thursday only
+                        </div>
+                        <Button 
+                          className="w-full"
+                          variant="outline"
+                          onClick={() => handleMoveToNextWeek(subscription.id)}
+                          disabled={updateSubscriptionMutation.isPending}
+                          data-testid={`button-move-to-next-week-${subscription.id}`}
+                        >
+                          Move to Next Week
+                        </Button>
                       </div>
                     </div>
                   </CardContent>

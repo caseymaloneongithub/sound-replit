@@ -6,6 +6,7 @@ import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesal
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
+import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
 import { sendVerificationCode, generateVerificationCode } from "./twilio";
@@ -1730,7 +1731,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update subscription (delay delivery, change product, change frequency)
+  // Update subscription (delay delivery, change product, change frequency, advance to next week)
   app.patch("/api/my-subscriptions/:id", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
@@ -1745,10 +1746,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updateSchema = z.object({
         productId: z.string().uuid().optional(),
         weeksToDelay: z.number().int().min(1).max(12).optional(), // Declarative: delay by N weeks
+        advanceToNextWeek: z.boolean().optional(), // Declarative: move to next week
         subscriptionFrequency: z.enum(['weekly', 'bi-weekly', 'every-4-weeks']).optional(),
       });
       
       const validated = updateSchema.parse(req.body);
+      
+      // Ensure mutually exclusive schedule changes
+      if (validated.weeksToDelay && validated.advanceToNextWeek) {
+        return res.status(400).json({
+          message: "Cannot delay and advance pickup in the same request."
+        });
+      }
       
       // Validate billing state for any updates
       if (subscription.status !== 'active') {
@@ -1780,6 +1789,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Handle product change
       if (validated.productId) {
         updates.productId = validated.productId;
+      }
+      
+      // Handle advance to next week (server-side calculation with Friday cutoff)
+      if (validated.advanceToNextWeek) {
+        // Use Pacific timezone (brewery's canonical timezone)
+        const BREWERY_TIMEZONE = 'America/Los_Angeles';
+        const now = new Date();
+        
+        // Convert current time to Pacific timezone for validation
+        const nowPacific = toZonedTime(now, BREWERY_TIMEZONE);
+        const dayOfWeek = nowPacific.getDay(); // 0 = Sunday, 5 = Friday
+        
+        // Check if it's Friday (5) or after
+        if (dayOfWeek >= 5) {
+          return res.status(400).json({
+            message: "Cannot move pickup to next week after Thursday. Please try again next week."
+          });
+        }
+        
+        // Get current scheduled delivery date
+        const currentDate = subscription.nextDeliveryDate 
+          ? new Date(subscription.nextDeliveryDate)
+          : new Date();
+        
+        // Convert current delivery date to Pacific timezone
+        // toZonedTime stores the Pacific time in UTC components
+        const currentDatePacific = toZonedTime(currentDate, BREWERY_TIMEZONE);
+        
+        // Extract Pacific wall-clock components using getUTC* methods
+        const year = currentDatePacific.getUTCFullYear();
+        const month = currentDatePacific.getUTCMonth();
+        const day = currentDatePacific.getUTCDate();
+        const hours = currentDatePacific.getUTCHours();
+        const minutes = currentDatePacific.getUTCMinutes();
+        const seconds = currentDatePacific.getUTCSeconds();
+        const ms = currentDatePacific.getUTCMilliseconds();
+        
+        // Create Date representing Pacific wall-clock + 7 days
+        const nextWeekWallClock = new Date(Date.UTC(year, month, day + 7, hours, minutes, seconds, ms));
+        
+        // Create Date representing Pacific wall-clock + 48 hours from now
+        const nowYear = nowPacific.getUTCFullYear();
+        const nowMonth = nowPacific.getUTCMonth();
+        const nowDay = nowPacific.getUTCDate();
+        const nowHours = nowPacific.getUTCHours();
+        const nowMinutes = nowPacific.getUTCMinutes();
+        const minWallClock = new Date(Date.UTC(nowYear, nowMonth, nowDay, nowHours + 48, nowMinutes));
+        
+        // Validate minimum lead time (comparing wall-clock times)
+        if (nextWeekWallClock < minWallClock) {
+          return res.status(400).json({
+            message: "Cannot move pickup to a date less than 48 hours away."
+          });
+        }
+        
+        // Check if already scheduled for next week (within 0-7 days from now)
+        const currentWallClock = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
+        const nowWallClock = new Date(Date.UTC(nowYear, nowMonth, nowDay, nowHours, nowMinutes));
+        const daysUntilCurrent = Math.floor((currentWallClock.getTime() - nowWallClock.getTime()) / (1000 * 60 * 60 * 24));
+        if (daysUntilCurrent >= 0 && daysUntilCurrent < 7) {
+          return res.status(400).json({
+            message: "Your pickup is already scheduled for next week or sooner."
+          });
+        }
+        
+        // Convert Pacific wall-clock time back to actual UTC for storage
+        // fromZonedTime treats the Date as Pacific time and converts to UTC
+        const nextWeekDeliveryUTC = fromZonedTime(nextWeekWallClock, BREWERY_TIMEZONE);
+        
+        // Update both dates together to keep them in sync
+        updates.nextDeliveryDate = nextWeekDeliveryUTC;
+        updates.nextChargeAt = nextWeekDeliveryUTC;
       }
       
       // Handle delay (server-side calculation prevents client manipulation)
