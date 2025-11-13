@@ -142,16 +142,12 @@ export default function MySubscriptions() {
       return;
     }
 
-    const subscription = subscriptions?.find(s => s.id === subscriptionId);
-    const currentDate = subscription?.nextDeliveryDate 
-      ? new Date(subscription.nextDeliveryDate)
-      : new Date();
-    
-    const newDate = addWeeks(currentDate, weeksToDelay);
-
+    // Send declarative adjustment - server computes actual dates
     updateSubscriptionMutation.mutate({
       subscriptionId,
-      updates: { nextDeliveryDate: newDate.toISOString() },
+      updates: { 
+        weeksToDelay,
+      },
     });
     
     setSelectedWeeksDelay(prev => {

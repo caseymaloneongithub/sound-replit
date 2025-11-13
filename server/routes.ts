@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, inventoryAdjustments, subscriptions } from "@shared/schema";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, inventoryAdjustments, subscriptions, Subscription } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -1744,54 +1744,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const updateSchema = z.object({
         productId: z.string().uuid().optional(),
-        nextDeliveryDate: z.string().datetime().transform(str => new Date(str)).optional(),
+        weeksToDelay: z.number().int().min(1).max(12).optional(), // Declarative: delay by N weeks
         subscriptionFrequency: z.enum(['weekly', 'bi-weekly', 'every-4-weeks']).optional(),
       });
       
       const validated = updateSchema.parse(req.body);
       
-      // If changing frequency, validate billing state and recalculate next charge date
-      if (validated.subscriptionFrequency && validated.subscriptionFrequency !== subscription.subscriptionFrequency) {
-        // Only allow frequency changes when not in the middle of payment processing
-        if (subscription.billingStatus !== 'active') {
-          return res.status(400).json({ 
-            message: "Cannot change frequency while payment is in progress. Please try again later." 
-          });
-        }
-        
-        if (subscription.processingLock) {
-          return res.status(400).json({ 
-            message: "Subscription is currently being processed. Please try again in a moment." 
-          });
-        }
-        
-        // Recalculate nextChargeAt based on new frequency
-        const frequencyDays: Record<string, number> = {
-          'weekly': 7,
-          'bi-weekly': 14,
-          'every-4-weeks': 28,
-        };
-        
-        const daysToAdd = frequencyDays[validated.subscriptionFrequency];
-        const newNextChargeAt = new Date();
-        newNextChargeAt.setDate(newNextChargeAt.getDate() + daysToAdd);
-        
-        // Also update nextDeliveryDate to match new schedule
-        validated.nextDeliveryDate = newNextChargeAt;
-        
-        // Add nextChargeAt to updates (requires updating storage interface if not already supported)
-        const updates = {
-          ...validated,
-          nextChargeAt: newNextChargeAt,
-        };
-        
-        const updated = await storage.updateSubscription(subscriptionId, updates);
-        res.json(updated);
-      } else {
-        // Normal update without frequency change
-        const updated = await storage.updateSubscription(subscriptionId, validated);
-        res.json(updated);
+      // Validate billing state for any updates
+      if (subscription.status !== 'active') {
+        return res.status(400).json({ 
+          message: "Cannot modify a cancelled subscription." 
+        });
       }
+      
+      if (subscription.billingStatus !== 'active') {
+        return res.status(400).json({ 
+          message: "Cannot modify subscription while payment is in progress. Please try again later." 
+        });
+      }
+      
+      if (subscription.processingLock) {
+        return res.status(400).json({ 
+          message: "Subscription is currently being processed. Please try again in a moment." 
+        });
+      }
+      
+      // Build updates object with server-computed dates
+      const updates: Partial<Subscription> = {};
+      
+      // Handle frequency change
+      if (validated.subscriptionFrequency) {
+        updates.subscriptionFrequency = validated.subscriptionFrequency;
+      }
+      
+      // Handle product change
+      if (validated.productId) {
+        updates.productId = validated.productId;
+      }
+      
+      // Handle delay (server-side calculation prevents client manipulation)
+      if (validated.weeksToDelay) {
+        const currentDate = subscription.nextDeliveryDate 
+          ? new Date(subscription.nextDeliveryDate)
+          : new Date();
+        
+        const newDate = new Date(currentDate);
+        newDate.setDate(newDate.getDate() + (validated.weeksToDelay * 7));
+        
+        // Update both dates together to keep them in sync
+        updates.nextDeliveryDate = newDate;
+        updates.nextChargeAt = newDate;
+      }
+      
+      // Update subscription with server-computed values
+      const updated = await storage.updateSubscription(subscriptionId, updates);
+      res.json(updated);
     } catch (error: any) {
       console.error("Error updating subscription:", error);
       res.status(400).json({ message: "Error updating subscription: " + error.message });
