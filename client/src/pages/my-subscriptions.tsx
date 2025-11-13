@@ -27,6 +27,7 @@ type SubscriptionWithItems = Subscription & {
 export default function MySubscriptions() {
   const { toast } = useToast();
   const [selectedWeeksDelay, setSelectedWeeksDelay] = useState<Record<string, number>>({});
+  const [selectedFrequency, setSelectedFrequency] = useState<Record<string, string>>({});
   const [addProductDialog, setAddProductDialog] = useState<{ open: boolean; subscriptionId: string | null }>({ 
     open: false, 
     subscriptionId: null 
@@ -154,6 +155,29 @@ export default function MySubscriptions() {
     });
     
     setSelectedWeeksDelay(prev => {
+      const updated = { ...prev };
+      delete updated[subscriptionId];
+      return updated;
+    });
+  };
+
+  const handleChangeFrequency = (subscriptionId: string) => {
+    const newFrequency = selectedFrequency[subscriptionId];
+    if (!newFrequency) {
+      toast({
+        title: "Error",
+        description: "Please select a frequency",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    updateSubscriptionMutation.mutate({
+      subscriptionId,
+      updates: { subscriptionFrequency: newFrequency },
+    });
+    
+    setSelectedFrequency(prev => {
       const updated = { ...prev };
       delete updated[subscriptionId];
       return updated;
@@ -324,6 +348,39 @@ export default function MySubscriptions() {
                     </div>
 
                     <div className="space-y-4">
+                      <div>
+                        <div className="text-sm font-medium mb-3">Change Frequency</div>
+                        <div className="flex gap-2">
+                          <Select
+                            value={selectedFrequency[subscription.id] || subscription.subscriptionFrequency || ""}
+                            onValueChange={(value) => setSelectedFrequency(prev => ({ ...prev, [subscription.id]: value }))}
+                          >
+                            <SelectTrigger 
+                              className="flex-1"
+                              data-testid={`select-frequency-${subscription.id}`}
+                            >
+                              <SelectValue placeholder="Select frequency" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="weekly" data-testid="option-frequency-weekly">Weekly</SelectItem>
+                              <SelectItem value="bi-weekly" data-testid="option-frequency-bi-weekly">Bi-weekly (every 2 weeks)</SelectItem>
+                              <SelectItem value="every-4-weeks" data-testid="option-frequency-every-4-weeks">Every 4 weeks</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button 
+                            onClick={() => handleChangeFrequency(subscription.id)}
+                            disabled={
+                              !selectedFrequency[subscription.id] || 
+                              selectedFrequency[subscription.id] === subscription.subscriptionFrequency ||
+                              updateSubscriptionMutation.isPending
+                            }
+                            data-testid={`button-change-frequency-${subscription.id}`}
+                          >
+                            Update
+                          </Button>
+                        </div>
+                      </div>
+                      
                       <div>
                         <div className="text-sm font-medium mb-3">Delay Next Pickup</div>
                         <div className="flex gap-2">
