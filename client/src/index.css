@@ -14,33 +14,33 @@
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
 
-  --background: 0 0% 98%;
+  --background: 0 0% 100%;
 
-  --foreground: 0 0% 12%;
+  --foreground: 0 0% 20%;
 
-  --border: 0 0% 88%;
+  --border: 0 0% 90%;
 
-  --card: 0 0% 96%;
+  --card: 0 0% 98%;
 
-  --card-foreground: 0 0% 12%;
+  --card-foreground: 0 0% 20%;
 
-  --card-border: 0 0% 90%;
+  --card-border: 0 0% 92%;
 
-  --sidebar: 30 12% 94%;
+  --sidebar: 0 0% 97%;
 
-  --sidebar-foreground: 30 8% 12%;
+  --sidebar-foreground: 0 0% 20%;
 
-  --sidebar-border: 30 8% 86%;
+  --sidebar-border: 0 0% 90%;
 
-  --sidebar-primary: 43 52% 48%;
+  --sidebar-primary: 0 0% 30%;
 
-  --sidebar-primary-foreground: 43 52% 98%;
+  --sidebar-primary-foreground: 0 0% 98%;
 
-  --sidebar-accent: 30 20% 88%;
+  --sidebar-accent: 0 0% 92%;
 
-  --sidebar-accent-foreground: 30 20% 20%;
+  --sidebar-accent-foreground: 0 0% 20%;
 
-  --sidebar-ring: 43 52% 48%;
+  --sidebar-ring: 0 0% 30%;
 
   --popover: 0 0% 92%;
 
@@ -48,21 +48,21 @@
 
   --popover-border: 0 0% 84%;
 
-  --primary: 43 52% 48%;
+  --primary: 0 0% 30%;
 
-  --primary-foreground: 43 52% 98%;
+  --primary-foreground: 0 0% 98%;
 
-  --secondary: 30 35% 88%;
+  --secondary: 0 0% 92%;
 
-  --secondary-foreground: 30 35% 20%;
+  --secondary-foreground: 0 0% 20%;
 
-  --muted: 30 15% 90%;
+  --muted: 0 0% 94%;
 
-  --muted-foreground: 30 15% 40%;
+  --muted-foreground: 0 0% 45%;
 
-  --accent: 8 45% 78%;
+  --accent: 0 0% 88%;
 
-  --accent-foreground: 8 45% 20%;
+  --accent-foreground: 0 0% 20%;
 
   --destructive: 0 72% 42%;
 
@@ -81,7 +81,7 @@
   --font-mono: 'SF Mono', Menlo, Monaco, monospace;
   --font-heading: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-brand: 'Bebas Neue', 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-script: 'Pacifico', cursive;
+  --font-script: 'Great Vibes', cursive;
   --radius: .5rem;
   --shadow-2xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.05);
   --shadow-xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.08);

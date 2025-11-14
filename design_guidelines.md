@@ -2,96 +2,101 @@
 
 ## Brand Identity
 
-**Inspired by Label Design**: Pacific Northwest aesthetic with botanical illustrations, earthy color palette, and natural typography reflecting the craft kombucha brewing tradition.
+**Tone**: Bright, minimalist, clean, natural
+
+**Philosophy**: Clean, modern aesthetic that lets the product and flavors shine. Minimal ornamentation, plenty of white space, flavor-specific accents for visual interest.
 
 ## Color Palette
 
-**Primary Brand Colors** (extracted from product labels):
+**Base Colors**:
 
-- **Brand Gold** `--primary`: HSL(43, 52%, 48%) - The signature gold used for "PUGET SOUND KOMBUCHA COMPANY" branding. Use for primary CTAs, brand elements, and key highlights.
+- **White Background**: Pure white (`--background`: HSL 0, 0%, 100%) - Primary background for clean, minimalist feel
+- **Soft Charcoal**: (`--foreground`, `--primary`: HSL 0, 0%, 30%) - For text, wordmark, and primary elements
+- **Light Gray**: (`--secondary`, `--accent`: HSL 0, 0%, 92-94%) - For cards, subtle backgrounds, and secondary elements
 
-- **Warm Coral/Pink** `--accent`: HSL(8, 45%, 78%) - The soft coral/pink from label ribbons. Use for accent elements, badges, and secondary highlights.
-
-- **Warm Neutrals** `--secondary`: HSL(30, 35%, 88%) - Earthy warm grey tones. Use for secondary buttons, background variations.
-
-**Flavor-Inspired Accent Colors** (for product cards, charts, illustrations):
-- Evergreen: Olive green tones (earthy sage)
-- Bonfire: Burnt orange/terracotta
-- Northzest: Bright lemon yellow
-- Humming Brew: Deep teal/navy
-- Mist: Soft blue-grey
-- Island Hop: Mossy olive
-- Wildberry: Ocean blue
-- Sunbreak: Peachy orange
+**Flavor Accent Colors** (use for product cards, badges, highlights):
+- **Peach**: HSL(20, 85%, 75%) - Warm, inviting
+- **Rust**: HSL(15, 65%, 50%) - Earthy, bold  
+- **Yellow**: HSL(45, 95%, 65%) - Bright, energetic
+- **Green**: HSL(120, 40%, 55%) - Fresh, natural
+- **Olive**: HSL(60, 30%, 45%) - Organic, muted
+- **Lavender**: HSL(270, 50%, 75%) - Soft, calming
+- **Pale Blue**: HSL(200, 70%, 80%) - Clean, refreshing
+- **Deep Blue**: HSL(210, 70%, 45%) - Rich, sophisticated
 
 **Usage Guidelines**:
-- Use brand gold (`primary`) for all CTAs, nav highlights, and brand moments
-- Use coral (`accent`) sparingly for special callouts, badges, notifications
-- Maintain warm, natural feel - avoid pure black/white when possible
-- Product cards can use flavor-specific colors as subtle background washes or borders
+- Start with white background - let it breathe
+- Use soft charcoal for text and the wordmark (no gold, no bright colors for logo)
+- Apply flavor accent colors as subtle washes, borders, or badges on product cards
+- Each flavor should have its own signature accent color
+- Maintain high contrast for readability (dark text on white/light backgrounds)
+- Use color sparingly - accent, don't overwhelm
 
 ## Typography
 
-**Font Families** (extracted from product labels):
+**Font Families**:
 
-1. **Bebas Neue** (`font-brand`) - For brand name, bold headers, and ingredient text
-   - The condensed, impactful font from "PUGET SOUND KOMBUCHA COMPANY" and main ingredients
-   - Usage: Brand logo, hero headlines, bold section headers, emphasis text
-   - Available via Tailwind class: `font-brand`
+1. **Inter** (`font-sans`) - Clean sans-serif for body text
+   - Default font for all body text, descriptions, forms, labels
+   - Highly readable, modern, professional
+   - Usage: Body copy, navigation, buttons, form inputs
    
-2. **Pacifico** (`font-script`) - For product flavor names
-   - The casual script font from "Evergreen", "Bonfire", etc.
-   - Usage: Product names, flavor titles, special callouts, decorative text
+2. **Great Vibes** (`font-script`) - Elegant script for flavor names
+   - Beautiful cursive font for product flavor names
+   - Usage: Product names, flavor titles only (use sparingly for impact)
    - Available via Tailwind class: `font-script`
    
-3. **Outfit** (`font-heading`) - For general headings
-   - Modern, approachable sans-serif for subheadings
-   - Usage: Section headers, card titles
-   
-4. **Inter** (`font-sans`) - For body text
-   - Clean, readable for descriptions, forms, labels
-   - Default body font
+3. **Outfit** (`font-heading`) - Modern sans-serif for headings
+   - Clean, approachable for section headers
+   - Usage: Page titles, section headers, card titles
 
 **Typography Hierarchy**:
-- **Brand Name** (PUGET SOUND KOMBUCHA COMPANY): `font-brand uppercase tracking-wider text-primary text-2xl md:text-3xl`
-- **Hero Headlines**: `font-brand text-5xl md:text-7xl tracking-tight`
-- **Product Flavor Names**: `font-script text-4xl md:text-5xl text-primary`
-- **Main Ingredients** (MATCHA, ROOIBOS, etc.): `font-brand text-3xl md:text-4xl uppercase`
-- **Section Headers**: `font-heading text-3xl md:text-4xl font-semibold`
-- **Product Titles**: `text-xl md:text-2xl font-semibold`
-- **Body Text**: `text-base md:text-lg` (default Inter)
-- **Small Labels** ("MADE IN SEATTLE", badges): `text-xs md:text-sm uppercase tracking-wide font-medium`
+- **Wordmark**: "Puget Sound Kombucha Company" - `text-2xl md:text-3xl font-sans text-foreground` (centered, soft charcoal)
+- **Hero Headlines**: `text-5xl md:text-7xl font-heading font-bold tracking-tight text-foreground`
+- **Product Flavor Names**: `font-script text-5xl md:text-6xl` (with flavor accent color)
+- **Section Headers**: `text-3xl md:text-4xl font-heading font-semibold text-foreground`
+- **Product Titles**: `text-xl md:text-2xl font-sans font-semibold`
+- **Body Text**: `text-base md:text-lg font-sans text-foreground`
+- **Small Labels**: `text-xs md:text-sm uppercase tracking-wide font-medium text-muted-foreground`
+
+**Typography Guidelines**:
+- Keep it clean and minimal
+- Generous line spacing for readability
+- Use Great Vibes script sparingly - only for flavor names to create visual interest
+- Avoid all-caps except for small labels/metadata
+- Maintain strong hierarchy through size and weight, not color
 
 **Implementation Examples**:
 ```jsx
-// Brand logo/name
-<h1 className="font-brand uppercase tracking-wider text-primary">
+// Wordmark (centered, soft charcoal)
+<h1 className="text-3xl font-sans text-foreground text-center">
   Puget Sound Kombucha Company
 </h1>
 
-// Product flavor name
-<h2 className="font-script text-4xl text-primary">
-  Evergreen
+// Product flavor name with accent color
+<h2 className="font-script text-6xl text-[hsl(20,85%,75%)]">
+  Sunbreak
 </h2>
 
-// Main ingredient
-<div className="font-brand text-3xl uppercase">
-  Matcha
-</div>
+// Section header
+<h2 className="text-4xl font-heading font-semibold text-foreground">
+  Our Flavors
+</h2>
 
-// Hero headline
-<h1 className="font-brand text-7xl tracking-tight">
-  Craft Kombucha from the Pacific Northwest
-</h1>
+// Clean body text
+<p className="text-lg font-sans text-foreground leading-relaxed">
+  Handcrafted kombucha from the Pacific Northwest...
+</p>
 ```
 
 ## Core Design Principles
 
-1. **Pacific Northwest Artisanal**: Earthy tones, botanical illustrations, natural textures reflecting local craft brewing
-2. **Brand Gold Moments**: Strategic use of gold for brand recognition and premium feel
-3. **Product Hero**: Kombucha bottles and flavor stories take center stage
-4. **Organic Shapes**: Droplet/teardrop shapes from labels, rounded corners, flowing botanical elements
-5. **Dual Audience Clarity**: Distinct visual separation between wholesale portal and consumer shop
+1. **Bright & Minimalist**: Clean white backgrounds, generous spacing, minimal ornamentation
+2. **Flavor as Accent**: Let each kombucha flavor shine through its signature color - use sparingly for impact
+3. **Product Hero**: Kombucha bottles and flavor names take center stage against clean backgrounds
+4. **Natural & Approachable**: Warm, inviting but not cluttered - simple, honest, refreshing
+5. **Clear Hierarchy**: Strong typography hierarchy using size and weight, not heavy color use
+6. **Dual Audience Clarity**: Distinct visual separation between wholesale portal and consumer shop
 
 ## Layout System
 
@@ -148,23 +153,17 @@
 
 ## Visual Elements
 
-**Hero Section**: Full-width immersive brewery photo showing fermentation vessels and bottling, height 70vh on desktop, 50vh mobile. Overlay with semi-transparent dark wash for text readability. Brand gold CTAs with backdrop-blur.
+**Hero Section**: Clean, bright hero with plenty of white space. Simple headline and CTA. If using imagery, keep it light and airy - avoid dark overlays. Height 60vh on desktop, 40vh mobile.
 
-**Product Photography**: Square product shots (1:1 aspect ratio) showing bottles with label-inspired styling. Use flavor-specific background colors from labels as subtle washes. Minimum 800x800px.
+**Product Photography**: Square product shots (1:1 aspect ratio) showing bottles against pure white or very light backgrounds. Clean, bright, minimal shadows. Minimum 800x800px. Each product card can have a subtle flavor accent color border or background wash.
 
-**Botanical Illustrations**: Incorporate leaf and floral illustrations from labels (loose, organic style) as decorative elements, borders, or section dividers. Use subtle, muted colors.
+**Product Cards**: White card backgrounds with subtle shadows. Flavor name in Great Vibes script with the flavor's signature accent color. Clean product photo. Minimal text.
 
-**Droplet/Teardrop Shapes**: The central droplet shape from labels can be used as:
-- Icon containers
-- Quote backgrounds  
-- Section decorations
-- Loading indicators
+**Lifestyle Imagery**: Bright, natural light photos. People enjoying kombucha outdoors, at cafes, in bright, airy spaces. Authentic Pacific Northwest scenes but keep them light and optimistic, not moody.
 
-**About/Process**: Rectangular photos (16:9) showing brewing process - raw ingredients, fermentation, bottling line, quality testing.
+**Whitespace**: Generous padding and margins throughout. Let elements breathe. Don't be afraid of empty space - it's a feature, not a bug.
 
-**Lifestyle Imagery**: People enjoying kombucha at farmers markets, yoga studios, local cafes - authentic Pacific Northwest scenes.
-
-**Pattern/Texture**: Subtle organic textures (wood grain, paper texture, botanical patterns) as section backgrounds to reinforce artisanal quality.
+**Simplicity**: Avoid decorative elements, patterns, or textures unless absolutely necessary. Keep interfaces clean and focused on content.
 
 ## Page Structures
 
