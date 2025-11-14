@@ -452,8 +452,8 @@ export default function AdminProducts() {
         <div className="max-w-7xl mx-auto">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-bold mb-2" data-testid="text-products-title">Product Management</h1>
-            <p className="text-muted-foreground">Manage products, pricing, and inventory</p>
+            <h1 className="text-4xl font-bold mb-2" data-testid="text-products-title">Retail Product Management</h1>
+            <p className="text-muted-foreground">Manage products, retail pricing, and inventory</p>
           </div>
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2">
@@ -481,7 +481,7 @@ export default function AdminProducts() {
                   {editingProduct ? 'Edit Product' : 'Add New Product'}
                 </DialogTitle>
                 <DialogDescription>
-                  {editingProduct ? 'Update product details' : 'Create a new product for retail and wholesale'}
+                  {editingProduct ? 'Update product details and retail pricing' : 'Create a new product with retail pricing'}
                 </DialogDescription>
               </DialogHeader>
               
@@ -615,35 +615,19 @@ export default function AdminProducts() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="retailPrice"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Retail Price (per case)</FormLabel>
-                          <FormControl>
-                            <Input type="number" step="0.01" {...field} data-testid="input-retail-price" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="wholesalePrice"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Wholesale Price (per case - default)</FormLabel>
-                          <FormControl>
-                            <Input type="number" step="0.01" {...field} data-testid="input-wholesale-price" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
+                  <FormField
+                    control={form.control}
+                    name="retailPrice"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Retail Price (per case)</FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" {...field} data-testid="input-retail-price" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
                   <div className="grid grid-cols-2 gap-4">
                     <FormField

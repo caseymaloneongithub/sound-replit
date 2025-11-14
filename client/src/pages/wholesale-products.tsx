@@ -1,29 +1,25 @@
-import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Product, WholesaleCustomer, InsertWholesaleOrder } from "@shared/schema";
+import { useState } from "react";
+import { Product, WholesaleCustomer, WholesalePricing } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Package, Plus, Minus, Trash2, Loader2 } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { DollarSign, Loader2, Edit, X, Plus } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-interface OrderItem {
-  productId: string;
-  quantity: number;
-  unitPrice: string;
-}
-
 export default function WholesaleProducts() {
-  const [location, setLocation] = useLocation();
-  const [selectedCustomer, setSelectedCustomer] = useState<string>("");
-  const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
-  const [notes, setNotes] = useState("");
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [newWholesalePrice, setNewWholesalePrice] = useState("");
+  const [customerPricingProduct, setCustomerPricingProduct] = useState<Product | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState("");
+  const [customPrice, setCustomPrice] = useState("");
   const { toast } = useToast();
 
   const { data: products, isLoading } = useQuery<Product[]>({
@@ -34,290 +30,357 @@ export default function WholesaleProducts() {
     queryKey: ["/api/wholesale/customers"],
   });
 
-  const addToOrder = (product: Product) => {
-    const existing = orderItems.find(item => item.productId === product.id);
-    if (existing) {
-      setOrderItems(orderItems.map(item =>
-        item.productId === product.id
-          ? { ...item, quantity: item.quantity + 1 }
-          : item
-      ));
-    } else {
-      setOrderItems([...orderItems, {
-        productId: product.id,
-        quantity: 1,
-        unitPrice: product.wholesalePrice,
-      }]);
-    }
-  };
+  const { data: allPricing = [] } = useQuery<WholesalePricing[]>({
+    queryKey: ["/api/wholesale/pricing/all"],
+    queryFn: async () => {
+      const response = await fetch("/api/wholesale/pricing/all");
+      if (!response.ok) throw new Error("Failed to fetch pricing");
+      return response.json();
+    },
+  });
 
-  const updateQuantity = (productId: string, change: number) => {
-    setOrderItems(orderItems.map(item =>
-      item.productId === productId
-        ? { ...item, quantity: Math.max(1, item.quantity + change) }
-        : item
-    ).filter(item => item.quantity > 0));
-  };
-
-  const removeItem = (productId: string) => {
-    setOrderItems(orderItems.filter(item => item.productId !== productId));
-  };
-
-  const totalAmount = orderItems.reduce((sum, item) => 
-    sum + (Number(item.unitPrice) * item.quantity), 0
-  );
-
-  const placeOrderMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedCustomer) {
-        throw new Error("Please select a customer");
-      }
-      if (orderItems.length === 0) {
-        throw new Error("Please add at least one product");
-      }
-
-      const response = await apiRequest("POST", "/api/wholesale/orders", {
-        order: {
-          customerId: selectedCustomer,
-          totalAmount: totalAmount.toString(),
-          status: "pending",
-          notes: notes || undefined,
-        },
-        items: orderItems,
+  const updateWholesalePriceMutation = useMutation({
+    mutationFn: async ({ id, wholesalePrice }: { id: string; wholesalePrice: string }) => {
+      const response = await apiRequest("PATCH", `/api/products/${id}`, {
+        wholesalePrice,
       });
       return await response.json();
     },
     onSuccess: () => {
       toast({
-        title: "Order Placed",
-        description: "Wholesale order created successfully",
+        title: "Price Updated",
+        description: "Wholesale price has been updated successfully.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
-      setSelectedCustomer("");
-      setOrderItems([]);
-      setNotes("");
-      setLocation("/staff-portal/wholesale/orders");
+      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+      setEditingProduct(null);
+      setNewWholesalePrice("");
     },
-    onError: (error: any) => {
+    onError: () => {
       toast({
         title: "Error",
-        description: error.message || "Failed to place order",
+        description: "Failed to update wholesale price. Please try again.",
         variant: "destructive",
       });
     },
   });
+
+  const setCustomerPricingMutation = useMutation({
+    mutationFn: async () => {
+      if (!customerPricingProduct || !selectedCustomer || !customPrice) {
+        throw new Error("Missing required fields");
+      }
+      const response = await apiRequest("POST", "/api/wholesale/pricing", {
+        customerId: selectedCustomer,
+        productId: customerPricingProduct.id,
+        customPrice: parseFloat(customPrice),
+      });
+      return await response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Customer Pricing Set",
+        description: "Customer-specific pricing has been set successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/pricing/all"] });
+      setCustomerPricingProduct(null);
+      setSelectedCustomer("");
+      setCustomPrice("");
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to set customer pricing. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleUpdateWholesalePrice = () => {
+    if (!editingProduct || !newWholesalePrice) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid price.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const price = parseFloat(newWholesalePrice);
+    if (isNaN(price) || price <= 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid positive price.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    updateWholesalePriceMutation.mutate({
+      id: editingProduct.id,
+      wholesalePrice: newWholesalePrice,
+    });
+  };
+
+  const handleSetCustomerPricing = () => {
+    if (!selectedCustomer || !customPrice) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a customer and enter a price.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const price = parseFloat(customPrice);
+    if (isNaN(price) || price <= 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid positive price.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setCustomerPricingMutation.mutate();
+  };
+
+  const getCustomerPricingForProduct = (productId: string) => {
+    return allPricing.filter(p => p.productId === productId);
+  };
+
+  if (isLoading) {
+    return (
+      <StaffLayout>
+        <div className="flex items-center justify-center min-h-96">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </StaffLayout>
+    );
+  }
 
   return (
     <StaffLayout>
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="mb-8">
           <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
-            Wholesale Products
+            Wholesale Pricing Management
           </h1>
           <p className="text-muted-foreground">
-            Browse products and create wholesale orders
+            Manage default wholesale prices and customer-specific pricing
           </p>
         </div>
 
-        <div className="space-y-6">
-              {orderItems.length > 0 && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>New Order</CardTitle>
-                    <CardDescription>Review and place your wholesale order</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">Select Customer</label>
-                      <Select value={selectedCustomer} onValueChange={setSelectedCustomer}>
-                        <SelectTrigger data-testid="select-customer">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {customers.map((customer) => (
-                            <SelectItem key={customer.id} value={customer.id}>
-                              {customer.businessName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+        <Card>
+          <CardHeader>
+            <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>Product Wholesale Pricing</CardTitle>
+            <CardDescription>Set default wholesale prices and manage customer-specific overrides</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Product</TableHead>
+                  <TableHead>Retail Price</TableHead>
+                  <TableHead>Default Wholesale Price</TableHead>
+                  <TableHead>Customer Overrides</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {products?.map((product) => {
+                  const customerPricing = getCustomerPricingForProduct(product.id);
+                  return (
+                    <TableRow key={product.id} data-testid={`row-product-${product.id}`}>
+                      <TableCell className="font-medium">{product.name}</TableCell>
+                      <TableCell>${product.retailPrice}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">${product.wholesalePrice}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {customerPricing.length > 0 ? (
+                          <Badge variant="secondary">
+                            {customerPricing.length} custom {customerPricing.length === 1 ? 'price' : 'prices'}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">None</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setEditingProduct(product);
+                              setNewWholesalePrice(product.wholesalePrice);
+                            }}
+                            data-testid={`button-edit-price-${product.id}`}
+                          >
+                            <Edit className="w-4 h-4 mr-1" />
+                            Edit Price
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setCustomerPricingProduct(product)}
+                            data-testid={`button-customer-pricing-${product.id}`}
+                          >
+                            <DollarSign className="w-4 h-4 mr-1" />
+                            Customer Pricing
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
 
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">Order Items</label>
-                      <div className="space-y-2">
-                        {orderItems.map((item) => {
-                          const product = products?.find(p => p.id === item.productId);
+        {/* Edit Wholesale Price Dialog */}
+        <Dialog open={!!editingProduct} onOpenChange={(open) => !open && setEditingProduct(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Wholesale Price</DialogTitle>
+              <DialogDescription>
+                Update the default wholesale price for {editingProduct?.name}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="wholesale-price">Default Wholesale Price (per case)</Label>
+                <Input
+                  id="wholesale-price"
+                  type="number"
+                  step="0.01"
+                  value={newWholesalePrice}
+                  onChange={(e) => setNewWholesalePrice(e.target.value)}
+                  data-testid="input-wholesale-price"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditingProduct(null)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleUpdateWholesalePrice}
+                disabled={updateWholesalePriceMutation.isPending}
+                data-testid="button-save-price"
+              >
+                {updateWholesalePriceMutation.isPending ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</>
+                ) : (
+                  "Save Price"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Customer Pricing Dialog */}
+        <Dialog open={!!customerPricingProduct} onOpenChange={(open) => !open && setCustomerPricingProduct(null)}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Customer-Specific Pricing</DialogTitle>
+              <DialogDescription>
+                Set custom wholesale prices for {customerPricingProduct?.name}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-6 py-4">
+              <div className="space-y-4">
+                <div className="flex gap-4">
+                  <div className="flex-1">
+                    <Label htmlFor="customer">Customer</Label>
+                    <Select value={selectedCustomer} onValueChange={setSelectedCustomer}>
+                      <SelectTrigger data-testid="select-pricing-customer">
+                        <SelectValue placeholder="Select customer..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {customers.map((customer) => (
+                          <SelectItem key={customer.id} value={customer.id}>
+                            {customer.businessName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="w-32">
+                    <Label htmlFor="price">Price</Label>
+                    <Input
+                      id="price"
+                      type="number"
+                      step="0.01"
+                      value={customPrice}
+                      onChange={(e) => setCustomPrice(e.target.value)}
+                      data-testid="input-custom-price"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      onClick={handleSetCustomerPricing}
+                      disabled={setCustomerPricingMutation.isPending}
+                      data-testid="button-set-price"
+                    >
+                      {setCustomerPricingMutation.isPending ? (
+                        <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Setting...</>
+                      ) : (
+                        <>
+                          <Plus className="w-4 h-4 mr-2" />
+                          Set Price
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {customerPricingProduct && (
+                <div>
+                  <h4 className="font-semibold mb-3">Existing Customer Pricing</h4>
+                  {getCustomerPricingForProduct(customerPricingProduct.id).length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Customer</TableHead>
+                          <TableHead>Custom Price</TableHead>
+                          <TableHead>vs. Default</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {getCustomerPricingForProduct(customerPricingProduct.id).map((pricing) => {
+                          const customer = customers.find(c => c.id === pricing.customerId);
+                          const difference = parseFloat(pricing.customPrice) - parseFloat(customerPricingProduct.wholesalePrice);
                           return (
-                            <div 
-                              key={item.productId} 
-                              className="flex flex-wrap items-center gap-4 p-3 rounded-lg border"
-                              data-testid={`order-item-${item.productId}`}
-                            >
-                              <div className="flex-1 min-w-0">
-                                <p className="font-medium truncate">{product?.name}</p>
-                                <p className="text-sm text-muted-foreground">${item.unitPrice} each</p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Button 
-                                  size="icon" 
-                                  variant="outline" 
-                                  onClick={() => updateQuantity(item.productId, -1)}
-                                  data-testid={`button-decrease-${item.productId}`}
-                                >
-                                  <Minus className="w-4 h-4" />
-                                </Button>
-                                <span className="w-12 text-center font-medium" data-testid={`text-quantity-${item.productId}`}>
-                                  {item.quantity}
-                                </span>
-                                <Button 
-                                  size="icon" 
-                                  variant="outline" 
-                                  onClick={() => updateQuantity(item.productId, 1)}
-                                  data-testid={`button-increase-${item.productId}`}
-                                >
-                                  <Plus className="w-4 h-4" />
-                                </Button>
-                              </div>
-                              <div className="text-right min-w-24">
-                                <p className="font-bold">${(Number(item.unitPrice) * item.quantity).toFixed(2)}</p>
-                              </div>
-                              <Button 
-                                size="icon" 
-                                variant="ghost" 
-                                onClick={() => removeItem(item.productId)}
-                                data-testid={`button-remove-${item.productId}`}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
+                            <TableRow key={pricing.id}>
+                              <TableCell>{customer?.businessName}</TableCell>
+                              <TableCell className="font-semibold">${pricing.customPrice}</TableCell>
+                              <TableCell>
+                                <Badge variant={difference < 0 ? "destructive" : "secondary"}>
+                                  {difference > 0 ? '+' : ''}{difference.toFixed(2)}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
                           );
                         })}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">Notes (Optional)</label>
-                      <Textarea
-                       
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        data-testid="input-notes"
-                      />
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Order Total</p>
-                        <p className="text-3xl font-bold" data-testid="text-order-total">
-                          ${totalAmount.toFixed(2)}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button 
-                          variant="outline" 
-                          onClick={() => setOrderItems([])}
-                          data-testid="button-clear-order"
-                        >
-                          Clear Order
-                        </Button>
-                        <Button 
-                          onClick={() => placeOrderMutation.mutate()}
-                          disabled={placeOrderMutation.isPending || !selectedCustomer}
-                          data-testid="button-place-order"
-                        >
-                          {placeOrderMutation.isPending ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              Placing Order...
-                            </>
-                          ) : (
-                            'Place Order'
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              <Card>
-                <CardHeader>
-                  <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>Product Catalog</CardTitle>
-                  <CardDescription>
-                    {orderItems.length > 0 
-                      ? "Add more products to your order" 
-                      : "Select products to create a wholesale order"
-                    }
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {isLoading ? (
-                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {[1, 2, 3].map((i) => (
-                        <div key={i} className="h-48 bg-muted rounded-lg animate-pulse" />
-                      ))}
-                    </div>
-                  ) : products && products.length > 0 ? (
-                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {products.map((product) => (
-                        <Card key={product.id} className="overflow-hidden hover-elevate" data-testid={`product-${product.id}`}>
-                          <CardHeader className="p-0">
-                            <div className="aspect-square bg-card overflow-hidden">
-                              <img 
-                                src={product.imageUrl} 
-                                alt={product.name}
-                                className="w-full h-full object-cover"
-                              />
-                            </div>
-                          </CardHeader>
-                          <CardContent className="p-4">
-                            <div className="flex items-start justify-between gap-2 mb-2">
-                              <h3 className="font-semibold text-lg" style={{ fontFamily: 'var(--font-heading)' }}>
-                                {product.name}
-                              </h3>
-                              <Badge variant={product.inStock ? "secondary" : "destructive"} className="shrink-0">
-                                {product.inStock ? 'In Stock' : 'Out of Stock'}
-                              </Badge>
-                            </div>
-                            <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-                              {product.description}
-                            </p>
-                            <div className="space-y-3">
-                              <div className="space-y-2">
-                                <div className="flex justify-between items-baseline">
-                                  <span className="text-sm text-muted-foreground">Retail</span>
-                                  <span className="font-semibold">${product.retailPrice}</span>
-                                </div>
-                                <div className="flex justify-between items-baseline">
-                                  <span className="text-sm text-muted-foreground">Wholesale</span>
-                                  <span className="text-lg font-bold text-primary">${product.wholesalePrice}</span>
-                                </div>
-                              </div>
-                              <Button 
-                                className="w-full"
-                                size="sm"
-                                onClick={() => addToOrder(product)}
-                                disabled={!product.inStock}
-                                data-testid={`button-add-${product.id}`}
-                              >
-                                <Plus className="w-4 h-4 mr-1" />
-                                Add to Order
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
+                      </TableBody>
+                    </Table>
                   ) : (
-                    <div className="text-center py-12">
-                      <Package className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
-                      <p className="text-muted-foreground">No products available</p>
-                    </div>
+                    <p className="text-muted-foreground text-sm">No customer-specific pricing set for this product.</p>
                   )}
-                </CardContent>
-              </Card>
-        </div>
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCustomerPricingProduct(null)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </StaffLayout>
   );
