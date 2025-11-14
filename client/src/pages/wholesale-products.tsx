@@ -180,7 +180,6 @@ export default function WholesaleProducts() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Product</TableHead>
-                  <TableHead>Retail Price</TableHead>
                   <TableHead>Default Wholesale Price</TableHead>
                   <TableHead>Customer Overrides</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -192,7 +191,6 @@ export default function WholesaleProducts() {
                   return (
                     <TableRow key={product.id} data-testid={`row-product-${product.id}`}>
                       <TableCell className="font-medium">{product.name}</TableCell>
-                      <TableCell>${product.retailPrice}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <span className="font-semibold">${product.wholesalePrice}</span>

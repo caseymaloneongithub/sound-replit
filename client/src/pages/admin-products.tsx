@@ -700,7 +700,6 @@ export default function AdminProducts() {
                     <TableHead>Product</TableHead>
                     <TableHead>Flavor</TableHead>
                     <TableHead>Retail Price/Case</TableHead>
-                    <TableHead>Wholesale Price/Case</TableHead>
                     <TableHead>Stock</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -724,7 +723,6 @@ export default function AdminProducts() {
                       </TableCell>
                       <TableCell>{product.flavor}</TableCell>
                       <TableCell>${product.retailPrice}</TableCell>
-                      <TableCell>${product.wholesalePrice}</TableCell>
                       <TableCell>
                         <span data-testid={`stock-${product.id}`}>{product.stockQuantity}</span>
                       </TableCell>
