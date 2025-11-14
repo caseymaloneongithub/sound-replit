@@ -1,32 +1,59 @@
-# Kombucha Brewery Design Guidelines
+# Puget Sound Kombucha Co. - Design Guidelines
 
-## Design Approach
+## Brand Identity
 
-**Reference-Based Approach** drawing from modern artisanal food/beverage e-commerce:
-- Primary inspiration: Shopify premium themes (clean product focus), Verve Coffee, Blueland (sustainability aesthetic)
-- Secondary: Ritual Vitamins (subscription UX), Patagonia Provisions (authentic, craft-focused)
-- Rationale: Visual-rich product showcase with strong brand storytelling for local artisanal products
+**Inspired by Label Design**: Pacific Northwest aesthetic with botanical illustrations, earthy color palette, and natural typography reflecting the craft kombucha brewing tradition.
 
-## Core Design Principles
+## Color Palette
 
-1. **Artisanal Authenticity**: Organic shapes, natural textures, honest photography showing real brewery operations
-2. **Dual Audience Clarity**: Distinct visual separation between wholesale portal and consumer shop
-3. **Product Hero**: Kombucha bottles and flavors take center stage with high-quality photography
-4. **Trust & Transparency**: Showcase brewing process, ingredients, local pickup locations
+**Primary Brand Colors** (extracted from product labels):
+
+- **Brand Gold** `--primary`: HSL(43, 52%, 48%) - The signature gold used for "PUGET SOUND KOMBUCHA COMPANY" branding. Use for primary CTAs, brand elements, and key highlights.
+
+- **Warm Coral/Pink** `--accent`: HSL(8, 45%, 78%) - The soft coral/pink from label ribbons. Use for accent elements, badges, and secondary highlights.
+
+- **Warm Neutrals** `--secondary`: HSL(30, 35%, 88%) - Earthy warm grey tones. Use for secondary buttons, background variations.
+
+**Flavor-Inspired Accent Colors** (for product cards, charts, illustrations):
+- Evergreen: Olive green tones (earthy sage)
+- Bonfire: Burnt orange/terracotta
+- Northzest: Bright lemon yellow
+- Humming Brew: Deep teal/navy
+- Mist: Soft blue-grey
+- Island Hop: Mossy olive
+- Wildberry: Ocean blue
+- Sunbreak: Peachy orange
+
+**Usage Guidelines**:
+- Use brand gold (`primary`) for all CTAs, nav highlights, and brand moments
+- Use coral (`accent`) sparingly for special callouts, badges, notifications
+- Maintain warm, natural feel - avoid pure black/white when possible
+- Product cards can use flavor-specific colors as subtle background washes or borders
 
 ## Typography
 
-**Font Families** (Google Fonts):
-- Headlines: 'Outfit' (700, 600) - Modern, approachable, slightly rounded
-- Body: 'Inter' (400, 500) - Clean, highly readable for product descriptions and forms
-- Accent: 'Outfit' (500) - For labels, pricing, CTAs
+**Font Families** (matching label aesthetic):
+- **Headlines**: 'Outfit' (700, 600) - Modern, approachable, slightly rounded (similar to label's clean sans-serif)
+- **Body**: 'Inter' (400, 500) - Clean, highly readable for product descriptions and forms
+- **Accent/Product Names**: Consider adding a script/cursive Google Font for product names to match label style (e.g., 'Pacifico', 'Dancing Script', or 'Allura')
+- **Brand Name**: 'Outfit' (700) in uppercase and letterspaced for the condensed, impactful look
 
 **Hierarchy**:
-- Hero Headlines: text-5xl to text-7xl, font-bold
+- Hero Headlines: text-5xl to text-7xl, font-bold, tracking-tight
+- Brand Name (PUGET SOUND KOMBUCHA COMPANY): uppercase, tracking-wider, text-gold
+- Product Flavor Names: Consider script font for artisanal feel
 - Section Headers: text-3xl to text-4xl, font-semibold
 - Product Titles: text-xl to text-2xl, font-semibold
 - Body Text: text-base to text-lg
-- Labels/Metadata: text-sm, font-medium
+- Labels/Metadata: text-sm, font-medium, uppercase tracking-wide for "MADE IN SEATTLE" style
+
+## Core Design Principles
+
+1. **Pacific Northwest Artisanal**: Earthy tones, botanical illustrations, natural textures reflecting local craft brewing
+2. **Brand Gold Moments**: Strategic use of gold for brand recognition and premium feel
+3. **Product Hero**: Kombucha bottles and flavor stories take center stage
+4. **Organic Shapes**: Droplet/teardrop shapes from labels, rounded corners, flowing botanical elements
+5. **Dual Audience Clarity**: Distinct visual separation between wholesale portal and consumer shop
 
 ## Layout System
 
@@ -81,17 +108,25 @@
 - **Brewing Process Timeline**: Horizontal timeline with photos showing fermentation stages
 - **Reviews/Testimonials**: Photo testimonials from wholesale clients and subscription customers
 
-## Images
+## Visual Elements
 
-**Hero Section**: Full-width immersive brewery photo showing fermentation vessels and bottling, height 70vh on desktop, 50vh mobile. Place headline and "Shop Now" / "Wholesale Portal" CTAs with backdrop-blur overlay.
+**Hero Section**: Full-width immersive brewery photo showing fermentation vessels and bottling, height 70vh on desktop, 50vh mobile. Overlay with semi-transparent dark wash for text readability. Brand gold CTAs with backdrop-blur.
 
-**Product Photography**: Square product shots (1:1 aspect ratio) showing bottles against clean backgrounds or in lifestyle contexts (outdoor picnic, home kitchen). Minimum 800x800px.
+**Product Photography**: Square product shots (1:1 aspect ratio) showing bottles with label-inspired styling. Use flavor-specific background colors from labels as subtle washes. Minimum 800x800px.
+
+**Botanical Illustrations**: Incorporate leaf and floral illustrations from labels (loose, organic style) as decorative elements, borders, or section dividers. Use subtle, muted colors.
+
+**Droplet/Teardrop Shapes**: The central droplet shape from labels can be used as:
+- Icon containers
+- Quote backgrounds  
+- Section decorations
+- Loading indicators
 
 **About/Process**: Rectangular photos (16:9) showing brewing process - raw ingredients, fermentation, bottling line, quality testing.
 
-**Lifestyle Imagery**: People enjoying kombucha at farmers markets, yoga studios, local cafes - authentic local scenes.
+**Lifestyle Imagery**: People enjoying kombucha at farmers markets, yoga studios, local cafes - authentic Pacific Northwest scenes.
 
-**Pattern/Texture**: Consider subtle organic textures (wood grain, paper texture) as section backgrounds to reinforce artisanal quality.
+**Pattern/Texture**: Subtle organic textures (wood grain, paper texture, botanical patterns) as section backgrounds to reinforce artisanal quality.
 
 ## Page Structures
 
