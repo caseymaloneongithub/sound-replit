@@ -80,6 +80,8 @@
   --font-serif: Georgia, serif;
   --font-mono: 'SF Mono', Menlo, Monaco, monospace;
   --font-heading: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-brand: 'Bebas Neue', 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-script: 'Pacifico', cursive;
   --radius: .5rem;
   --shadow-2xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.05);
   --shadow-xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.08);
@@ -213,6 +215,16 @@
 
   body {
     @apply font-sans antialiased bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  .font-brand {
+    font-family: var(--font-brand);
+  }
+  
+  .font-script {
+    font-family: var(--font-script);
   }
 }
 
