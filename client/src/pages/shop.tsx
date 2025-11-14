@@ -10,6 +10,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
+import logo from "@assets/text-stacked-black_1762299663824.png";
 import { getCasePrice } from "@shared/pricing";
 
 function ProductImageCarousel({ product }: { product: Product }) {
@@ -168,9 +169,13 @@ export default function Shop() {
         </div>
         
         <div className="relative z-10 text-center px-6 max-w-4xl">
-          <h1 className="text-5xl md:text-7xl font-bold text-white mb-6" style={{ fontFamily: 'var(--font-heading)' }}>
-            Puget Sound Kombucha Co.
-          </h1>
+          <img 
+            src={logo} 
+            alt="Puget Sound Kombucha Company" 
+            className="h-32 md:h-40 mx-auto mb-8"
+            style={{ filter: 'brightness(0) invert(1)' }}
+            data-testid="logo-hero"
+          />
           <p className="text-xl md:text-2xl text-white/90 mb-8 max-w-2xl mx-auto">
             Craft kombucha from the Pacific Northwest. Handcrafted with organic ingredients.
           </p>
