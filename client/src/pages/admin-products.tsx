@@ -20,6 +20,7 @@ import { insertProductSchema, type Product, type WholesaleCustomer, type Wholesa
 import { z } from "zod";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import type { UploadResult } from "@uppy/core";
+import { StaffLayout } from "@/components/staff/staff-layout";
 
 const productFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -440,16 +441,17 @@ export default function AdminProducts() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
+      <StaffLayout>
+        <div className="flex items-center justify-center min-h-96">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </StaffLayout>
     );
   }
 
   return (
-    <>
-      <div className="min-h-screen bg-background p-6">
-        <div className="max-w-7xl mx-auto">
+    <StaffLayout>
+      <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-4xl font-bold mb-2" data-testid="text-products-title">Retail Product Management</h1>
@@ -679,7 +681,6 @@ export default function AdminProducts() {
               </Form>
             </DialogContent>
           </Dialog>
-        </div>
 
         <Card>
           <CardHeader>
@@ -790,6 +791,6 @@ export default function AdminProducts() {
           />
         </Dialog>
       )}
-    </>
+    </StaffLayout>
   );
 }
