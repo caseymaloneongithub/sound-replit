@@ -32,20 +32,58 @@
 
 ## Typography
 
-**Font Families** (matching label aesthetic):
-- **Headlines**: 'Outfit' (700, 600) - Modern, approachable, slightly rounded (similar to label's clean sans-serif)
-- **Body**: 'Inter' (400, 500) - Clean, highly readable for product descriptions and forms
-- **Accent/Product Names**: Consider adding a script/cursive Google Font for product names to match label style (e.g., 'Pacifico', 'Dancing Script', or 'Allura')
-- **Brand Name**: 'Outfit' (700) in uppercase and letterspaced for the condensed, impactful look
+**Font Families** (extracted from product labels):
 
-**Hierarchy**:
-- Hero Headlines: text-5xl to text-7xl, font-bold, tracking-tight
-- Brand Name (PUGET SOUND KOMBUCHA COMPANY): uppercase, tracking-wider, text-gold
-- Product Flavor Names: Consider script font for artisanal feel
-- Section Headers: text-3xl to text-4xl, font-semibold
-- Product Titles: text-xl to text-2xl, font-semibold
-- Body Text: text-base to text-lg
-- Labels/Metadata: text-sm, font-medium, uppercase tracking-wide for "MADE IN SEATTLE" style
+1. **Bebas Neue** (`font-brand`) - For brand name, bold headers, and ingredient text
+   - The condensed, impactful font from "PUGET SOUND KOMBUCHA COMPANY" and main ingredients
+   - Usage: Brand logo, hero headlines, bold section headers, emphasis text
+   - Available via Tailwind class: `font-brand`
+   
+2. **Pacifico** (`font-script`) - For product flavor names
+   - The casual script font from "Evergreen", "Bonfire", etc.
+   - Usage: Product names, flavor titles, special callouts, decorative text
+   - Available via Tailwind class: `font-script`
+   
+3. **Outfit** (`font-heading`) - For general headings
+   - Modern, approachable sans-serif for subheadings
+   - Usage: Section headers, card titles
+   
+4. **Inter** (`font-sans`) - For body text
+   - Clean, readable for descriptions, forms, labels
+   - Default body font
+
+**Typography Hierarchy**:
+- **Brand Name** (PUGET SOUND KOMBUCHA COMPANY): `font-brand uppercase tracking-wider text-primary text-2xl md:text-3xl`
+- **Hero Headlines**: `font-brand text-5xl md:text-7xl tracking-tight`
+- **Product Flavor Names**: `font-script text-4xl md:text-5xl text-primary`
+- **Main Ingredients** (MATCHA, ROOIBOS, etc.): `font-brand text-3xl md:text-4xl uppercase`
+- **Section Headers**: `font-heading text-3xl md:text-4xl font-semibold`
+- **Product Titles**: `text-xl md:text-2xl font-semibold`
+- **Body Text**: `text-base md:text-lg` (default Inter)
+- **Small Labels** ("MADE IN SEATTLE", badges): `text-xs md:text-sm uppercase tracking-wide font-medium`
+
+**Implementation Examples**:
+```jsx
+// Brand logo/name
+<h1 className="font-brand uppercase tracking-wider text-primary">
+  Puget Sound Kombucha Company
+</h1>
+
+// Product flavor name
+<h2 className="font-script text-4xl text-primary">
+  Evergreen
+</h2>
+
+// Main ingredient
+<div className="font-brand text-3xl uppercase">
+  Matcha
+</div>
+
+// Hero headline
+<h1 className="font-brand text-7xl tracking-tight">
+  Craft Kombucha from the Pacific Northwest
+</h1>
+```
 
 ## Core Design Principles
 
