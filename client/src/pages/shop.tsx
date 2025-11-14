@@ -172,7 +172,7 @@ export default function Shop() {
           <img 
             src={logo} 
             alt="Puget Sound Kombucha Company" 
-            className="h-32 md:h-40 mx-auto mb-8"
+            className="h-42 md:h-52 mx-auto mb-8"
             style={{ filter: 'brightness(0) invert(1)' }}
             data-testid="logo-hero"
           />
