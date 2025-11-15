@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -349,6 +349,13 @@ export default function AuthPage() {
                         >
                           {loginMutation.isPending ? "Logging in..." : "Login"}
                         </Button>
+                        <div className="text-center mt-4">
+                          <Link href="/forgot-password">
+                            <a className="text-sm text-primary hover:underline" data-testid="link-forgot-password">
+                              Forgot Password?
+                            </a>
+                          </Link>
+                        </div>
                       </form>
                     </Form>
                   </TabsContent>

@@ -8,6 +8,8 @@ import { Navbar } from "@/components/layout/navbar";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
 import { StaffProtectedRoute, WholesaleCustomerProtectedRoute } from "@/lib/protected-route";
 import AuthPage from "@/pages/auth-page";
+import ForgotPassword from "@/pages/forgot-password";
+import ResetPassword from "@/pages/reset-password";
 import WholesaleRegister from "@/pages/wholesale-register";
 import WholesaleCustomerDashboard from "@/pages/wholesale-customer-dashboard";
 import Shop from "@/pages/shop";
@@ -39,6 +41,8 @@ function Router() {
   return (
     <Switch>
       <Route path="/auth" component={AuthPage} />
+      <Route path="/forgot-password" component={ForgotPassword} />
+      <Route path="/reset-password" component={ResetPassword} />
       <Route path="/wholesale/register" component={WholesaleRegister} />
       <WholesaleCustomerProtectedRoute path="/wholesale-customer" component={WholesaleCustomerDashboard} />
       <Route path="/" component={() => <Redirect to="/shop" />} />
