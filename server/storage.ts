@@ -30,7 +30,8 @@ import {
   wholesalePricing,
   users,
   verificationCodes,
-  impersonationLogs
+  impersonationLogs,
+  passwordResetTokens
 } from "@shared/schema";
 import { eq, and, or, desc, sql } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
@@ -163,6 +164,12 @@ export interface IStorage {
   updateRetailOrderStatus(id: string, status: string, userId?: string): Promise<RetailOrder | undefined>;
   generateNextOrderNumber(): Promise<string>;
   updateWholesaleOrderFulfillment(id: string, userId: string): Promise<WholesaleOrder | undefined>;
+  
+  createPasswordResetToken(userId: string, token: string, expiresAt: Date): Promise<void>;
+  getPasswordResetToken(token: string): Promise<{ id: string; userId: string; expiresAt: Date; used: boolean } | undefined>;
+  markPasswordResetTokenAsUsed(token: string): Promise<void>;
+  updateUserPassword(userId: string, hashedPassword: string): Promise<void>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   
   seedData(): Promise<void>;
 }
@@ -1534,6 +1541,43 @@ export class PostgresStorage implements IStorage {
         client.release();
       }
     });
+  }
+
+  async createPasswordResetToken(userId: string, token: string, expiresAt: Date): Promise<void> {
+    await db.insert(passwordResetTokens).values({
+      userId,
+      token,
+      expiresAt,
+    });
+  }
+
+  async getPasswordResetToken(token: string): Promise<{ id: string; userId: string; expiresAt: Date; used: boolean } | undefined> {
+    const result = await db.select({
+      id: passwordResetTokens.id,
+      userId: passwordResetTokens.userId,
+      expiresAt: passwordResetTokens.expiresAt,
+      used: passwordResetTokens.used,
+    })
+      .from(passwordResetTokens)
+      .where(eq(passwordResetTokens.token, token));
+    return result[0];
+  }
+
+  async markPasswordResetTokenAsUsed(token: string): Promise<void> {
+    await db.update(passwordResetTokens)
+      .set({ used: true, usedAt: new Date() })
+      .where(eq(passwordResetTokens.token, token));
+  }
+
+  async updateUserPassword(userId: string, hashedPassword: string): Promise<void> {
+    await db.update(users)
+      .set({ password: hashedPassword })
+      .where(eq(users.id, userId));
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(sql`LOWER(${users.email}) = LOWER(${email})`);
+    return result[0];
   }
 }
 
