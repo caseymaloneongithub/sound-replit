@@ -2042,6 +2042,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Create Stripe billing portal session for payment method updates
+  app.post("/api/create-billing-portal", isAuthenticated, async (req: any, res) => {
+    try {
+      if (!stripe) {
+        return res.status(500).json({ message: "Stripe is not configured" });
+      }
+
+      const userId = req.user.id;
+      const user = await storage.getUser(userId);
+      
+      if (!user || !user.stripeCustomerId) {
+        return res.status(400).json({ message: "No Stripe customer found. Please contact support." });
+      }
+
+      // Create billing portal session
+      const session = await stripe.billingPortal.sessions.create({
+        customer: user.stripeCustomerId,
+        return_url: `${req.headers.origin || 'http://localhost:5000'}/my-subscriptions`,
+      });
+
+      res.json({ url: session.url });
+    } catch (error: any) {
+      console.error("[BILLING PORTAL] Error creating session:", error);
+      res.status(500).json({ message: "Failed to create billing portal session: " + error.message });
+    }
+  });
+
   // Wholesale customer routes (admin-only access)
   app.get("/api/wholesale/customers", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {

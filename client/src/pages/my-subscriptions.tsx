@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Package, Repeat, Plus, Trash2, X } from "lucide-react";
+import { Package, Repeat, Plus, Trash2, X, CreditCard } from "lucide-react";
 import { format, addWeeks } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -131,6 +131,23 @@ export default function MySubscriptions() {
     },
   });
 
+  const createBillingPortalMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/create-billing-portal", {});
+    },
+    onSuccess: (data: { url: string }) => {
+      // Redirect to Stripe billing portal
+      window.location.href = data.url;
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to open billing portal",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleDelayPickup = (subscriptionId: string) => {
     const weeksToDelay = selectedWeeksDelay[subscriptionId];
     if (!weeksToDelay) {
@@ -219,13 +236,23 @@ export default function MySubscriptions() {
     <div className="min-h-screen bg-background">
       <Navbar />
       <div className="max-w-6xl mx-auto px-6 py-12">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
-            My Subscriptions
-          </h1>
-          <p className="text-muted-foreground">
-            Manage your kombucha subscriptions
-          </p>
+        <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
+              My Subscriptions
+            </h1>
+            <p className="text-muted-foreground">
+              Manage your kombucha subscriptions
+            </p>
+          </div>
+          <Button
+            onClick={() => createBillingPortalMutation.mutate()}
+            disabled={createBillingPortalMutation.isPending}
+            data-testid="button-manage-payment"
+          >
+            <CreditCard className="w-4 h-4 mr-2" />
+            {createBillingPortalMutation.isPending ? "Opening..." : "Manage Payment Method"}
+          </Button>
         </div>
 
         {subscriptionsLoading ? (
