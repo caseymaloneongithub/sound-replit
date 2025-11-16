@@ -85,7 +85,7 @@ function Router() {
       <StaffProtectedRoute path="/inventory" component={Inventory} />
       <StaffProtectedRoute path="/reports" component={Reports} />
       <Route path="/account" component={Account} />
-      <Route path="/staff-portal" component={StaffPortal} />
+      <StaffProtectedRoute path="/staff-portal" component={StaffPortal} />
       <Route component={NotFound} />
     </Switch>
   );
