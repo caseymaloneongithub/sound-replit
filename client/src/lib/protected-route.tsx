@@ -54,7 +54,7 @@ export function StaffProtectedRoute({
   if (!user) {
     return (
       <Route path={path}>
-        <Redirect to="/auth" />
+        <Redirect to="/staff/login" />
       </Route>
     );
   }
@@ -97,7 +97,7 @@ export function WholesaleCustomerProtectedRoute({
   if (!user) {
     return (
       <Route path={path}>
-        <Redirect to="/auth" />
+        <Redirect to="/wholesale/login" />
       </Route>
     );
   }

@@ -275,11 +275,12 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-background p-4">
-      <div className="w-full max-width-md">
+    <div className="flex items-center justify-center min-h-screen bg-gradient-to-b from-background to-muted/20 p-4">
+      <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold mb-2">Puget Sound Kombucha Co.</h1>
           <p className="text-muted-foreground">Artisanal craft kombucha from the Pacific Northwest</p>
+          <p className="text-sm text-muted-foreground mt-2">Shop • Subscribe • Pickup</p>
         </div>
 
         <Tabs defaultValue="login" className="w-full">
@@ -686,18 +687,20 @@ export default function AuthPage() {
           </TabsContent>
         </Tabs>
 
-        <div className="mt-6 text-center">
-          <p className="text-sm text-muted-foreground">
-            Looking for wholesale pricing?{" "}
-            <button
-              type="button"
-              onClick={() => setLocation("/wholesale/register")}
-              className="p-0 h-auto font-semibold text-primary hover:underline"
-              data-testid="button-wholesale-register-link"
-            >
-              Register as a Wholesale Customer
-            </button>
-          </p>
+        <div className="mt-6 text-center space-y-2">
+          <div className="flex items-center justify-center gap-4 text-sm">
+            <Link href="/staff/login">
+              <a className="text-muted-foreground hover:text-primary hover:underline" data-testid="link-to-staff-login">
+                Staff Login
+              </a>
+            </Link>
+            <span className="text-muted-foreground">•</span>
+            <Link href="/wholesale/login">
+              <a className="text-muted-foreground hover:text-primary hover:underline" data-testid="link-to-wholesale-login">
+                Wholesale Login
+              </a>
+            </Link>
+          </div>
         </div>
       </div>
     </div>
