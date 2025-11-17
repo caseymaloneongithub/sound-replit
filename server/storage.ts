@@ -16,6 +16,8 @@ import {
   type VerificationCode, type InsertVerificationCode,
   type EmailVerificationCode, type InsertEmailVerificationCode,
   type ImpersonationLog, type InsertImpersonationLog,
+  type Lead, type InsertLead,
+  type LeadTouchPoint, type InsertLeadTouchPoint,
   products,
   inventoryAdjustments,
   subscriptionPlans,
@@ -33,7 +35,9 @@ import {
   verificationCodes,
   emailVerificationCodes,
   impersonationLogs,
-  passwordResetTokens
+  passwordResetTokens,
+  leads,
+  leadTouchPoints
 } from "@shared/schema";
 import { eq, and, or, desc, sql } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
@@ -179,6 +183,19 @@ export interface IStorage {
   markPasswordResetTokenAsUsed(token: string): Promise<void>;
   updateUserPassword(userId: string, hashedPassword: string): Promise<void>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  
+  // CRM - Lead management
+  getLeads(filters?: { status?: string; priorityLevel?: string; assignedToUserId?: string }): Promise<Lead[]>;
+  getLead(id: string): Promise<Lead | undefined>;
+  createLead(lead: InsertLead): Promise<Lead>;
+  updateLead(id: string, updates: Partial<InsertLead>): Promise<Lead | undefined>;
+  deleteLead(id: string): Promise<void>;
+  searchLeads(query: string): Promise<Lead[]>;
+  
+  // CRM - Touch point management
+  getLeadTouchPoints(leadId: string): Promise<LeadTouchPoint[]>;
+  createLeadTouchPoint(touchPoint: InsertLeadTouchPoint): Promise<LeadTouchPoint>;
+  getRecentTouchPoints(limit?: number): Promise<Array<LeadTouchPoint & { leadBusinessName: string; createdByName: string }>>;
   
   seedData(): Promise<void>;
 }
@@ -1638,6 +1655,112 @@ export class PostgresStorage implements IStorage {
   async getUserByEmail(email: string): Promise<User | undefined> {
     const result = await db.select().from(users).where(sql`LOWER(${users.email}) = LOWER(${email})`);
     return result[0];
+  }
+
+  // CRM - Lead management methods
+  async getLeads(filters?: { status?: string; priorityLevel?: string; assignedToUserId?: string }): Promise<Lead[]> {
+    let query = db.select().from(leads);
+    
+    const conditions = [];
+    if (filters?.status) {
+      conditions.push(eq(leads.status, filters.status));
+    }
+    if (filters?.priorityLevel) {
+      conditions.push(eq(leads.priorityLevel, filters.priorityLevel));
+    }
+    if (filters?.assignedToUserId) {
+      conditions.push(eq(leads.assignedToUserId, filters.assignedToUserId));
+    }
+    
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+    
+    const result = await query.orderBy(desc(leads.createdAt));
+    return result;
+  }
+
+  async getLead(id: string): Promise<Lead | undefined> {
+    const result = await db.select().from(leads).where(eq(leads.id, id));
+    return result[0];
+  }
+
+  async createLead(lead: InsertLead): Promise<Lead> {
+    const result = await db.insert(leads).values(lead).returning();
+    return result[0];
+  }
+
+  async updateLead(id: string, updates: Partial<InsertLead>): Promise<Lead | undefined> {
+    const result = await db
+      .update(leads)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(leads.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteLead(id: string): Promise<void> {
+    await db.delete(leads).where(eq(leads.id, id));
+  }
+
+  async searchLeads(query: string): Promise<Lead[]> {
+    const result = await db
+      .select()
+      .from(leads)
+      .where(
+        or(
+          sql`LOWER(${leads.businessName}) LIKE LOWER(${'%' + query + '%'})`,
+          sql`LOWER(${leads.contactName}) LIKE LOWER(${'%' + query + '%'})`,
+          sql`LOWER(${leads.email}) LIKE LOWER(${'%' + query + '%'})`,
+          sql`LOWER(${leads.phone}) LIKE LOWER(${'%' + query + '%'})`
+        )
+      )
+      .orderBy(desc(leads.createdAt));
+    return result;
+  }
+
+  // CRM - Touch point management methods
+  async getLeadTouchPoints(leadId: string): Promise<LeadTouchPoint[]> {
+    const result = await db
+      .select()
+      .from(leadTouchPoints)
+      .where(eq(leadTouchPoints.leadId, leadId))
+      .orderBy(desc(leadTouchPoints.createdAt));
+    return result;
+  }
+
+  async createLeadTouchPoint(touchPoint: InsertLeadTouchPoint): Promise<LeadTouchPoint> {
+    const result = await db.insert(leadTouchPoints).values(touchPoint).returning();
+    
+    // Update the lead's updatedAt timestamp
+    await db
+      .update(leads)
+      .set({ updatedAt: new Date() })
+      .where(eq(leads.id, touchPoint.leadId));
+    
+    return result[0];
+  }
+
+  async getRecentTouchPoints(limit: number = 10): Promise<Array<LeadTouchPoint & { leadBusinessName: string; createdByName: string }>> {
+    const result = await db
+      .select({
+        id: leadTouchPoints.id,
+        leadId: leadTouchPoints.leadId,
+        type: leadTouchPoints.type,
+        subject: leadTouchPoints.subject,
+        notes: leadTouchPoints.notes,
+        createdByUserId: leadTouchPoints.createdByUserId,
+        createdAt: leadTouchPoints.createdAt,
+        leadBusinessName: leads.businessName,
+        createdByName: sql<string>`${users.firstName} || ' ' || ${users.lastName}`,
+      })
+      .from(leadTouchPoints)
+      .innerJoin(leads, eq(leadTouchPoints.leadId, leads.id))
+      .innerJoin(users, eq(leadTouchPoints.createdByUserId, users.id))
+      .orderBy(desc(leadTouchPoints.createdAt))
+      .limit(limit);
+    
+    return result;
   }
 }
 
