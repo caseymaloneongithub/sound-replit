@@ -41,6 +41,11 @@ const smsLoginSchema = z.object({
   }),
 });
 
+const emailLoginSchema = z.object({
+  email: z.string().email("Please enter a valid email address"),
+  verificationCode: z.string().optional(),
+});
+
 const registerSchema = insertUserSchema.extend({
   password: z.string().min(6, "Password must be at least 6 characters"),
   phoneNumber: z.string().min(10, "Phone number must be at least 10 digits"),
@@ -62,10 +67,13 @@ export default function AuthPage() {
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
   const [verifyingCode, setVerifyingCode] = useState(false);
-  const [loginMethod, setLoginMethod] = useState<'password' | 'sms'>('password');
+  const [loginMethod, setLoginMethod] = useState<'password' | 'sms' | 'email'>('password');
   const [smsLoginCodeSent, setSmsLoginCodeSent] = useState(false);
   const [sendingSmsLoginCode, setSendingSmsLoginCode] = useState(false);
   const [verifyingSmsLoginCode, setVerifyingSmsLoginCode] = useState(false);
+  const [emailLoginCodeSent, setEmailLoginCodeSent] = useState(false);
+  const [sendingEmailLoginCode, setSendingEmailLoginCode] = useState(false);
+  const [verifyingEmailLoginCode, setVerifyingEmailLoginCode] = useState(false);
 
   const loginForm = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -81,6 +89,14 @@ export default function AuthPage() {
       phoneNumber: "",
       verificationCode: "",
       smsConsent: false,
+    },
+  });
+
+  const emailLoginForm = useForm<z.infer<typeof emailLoginSchema>>({
+    resolver: zodResolver(emailLoginSchema),
+    defaultValues: {
+      email: "",
+      verificationCode: "",
     },
   });
 
@@ -254,6 +270,78 @@ export default function AuthPage() {
     }
   };
 
+  const sendEmailLoginCode = async () => {
+    const email = emailLoginForm.getValues("email");
+    
+    if (!email) {
+      toast({
+        title: "Error",
+        description: "Please enter your email address",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSendingEmailLoginCode(true);
+    try {
+      await apiRequest("POST", "/api/send-email-verification-code", { email });
+      setEmailLoginCodeSent(true);
+      toast({
+        title: "Code Sent",
+        description: "Verification code sent to your email",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send verification code",
+        variant: "destructive",
+      });
+    } finally {
+      setSendingEmailLoginCode(false);
+    }
+  };
+
+  const onEmailLogin = async (values: z.infer<typeof emailLoginSchema>) => {
+    const { email, verificationCode } = values;
+    
+    if (!verificationCode || verificationCode.length !== 6) {
+      toast({
+        title: "Error",
+        description: "Please enter the 6-digit verification code",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setVerifyingEmailLoginCode(true);
+    try {
+      const response = await apiRequest("POST", "/api/verify-email-code", { 
+        email, 
+        code: verificationCode 
+      });
+      
+      // Parse the user object from the response
+      const user = await response.json();
+      
+      // Update the auth context with the logged-in user
+      queryClient.setQueryData(["/api/user"], user);
+      
+      toast({
+        title: "Success",
+        description: "Logged in successfully",
+      });
+      setLocation("/");
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Invalid verification code",
+        variant: "destructive",
+      });
+    } finally {
+      setVerifyingEmailLoginCode(false);
+    }
+  };
+
   const onLogin = async (values: z.infer<typeof loginSchema>) => {
     await loginMutation.mutateAsync(values);
     setLocation("/");
@@ -298,10 +386,11 @@ export default function AuthPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Tabs value={loginMethod} onValueChange={(v) => setLoginMethod(v as 'password' | 'sms')} className="w-full">
-                  <TabsList className="grid w-full grid-cols-2 mb-4">
+                <Tabs value={loginMethod} onValueChange={(v) => setLoginMethod(v as 'password' | 'sms' | 'email')} className="w-full">
+                  <TabsList className="grid w-full grid-cols-3 mb-4">
                     <TabsTrigger value="password" data-testid="tab-login-password">Password</TabsTrigger>
                     <TabsTrigger value="sms" data-testid="tab-login-sms">SMS Code</TabsTrigger>
+                    <TabsTrigger value="email" data-testid="tab-login-email">Email Code</TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="password">
@@ -450,6 +539,79 @@ export default function AuthPage() {
                         {!smsLoginCodeSent && (
                           <p className="text-sm text-muted-foreground text-center">
                             Enter your phone number and request a code to continue
+                          </p>
+                        )}
+                      </form>
+                    </Form>
+                  </TabsContent>
+
+                  <TabsContent value="email">
+                    <Form {...emailLoginForm}>
+                      <form onSubmit={emailLoginForm.handleSubmit(onEmailLogin)} className="space-y-4">
+                        <FormField
+                          control={emailLoginForm.control}
+                          name="email"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Email Address</FormLabel>
+                              <div className="flex gap-2">
+                                <FormControl>
+                                  <Input
+                                    type="email"
+                                    placeholder="your.email@example.com"
+                                    data-testid="input-email-login-email"
+                                    {...field}
+                                    disabled={emailLoginCodeSent}
+                                  />
+                                </FormControl>
+                                <Button
+                                  type="button"
+                                  onClick={sendEmailLoginCode}
+                                  disabled={sendingEmailLoginCode || emailLoginCodeSent || !field.value}
+                                  data-testid="button-send-email-login-code"
+                                >
+                                  {sendingEmailLoginCode ? "Sending..." : emailLoginCodeSent ? "Sent" : "Send Code"}
+                                </Button>
+                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        {emailLoginCodeSent && (
+                          <FormField
+                            control={emailLoginForm.control}
+                            name="verificationCode"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Verification Code</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    placeholder="Enter 6-digit code"
+                                    data-testid="input-email-login-code"
+                                    maxLength={6}
+                                    {...field}
+                                    value={field.value ?? ""}
+                                  />
+                                </FormControl>
+                                <p className="text-sm text-muted-foreground">
+                                  Check your email for the verification code
+                                </p>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
+                        <Button
+                          type="submit"
+                          className="w-full"
+                          disabled={verifyingEmailLoginCode || !emailLoginCodeSent}
+                          data-testid="button-email-login-submit"
+                        >
+                          {verifyingEmailLoginCode ? "Logging in..." : "Login with Code"}
+                        </Button>
+                        {!emailLoginCodeSent && (
+                          <p className="text-sm text-muted-foreground text-center">
+                            Enter your email and request a code to continue
                           </p>
                         )}
                       </form>
