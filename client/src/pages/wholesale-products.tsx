@@ -41,10 +41,9 @@ export default function WholesaleProducts() {
 
   const updateWholesalePriceMutation = useMutation({
     mutationFn: async ({ id, wholesalePrice }: { id: string; wholesalePrice: string }) => {
-      const response = await apiRequest("PATCH", `/api/products/${id}`, {
+      return await apiRequest("PATCH", `/api/products/${id}`, {
         wholesalePrice,
       });
-      return await response.json();
     },
     onSuccess: () => {
       toast({
@@ -69,12 +68,11 @@ export default function WholesaleProducts() {
       if (!customerPricingProduct || !selectedCustomer || !customPrice) {
         throw new Error("Missing required fields");
       }
-      const response = await apiRequest("POST", "/api/wholesale/pricing", {
+      return await apiRequest("POST", "/api/wholesale/pricing", {
         customerId: selectedCustomer,
         productId: customerPricingProduct.id,
         customPrice: parseFloat(customPrice),
       });
-      return await response.json();
     },
     onSuccess: () => {
       toast({
