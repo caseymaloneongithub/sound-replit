@@ -3058,7 +3058,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
 
   // Get all leads with optional filters
-  app.get("/api/crm/leads", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+  app.get("/api/crm/leads", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { status, priorityLevel, assignedToUserId } = req.query;
       
@@ -3076,7 +3076,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Search leads
-  app.get("/api/crm/leads/search", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+  app.get("/api/crm/leads/search", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { q } = req.query;
       
@@ -3093,7 +3093,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get single lead by ID
-  app.get("/api/crm/leads/:id", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+  app.get("/api/crm/leads/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -3110,7 +3110,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create new lead
-  app.post("/api/crm/leads", requireRole(['staff', 'admin', 'super_admin']), async (req: any, res) => {
+  app.post("/api/crm/leads", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
     try {
       const { businessName, contactName, email, phone, priorityLevel, status, notes, assignedToUserId } = req.body;
       
@@ -3137,7 +3137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update lead
-  app.patch("/api/crm/leads/:id", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+  app.patch("/api/crm/leads/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const updates = req.body;
@@ -3155,7 +3155,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete lead
-  app.delete("/api/crm/leads/:id", requireRole(['admin', 'super_admin']), async (req, res) => {
+  app.delete("/api/crm/leads/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -3172,7 +3172,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
 
   // Get touch points for a lead
-  app.get("/api/crm/leads/:id/touchpoints", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+  app.get("/api/crm/leads/:id/touchpoints", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -3185,7 +3185,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create new touch point
-  app.post("/api/crm/leads/:id/touchpoints", requireRole(['staff', 'admin', 'super_admin']), async (req: any, res) => {
+  app.post("/api/crm/leads/:id/touchpoints", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
     try {
       const { id } = req.params;
       const { type, subject, notes } = req.body;
@@ -3210,7 +3210,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get recent touch points across all leads
-  app.get("/api/crm/touchpoints/recent", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+  app.get("/api/crm/touchpoints/recent", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
       

@@ -11,11 +11,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Package, ShoppingCart, Settings, AlertCircle, Loader2, Users, Eye } from "lucide-react";
+import { Package, ShoppingCart, Settings, AlertCircle, Loader2, Users, Eye, Building2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { InventoryTab } from "@/components/staff/inventory-tab";
+import CRMPage from "@/pages/crm-page";
 import type { Product, WholesaleOrder, WholesaleCustomer, User } from "@shared/schema";
 
 interface ProductFormData {
@@ -316,6 +317,10 @@ export default function StaffPortal() {
               <Package className="w-4 h-4 mr-2" />
               Inventory
             </TabsTrigger>
+            <TabsTrigger value="crm" data-testid="tab-crm">
+              <Building2 className="w-4 h-4 mr-2" />
+              CRM
+            </TabsTrigger>
             {user?.isAdmin && (
               <TabsTrigger value="products" data-testid="tab-products">
                 <Settings className="w-4 h-4 mr-2" />
@@ -396,6 +401,10 @@ export default function StaffPortal() {
 
           <TabsContent value="inventory" className="space-y-4">
             <InventoryTab products={products} isLoading={productsLoading} />
+          </TabsContent>
+
+          <TabsContent value="crm" className="space-y-4">
+            <CRMPage />
           </TabsContent>
 
           {user?.isAdmin && (
