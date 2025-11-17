@@ -4,6 +4,14 @@
 
 Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacific Northwest kombucha brewery. The platform supports retail product and subscription purchases, and wholesale orders for business clients. Key capabilities include product browsing, subscription management, Stripe payment integration, comprehensive inventory tracking, retail and wholesale order tracking with fulfillment management, wholesale customer management, delivery scheduling, daily delivery reporting, and an admin dashboard. The business aims to provide a seamless online experience for purchasing artisanal kombucha, expanding market reach, and streamlining B2B operations.
 
+## 🚧 Active Schema Migration (Nov 2024)
+
+**Status:** Phase 1 Complete - Parallel Schema Established
+
+The application is undergoing a staged migration to completely separate retail and wholesale product management with centrally-managed flavors. Both old and new schemas coexist to allow incremental development without downtime.
+
+**See MIGRATION_PLAN.md for detailed migration roadmap.**
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
