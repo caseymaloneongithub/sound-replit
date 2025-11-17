@@ -3053,6 +3053,175 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================
+  // CRM - Lead Management Routes
+  // ============================================
+
+  // Get all leads with optional filters
+  app.get("/api/crm/leads", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+    try {
+      const { status, priorityLevel, assignedToUserId } = req.query;
+      
+      const filters: any = {};
+      if (status) filters.status = status as string;
+      if (priorityLevel) filters.priorityLevel = priorityLevel as string;
+      if (assignedToUserId) filters.assignedToUserId = assignedToUserId as string;
+      
+      const leads = await storage.getLeads(filters);
+      res.json(leads);
+    } catch (error: any) {
+      console.error("Error fetching leads:", error);
+      res.status(500).json({ message: "Error fetching leads: " + error.message });
+    }
+  });
+
+  // Search leads
+  app.get("/api/crm/leads/search", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+    try {
+      const { q } = req.query;
+      
+      if (!q || typeof q !== 'string') {
+        return res.status(400).json({ message: "Search query is required" });
+      }
+      
+      const leads = await storage.searchLeads(q);
+      res.json(leads);
+    } catch (error: any) {
+      console.error("Error searching leads:", error);
+      res.status(500).json({ message: "Error searching leads: " + error.message });
+    }
+  });
+
+  // Get single lead by ID
+  app.get("/api/crm/leads/:id", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const lead = await storage.getLead(id);
+      if (!lead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      
+      res.json(lead);
+    } catch (error: any) {
+      console.error("Error fetching lead:", error);
+      res.status(500).json({ message: "Error fetching lead: " + error.message });
+    }
+  });
+
+  // Create new lead
+  app.post("/api/crm/leads", requireRole(['staff', 'admin', 'super_admin']), async (req: any, res) => {
+    try {
+      const { businessName, contactName, email, phone, priorityLevel, status, notes, assignedToUserId } = req.body;
+      
+      if (!businessName || !contactName) {
+        return res.status(400).json({ message: "Business name and contact name are required" });
+      }
+      
+      const lead = await storage.createLead({
+        businessName,
+        contactName,
+        email,
+        phone,
+        priorityLevel: priorityLevel || 'medium',
+        status: status || 'new',
+        notes,
+        assignedToUserId,
+      });
+      
+      res.status(201).json(lead);
+    } catch (error: any) {
+      console.error("Error creating lead:", error);
+      res.status(500).json({ message: "Error creating lead: " + error.message });
+    }
+  });
+
+  // Update lead
+  app.patch("/api/crm/leads/:id", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      
+      const lead = await storage.updateLead(id, updates);
+      if (!lead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      
+      res.json(lead);
+    } catch (error: any) {
+      console.error("Error updating lead:", error);
+      res.status(500).json({ message: "Error updating lead: " + error.message });
+    }
+  });
+
+  // Delete lead
+  app.delete("/api/crm/leads/:id", requireRole(['admin', 'super_admin']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      await storage.deleteLead(id);
+      res.json({ message: "Lead deleted successfully" });
+    } catch (error: any) {
+      console.error("Error deleting lead:", error);
+      res.status(500).json({ message: "Error deleting lead: " + error.message });
+    }
+  });
+
+  // ============================================
+  // CRM - Touch Point Management Routes
+  // ============================================
+
+  // Get touch points for a lead
+  app.get("/api/crm/leads/:id/touchpoints", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const touchPoints = await storage.getLeadTouchPoints(id);
+      res.json(touchPoints);
+    } catch (error: any) {
+      console.error("Error fetching touch points:", error);
+      res.status(500).json({ message: "Error fetching touch points: " + error.message });
+    }
+  });
+
+  // Create new touch point
+  app.post("/api/crm/leads/:id/touchpoints", requireRole(['staff', 'admin', 'super_admin']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { type, subject, notes } = req.body;
+      
+      if (!type || !subject) {
+        return res.status(400).json({ message: "Type and subject are required" });
+      }
+      
+      const touchPoint = await storage.createLeadTouchPoint({
+        leadId: id,
+        type,
+        subject,
+        notes,
+        createdByUserId: req.user.id,
+      });
+      
+      res.status(201).json(touchPoint);
+    } catch (error: any) {
+      console.error("Error creating touch point:", error);
+      res.status(500).json({ message: "Error creating touch point: " + error.message });
+    }
+  });
+
+  // Get recent touch points across all leads
+  app.get("/api/crm/touchpoints/recent", requireRole(['staff', 'admin', 'super_admin']), async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+      
+      const touchPoints = await storage.getRecentTouchPoints(limit);
+      res.json(touchPoints);
+    } catch (error: any) {
+      console.error("Error fetching recent touch points:", error);
+      res.status(500).json({ message: "Error fetching recent touch points: " + error.message });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;
