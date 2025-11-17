@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { Product, WholesaleCustomer, WholesalePricing } from "@shared/schema";
+import { Product, ProductType, WholesaleCustomer, WholesalePricing } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,15 +15,19 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 export default function WholesaleProducts() {
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editingProductType, setEditingProductType] = useState<ProductType | null>(null);
   const [newWholesalePrice, setNewWholesalePrice] = useState("");
-  const [customerPricingProduct, setCustomerPricingProduct] = useState<Product | null>(null);
+  const [customerPricingProductType, setCustomerPricingProductType] = useState<ProductType | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [customPrice, setCustomPrice] = useState("");
   const { toast } = useToast();
 
   const { data: products, isLoading } = useQuery<Product[]>({
     queryKey: ["/api/products"],
+  });
+
+  const { data: productTypes = [], isLoading: isLoadingProductTypes } = useQuery<ProductType[]>({
+    queryKey: ["/api/product-types"],
   });
 
   const { data: customers = [] } = useQuery<WholesaleCustomer[]>({
@@ -41,7 +45,7 @@ export default function WholesaleProducts() {
 
   const updateWholesalePriceMutation = useMutation({
     mutationFn: async ({ id, wholesalePrice }: { id: string; wholesalePrice: string }) => {
-      return await apiRequest("PATCH", `/api/products/${id}`, {
+      return await apiRequest("PATCH", `/api/product-types/${id}`, {
         wholesalePrice,
       });
     },
@@ -50,8 +54,8 @@ export default function WholesaleProducts() {
         title: "Price Updated",
         description: "Wholesale price has been updated successfully.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
-      setEditingProduct(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/product-types"] });
+      setEditingProductType(null);
       setNewWholesalePrice("");
     },
     onError: () => {
@@ -65,12 +69,12 @@ export default function WholesaleProducts() {
 
   const setCustomerPricingMutation = useMutation({
     mutationFn: async () => {
-      if (!customerPricingProduct || !selectedCustomer || !customPrice) {
+      if (!customerPricingProductType || !selectedCustomer || !customPrice) {
         throw new Error("Missing required fields");
       }
       return await apiRequest("POST", "/api/wholesale/pricing", {
         customerId: selectedCustomer,
-        productTypeId: customerPricingProduct.productTypeId,
+        productTypeId: customerPricingProductType.id,
         customPrice: parseFloat(customPrice),
       });
     },
@@ -80,7 +84,7 @@ export default function WholesaleProducts() {
         description: "Customer-specific pricing has been set successfully.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/pricing/all"] });
-      setCustomerPricingProduct(null);
+      setCustomerPricingProductType(null);
       setSelectedCustomer("");
       setCustomPrice("");
     },
@@ -94,7 +98,7 @@ export default function WholesaleProducts() {
   });
 
   const handleUpdateWholesalePrice = () => {
-    if (!editingProduct || !newWholesalePrice) {
+    if (!editingProductType || !newWholesalePrice) {
       toast({
         title: "Validation Error",
         description: "Please enter a valid price.",
@@ -114,7 +118,7 @@ export default function WholesaleProducts() {
     }
 
     updateWholesalePriceMutation.mutate({
-      id: editingProduct.id,
+      id: editingProductType.id,
       wholesalePrice: newWholesalePrice,
     });
   };
@@ -142,11 +146,11 @@ export default function WholesaleProducts() {
     setCustomerPricingMutation.mutate();
   };
 
-  const getCustomerPricingForProduct = (productId: string) => {
-    return allPricing.filter(p => p.productId === productId);
+  const getCustomerPricingForProductType = (productTypeId: string) => {
+    return allPricing.filter(p => p.productTypeId === productTypeId);
   };
 
-  if (isLoading) {
+  if (isLoading || isLoadingProductTypes) {
     return (
       <StaffLayout>
         <div className="flex items-center justify-center min-h-96">
@@ -184,14 +188,14 @@ export default function WholesaleProducts() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {products?.map((product) => {
-                  const customerPricing = getCustomerPricingForProduct(product.id);
+                {productTypes?.map((productType) => {
+                  const customerPricing = getCustomerPricingForProductType(productType.id);
                   return (
-                    <TableRow key={product.id} data-testid={`row-product-${product.id}`}>
-                      <TableCell className="font-medium">{product.name}</TableCell>
+                    <TableRow key={productType.id} data-testid={`row-product-type-${productType.id}`}>
+                      <TableCell className="font-medium">{productType.name}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold">${product.wholesalePrice}</span>
+                          <span className="font-semibold">${productType.wholesalePrice}</span>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -209,10 +213,10 @@ export default function WholesaleProducts() {
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              setEditingProduct(product);
-                              setNewWholesalePrice(product.wholesalePrice);
+                              setEditingProductType(productType);
+                              setNewWholesalePrice(productType.wholesalePrice);
                             }}
-                            data-testid={`button-edit-price-${product.id}`}
+                            data-testid={`button-edit-price-${productType.id}`}
                           >
                             <Edit className="w-4 h-4 mr-1" />
                             Edit Price
@@ -220,8 +224,8 @@ export default function WholesaleProducts() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => setCustomerPricingProduct(product)}
-                            data-testid={`button-customer-pricing-${product.id}`}
+                            onClick={() => setCustomerPricingProductType(productType)}
+                            data-testid={`button-customer-pricing-${productType.id}`}
                           >
                             <DollarSign className="w-4 h-4 mr-1" />
                             Customer Pricing
@@ -237,12 +241,12 @@ export default function WholesaleProducts() {
         </Card>
 
         {/* Edit Wholesale Price Dialog */}
-        <Dialog open={!!editingProduct} onOpenChange={(open) => !open && setEditingProduct(null)}>
+        <Dialog open={!!editingProductType} onOpenChange={(open) => !open && setEditingProductType(null)}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Edit Wholesale Price</DialogTitle>
               <DialogDescription>
-                Update the default wholesale price for {editingProduct?.name}
+                Update the default wholesale price for {editingProductType?.name}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
@@ -259,7 +263,7 @@ export default function WholesaleProducts() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setEditingProduct(null)}>
+              <Button variant="outline" onClick={() => setEditingProductType(null)}>
                 Cancel
               </Button>
               <Button
@@ -278,12 +282,12 @@ export default function WholesaleProducts() {
         </Dialog>
 
         {/* Customer Pricing Dialog */}
-        <Dialog open={!!customerPricingProduct} onOpenChange={(open) => !open && setCustomerPricingProduct(null)}>
+        <Dialog open={!!customerPricingProductType} onOpenChange={(open) => !open && setCustomerPricingProductType(null)}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle>Customer-Specific Pricing</DialogTitle>
               <DialogDescription>
-                Set custom wholesale prices for {customerPricingProduct?.name}
+                Set custom wholesale prices for {customerPricingProductType?.name}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-6 py-4">
@@ -334,10 +338,10 @@ export default function WholesaleProducts() {
                 </div>
               </div>
 
-              {customerPricingProduct && (
+              {customerPricingProductType && (
                 <div>
                   <h4 className="font-semibold mb-3">Existing Customer Pricing</h4>
-                  {getCustomerPricingForProduct(customerPricingProduct.id).length > 0 ? (
+                  {getCustomerPricingForProductType(customerPricingProductType.id).length > 0 ? (
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -347,9 +351,9 @@ export default function WholesaleProducts() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {getCustomerPricingForProduct(customerPricingProduct.id).map((pricing) => {
+                        {getCustomerPricingForProductType(customerPricingProductType.id).map((pricing) => {
                           const customer = customers.find(c => c.id === pricing.customerId);
-                          const difference = parseFloat(pricing.customPrice) - parseFloat(customerPricingProduct.wholesalePrice);
+                          const difference = parseFloat(pricing.customPrice) - parseFloat(customerPricingProductType.wholesalePrice);
                           return (
                             <TableRow key={pricing.id}>
                               <TableCell>{customer?.businessName}</TableCell>
@@ -365,13 +369,13 @@ export default function WholesaleProducts() {
                       </TableBody>
                     </Table>
                   ) : (
-                    <p className="text-muted-foreground text-sm">No customer-specific pricing set for this product.</p>
+                    <p className="text-muted-foreground text-sm">No customer-specific pricing set for this product type.</p>
                   )}
                 </div>
               )}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setCustomerPricingProduct(null)}>
+              <Button variant="outline" onClick={() => setCustomerPricingProductType(null)}>
                 Close
               </Button>
             </DialogFooter>

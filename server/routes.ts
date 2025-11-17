@@ -24,6 +24,17 @@ const stripe = process.env.STRIPE_SECRET_KEY
     })
   : null;
 
+async function getProductPricing(productId: string): Promise<{ retailPrice: string; wholesalePrice: string } | null> {
+  const product = await storage.getProduct(productId);
+  if (!product) return null;
+  const productType = await storage.getProductType(product.productTypeId);
+  if (!productType) return null;
+  return {
+    retailPrice: productType.retailPrice,
+    wholesalePrice: productType.wholesalePrice,
+  };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware - sets up /api/register, /api/login, /api/logout, /api/user
   await setupAuth(app);
@@ -824,8 +835,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Product not found" });
       }
 
+      const pricing = await getProductPricing(productId);
+      if (!pricing) {
+        return res.status(404).json({ message: "Product pricing not found" });
+      }
+
       // Calculate subscription price (10% discount)
-      const basePrice = parseFloat(product.retailPrice);
+      const basePrice = parseFloat(pricing.retailPrice);
       const subscriptionPrice = basePrice * 0.9;
       const unitAmountCents = Math.round(subscriptionPrice * 100);
 
@@ -997,10 +1013,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         items
           .filter(item => !item.isSubscription)
           .map(async (item) => {
-            const product = await storage.getProduct(item.productId);
-            if (!product) return 0;
+            const pricing = await getProductPricing(item.productId);
+            if (!pricing) return 0;
             // Use actual product retail price in cents
-            const priceInCents = Math.round(parseFloat(product.retailPrice) * 100);
+            const priceInCents = Math.round(parseFloat(pricing.retailPrice) * 100);
             return priceInCents * item.quantity;
           })
       ).then(amounts => amounts.reduce((sum, amount) => sum + amount, 0));
@@ -1117,9 +1133,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Calculate total amount in cents using actual product prices
       let subtotalCents = 0;
       for (const item of items) {
-        const product = await storage.getProduct(item.productId);
-        if (!product) throw new Error(`Product ${item.productId} not found`);
-        const priceInCents = Math.round(parseFloat(product.retailPrice) * 100);
+        const pricing = await getProductPricing(item.productId);
+        if (!pricing) throw new Error(`Product pricing ${item.productId} not found`);
+        const priceInCents = Math.round(parseFloat(pricing.retailPrice) * 100);
         subtotalCents += priceInCents * item.quantity;
       }
 
@@ -1521,13 +1537,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
               
               const productsMap = new Map(productsList.map(p => [p.id, p]));
               
+              // Also fetch product types for pricing
+              const { productTypes } = await import("@shared/schema");
+              const productTypeIds = [...new Set(productsList.map(p => p.productTypeId))];
+              const productTypesList = await tx
+                .select()
+                .from(productTypes)
+                .where(sql`${productTypes.id} = ANY(${productTypeIds})`);
+              
+              const productTypesMap = new Map(productTypesList.map(pt => [pt.id, pt]));
+              
               let subtotal = 0;
               for (const item of subscriptionItems) {
                 const product = productsMap.get(item.productId);
                 if (product) {
-                  // Subscription price is retail price * 0.9
-                  const itemPrice = parseFloat(product.retailPrice) * 0.9 * item.quantity;
-                  subtotal += itemPrice;
+                  const productType = productTypesMap.get(product.productTypeId);
+                  if (productType) {
+                    // Subscription price is retail price * 0.9
+                    const itemPrice = parseFloat(productType.retailPrice) * 0.9 * item.quantity;
+                    subtotal += itemPrice;
+                  }
                 }
               }
               
@@ -1550,7 +1579,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               for (const item of subscriptionItems) {
                 const product = productsMap.get(item.productId);
                 if (product) {
-                  const itemPrice = parseFloat(product.retailPrice) * 0.9;
+                  const productType = productTypesMap.get(product.productTypeId);
+                  if (!productType) {
+                    throw new Error(`Product type ${product.productTypeId} not found`);
+                  }
+                  const itemPrice = parseFloat(productType.retailPrice) * 0.9;
                   
                   // Create order item
                   await tx.insert(retailOrderItems).values({
@@ -1710,11 +1743,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   
                   // Create order items
                   for (const item of cartItems) {
-                    const product = await storage.getProduct(item.productId);
-                    if (product) {
+                    const pricing = await getProductPricing(item.productId);
+                    if (pricing) {
                       await client.query(
                         'INSERT INTO retail_order_items (order_id, product_id, quantity, unit_price) VALUES ($1, $2, $3, $4)',
-                        [orderId, item.productId, item.quantity, product.retailPrice]
+                        [orderId, item.productId, item.quantity, pricing.retailPrice]
                       );
                     }
                   }
@@ -2505,8 +2538,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: `Product ${item.productId} not found` });
         }
         
-        const customPricing = await storage.getWholesalePrice(order.customerId, item.productId);
-        const perBottlePrice = customPricing ? Number(customPricing.customPrice) : Number(product.wholesalePrice);
+        const pricing = await getProductPricing(item.productId);
+        if (!pricing) {
+          return res.status(404).json({ message: `Product pricing ${item.productId} not found` });
+        }
+        
+        // Check for customer-specific pricing using productTypeId
+        const customPricing = await storage.getWholesalePrice(order.customerId, product.productTypeId);
+        const perBottlePrice = customPricing ? Number(customPricing.customPrice) : Number(pricing.wholesalePrice);
         const perCasePrice = perBottlePrice * CASE_SIZE;
         const itemTotal = perCasePrice * item.quantity;
         serverCalculatedTotal += itemTotal;
@@ -2711,12 +2750,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const itemsWithProducts = await Promise.all(
         items.map(async (item) => {
           const product = await storage.getProduct(item.productId);
+          const pricing = await getProductPricing(item.productId);
           return {
             ...item,
-            product: product ? {
+            product: product && pricing ? {
               id: product.id,
               name: product.name,
-              retailPrice: product.retailPrice,
+              retailPrice: pricing.retailPrice,
               imageUrl: product.imageUrl,
             } : null,
           };

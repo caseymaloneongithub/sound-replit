@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { WholesaleCustomer, Product, WholesalePricing } from "@shared/schema";
+import { WholesaleCustomer, Product, ProductType, WholesalePricing } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -32,6 +32,10 @@ export default function WholesalePlaceOrder() {
 
   const { data: products = [] } = useQuery<Product[]>({
     queryKey: ["/api/products"],
+  });
+
+  const { data: productTypes = [] } = useQuery<ProductType[]>({
+    queryKey: ["/api/product-types"],
   });
 
   const { data: pricing = [] } = useQuery<WholesalePricing[]>({
@@ -80,13 +84,18 @@ export default function WholesalePlaceOrder() {
   const getPrice = (productId: string): number => {
     if (!selectedCustomerId) return 0;
     
-    const customPrice = pricing.find(p => p.productId === productId);
+    const product = products.find(p => p.id === productId);
+    if (!product) return 0;
+    
+    // Check for customer-specific pricing based on product type
+    const customPrice = pricing.find(p => p.productTypeId === product.productTypeId);
     if (customPrice) {
       return Number(customPrice.customPrice) * CASE_SIZE;
     }
     
-    const product = products.find(p => p.id === productId);
-    return product ? Number(product.wholesalePrice) * CASE_SIZE : 0;
+    // Fall back to default wholesale price from product type
+    const productType = productTypes.find(pt => pt.id === product.productTypeId);
+    return productType ? Number(productType.wholesalePrice) * CASE_SIZE : 0;
   };
 
   const addToCart = (productId: string) => {
@@ -170,7 +179,7 @@ export default function WholesalePlaceOrder() {
                       <div className="space-y-3">
                         {products.map((product) => {
                           const price = getPrice(product.id);
-                          const hasCustomPrice = pricing.some(p => p.productId === product.id);
+                          const hasCustomPrice = pricing.some(p => p.productTypeId === product.productTypeId);
                           
                           return (
                             <div 
