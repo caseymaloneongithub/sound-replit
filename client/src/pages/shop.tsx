@@ -198,7 +198,8 @@ export default function Shop() {
             <span className="font-semibold">Retailers and Distributors:</span> Get in touch with us{" "}
             <a 
               href="/contact" 
-              className="text-primary hover:underline font-semibold"
+              className="hover:underline font-semibold"
+              style={{ color: '#656F3F' }}
               data-testid="link-wholesale-contact"
             >
               here
