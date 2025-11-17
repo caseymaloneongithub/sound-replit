@@ -315,16 +315,13 @@ export default function AuthPage() {
 
     setVerifyingEmailLoginCode(true);
     try {
-      const response = await apiRequest("POST", "/api/verify-email-code", { 
+      const data = await apiRequest("POST", "/api/verify-email-code", { 
         email, 
         code: verificationCode 
       });
       
-      // Parse the user object from the response
-      const user = await response.json();
-      
       // Update the auth context with the logged-in user
-      queryClient.setQueryData(["/api/user"], user);
+      queryClient.setQueryData(["/api/user"], data.user);
       
       toast({
         title: "Success",
