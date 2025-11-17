@@ -44,10 +44,17 @@ export default function CRMPage() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isTouchPointDialogOpen, setIsTouchPointDialogOpen] = useState(false);
 
-  // Fetch leads
-  const { data: leads = [], isLoading } = useQuery<Lead[]>({
-    queryKey: ["/api/crm/leads", statusFilter, priorityFilter],
+  // Fetch all leads
+  const { data: allLeads = [], isLoading } = useQuery<Lead[]>({
+    queryKey: ["/api/crm/leads"],
     enabled: searchQuery === "",
+  });
+
+  // Filter leads based on status and priority
+  const leads = allLeads.filter(lead => {
+    const matchesStatus = statusFilter === "all" || lead.status === statusFilter;
+    const matchesPriority = priorityFilter === "all" || lead.priorityLevel === priorityFilter;
+    return matchesStatus && matchesPriority;
   });
 
   // Fetch search results - using default fetcher with query params in query key
