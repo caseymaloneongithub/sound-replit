@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, inventoryAdjustments, subscriptions, Subscription } from "@shared/schema";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, inventoryAdjustments, subscriptions, Subscription, updateProfileSchema, users } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -173,6 +173,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error verifying code:", error);
       res.status(500).json({ message: "Error verifying code: " + error.message });
+    }
+  });
+
+  // Update user profile
+  app.patch("/api/update-profile", isAuthenticated, async (req, res) => {
+    try {
+      const user = req.user;
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      // Validate request body
+      const validationResult = updateProfileSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Validation failed", 
+          errors: validationResult.error.errors 
+        });
+      }
+
+      const updates = validationResult.data;
+
+      // Check if email is already taken by another user
+      if (updates.email && updates.email !== user.email) {
+        const existingUser = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, updates.email))
+          .limit(1);
+        
+        if (existingUser.length > 0 && existingUser[0].id !== user.id) {
+          return res.status(400).json({ message: "Email is already in use" });
+        }
+      }
+
+      // Update user profile
+      const [updatedUser] = await db
+        .update(users)
+        .set({
+          ...updates,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, user.id))
+        .returning();
+
+      // Remove sensitive fields before returning
+      const { password, ...userWithoutPassword } = updatedUser;
+
+      res.json({ 
+        message: "Profile updated successfully", 
+        user: userWithoutPassword 
+      });
+    } catch (error: any) {
+      console.error("Error updating profile:", error);
+      res.status(500).json({ message: "Error updating profile: " + error.message });
     }
   });
 
