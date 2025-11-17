@@ -52,9 +52,15 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
         -   **Billing States**: `active` (ready for billing), `awaiting_auth` (3D Secure pending), `awaiting_confirmation` (bank processing), `retrying` (after failures)
     -   **Automated Order Creation**: When payments succeed (either synchronously or via webhook), system atomically: (1) creates retail order with `isSubscriptionOrder: true`, (2) deducts inventory with row-level locking, (3) records adjustments in ledger, (4) updates next charge date, (5) clears retry counters. Refund safety checks prevent order creation for refunded PaymentIntents.
 -   **Inventory Management System**: Staff can record production batches, increasing stock with an audit trail in an `inventory_adjustments` ledger. All inventory updates use atomic PostgreSQL transactions with pessimistic locking. Fulfillment automatically deducts inventory and records adjustments.
--   **Staff Portal**: Unified management portal at `/staff-portal` for staff and admin users. Includes order management (retail and wholesale), inventory management (production recording, stock overview, adjustments ledger), and admin features (product specs, user management). Super admins can impersonate users with an audit trail and visual indicator.
+-   **Staff Portal**: Unified management portal at `/staff-portal` for staff and admin users. Includes order management (retail and wholesale), inventory management (production recording, stock overview, adjustments ledger), CRM system, and admin features (product specs, user management). Super admins can impersonate users with an audit trail and visual indicator.
     -   **Wholesale Management**: Create/manage wholesale accounts, place orders, delivery scheduling, generate daily delivery reports, and professional invoice generation. Supports 'fulfilled' status for orders.
     -   **Retail Management**: Customer directory with search functionality and a daily pickup report for subscriptions.
+    -   **CRM System**: Comprehensive lead tracking for potential wholesale customers accessible to staff/admin roles. Features include:
+        -   **Lead Management**: Create, view, edit, and delete leads with business name, contact info, priority levels (high/medium/low), and status tracking (new/contacted/qualified/proposal/negotiation/won/lost).
+        -   **Touch Point History**: Full timeline of customer interactions (email, phone, meeting, other) with timestamps, subject lines, notes, and staff member attribution. Chronologically sorted display shows most recent interactions first.
+        -   **Search & Filter**: Real-time search across business name, contact name, email, and phone. Filter leads by status and priority level.
+        -   **Data Architecture**: Uses shadcn Form components with react-hook-form + zodResolver for all forms. Zod schemas from @shared/schema.ts ensure type safety. TanStack Query handles caching with stable query keys and proper invalidation after mutations.
+        -   **UI/UX**: Clean card-based layout with status badges, priority indicators, and expandable detail views. Touch point dialog remains nested within lead detail dialog for seamless interaction tracking. All interactive elements have data-testid attributes for automated testing.
 
 ### Development & Build Process
 
