@@ -41,7 +41,16 @@ import {
   impersonationLogs,
   passwordResetTokens,
   leads,
-  leadTouchPoints
+  leadTouchPoints,
+  // Compatibility imports (temporary - old names mapping to new tables)
+  products,
+  productTypes,
+  wholesalePricing,
+  inventoryAdjustments,
+  type Product, type InsertProduct,
+  type ProductType, type InsertProductType,
+  type WholesalePricing, type InsertWholesalePricing,
+  type InventoryAdjustment, type InsertInventoryAdjustment,
 } from "@shared/schema";
 import { eq, and, or, desc, sql } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";

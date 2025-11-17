@@ -76,6 +76,12 @@ export const flavors = pgTable("flavors", {
   imageUrls: text("image_urls").array().notNull().default(sql`ARRAY[]::text[]`),
   isActive: boolean("is_active").notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
+  // TEMPORARY: Backwards compatibility fields (to be removed after full migration)
+  stockQuantity: integer("stock_quantity").notNull().default(0),
+  lowStockThreshold: integer("low_stock_threshold").notNull().default(50),
+  inStock: boolean("in_stock").notNull().default(true),
+  flavor: text("flavor").notNull().default(''), // Duplicate of flavorProfile for compatibility
+  productTypeId: varchar("product_type_id"), // Temporary for compatibility
 });
 
 // Retail Products - Each flavor+unit combination sold to retail customers
@@ -124,6 +130,7 @@ export const cartItems = pgTable("cart_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   sessionId: text("session_id").notNull(),
   retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id),
+  productId: varchar("product_id").references(() => flavors.id), // TEMPORARY: Compatibility alias for retailProductId
   quantity: integer("quantity").notNull().default(1),
   isSubscription: boolean("is_subscription").notNull().default(false),
   subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
@@ -136,6 +143,7 @@ export const subscriptions = pgTable("subscriptions", {
   customerEmail: text("customer_email").notNull(),
   customerPhone: text("customer_phone").notNull(),
   planId: varchar("plan_id").references(() => subscriptionPlans.id),
+  productId: varchar("product_id").references(() => flavors.id), // TEMPORARY: Legacy single product field
   subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
   stripeSubscriptionId: text("stripe_subscription_id"),
   stripeCheckoutSessionId: text("stripe_checkout_session_id").unique(), // For idempotency
@@ -210,6 +218,7 @@ export const retailOrderItems = pgTable("retail_order_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orderId: varchar("order_id").notNull().references(() => retailOrders.id),
   retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id),
+  productId: varchar("product_id").references(() => flavors.id), // TEMPORARY: Compatibility alias  
   quantity: integer("quantity").notNull(),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
 });
@@ -232,6 +241,7 @@ export const wholesaleOrderItems = pgTable("wholesale_order_items", {
   orderId: varchar("order_id").notNull().references(() => wholesaleOrders.id),
   unitTypeId: varchar("unit_type_id").notNull().references(() => wholesaleUnitTypes.id),
   flavorId: varchar("flavor_id").notNull().references(() => flavors.id),
+  productId: varchar("product_id").references(() => flavors.id), // TEMPORARY: Compatibility alias
   quantity: integer("quantity").notNull(),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
 });
@@ -240,6 +250,7 @@ export const wholesaleCustomerPricing = pgTable("wholesale_customer_pricing", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id),
   unitTypeId: varchar("unit_type_id").notNull().references(() => wholesaleUnitTypes.id),
+  productTypeId: varchar("product_type_id").references(() => wholesaleUnitTypes.id), // TEMPORARY: Compatibility alias
   customPrice: decimal("custom_price", { precision: 10, scale: 2 }).notNull(),
 }, (table) => ({
   uniqueCustomerUnitType: unique().on(table.customerId, table.unitTypeId),
@@ -360,3 +371,35 @@ export type EmailVerificationCode = typeof emailVerificationCodes.$inferSelect;
 export type ImpersonationLog = typeof impersonationLogs.$inferSelect;
 export type Lead = typeof leads.$inferSelect;
 export type LeadTouchPoint = typeof leadTouchPoints.$inferSelect;
+
+// TEMPORARY COMPATIBILITY EXPORTS - To be removed after migration
+// These allow old code to continue working during the refactor
+export const products = flavors; // OLD: products table, NEW: flavors table
+export const productTypes = wholesaleUnitTypes; // OLD: productTypes, NEW: wholesaleUnitTypes
+export const wholesalePricing = wholesaleCustomerPricing; // OLD: wholesalePricing, NEW: wholesaleCustomerPricing
+export type Product = Flavor; // OLD: Product type, NEW: Flavor type
+export type ProductType = WholesaleUnitType; // OLD: ProductType, NEW: WholesaleUnitType
+export type WholesalePricing = WholesaleCustomerPricing; // OLD: WholesalePricing, NEW: WholesaleCustomerPricing
+export type InsertProduct = InsertFlavor; // OLD: InsertProduct, NEW: InsertFlavor
+export type InsertProductType = InsertWholesaleUnitType; // OLD: InsertProductType, NEW: InsertWholesaleUnitType
+export type InsertWholesalePricing = InsertWholesaleCustomerPricing; // OLD: InsertWholesalePricing, NEW: InsertWholesaleCustomerPricing
+export const insertProductSchema = insertFlavorSchema; // OLD: insertProductSchema, NEW: insertFlavorSchema
+export const insertProductTypeSchema = insertWholesaleUnitTypeSchema; // OLD: insertProductTypeSchema, NEW: insertWholesaleUnitTypeSchema
+export const insertWholesalePricingSchema = insertWholesaleCustomerPricingSchema; // OLD: insertWholesalePricingSchema, NEW: insertWholesaleCustomerPricingSchema
+
+// Stub for inventory adjustments (will be implemented later)
+export const inventoryAdjustments = pgTable("inventory_adjustments_stub", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  flavorId: varchar("flavor_id").notNull().references(() => flavors.id),
+  quantity: integer("quantity").notNull(),
+  reason: text("reason").notNull(),
+  staffUserId: varchar("staff_user_id").references(() => users.id),
+  orderId: varchar("order_id"),
+  orderType: text("order_type"),
+  batchMetadata: text("batch_metadata"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export type InventoryAdjustment = typeof inventoryAdjustments.$inferSelect;
+export type InsertInventoryAdjustment = z.infer<typeof insertInventoryAdjustmentSchema>;
+export const insertInventoryAdjustmentSchema = createInsertSchema(inventoryAdjustments).omit({ id: true, createdAt: true });
