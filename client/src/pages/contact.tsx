@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -24,6 +24,9 @@ type ContactFormData = z.infer<typeof contactFormSchema>;
 export default function Contact() {
   const { toast } = useToast();
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submittedData, setSubmittedData] = useState<ContactFormData | null>(null);
+  const successPanelRef = useRef<HTMLDivElement>(null);
+  const firstInputRef = useRef<HTMLInputElement>(null);
   
   const form = useForm<ContactFormData>({
     resolver: zodResolver(contactFormSchema),
@@ -36,20 +39,32 @@ export default function Contact() {
     },
   });
 
+  useEffect(() => {
+    if (isSubmitted && successPanelRef.current) {
+      successPanelRef.current.focus();
+    }
+  }, [isSubmitted]);
+
   const onSubmit = async (data: ContactFormData) => {
     console.log("Contact form submission:", data);
     
+    setSubmittedData(data);
     setIsSubmitted(true);
     
     toast({
       title: "Message sent!",
       description: "We'll get back to you within 1-2 business days.",
     });
+  };
 
+  const handleSendAnother = () => {
+    setIsSubmitted(false);
+    setSubmittedData(null);
+    form.reset();
+    
     setTimeout(() => {
-      setIsSubmitted(false);
-      form.reset();
-    }, 3000);
+      firstInputRef.current?.focus();
+    }, 0);
   };
 
   return (
@@ -147,127 +162,183 @@ export default function Contact() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Send us a message</CardTitle>
+              <CardTitle>{isSubmitted ? "Message Sent!" : "Send us a message"}</CardTitle>
               <CardDescription>
-                Fill out the form below and we'll respond within 1-2 business days
+                {isSubmitted 
+                  ? "We've received your message and will respond within 1-2 business days"
+                  : "Fill out the form below and we'll respond within 1-2 business days"
+                }
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                  <FormField
-                    control={form.control}
-                    name="name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Name *</FormLabel>
-                        <FormControl>
-                          <Input 
-                            placeholder="Your name" 
-                            {...field}
-                            data-testid="input-name"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="email"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Email *</FormLabel>
-                        <FormControl>
-                          <Input 
-                            type="email"
-                            placeholder="your@email.com" 
-                            {...field}
-                            data-testid="input-email"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="phone"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Phone</FormLabel>
-                        <FormControl>
-                          <Input 
-                            type="tel"
-                            placeholder="(206) 555-1234" 
-                            {...field}
-                            data-testid="input-phone"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="company"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Company / Business</FormLabel>
-                        <FormControl>
-                          <Input 
-                            placeholder="Your company name" 
-                            {...field}
-                            data-testid="input-company"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="message"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Message *</FormLabel>
-                        <FormControl>
-                          <Textarea 
-                            placeholder="Tell us about your inquiry..."
-                            className="min-h-32 resize-none"
-                            {...field}
-                            data-testid="input-message"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+              {isSubmitted && submittedData ? (
+                <div 
+                  ref={successPanelRef}
+                  className="space-y-6" 
+                  role="status" 
+                  aria-live="polite" 
+                  tabIndex={-1}
+                  data-testid="success-panel"
+                >
+                  <div className="flex items-center justify-center py-6">
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
+                      <Check className="w-8 h-8 text-primary" />
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-4 border-t pt-6">
+                    <h3 className="font-semibold text-sm text-muted-foreground">Your Message Details:</h3>
+                    
+                    <div className="space-y-3 text-sm">
+                      <div>
+                        <span className="font-medium">Name:</span>
+                        <p className="text-muted-foreground">{submittedData.name}</p>
+                      </div>
+                      
+                      <div>
+                        <span className="font-medium">Email:</span>
+                        <p className="text-muted-foreground">{submittedData.email}</p>
+                      </div>
+                      
+                      {submittedData.phone && (
+                        <div>
+                          <span className="font-medium">Phone:</span>
+                          <p className="text-muted-foreground">{submittedData.phone}</p>
+                        </div>
+                      )}
+                      
+                      {submittedData.company && (
+                        <div>
+                          <span className="font-medium">Company:</span>
+                          <p className="text-muted-foreground">{submittedData.company}</p>
+                        </div>
+                      )}
+                      
+                      <div>
+                        <span className="font-medium">Message:</span>
+                        <p className="text-muted-foreground whitespace-pre-wrap">{submittedData.message}</p>
+                      </div>
+                    </div>
+                  </div>
 
                   <Button 
-                    type="submit" 
+                    onClick={handleSendAnother}
                     className="w-full rounded-full gap-2"
-                    disabled={form.formState.isSubmitting || isSubmitted}
-                    data-testid="button-submit"
+                    data-testid="button-send-another"
                   >
-                    {isSubmitted ? (
-                      <>
-                        <Check className="w-4 h-4" />
-                        Message Sent!
-                      </>
-                    ) : (
-                      <>
-                        <Send className="w-4 h-4" />
-                        Send Message
-                      </>
-                    )}
+                    <Send className="w-4 h-4" />
+                    Send Another Message
                   </Button>
-                </form>
-              </Form>
+                </div>
+              ) : (
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                    <FormField
+                      control={form.control}
+                      name="name"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Name *</FormLabel>
+                          <FormControl>
+                            <Input 
+                              placeholder="Your name" 
+                              {...field}
+                              ref={firstInputRef}
+                              data-testid="input-name"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email *</FormLabel>
+                          <FormControl>
+                            <Input 
+                              type="email"
+                              placeholder="your@email.com" 
+                              {...field}
+                              data-testid="input-email"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="phone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Phone</FormLabel>
+                          <FormControl>
+                            <Input 
+                              type="tel"
+                              placeholder="(206) 555-1234" 
+                              {...field}
+                              data-testid="input-phone"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="company"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Company / Business</FormLabel>
+                          <FormControl>
+                            <Input 
+                              placeholder="Your company name" 
+                              {...field}
+                              data-testid="input-company"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="message"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Message *</FormLabel>
+                          <FormControl>
+                            <Textarea 
+                              placeholder="Tell us about your inquiry..."
+                              className="min-h-32 resize-none"
+                              {...field}
+                              data-testid="input-message"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <Button 
+                      type="submit" 
+                      className="w-full rounded-full gap-2"
+                      disabled={form.formState.isSubmitting}
+                      data-testid="button-submit"
+                    >
+                      <Send className="w-4 h-4" />
+                      Send Message
+                    </Button>
+                  </form>
+                </Form>
+              )}
             </CardContent>
           </Card>
         </div>
