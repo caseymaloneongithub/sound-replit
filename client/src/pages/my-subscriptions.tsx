@@ -11,6 +11,7 @@ import { Package, Repeat, Plus, Trash2, X, CreditCard } from "lucide-react";
 import { format, addWeeks } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { PickupInfo } from "@/components/pickup-info";
 
 type SubscriptionItem = {
   id: string;
@@ -475,6 +476,13 @@ export default function MySubscriptions() {
               </Button>
             </CardContent>
           </Card>
+        )}
+
+        {activeSubscriptions && activeSubscriptions.length > 0 && (
+          <div className="mt-8">
+            <h2 className="text-2xl font-bold mb-4">Pickup Information</h2>
+            <PickupInfo />
+          </div>
         )}
       </div>
 

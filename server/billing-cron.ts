@@ -4,6 +4,7 @@ import { db } from './db';
 import { subscriptions, subscriptionItems, products, retailOrders, retailOrderItems, inventoryAdjustments } from '../shared/schema';
 import { eq, and, lte, sql } from 'drizzle-orm';
 import { sendPaymentFailureEmail, sendStaffPaymentFailureNotification } from './email';
+import { normalizeToAllowedPickupDay } from '../shared/pickup-policy';
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-10-29.clover' })
@@ -182,11 +183,14 @@ export async function finalizeSubscriptionCharge(paymentIntentId: string): Promi
           .where(eq(subscriptions.id, sub.id))
           .for('update');
 
+        // Normalize next date to allowed pickup day (Mon-Thu)
+        const normalizedNextDate = normalizeToAllowedPickupDay(nextDate);
+        
         await tx
           .update(subscriptions)
           .set({
-            nextChargeAt: nextDate,
-            nextDeliveryDate: nextDate,
+            nextChargeAt: normalizedNextDate,
+            nextDeliveryDate: normalizedNextDate,
             billingStatus: 'active',
             retryCount: 0,
             lastPaymentIntentId: paymentIntentId,

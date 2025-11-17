@@ -15,6 +15,7 @@ import { sendEmailVerificationCode } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { createStripeCustomer } from "./stripeCustomer";
+import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY } from "@shared/pickup-policy";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -1328,8 +1329,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
               frequency === 'bi-weekly' ? 14 :
               28;
 
-            const nextDate = new Date();
-            nextDate.setDate(nextDate.getDate() + daysUntilNext);
+            // Calculate next date and normalize to allowed pickup day (Mon-Thu)
+            const tentativeNextDate = new Date();
+            tentativeNextDate.setDate(tentativeNextDate.getDate() + daysUntilNext);
+            const nextDate = normalizeToAllowedPickupDay(tentativeNextDate);
 
             // Get customer details
             const customer = session.customer_details;
@@ -1424,6 +1427,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             28; // every-4-weeks
 
           // Create subscription with product info from metadata (cart-based) or planId (plan-based)
+          // Calculate next delivery date and normalize to allowed pickup day (Mon-Thu)
+          const tentativeDate = new Date(Date.now() + daysUntilNext * 24 * 60 * 60 * 1000);
+          const nextDeliveryDate = normalizeToAllowedPickupDay(tentativeDate);
+          
           const subscriptionData: any = {
             customerName: session.metadata?.customerName || session.customer_details?.name || 'Unknown',
             customerEmail: session.customer_details?.email || '',
@@ -1431,7 +1438,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             stripeSubscriptionId: subscription.id,
             stripeCustomerId: subscription.customer as string,
             status: 'active',
-            nextDeliveryDate: new Date(Date.now() + daysUntilNext * 24 * 60 * 60 * 1000),
+            nextDeliveryDate: nextDeliveryDate,
           };
 
           // Add userId if available
@@ -2099,7 +2106,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // 2. The "48-hour minimum" check ensures adequate lead time
         // Together, these prevent moving to dates that are too soon
         
-        const nextWeekDeliveryUTC = nextWeekUTC;
+        // Normalize to allowed pickup day (Mon-Thu) - usually already Monday
+        const nextWeekDeliveryUTC = normalizeToAllowedPickupDay(nextWeekUTC);
         
         // Update both dates together to keep them in sync
         updates.nextDeliveryDate = nextWeekDeliveryUTC;
@@ -2112,8 +2120,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? new Date(subscription.nextDeliveryDate)
           : new Date();
         
-        const newDate = new Date(currentDate);
-        newDate.setDate(newDate.getDate() + (validated.weeksToDelay * 7));
+        const tentativeNewDate = new Date(currentDate);
+        tentativeNewDate.setDate(tentativeNewDate.getDate() + (validated.weeksToDelay * 7));
+        
+        // Normalize to allowed pickup day (Mon-Thu)
+        const newDate = normalizeToAllowedPickupDay(tentativeNewDate);
         
         // Update both dates together to keep them in sync
         updates.nextDeliveryDate = newDate;

@@ -17,6 +17,7 @@ import { format } from "date-fns";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { PickupInfo } from "@/components/pickup-info";
 
 export default function Account() {
   const { toast } = useToast();
@@ -425,6 +426,13 @@ export default function Account() {
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {activeSubscriptions.length > 0 && (
+            <div>
+              <h2 className="text-2xl font-bold mb-4">Pickup Information</h2>
+              <PickupInfo />
             </div>
           )}
         </div>
