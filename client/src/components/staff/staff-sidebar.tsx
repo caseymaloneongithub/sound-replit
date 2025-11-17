@@ -12,7 +12,8 @@ import {
   Settings,
   BarChart3,
   DollarSign,
-  UserCog
+  UserCog,
+  Building2
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -65,6 +66,7 @@ export function StaffSidebar() {
     {
       title: "Administration",
       items: [
+        { title: "CRM", href: "/staff-portal?tab=crm", icon: Building2 },
         { title: "User Management", href: "/staff-portal?tab=users", icon: UserCog, adminOnly: true },
       ],
     },
