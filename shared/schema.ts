@@ -65,17 +65,27 @@ export const emailVerificationCodes = pgTable("email_verification_codes", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const products = pgTable("products", {
+// Product Types - represents product categories with pricing (e.g., "Mixed Case - 12 bottles")
+export const productTypes = pgTable("product_types", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
   description: text("description").notNull(),
-  flavor: text("flavor").notNull(),
-  ingredients: text("ingredients").array().notNull(),
   retailPrice: decimal("retail_price", { precision: 10, scale: 2 }).notNull(),
   wholesalePrice: decimal("wholesale_price", { precision: 10, scale: 2 }).notNull(),
+  unitType: text("unit_type").notNull().default('case'), // 'case', '1/6-barrel', '1/2-barrel'
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+// Products - represents individual flavors (linked to a product type for pricing)
+export const products = pgTable("products", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  productTypeId: varchar("product_type_id").notNull().references(() => productTypes.id),
+  name: text("name").notNull(), // Flavor name (e.g., "Bonfire", "Evergreen")
+  description: text("description").notNull(),
+  flavor: text("flavor").notNull(), // Flavor description (e.g., "warm spiced", "matcha")
+  ingredients: text("ingredients").array().notNull(),
   imageUrl: text("image_url").notNull(),
   imageUrls: text("image_urls").array().notNull().default(sql`ARRAY[]::text[]`),
-  unitType: text("unit_type").notNull().default('case'), // 'case', '1/6-barrel', '1/2-barrel'
   inStock: boolean("in_stock").notNull().default(true),
   isActive: boolean("is_active").notNull().default(true),
   stockQuantity: integer("stock_quantity").notNull().default(0),
@@ -225,10 +235,10 @@ export const wholesaleOrderItems = pgTable("wholesale_order_items", {
 export const wholesalePricing = pgTable("wholesale_pricing", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id),
-  productId: varchar("product_id").notNull().references(() => products.id),
+  productTypeId: varchar("product_type_id").notNull().references(() => productTypes.id),
   customPrice: decimal("custom_price", { precision: 10, scale: 2 }).notNull(),
 }, (table) => ({
-  uniqueCustomerProduct: unique().on(table.customerId, table.productId),
+  uniqueCustomerProductType: unique().on(table.customerId, table.productTypeId),
 }));
 
 export const impersonationLogs = pgTable("impersonation_logs", {
@@ -271,6 +281,7 @@ export const leadTouchPoints = pgTable("lead_touch_points", {
 
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, isAdmin: true, role: true });
+export const insertProductTypeSchema = createInsertSchema(productTypes).omit({ id: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
 export const insertSubscriptionPlanSchema = createInsertSchema(subscriptionPlans).omit({ id: true });
 export const insertCartItemSchema = createInsertSchema(cartItems).omit({ id: true });
@@ -300,6 +311,7 @@ export const updateProfileSchema = z.object({
 
 // Insert types
 export type InsertUser = z.infer<typeof insertUserSchema>;
+export type InsertProductType = z.infer<typeof insertProductTypeSchema>;
 export type InsertProduct = z.infer<typeof insertProductSchema>;
 export type InsertInventoryAdjustment = z.infer<typeof insertInventoryAdjustmentSchema>;
 export type InsertSubscriptionPlan = z.infer<typeof insertSubscriptionPlanSchema>;
@@ -322,6 +334,7 @@ export type UpdateProfile = z.infer<typeof updateProfileSchema>;
 
 // Select types
 export type User = typeof users.$inferSelect;
+export type ProductType = typeof productTypes.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type InventoryAdjustment = typeof inventoryAdjustments.$inferSelect;
 export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
