@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, inventoryAdjustments, subscriptions, Subscription, updateProfileSchema, users } from "@shared/schema";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, inventoryAdjustments, subscriptions, Subscription, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -658,6 +658,200 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
       }
       res.status(500).json({ message: "Error updating product: " + error.message });
+    }
+  });
+
+  // NEW SCHEMA - Flavor management routes
+  app.get("/api/flavors", async (req: any, res) => {
+    try {
+      const includeInactive = req.query.includeInactive === 'true';
+      
+      if (includeInactive && (!req.user || req.user.role !== 'admin')) {
+        return res.status(403).json({ message: "Only admins can view inactive flavors" });
+      }
+      
+      const flavors = await storage.getFlavors(includeInactive);
+      res.json(flavors);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching flavors: " + error.message });
+    }
+  });
+
+  app.get("/api/flavors/:id", async (req, res) => {
+    try {
+      const flavor = await storage.getFlavor(req.params.id);
+      if (!flavor) {
+        return res.status(404).json({ message: "Flavor not found" });
+      }
+      res.json(flavor);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching flavor: " + error.message });
+    }
+  });
+
+  app.post("/api/flavors", isAdmin, async (req, res) => {
+    try {
+      const validatedData = insertFlavorSchema.parse(req.body);
+      const flavor = await storage.createFlavor(validatedData);
+      res.json(flavor);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error creating flavor: " + error.message });
+    }
+  });
+
+  app.patch("/api/flavors/:id", isAdmin, async (req, res) => {
+    try {
+      const partialFlavorSchema = insertFlavorSchema.partial();
+      const validatedUpdates = partialFlavorSchema.parse(req.body);
+      const flavor = await storage.updateFlavor(req.params.id, validatedUpdates);
+      if (!flavor) {
+        return res.status(404).json({ message: "Flavor not found" });
+      }
+      res.json(flavor);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error updating flavor: " + error.message });
+    }
+  });
+
+  app.delete("/api/flavors/:id", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteFlavor(req.params.id);
+      res.json({ message: "Flavor deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting flavor: " + error.message });
+    }
+  });
+
+  // NEW SCHEMA - Retail Product management routes
+  app.get("/api/retail-products", async (req: any, res) => {
+    try {
+      const includeInactive = req.query.includeInactive === 'true';
+      
+      if (includeInactive && (!req.user || req.user.role !== 'admin')) {
+        return res.status(403).json({ message: "Only admins can view inactive products" });
+      }
+      
+      const products = await storage.getRetailProducts(includeInactive);
+      res.json(products);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching retail products: " + error.message });
+    }
+  });
+
+  app.post("/api/retail-products", isAdmin, async (req, res) => {
+    try {
+      const validatedData = insertRetailProductSchema.parse(req.body);
+      const product = await storage.createRetailProduct(validatedData);
+      res.json(product);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error creating retail product: " + error.message });
+    }
+  });
+
+  app.patch("/api/retail-products/:id", isAdmin, async (req, res) => {
+    try {
+      const partialProductSchema = insertRetailProductSchema.partial();
+      const validatedUpdates = partialProductSchema.parse(req.body);
+      const product = await storage.updateRetailProduct(req.params.id, validatedUpdates);
+      if (!product) {
+        return res.status(404).json({ message: "Retail product not found" });
+      }
+      res.json(product);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error updating retail product: " + error.message });
+    }
+  });
+
+  app.delete("/api/retail-products/:id", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteRetailProduct(req.params.id);
+      res.json({ message: "Retail product deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting retail product: " + error.message });
+    }
+  });
+
+  // NEW SCHEMA - Wholesale Unit Type management routes
+  app.get("/api/wholesale-unit-types", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
+    try {
+      const includeInactive = req.query.includeInactive === 'true';
+      const includeFlavors = req.query.includeFlavors === 'true';
+      
+      if (includeFlavors) {
+        const unitTypes = await storage.getAllWholesaleUnitTypesWithFlavors();
+        res.json(unitTypes);
+      } else {
+        const unitTypes = await storage.getWholesaleUnitTypes(includeInactive);
+        res.json(unitTypes);
+      }
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching wholesale unit types: " + error.message });
+    }
+  });
+
+  app.post("/api/wholesale-unit-types", isAdmin, async (req, res) => {
+    try {
+      const { flavorIds, ...unitTypeData } = req.body;
+      const validatedData = insertWholesaleUnitTypeSchema.parse(unitTypeData);
+      const unitType = await storage.createWholesaleUnitType(validatedData);
+      
+      // Set flavor associations if provided
+      if (flavorIds && Array.isArray(flavorIds)) {
+        await storage.setWholesaleUnitTypeFlavors(unitType.id, flavorIds);
+      }
+      
+      res.json(unitType);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error creating wholesale unit type: " + error.message });
+    }
+  });
+
+  app.patch("/api/wholesale-unit-types/:id", isAdmin, async (req, res) => {
+    try {
+      const { flavorIds, ...unitTypeData } = req.body;
+      const partialUnitTypeSchema = insertWholesaleUnitTypeSchema.partial();
+      const validatedUpdates = partialUnitTypeSchema.parse(unitTypeData);
+      const unitType = await storage.updateWholesaleUnitType(req.params.id, validatedUpdates);
+      
+      if (!unitType) {
+        return res.status(404).json({ message: "Wholesale unit type not found" });
+      }
+      
+      // Update flavor associations if provided
+      if (flavorIds && Array.isArray(flavorIds)) {
+        await storage.setWholesaleUnitTypeFlavors(req.params.id, flavorIds);
+      }
+      
+      res.json(unitType);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error updating wholesale unit type: " + error.message });
+    }
+  });
+
+  app.delete("/api/wholesale-unit-types/:id", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteWholesaleUnitType(req.params.id);
+      res.json({ message: "Wholesale unit type deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting wholesale unit type: " + error.message });
     }
   });
 

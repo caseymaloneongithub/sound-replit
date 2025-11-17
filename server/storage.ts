@@ -98,6 +98,7 @@ export interface IStorage {
   markEmailVerificationCodeAsConsumed(id: string): Promise<void>;
   incrementEmailVerificationAttempts(id: string): Promise<void>;
   
+  // OLD SCHEMA - Product management
   getProducts(includeInactive?: boolean): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
@@ -106,6 +107,30 @@ export interface IStorage {
   getLowStockProducts(): Promise<Product[]>;
   
   createInventoryAdjustment(adjustment: InsertInventoryAdjustment): Promise<InventoryAdjustment>;
+  
+  // NEW SCHEMA - Flavor management
+  getFlavors(includeInactive?: boolean): Promise<Flavor[]>;
+  getFlavor(id: string): Promise<Flavor | undefined>;
+  createFlavor(flavor: InsertFlavor): Promise<Flavor>;
+  updateFlavor(id: string, updates: Partial<InsertFlavor>): Promise<Flavor | undefined>;
+  deleteFlavor(id: string): Promise<void>;
+  
+  // NEW SCHEMA - Retail Product management
+  getRetailProducts(includeInactive?: boolean): Promise<(RetailProduct & { flavor: Flavor })[]>;
+  getRetailProduct(id: string): Promise<(RetailProduct & { flavor: Flavor }) | undefined>;
+  createRetailProduct(product: InsertRetailProduct): Promise<RetailProduct>;
+  updateRetailProduct(id: string, updates: Partial<InsertRetailProduct>): Promise<RetailProduct | undefined>;
+  deleteRetailProduct(id: string): Promise<void>;
+  
+  // NEW SCHEMA - Wholesale Unit Type management
+  getWholesaleUnitTypes(includeInactive?: boolean): Promise<WholesaleUnitType[]>;
+  getWholesaleUnitType(id: string): Promise<WholesaleUnitType | undefined>;
+  getWholesaleUnitTypeWithFlavors(id: string): Promise<(WholesaleUnitType & { flavors: Flavor[] }) | undefined>;
+  getAllWholesaleUnitTypesWithFlavors(): Promise<(WholesaleUnitType & { flavors: Flavor[] })[]>;
+  createWholesaleUnitType(unitType: InsertWholesaleUnitType): Promise<WholesaleUnitType>;
+  updateWholesaleUnitType(id: string, updates: Partial<InsertWholesaleUnitType>): Promise<WholesaleUnitType | undefined>;
+  deleteWholesaleUnitType(id: string): Promise<void>;
+  setWholesaleUnitTypeFlavors(unitTypeId: string, flavorIds: string[]): Promise<void>;
   getInventoryAdjustments(filters?: { productId?: string; reason?: string; limit?: number }): Promise<Array<InventoryAdjustment & { productName: string }>>;
   checkStockAvailability(productId: string, requiredQuantity: number): Promise<{ available: boolean; currentStock: number; deficit?: number }>;
   
@@ -647,6 +672,212 @@ export class PostgresStorage implements IStorage {
       currentStock: product.stockQuantity,
       deficit
     };
+  }
+
+  // NEW SCHEMA - Flavor management implementation
+  async getFlavors(includeInactive = false): Promise<Flavor[]> {
+    if (includeInactive) {
+      return await db.select().from(flavors).orderBy(flavors.displayOrder, flavors.name);
+    }
+    return await db.select().from(flavors).where(eq(flavors.isActive, true)).orderBy(flavors.displayOrder, flavors.name);
+  }
+
+  async getFlavor(id: string): Promise<Flavor | undefined> {
+    const result = await db.select().from(flavors).where(eq(flavors.id, id));
+    return result[0];
+  }
+
+  async createFlavor(insertFlavor: InsertFlavor): Promise<Flavor> {
+    const result = await db.insert(flavors).values(insertFlavor).returning();
+    return result[0];
+  }
+
+  async updateFlavor(id: string, updates: Partial<InsertFlavor>): Promise<Flavor | undefined> {
+    const result = await db
+      .update(flavors)
+      .set(updates)
+      .where(eq(flavors.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteFlavor(id: string): Promise<void> {
+    await db.delete(flavors).where(eq(flavors.id, id));
+  }
+
+  // NEW SCHEMA - Retail Product management implementation
+  async getRetailProducts(includeInactive = false): Promise<(RetailProduct & { flavor: Flavor })[]> {
+    const query = db
+      .select({
+        id: retailProducts.id,
+        flavorId: retailProducts.flavorId,
+        unitType: retailProducts.unitType,
+        unitDescription: retailProducts.unitDescription,
+        price: retailProducts.price,
+        isActive: retailProducts.isActive,
+        displayOrder: retailProducts.displayOrder,
+        flavor: flavors,
+      })
+      .from(retailProducts)
+      .leftJoin(flavors, eq(retailProducts.flavorId, flavors.id))
+      .orderBy(retailProducts.unitType, retailProducts.displayOrder);
+
+    if (!includeInactive) {
+      const results = await query.where(eq(retailProducts.isActive, true));
+      return results.map(r => ({
+        id: r.id,
+        flavorId: r.flavorId,
+        unitType: r.unitType,
+        unitDescription: r.unitDescription,
+        price: r.price,
+        isActive: r.isActive,
+        displayOrder: r.displayOrder,
+        flavor: r.flavor!,
+      }));
+    }
+
+    const results = await query;
+    return results.map(r => ({
+      id: r.id,
+      flavorId: r.flavorId,
+      unitType: r.unitType,
+      unitDescription: r.unitDescription,
+      price: r.price,
+      isActive: r.isActive,
+      displayOrder: r.displayOrder,
+      flavor: r.flavor!,
+    }));
+  }
+
+  async getRetailProduct(id: string): Promise<(RetailProduct & { flavor: Flavor }) | undefined> {
+    const result = await db
+      .select({
+        id: retailProducts.id,
+        flavorId: retailProducts.flavorId,
+        unitType: retailProducts.unitType,
+        unitDescription: retailProducts.unitDescription,
+        price: retailProducts.price,
+        isActive: retailProducts.isActive,
+        displayOrder: retailProducts.displayOrder,
+        flavor: flavors,
+      })
+      .from(retailProducts)
+      .leftJoin(flavors, eq(retailProducts.flavorId, flavors.id))
+      .where(eq(retailProducts.id, id));
+
+    if (!result[0] || !result[0].flavor) return undefined;
+    
+    return {
+      id: result[0].id,
+      flavorId: result[0].flavorId,
+      unitType: result[0].unitType,
+      unitDescription: result[0].unitDescription,
+      price: result[0].price,
+      isActive: result[0].isActive,
+      displayOrder: result[0].displayOrder,
+      flavor: result[0].flavor,
+    };
+  }
+
+  async createRetailProduct(insertRetailProduct: InsertRetailProduct): Promise<RetailProduct> {
+    const result = await db.insert(retailProducts).values(insertRetailProduct).returning();
+    return result[0];
+  }
+
+  async updateRetailProduct(id: string, updates: Partial<InsertRetailProduct>): Promise<RetailProduct | undefined> {
+    const result = await db
+      .update(retailProducts)
+      .set(updates)
+      .where(eq(retailProducts.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteRetailProduct(id: string): Promise<void> {
+    await db.delete(retailProducts).where(eq(retailProducts.id, id));
+  }
+
+  // NEW SCHEMA - Wholesale Unit Type management implementation
+  async getWholesaleUnitTypes(includeInactive = false): Promise<WholesaleUnitType[]> {
+    if (includeInactive) {
+      return await db.select().from(wholesaleUnitTypes).orderBy(wholesaleUnitTypes.displayOrder);
+    }
+    return await db.select().from(wholesaleUnitTypes).where(eq(wholesaleUnitTypes.isActive, true)).orderBy(wholesaleUnitTypes.displayOrder);
+  }
+
+  async getWholesaleUnitType(id: string): Promise<WholesaleUnitType | undefined> {
+    const result = await db.select().from(wholesaleUnitTypes).where(eq(wholesaleUnitTypes.id, id));
+    return result[0];
+  }
+
+  async getWholesaleUnitTypeWithFlavors(id: string): Promise<(WholesaleUnitType & { flavors: Flavor[] }) | undefined> {
+    const unitType = await this.getWholesaleUnitType(id);
+    if (!unitType) return undefined;
+
+    const flavorLinks = await db
+      .select({ flavor: flavors })
+      .from(wholesaleUnitTypeFlavors)
+      .leftJoin(flavors, eq(wholesaleUnitTypeFlavors.flavorId, flavors.id))
+      .where(eq(wholesaleUnitTypeFlavors.unitTypeId, id));
+
+    return {
+      ...unitType,
+      flavors: flavorLinks.map(link => link.flavor!).filter(Boolean),
+    };
+  }
+
+  async getAllWholesaleUnitTypesWithFlavors(): Promise<(WholesaleUnitType & { flavors: Flavor[] })[]> {
+    const unitTypes = await this.getWholesaleUnitTypes(true);
+    
+    const unitTypesWithFlavors = await Promise.all(
+      unitTypes.map(async (unitType) => {
+        const flavorLinks = await db
+          .select({ flavor: flavors })
+          .from(wholesaleUnitTypeFlavors)
+          .leftJoin(flavors, eq(wholesaleUnitTypeFlavors.flavorId, flavors.id))
+          .where(eq(wholesaleUnitTypeFlavors.unitTypeId, unitType.id));
+
+        return {
+          ...unitType,
+          flavors: flavorLinks.map(link => link.flavor!).filter(Boolean),
+        };
+      })
+    );
+
+    return unitTypesWithFlavors;
+  }
+
+  async createWholesaleUnitType(insertWholesaleUnitType: InsertWholesaleUnitType): Promise<WholesaleUnitType> {
+    const result = await db.insert(wholesaleUnitTypes).values(insertWholesaleUnitType).returning();
+    return result[0];
+  }
+
+  async updateWholesaleUnitType(id: string, updates: Partial<InsertWholesaleUnitType>): Promise<WholesaleUnitType | undefined> {
+    const result = await db
+      .update(wholesaleUnitTypes)
+      .set(updates)
+      .where(eq(wholesaleUnitTypes.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteWholesaleUnitType(id: string): Promise<void> {
+    await db.delete(wholesaleUnitTypes).where(eq(wholesaleUnitTypes.id, id));
+  }
+
+  async setWholesaleUnitTypeFlavors(unitTypeId: string, flavorIds: string[]): Promise<void> {
+    // Delete existing flavor associations
+    await db.delete(wholesaleUnitTypeFlavors).where(eq(wholesaleUnitTypeFlavors.unitTypeId, unitTypeId));
+    
+    // Insert new associations
+    if (flavorIds.length > 0) {
+      await db.insert(wholesaleUnitTypeFlavors).values(
+        flavorIds.map(flavorId => ({
+          unitTypeId,
+          flavorId,
+        }))
+      );
+    }
   }
 
   async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
