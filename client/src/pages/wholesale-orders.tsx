@@ -42,8 +42,7 @@ export default function WholesaleOrders() {
 
   const updateStatusMutation = useMutation({
     mutationFn: async (status: string) => {
-      const response = await apiRequest("PATCH", `/api/wholesale/orders/${selectedOrderId}`, { status });
-      return await response.json();
+      return await apiRequest("PATCH", `/api/wholesale/orders/${selectedOrderId}`, { status });
     },
     onSuccess: () => {
       toast({
@@ -64,10 +63,9 @@ export default function WholesaleOrders() {
 
   const updateDeliveryDateMutation = useMutation({
     mutationFn: async (date: Date | null) => {
-      const response = await apiRequest("PATCH", `/api/wholesale/orders/${selectedOrderId}`, { 
+      return await apiRequest("PATCH", `/api/wholesale/orders/${selectedOrderId}`, { 
         deliveryDate: date ? date.toISOString() : null 
       });
-      return await response.json();
     },
     onSuccess: () => {
       toast({
