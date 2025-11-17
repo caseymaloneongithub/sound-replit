@@ -79,7 +79,7 @@ export const productTypes = pgTable("product_types", {
 // Products - represents individual flavors (linked to a product type for pricing)
 export const products = pgTable("products", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  productTypeId: varchar("product_type_id").notNull().references(() => productTypes.id),
+  productTypeId: varchar("product_type_id").references(() => productTypes.id), // Nullable during migration
   name: text("name").notNull(), // Flavor name (e.g., "Bonfire", "Evergreen")
   description: text("description").notNull(),
   flavor: text("flavor").notNull(), // Flavor description (e.g., "warm spiced", "matcha")
@@ -235,11 +235,10 @@ export const wholesaleOrderItems = pgTable("wholesale_order_items", {
 export const wholesalePricing = pgTable("wholesale_pricing", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id),
-  productTypeId: varchar("product_type_id").notNull().references(() => productTypes.id),
+  productId: varchar("product_id").references(() => products.id), // Old column, will migrate to productTypeId
+  productTypeId: varchar("product_type_id").references(() => productTypes.id), // New column
   customPrice: decimal("custom_price", { precision: 10, scale: 2 }).notNull(),
-}, (table) => ({
-  uniqueCustomerProductType: unique().on(table.customerId, table.productTypeId),
-}));
+});
 
 export const impersonationLogs = pgTable("impersonation_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
