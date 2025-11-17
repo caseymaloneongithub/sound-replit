@@ -37,6 +37,7 @@ import Reports from "@/pages/reports";
 import Account from "@/pages/account";
 import StaffPortal from "@/pages/staff-portal";
 import AdminProducts from "@/pages/admin-products";
+import Contact from "@/pages/contact";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -51,6 +52,7 @@ function Router() {
       <WholesaleCustomerProtectedRoute path="/wholesale-customer" component={WholesaleCustomerDashboard} />
       <Route path="/" component={() => <Redirect to="/shop" />} />
       <Route path="/shop" component={Shop} />
+      <Route path="/contact" component={Contact} />
       <Route path="/subscriptions" component={() => <Redirect to="/my-subscriptions" />} />
       <Route path="/my-subscriptions" component={MySubscriptions} />
       <Route path="/subscribe/:id" component={Subscribe} />
