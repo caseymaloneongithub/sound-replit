@@ -199,7 +199,7 @@ export default function Shop() {
             <a 
               href="/contact" 
               className="hover:underline font-semibold"
-              style={{ color: '#656F3F' }}
+              style={{ color: '#F2C179' }}
               data-testid="link-wholesale-contact"
             >
               here
