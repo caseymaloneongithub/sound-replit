@@ -1,6 +1,6 @@
 import { 
   type Product, type InsertProduct,
-  type ProductType,
+  type ProductType, type InsertProductType,
   type InventoryAdjustment, type InsertInventoryAdjustment,
   type SubscriptionPlan, type InsertSubscriptionPlan,
   type CartItem, type InsertCartItem,
@@ -153,6 +153,7 @@ export interface IStorage {
   getWholesalePrice(customerId: string, productTypeId: string): Promise<WholesalePricing | undefined>;
   setWholesalePrice(pricing: InsertWholesalePricing): Promise<WholesalePricing>;
   getProductTypes(): Promise<ProductType[]>;
+  createProductType(productType: InsertProductType): Promise<ProductType>;
   updateProductType(id: string, updates: Partial<ProductType>): Promise<ProductType | undefined>;
   
   getRetailCustomers(searchQuery?: string): Promise<Array<{
@@ -1076,6 +1077,11 @@ export class PostgresStorage implements IStorage {
 
   async getProductTypes(): Promise<ProductType[]> {
     return await db.select().from(productTypes);
+  }
+
+  async createProductType(insertProductType: InsertProductType): Promise<ProductType> {
+    const result = await db.insert(productTypes).values(insertProductType).returning();
+    return result[0];
   }
 
   async updateProductType(id: string, updates: Partial<ProductType>): Promise<ProductType | undefined> {

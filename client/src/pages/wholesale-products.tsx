@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { Product, ProductType, WholesaleCustomer, WholesalePricing } from "@shared/schema";
+import { Product, ProductType, WholesaleCustomer, WholesalePricing, insertProductTypeSchema, InsertProductType } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,10 +9,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Textarea } from "@/components/ui/textarea";
 import { DollarSign, Loader2, Edit, X, Plus } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 
 export default function WholesaleProducts() {
   const [editingProductType, setEditingProductType] = useState<ProductType | null>(null);
@@ -20,7 +24,20 @@ export default function WholesaleProducts() {
   const [customerPricingProductType, setCustomerPricingProductType] = useState<ProductType | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [customPrice, setCustomPrice] = useState("");
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const { toast } = useToast();
+
+  const createForm = useForm<InsertProductType>({
+    resolver: zodResolver(insertProductTypeSchema),
+    defaultValues: {
+      name: "",
+      description: "",
+      retailPrice: "",
+      wholesalePrice: "",
+      unitType: "case",
+      isActive: true,
+    },
+  });
 
   const { data: products, isLoading } = useQuery<Product[]>({
     queryKey: ["/api/products"],
@@ -92,6 +109,28 @@ export default function WholesaleProducts() {
       toast({
         title: "Error",
         description: "Failed to set customer pricing. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createProductTypeMutation = useMutation({
+    mutationFn: async (data: InsertProductType) => {
+      return await apiRequest("POST", "/api/product-types", data);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Product Type Created",
+        description: "New product type has been created successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/product-types"] });
+      setIsCreateDialogOpen(false);
+      createForm.reset();
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to create product type. Please try again.",
         variant: "destructive",
       });
     },
@@ -174,8 +213,19 @@ export default function WholesaleProducts() {
 
         <Card>
           <CardHeader>
-            <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>Product Wholesale Pricing</CardTitle>
-            <CardDescription>Set default wholesale prices and manage customer-specific overrides</CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>Product Wholesale Pricing</CardTitle>
+                <CardDescription>Set default wholesale prices and manage customer-specific overrides</CardDescription>
+              </div>
+              <Button
+                onClick={() => setIsCreateDialogOpen(true)}
+                data-testid="button-create-product-type"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Create Product Type
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <Table>
@@ -379,6 +429,114 @@ export default function WholesaleProducts() {
                 Close
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Create Product Type Dialog */}
+        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Create New Product Type</DialogTitle>
+              <DialogDescription>
+                Add a new product type with retail and wholesale pricing
+              </DialogDescription>
+            </DialogHeader>
+            <Form {...createForm}>
+              <form onSubmit={createForm.handleSubmit((data) => createProductTypeMutation.mutate(data))} className="space-y-4 py-4">
+                <FormField
+                  control={createForm.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Product Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="e.g., 12-pack Case" data-testid="input-product-name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={createForm.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description</FormLabel>
+                      <FormControl>
+                        <Textarea {...field} placeholder="Product description..." data-testid="input-product-description" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={createForm.control}
+                    name="retailPrice"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Retail Price (per case)</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="number" step="0.01" placeholder="0.00" data-testid="input-retail-price" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={createForm.control}
+                    name="wholesalePrice"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Wholesale Price (per case)</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="number" step="0.01" placeholder="0.00" data-testid="input-wholesale-price-create" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={createForm.control}
+                  name="unitType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Unit Type</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-unit-type">
+                            <SelectValue placeholder="Select unit type" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="case">Case (12 bottles)</SelectItem>
+                          <SelectItem value="1/6-barrel">1/6 Barrel (Sixth Barrel)</SelectItem>
+                          <SelectItem value="1/2-barrel">1/2 Barrel (Half Barrel)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button 
+                    type="submit" 
+                    disabled={createProductTypeMutation.isPending}
+                    data-testid="button-submit-product-type"
+                  >
+                    {createProductTypeMutation.isPending ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating...</>
+                    ) : (
+                      "Create Product Type"
+                    )}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
           </DialogContent>
         </Dialog>
       </div>

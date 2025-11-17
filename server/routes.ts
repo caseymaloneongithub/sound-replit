@@ -671,6 +671,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/product-types", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const validated = insertProductTypeSchema.parse(req.body);
+      const productType = await storage.createProductType(validated);
+      res.status(201).json(productType);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error creating product type: " + error.message });
+    }
+  });
+
   app.patch("/api/product-types/:id", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const { wholesalePrice, retailPrice } = req.body;
