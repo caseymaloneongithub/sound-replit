@@ -1,7 +1,13 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Menu, User, Shield, X } from "lucide-react";
+import { 
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Menu, User, Shield, Building2, ShoppingBag, UserCircle, ChevronDown } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { CartDrawer } from "@/components/cart/cart-drawer";
@@ -57,13 +63,37 @@ export function Navbar() {
                 <User className="w-5 h-5" />
               </Button>
             ) : (
-              <Button
-                variant="ghost"
-                onClick={() => setLocation('/auth')}
-                data-testid="button-login"
-              >
-                Log In
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" data-testid="button-login-dropdown">
+                    Log In
+                    <ChevronDown className="w-4 h-4 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" data-testid="menu-login-options">
+                  <DropdownMenuItem 
+                    onClick={() => setLocation('/auth')}
+                    data-testid="menu-item-retail-login"
+                  >
+                    <ShoppingBag className="w-4 h-4 mr-2" />
+                    Retail Login
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => setLocation('/wholesale/login')}
+                    data-testid="menu-item-wholesale-login"
+                  >
+                    <Building2 className="w-4 h-4 mr-2" />
+                    Wholesale Login
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => setLocation('/staff/login')}
+                    data-testid="menu-item-staff-login"
+                  >
+                    <Shield className="w-4 h-4 mr-2" />
+                    Staff Login
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )
           )}
           <CartDrawer />
@@ -120,17 +150,44 @@ export function Navbar() {
                   </Button>
                 )}
                 {!user && !isLoading && (
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setLocation('/auth');
-                      setMobileMenuOpen(false);
-                    }}
-                    data-testid="nav-mobile-login"
-                    className="justify-start"
-                  >
-                    Log In
-                  </Button>
+                  <>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setLocation('/auth');
+                        setMobileMenuOpen(false);
+                      }}
+                      data-testid="nav-mobile-retail-login"
+                      className="justify-start"
+                    >
+                      <ShoppingBag className="w-4 h-4 mr-2" />
+                      Retail Login
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setLocation('/wholesale/login');
+                        setMobileMenuOpen(false);
+                      }}
+                      data-testid="nav-mobile-wholesale-login"
+                      className="justify-start"
+                    >
+                      <Building2 className="w-4 h-4 mr-2" />
+                      Wholesale Login
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setLocation('/staff/login');
+                        setMobileMenuOpen(false);
+                      }}
+                      data-testid="nav-mobile-staff-login"
+                      className="justify-start"
+                    >
+                      <Shield className="w-4 h-4 mr-2" />
+                      Staff Login
+                    </Button>
+                  </>
                 )}
               </nav>
             </SheetContent>
