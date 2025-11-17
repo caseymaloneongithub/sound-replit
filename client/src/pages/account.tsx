@@ -357,7 +357,7 @@ export default function Account() {
                         </div>
                       </CardHeader>
                       <CardContent>
-                        <div className="grid md:grid-cols-2 gap-4">
+                        <div className="grid md:grid-cols-2 gap-4 mb-4">
                           <div>
                             <p className="text-sm text-muted-foreground">Started</p>
                             <p className="font-medium">{format(new Date(sub.startDate!), 'MMM d, yyyy')}</p>
@@ -373,6 +373,13 @@ export default function Account() {
                             <p className="font-medium">${plan?.price}/{plan?.frequency === 'weekly' ? 'week' : 'month'}</p>
                           </div>
                         </div>
+                        <Button 
+                          className="w-full" 
+                          onClick={() => setLocation('/my-subscriptions')}
+                          data-testid={`button-manage-subscription-${sub.id}`}
+                        >
+                          Manage Subscription
+                        </Button>
                       </CardContent>
                     </Card>
                   );
