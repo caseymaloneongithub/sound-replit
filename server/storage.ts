@@ -14,6 +14,7 @@ import {
   type WholesalePricing, type InsertWholesalePricing,
   type User, type InsertUser,
   type VerificationCode, type InsertVerificationCode,
+  type EmailVerificationCode, type InsertEmailVerificationCode,
   type ImpersonationLog, type InsertImpersonationLog,
   products,
   inventoryAdjustments,
@@ -30,6 +31,7 @@ import {
   wholesalePricing,
   users,
   verificationCodes,
+  emailVerificationCodes,
   impersonationLogs,
   passwordResetTokens
 } from "@shared/schema";
@@ -71,6 +73,13 @@ export interface IStorage {
   markVerificationCodeAsVerified(id: string): Promise<void>;
   markVerificationCodeAsConsumed(id: string): Promise<void>;
   incrementVerificationAttempts(id: string): Promise<void>;
+  
+  createEmailVerificationCode(code: InsertEmailVerificationCode): Promise<EmailVerificationCode>;
+  getLatestEmailVerificationCode(email: string): Promise<EmailVerificationCode | undefined>;
+  getLatestEmailVerificationCodeByPurpose(email: string, purpose: 'registration' | 'login'): Promise<EmailVerificationCode | undefined>;
+  markEmailVerificationCodeAsVerified(id: string): Promise<void>;
+  markEmailVerificationCodeAsConsumed(id: string): Promise<void>;
+  incrementEmailVerificationAttempts(id: string): Promise<void>;
   
   getProducts(includeInactive?: boolean): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
@@ -394,6 +403,57 @@ export class PostgresStorage implements IStorage {
       .update(verificationCodes)
       .set({ attempts: sql`${verificationCodes.attempts} + 1` })
       .where(eq(verificationCodes.id, id));
+  }
+
+  async createEmailVerificationCode(codeData: InsertEmailVerificationCode): Promise<EmailVerificationCode> {
+    const result = await db.insert(emailVerificationCodes).values(codeData).returning();
+    return result[0];
+  }
+
+  async getLatestEmailVerificationCode(email: string): Promise<EmailVerificationCode | undefined> {
+    const result = await db
+      .select()
+      .from(emailVerificationCodes)
+      .where(eq(emailVerificationCodes.email, email))
+      .orderBy(desc(emailVerificationCodes.createdAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async getLatestEmailVerificationCodeByPurpose(email: string, purpose: 'registration' | 'login'): Promise<EmailVerificationCode | undefined> {
+    const result = await db
+      .select()
+      .from(emailVerificationCodes)
+      .where(
+        and(
+          eq(emailVerificationCodes.email, email),
+          eq(emailVerificationCodes.purpose, purpose)
+        )
+      )
+      .orderBy(desc(emailVerificationCodes.createdAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async markEmailVerificationCodeAsVerified(id: string): Promise<void> {
+    await db
+      .update(emailVerificationCodes)
+      .set({ verified: true })
+      .where(eq(emailVerificationCodes.id, id));
+  }
+
+  async markEmailVerificationCodeAsConsumed(id: string): Promise<void> {
+    await db
+      .update(emailVerificationCodes)
+      .set({ consumedAt: new Date() })
+      .where(eq(emailVerificationCodes.id, id));
+  }
+
+  async incrementEmailVerificationAttempts(id: string): Promise<void> {
+    await db
+      .update(emailVerificationCodes)
+      .set({ attempts: sql`${emailVerificationCodes.attempts} + 1` })
+      .where(eq(emailVerificationCodes.id, id));
   }
 
   async getProducts(includeInactive = false): Promise<Product[]> {

@@ -259,6 +259,7 @@ export const insertWholesaleOrderSchema = createInsertSchema(wholesaleOrders).om
 export const insertWholesaleOrderItemSchema = createInsertSchema(wholesaleOrderItems).omit({ id: true });
 export const insertWholesalePricingSchema = createInsertSchema(wholesalePricing).omit({ id: true });
 export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
+export const insertEmailVerificationCodeSchema = createInsertSchema(emailVerificationCodes).omit({ id: true, createdAt: true });
 export const insertImpersonationLogSchema = createInsertSchema(impersonationLogs).omit({ id: true, startedAt: true });
 
 // Update profile schema - allows customers to update their contact information
@@ -285,6 +286,7 @@ export type InsertWholesaleOrder = z.infer<typeof insertWholesaleOrderSchema>;
 export type InsertWholesaleOrderItem = z.infer<typeof insertWholesaleOrderItemSchema>;
 export type InsertWholesalePricing = z.infer<typeof insertWholesalePricingSchema>;
 export type InsertVerificationCode = z.infer<typeof insertVerificationCodeSchema>;
+export type InsertEmailVerificationCode = z.infer<typeof insertEmailVerificationCodeSchema>;
 export type InsertImpersonationLog = z.infer<typeof insertImpersonationLogSchema>;
 export type UpdateProfile = z.infer<typeof updateProfileSchema>;
 
@@ -304,4 +306,5 @@ export type WholesaleOrder = typeof wholesaleOrders.$inferSelect;
 export type WholesaleOrderItem = typeof wholesaleOrderItems.$inferSelect;
 export type WholesalePricing = typeof wholesalePricing.$inferSelect;
 export type VerificationCode = typeof verificationCodes.$inferSelect;
+export type EmailVerificationCode = typeof emailVerificationCodes.$inferSelect;
 export type ImpersonationLog = typeof impersonationLogs.$inferSelect;
