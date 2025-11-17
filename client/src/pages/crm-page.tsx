@@ -97,8 +97,9 @@ export default function CRMPage() {
   const createTouchPointMutation = useMutation({
     mutationFn: async ({ leadId, data }: { leadId: string; data: Omit<z.infer<typeof insertLeadTouchPointSchema>, 'leadId' | 'createdByUserId'> }) =>
       await apiRequest("POST", `/api/crm/leads/${leadId}/touchpoints`, data),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/leads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/leads", variables.leadId, "touchpoints"] });
       toast({ title: "Success", description: "Touch point added successfully" });
       setIsTouchPointDialogOpen(false);
       touchPointForm.reset();
@@ -486,7 +487,7 @@ export default function CRMPage() {
       )}
 
       {/* Lead Detail Dialog */}
-      <Dialog open={!!selectedLead && !isEditDialogOpen && !isTouchPointDialogOpen} onOpenChange={(open) => !open && setSelectedLead(null)}>
+      <Dialog open={!!selectedLead && !isEditDialogOpen} onOpenChange={(open) => !open && setSelectedLead(null)}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           {selectedLead && (
             <>
