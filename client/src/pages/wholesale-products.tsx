@@ -70,7 +70,7 @@ export default function WholesaleProducts() {
       }
       return await apiRequest("POST", "/api/wholesale/pricing", {
         customerId: selectedCustomer,
-        productId: customerPricingProduct.id,
+        productTypeId: customerPricingProduct.productTypeId,
         customPrice: parseFloat(customPrice),
       });
     },

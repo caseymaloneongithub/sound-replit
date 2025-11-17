@@ -634,6 +634,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Product Types routes
+  app.get("/api/product-types", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const productTypes = await storage.getProductTypes();
+      res.json(productTypes);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching product types: " + error.message });
+    }
+  });
+
+  app.patch("/api/product-types/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { wholesalePrice, retailPrice } = req.body;
+      const updates: any = {};
+      if (wholesalePrice !== undefined) updates.wholesalePrice = wholesalePrice.toString();
+      if (retailPrice !== undefined) updates.retailPrice = retailPrice.toString();
+      
+      const productType = await storage.updateProductType(req.params.id, updates);
+      if (!productType) {
+        return res.status(404).json({ message: "Product type not found" });
+      }
+      res.json(productType);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error updating product type: " + error.message });
+    }
+  });
+
   // Object storage routes
   app.post("/api/objects/upload", isAdmin, async (req, res) => {
     try {
@@ -2603,15 +2630,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/wholesale/pricing", isAuthenticated, isAdmin, async (req, res) => {
     try {
-      const { customerId, productId, customPrice } = req.body;
+      const { customerId, productTypeId, customPrice } = req.body;
       
-      if (!customerId || !productId || !customPrice) {
-        return res.status(400).json({ message: "customerId, productId, and customPrice are required" });
+      if (!customerId || !productTypeId || !customPrice) {
+        return res.status(400).json({ message: "customerId, productTypeId, and customPrice are required" });
       }
 
       const pricing = await storage.setWholesalePrice({
         customerId,
-        productId,
+        productTypeId,
         customPrice: customPrice.toString(),
       });
       res.json(pricing);

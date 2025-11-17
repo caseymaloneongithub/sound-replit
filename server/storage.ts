@@ -1,5 +1,6 @@
 import { 
   type Product, type InsertProduct,
+  type ProductType,
   type InventoryAdjustment, type InsertInventoryAdjustment,
   type SubscriptionPlan, type InsertSubscriptionPlan,
   type CartItem, type InsertCartItem,
@@ -19,6 +20,7 @@ import {
   type Lead, type InsertLead,
   type LeadTouchPoint, type InsertLeadTouchPoint,
   products,
+  productTypes,
   inventoryAdjustments,
   subscriptionPlans,
   cartItems,
@@ -148,8 +150,10 @@ export interface IStorage {
   
   getAllWholesalePricing(): Promise<WholesalePricing[]>;
   getWholesalePricing(customerId: string): Promise<WholesalePricing[]>;
-  getWholesalePrice(customerId: string, productId: string): Promise<WholesalePricing | undefined>;
+  getWholesalePrice(customerId: string, productTypeId: string): Promise<WholesalePricing | undefined>;
   setWholesalePrice(pricing: InsertWholesalePricing): Promise<WholesalePricing>;
+  getProductTypes(): Promise<ProductType[]>;
+  updateProductType(id: string, updates: Partial<ProductType>): Promise<ProductType | undefined>;
   
   getRetailCustomers(searchQuery?: string): Promise<Array<{
     id: string;
@@ -1042,21 +1046,21 @@ export class PostgresStorage implements IStorage {
     return await db.select().from(wholesalePricing).where(eq(wholesalePricing.customerId, customerId));
   }
 
-  async getWholesalePrice(customerId: string, productId: string): Promise<WholesalePricing | undefined> {
+  async getWholesalePrice(customerId: string, productTypeId: string): Promise<WholesalePricing | undefined> {
     const result = await db
       .select()
       .from(wholesalePricing)
       .where(
         and(
           eq(wholesalePricing.customerId, customerId),
-          eq(wholesalePricing.productId, productId)
+          eq(wholesalePricing.productTypeId, productTypeId)
         )
       );
     return result[0];
   }
 
   async setWholesalePrice(pricing: InsertWholesalePricing): Promise<WholesalePricing> {
-    const existing = await this.getWholesalePrice(pricing.customerId, pricing.productId);
+    const existing = await this.getWholesalePrice(pricing.customerId, pricing.productTypeId);
     if (existing) {
       const result = await db
         .update(wholesalePricing)
@@ -1068,6 +1072,19 @@ export class PostgresStorage implements IStorage {
       const result = await db.insert(wholesalePricing).values(pricing).returning();
       return result[0];
     }
+  }
+
+  async getProductTypes(): Promise<ProductType[]> {
+    return await db.select().from(productTypes);
+  }
+
+  async updateProductType(id: string, updates: Partial<ProductType>): Promise<ProductType | undefined> {
+    const result = await db
+      .update(productTypes)
+      .set(updates)
+      .where(eq(productTypes.id, id))
+      .returning();
+    return result[0];
   }
 
   async seedData(): Promise<void> {
