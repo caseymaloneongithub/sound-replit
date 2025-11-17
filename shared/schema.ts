@@ -243,6 +243,32 @@ export const impersonationLogs = pgTable("impersonation_logs", {
   activeImpersonationIdx: index("active_impersonation_idx").on(table.adminUserId).where(sql`${table.endedAt} IS NULL`),
 }));
 
+// CRM - Leads table for tracking potential customers
+export const leads = pgTable("leads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  businessName: text("business_name").notNull(),
+  contactName: text("contact_name").notNull(),
+  email: varchar("email"),
+  phone: varchar("phone"),
+  priorityLevel: text("priority_level").notNull().default('medium'), // 'low', 'medium', 'high'
+  status: text("status").notNull().default('new'), // 'new', 'contacted', 'qualified', 'proposal', 'negotiation', 'won', 'lost'
+  notes: text("notes"),
+  assignedToUserId: varchar("assigned_to_user_id").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// CRM - Lead touch points (interaction history)
+export const leadTouchPoints = pgTable("lead_touch_points", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  leadId: varchar("lead_id").notNull().references(() => leads.id, { onDelete: 'cascade' }),
+  type: text("type").notNull(), // 'email', 'phone_call', 'meeting', 'note', 'other'
+  subject: text("subject").notNull(),
+  notes: text("notes"),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, isAdmin: true, role: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
@@ -261,6 +287,8 @@ export const insertWholesalePricingSchema = createInsertSchema(wholesalePricing)
 export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
 export const insertEmailVerificationCodeSchema = createInsertSchema(emailVerificationCodes).omit({ id: true, createdAt: true });
 export const insertImpersonationLogSchema = createInsertSchema(impersonationLogs).omit({ id: true, startedAt: true });
+export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertLeadTouchPointSchema = createInsertSchema(leadTouchPoints).omit({ id: true, createdAt: true });
 
 // Update profile schema - allows customers to update their contact information
 export const updateProfileSchema = z.object({
@@ -288,6 +316,8 @@ export type InsertWholesalePricing = z.infer<typeof insertWholesalePricingSchema
 export type InsertVerificationCode = z.infer<typeof insertVerificationCodeSchema>;
 export type InsertEmailVerificationCode = z.infer<typeof insertEmailVerificationCodeSchema>;
 export type InsertImpersonationLog = z.infer<typeof insertImpersonationLogSchema>;
+export type InsertLead = z.infer<typeof insertLeadSchema>;
+export type InsertLeadTouchPoint = z.infer<typeof insertLeadTouchPointSchema>;
 export type UpdateProfile = z.infer<typeof updateProfileSchema>;
 
 // Select types
@@ -308,3 +338,5 @@ export type WholesalePricing = typeof wholesalePricing.$inferSelect;
 export type VerificationCode = typeof verificationCodes.$inferSelect;
 export type EmailVerificationCode = typeof emailVerificationCodes.$inferSelect;
 export type ImpersonationLog = typeof impersonationLogs.$inferSelect;
+export type Lead = typeof leads.$inferSelect;
+export type LeadTouchPoint = typeof leadTouchPoints.$inferSelect;
