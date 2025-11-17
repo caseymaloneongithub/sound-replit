@@ -127,6 +127,18 @@ export default function WholesaleOrders() {
                               <p className="text-sm text-muted-foreground">
                                 Order #{order.id.slice(0, 8)} • {new Date(order.orderDate).toLocaleDateString()}
                               </p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-sm text-muted-foreground">Delivery:</span>
+                                {order.deliveryDate ? (
+                                  <span className="text-sm font-medium" data-testid={`delivery-date-${order.id}`}>
+                                    {new Date(order.deliveryDate).toLocaleDateString()}
+                                  </span>
+                                ) : (
+                                  <Badge variant="secondary" className="text-xs" data-testid={`delivery-not-set-${order.id}`}>
+                                    Not Set
+                                  </Badge>
+                                )}
+                              </div>
                               {order.notes && (
                                 <p className="text-sm text-muted-foreground mt-1 italic">{order.notes}</p>
                               )}
