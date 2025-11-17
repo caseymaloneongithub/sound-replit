@@ -248,6 +248,14 @@ export const insertWholesalePricingSchema = createInsertSchema(wholesalePricing)
 export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
 export const insertImpersonationLogSchema = createInsertSchema(impersonationLogs).omit({ id: true, startedAt: true });
 
+// Update profile schema - allows customers to update their contact information
+export const updateProfileSchema = z.object({
+  firstName: z.string().min(1, "First name is required").optional(),
+  lastName: z.string().min(1, "Last name is required").optional(),
+  email: z.string().email("Invalid email address").optional(),
+  phoneNumber: z.string().min(10, "Phone number must be at least 10 digits").optional(),
+});
+
 // Insert types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertProduct = z.infer<typeof insertProductSchema>;
@@ -265,6 +273,7 @@ export type InsertWholesaleOrderItem = z.infer<typeof insertWholesaleOrderItemSc
 export type InsertWholesalePricing = z.infer<typeof insertWholesalePricingSchema>;
 export type InsertVerificationCode = z.infer<typeof insertVerificationCodeSchema>;
 export type InsertImpersonationLog = z.infer<typeof insertImpersonationLogSchema>;
+export type UpdateProfile = z.infer<typeof updateProfileSchema>;
 
 // Select types
 export type User = typeof users.$inferSelect;
