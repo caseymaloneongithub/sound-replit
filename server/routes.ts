@@ -27,8 +27,12 @@ const stripe = process.env.STRIPE_SECRET_KEY
 async function getProductPricing(productId: string): Promise<{ retailPrice: string; wholesalePrice: string } | null> {
   const product = await storage.getProduct(productId);
   if (!product) return null;
-  const productType = await storage.getProductType(product.productTypeId);
+  
+  // Get the product type to access pricing
+  const productTypes = await storage.getProductTypes();
+  const productType = productTypes.find(pt => pt.id === product.productTypeId);
   if (!productType) return null;
+  
   return {
     retailPrice: productType.retailPrice,
     wholesalePrice: productType.wholesalePrice,
@@ -609,7 +613,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
       }
-      res.json(product);
+      
+      // Include pricing information from product_types
+      const pricing = await getProductPricing(req.params.id);
+      if (!pricing) {
+        return res.status(404).json({ message: "Product pricing not found" });
+      }
+      
+      res.json({
+        ...product,
+        retailPrice: pricing.retailPrice,
+        wholesalePrice: pricing.wholesalePrice,
+      });
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching product: " + error.message });
     }
@@ -1539,7 +1554,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               
               // Also fetch product types for pricing
               const { productTypes } = await import("@shared/schema");
-              const productTypeIds = [...new Set(productsList.map(p => p.productTypeId))];
+              const productTypeIds = Array.from(new Set(productsList.map(p => p.productTypeId)));
               const productTypesList = await tx
                 .select()
                 .from(productTypes)

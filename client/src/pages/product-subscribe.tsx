@@ -13,6 +13,12 @@ import { Loader2, ArrowLeft, Repeat, Check } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import type { Product } from "@shared/schema";
 
+// Extend Product type to include pricing from product_types
+type ProductWithPricing = Product & {
+  retailPrice: string;
+  wholesalePrice: string;
+};
+
 type FrequencyOption = 'weekly' | 'bi-weekly' | 'every-4-weeks';
 
 const frequencyLabels: Record<FrequencyOption, string> = {
@@ -30,7 +36,7 @@ export default function ProductSubscribe() {
   const [quantity, setQuantity] = useState<number>(1);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const { data: product, isLoading } = useQuery<Product>({
+  const { data: product, isLoading } = useQuery<ProductWithPricing>({
     queryKey: ['/api/products', productId],
   });
 
