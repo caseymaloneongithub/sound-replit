@@ -192,6 +192,22 @@ export default function Shop() {
         </div>
       </div>
 
+      <div className="bg-muted/50 py-12">
+        <div className="max-w-4xl mx-auto px-6 text-center">
+          <p className="text-lg md:text-xl mb-4">
+            <span className="font-semibold">Retailers and Distributors:</span> Get in touch with us{" "}
+            <a 
+              href="/contact" 
+              className="text-primary hover:underline font-semibold"
+              data-testid="link-wholesale-contact"
+            >
+              here
+            </a>{" "}
+            for wholesale pricing.
+          </p>
+        </div>
+      </div>
+
       <div id="products" className="max-w-7xl mx-auto px-6 py-20">
         <div className="text-center mb-12">
           <h2 className="text-4xl md:text-5xl font-bold mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
