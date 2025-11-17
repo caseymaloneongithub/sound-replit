@@ -169,6 +169,72 @@ Action Required: Follow up with customer regarding payment issue.
   }
 }
 
+interface EmailVerificationCodeParams {
+  email: string;
+  code: string;
+}
+
+export async function sendEmailVerificationCode(params: EmailVerificationCodeParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send verification code email to:', params.email);
+    console.log('[EMAIL] Verification code:', params.code);
+    return;
+  }
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.email,
+    subject: 'Your Verification Code - Puget Sound Kombucha Co.',
+    text: `
+Your verification code is: ${params.code}
+
+This code will expire in 5 minutes.
+
+If you didn't request this code, you can safely ignore this email.
+
+Thank you,
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2>Your Verification Code</h2>
+  
+  <div style="text-align: center; margin: 30px 0;">
+    <div style="background-color: #f3f4f6; 
+                padding: 20px; 
+                border-radius: 8px; 
+                font-size: 32px; 
+                font-weight: bold; 
+                letter-spacing: 8px; 
+                color: #16a34a;">
+      ${params.code}
+    </div>
+  </div>
+  
+  <p style="color: #6b7280; font-size: 14px; margin-top: 30px;">
+    This code will expire in 5 minutes.
+  </p>
+  
+  <p style="color: #6b7280; font-size: 14px;">
+    If you didn't request this code, you can safely ignore this email.
+  </p>
+  
+  <p style="margin-top: 30px;">Thank you,<br>Puget Sound Kombucha Co.</p>
+</div>
+    `.trim(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent verification code to ${params.email}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send verification code email:', error);
+    throw error;
+  }
+}
+
 interface PasswordResetEmailParams {
   email: string;
   name: string;

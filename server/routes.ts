@@ -11,6 +11,7 @@ import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "d
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
 import { sendVerificationCode, generateVerificationCode } from "./twilio";
+import { sendEmailVerificationCode } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { createStripeCustomer } from "./stripeCustomer";
@@ -172,6 +173,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ message: "Phone number verified successfully", verified: true });
     } catch (error: any) {
       console.error("Error verifying code:", error);
+      res.status(500).json({ message: "Error verifying code: " + error.message });
+    }
+  });
+
+  // Email verification routes
+  app.post("/api/send-email-verification-code", async (req, res) => {
+    try {
+      const { email } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: "Invalid email address" });
+      }
+
+      // Check if user exists with this email
+      const user = await storage.getUserByEmailOrUsername(email);
+      if (!user) {
+        return res.status(400).json({ message: "No account found with this email" });
+      }
+
+      // Generate 6-digit code
+      const code = generateVerificationCode();
+      
+      // Store code in database with 5-minute expiration
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      await storage.createEmailVerificationCode({
+        email,
+        code,
+        expiresAt,
+        verified: false,
+        purpose: 'login'
+      });
+
+      // Send email
+      await sendEmailVerificationCode({ email, code });
+
+      res.json({ message: "Verification code sent to your email" });
+    } catch (error: any) {
+      console.error("Error sending email verification code:", error);
+      res.status(500).json({ message: "Error sending verification code: " + error.message });
+    }
+  });
+
+  app.post("/api/verify-email-code", async (req, res) => {
+    try {
+      const { email, code } = req.body;
+      
+      if (!email || !code) {
+        return res.status(400).json({ message: "Email and code are required" });
+      }
+
+      // Get latest verification code for this email
+      const verificationCode = await storage.getLatestEmailVerificationCode(email);
+      
+      if (!verificationCode) {
+        return res.status(400).json({ message: "No verification code found" });
+      }
+
+      // Check if code is expired
+      if (new Date() > verificationCode.expiresAt) {
+        return res.status(400).json({ message: "Verification code has expired" });
+      }
+
+      // Check if code matches
+      if (verificationCode.code !== code) {
+        // Increment attempts
+        await storage.incrementEmailVerificationAttempts(verificationCode.id);
+        return res.status(400).json({ message: "Invalid verification code" });
+      }
+
+      // Check if already verified
+      if (verificationCode.verified) {
+        return res.status(400).json({ message: "Verification code already used" });
+      }
+
+      // Mark as verified
+      await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
+
+      // Get user to log them in
+      const user = await storage.getUserByEmailOrUsername(email);
+      if (!user) {
+        return res.status(400).json({ message: "User not found" });
+      }
+
+      // Log the user in
+      req.login(user, (err) => {
+        if (err) {
+          console.error("Login error:", err);
+          return res.status(500).json({ message: "Error logging in" });
+        }
+        res.json({ message: "Email verified and logged in successfully", user });
+      });
+    } catch (error: any) {
+      console.error("Error verifying email code:", error);
       res.status(500).json({ message: "Error verifying code: " + error.message });
     }
   });
