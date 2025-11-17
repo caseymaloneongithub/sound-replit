@@ -86,9 +86,7 @@ export default function WholesaleOrders() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return 'secondary';
-      case 'processing': return 'default';
-      case 'shipped': return 'default';
-      case 'delivered': return 'secondary';
+      case 'delivered': return 'default';
       default: return 'secondary';
     }
   };
@@ -216,8 +214,6 @@ export default function WholesaleOrders() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="processing">Processing</SelectItem>
-                        <SelectItem value="shipped">Shipped</SelectItem>
                         <SelectItem value="delivered">Delivered</SelectItem>
                       </SelectContent>
                     </Select>

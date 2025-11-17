@@ -134,6 +134,7 @@ export interface IStorage {
   getWholesaleOrders(): Promise<WholesaleOrder[]>;
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
   getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
+  getWholesaleOrdersByDeliveryDateRange(startDate: Date, endDate: Date): Promise<WholesaleOrder[]>;
   getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string }> }>>;
   getWholesaleOrderWithDetails(id: string): Promise<{
     order: WholesaleOrder;
@@ -944,6 +945,23 @@ export class PostgresStorage implements IStorage {
         and(
           sql`${wholesaleOrders.deliveryDate} >= ${startOfDay}`,
           sql`${wholesaleOrders.deliveryDate} <= ${endOfDay}`
+        )
+      )
+      .orderBy(wholesaleOrders.deliveryDate);
+    return result;
+  }
+
+  async getWholesaleOrdersByDeliveryDateRange(startDate: Date, endDate: Date): Promise<WholesaleOrder[]> {
+    // Client sends half-open range: [Monday 00:00, nextMonday 00:00)
+    // This naturally includes all of Sunday without timezone-related shifts
+    // Use exclusive upper bound (< instead of <=) to avoid spillover into next week
+    const result = await db
+      .select()
+      .from(wholesaleOrders)
+      .where(
+        and(
+          sql`${wholesaleOrders.deliveryDate} >= ${startDate}`,
+          sql`${wholesaleOrders.deliveryDate} < ${endDate}`
         )
       )
       .orderBy(wholesaleOrders.deliveryDate);

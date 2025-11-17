@@ -2512,7 +2512,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/wholesale/delivery-report", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const { date } = req.query;
+      const { date, startDate, endDate } = req.query;
+      
+      // Handle weekly date range query
+      if (startDate && endDate) {
+        if (typeof startDate !== 'string' || typeof endDate !== 'string') {
+          return res.status(400).json({ message: "Start and end dates must be strings" });
+        }
+        
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          return res.status(400).json({ message: "Invalid date format" });
+        }
+        
+        const orders = await storage.getWholesaleOrdersByDeliveryDateRange(start, end);
+        return res.json(orders);
+      }
+      
+      // Handle single date query (daily)
       if (!date || typeof date !== 'string') {
         return res.status(400).json({ message: "Date parameter is required" });
       }

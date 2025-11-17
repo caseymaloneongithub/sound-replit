@@ -6,20 +6,36 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CalendarIcon, Printer } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import { format } from "date-fns";
+import { format, startOfWeek, endOfWeek, addDays } from "date-fns";
 import { useAuth } from "@/hooks/use-auth";
+
+type ReportView = "daily" | "weekly";
 
 export default function WholesaleDeliveryReport() {
   const { user } = useAuth();
+  const [reportView, setReportView] = useState<ReportView>("daily");
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
+  // Calculate date range based on view
+  // For weekly: use half-open range [Monday 00:00, next Monday 00:00) to avoid timezone issues
+  const startDate = reportView === "weekly" 
+    ? startOfWeek(selectedDate, { weekStartsOn: 1 }) // Monday at 00:00:00 local
+    : selectedDate;
+  const endDate = reportView === "weekly"
+    ? addDays(startOfWeek(selectedDate, { weekStartsOn: 1 }), 7) // Next Monday at 00:00:00 local (exclusive upper bound)
+    : selectedDate;
+
   const { data: orders = [], isLoading: ordersLoading } = useQuery<WholesaleOrder[]>({
-    queryKey: ["/api/wholesale/delivery-report", selectedDate.toISOString()],
+    queryKey: ["/api/wholesale/delivery-report", reportView, startDate.toISOString(), endDate.toISOString()],
     queryFn: async () => {
-      const response = await fetch(`/api/wholesale/delivery-report?date=${selectedDate.toISOString()}`);
+      const url = reportView === "daily"
+        ? `/api/wholesale/delivery-report?date=${selectedDate.toISOString()}`
+        : `/api/wholesale/delivery-report?startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`;
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error('Failed to fetch delivery report');
       }
@@ -54,9 +70,7 @@ export default function WholesaleDeliveryReport() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return 'secondary';
-      case 'processing': return 'default';
-      case 'shipped': return 'default';
-      case 'delivered': return 'secondary';
+      case 'delivered': return 'default';
       default: return 'secondary';
     }
   };
@@ -68,19 +82,36 @@ export default function WholesaleDeliveryReport() {
   const totalAmount = orders.reduce((sum, order) => sum + Number(order.totalAmount), 0);
   const totalOrders = orders.length;
 
+  const reportTitle = reportView === "daily" ? "Daily Delivery Report" : "Weekly Delivery Report";
+  // For display: show actual week end (Sunday) not the exclusive bound (next Monday)
+  const displayEndDate = reportView === "weekly" ? addDays(endDate, -1) : endDate;
+  const dateRangeText = reportView === "daily" 
+    ? format(selectedDate, "PPP")
+    : `${format(startDate, "MMM d")} - ${format(displayEndDate, "MMM d, yyyy")}`;
+  const detailDateText = reportView === "daily"
+    ? format(selectedDate, "MMMM d, yyyy")
+    : `week of ${format(startDate, "MMMM d, yyyy")} (${format(startDate, "MMM d")} - ${format(displayEndDate, "MMM d")})`;
+
   return (
     <StaffLayout>
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="flex items-center justify-between mb-8 print:hidden">
           <div>
             <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
-              Daily Delivery Report
+              {reportTitle}
             </h1>
             <p className="text-muted-foreground">
               View and print wholesale delivery schedules
             </p>
           </div>
           <div className="flex items-center gap-4">
+                <Tabs value={reportView} onValueChange={(value) => setReportView(value as ReportView)}>
+                  <TabsList>
+                    <TabsTrigger value="daily" data-testid="tab-daily">Daily</TabsTrigger>
+                    <TabsTrigger value="weekly" data-testid="tab-weekly">Weekly</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
@@ -89,7 +120,7 @@ export default function WholesaleDeliveryReport() {
                       data-testid="button-select-date"
                     >
                       <CalendarIcon className="mr-2 h-4 w-4" />
-                      {format(selectedDate, "PPP")}
+                      {dateRangeText}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0">
@@ -116,10 +147,10 @@ export default function WholesaleDeliveryReport() {
         <div className="space-y-6">
           <div className="hidden print:block mb-6">
                 <h1 className="text-3xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
-                  Daily Delivery Report
+                  {reportTitle}
                 </h1>
                 <p className="text-lg text-muted-foreground">
-                  {format(selectedDate, "PPPP")}
+                  {reportView === "daily" ? format(selectedDate, "PPPP") : dateRangeText}
                 </p>
               </div>
 
@@ -164,7 +195,10 @@ export default function WholesaleDeliveryReport() {
                     Scheduled Deliveries
                   </CardTitle>
                   <CardDescription>
-                    Orders scheduled for delivery on {format(selectedDate, "MMMM d, yyyy")}
+                    {reportView === "daily" 
+                      ? `Orders scheduled for delivery on ${detailDateText}`
+                      : `Orders scheduled for delivery during the ${detailDateText}`
+                    }
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
