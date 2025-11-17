@@ -2076,7 +2076,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Verify that next week is EARLIER than current pickup (date-only comparison)
         if (nextWeekPacificStr >= currentPickupDateStr) {
           return res.status(400).json({
-            message: "Cannot move pickup to next week - your pickup is already scheduled for next week or sooner."
+            message: `Cannot move pickup earlier - your pickup is already scheduled for ${format(currentDate, 'EEEE, MMMM d')}. This feature only works when your pickup is more than 7 days away.`
           });
         }
         
