@@ -255,16 +255,31 @@ export class ObjectStorageService {
       throw new Error(`File not found: ${objectName}`);
     }
     
-    // Set ACL policy to public
+    // Set ACL policy to public (for our internal permission checking)
+    // Note: We can't use file.makePublic() because the bucket has public access prevention enabled
+    // Instead, we'll serve these through our own endpoint that checks the ACL policy
     const aclPolicy: ObjectAclPolicy = {
       owner: 'system',
       visibility: 'public',
     };
     
     await setObjectAclPolicy(file, aclPolicy);
-    
-    // Also make the file publicly readable at the GCS level
-    await file.makePublic();
+  }
+
+  async getPublicFile(filename: string): Promise<File | null> {
+    const publicPaths = this.getPublicObjectSearchPaths();
+    for (const searchPath of publicPaths) {
+      const fullPath = `${searchPath}/${filename}`;
+      const { bucketName, objectName } = parseObjectPath(fullPath);
+      const bucket = objectStorageClient.bucket(bucketName);
+      const file = bucket.file(objectName);
+      
+      const [exists] = await file.exists();
+      if (exists) {
+        return file;
+      }
+    }
+    return null;
   }
 }
 

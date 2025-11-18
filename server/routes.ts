@@ -14,6 +14,7 @@ import { sendVerificationCode, generateVerificationCode } from "./twilio";
 import { sendEmailVerificationCode } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
+import { getObjectAclPolicy } from "./objectAcl";
 import { createStripeCustomer } from "./stripeCustomer";
 import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY } from "@shared/pickup-policy";
 
@@ -939,6 +940,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error making file public:", error);
       res.status(500).json({ message: "Error making file public: " + error.message });
+    }
+  });
+
+  // Serve public files (like flavor images)
+  app.get("/public/:filename(*)", async (req, res) => {
+    const objectStorageService = new ObjectStorageService();
+    try {
+      const filename = req.params.filename;
+      const file = await objectStorageService.getPublicFile(filename);
+      
+      if (!file) {
+        return res.sendStatus(404);
+      }
+      
+      // Check if file is marked as public in ACL policy
+      const aclPolicy = await getObjectAclPolicy(file);
+      if (!aclPolicy || aclPolicy.visibility !== 'public') {
+        return res.sendStatus(403);
+      }
+      
+      await objectStorageService.downloadObject(file, res, 86400); // Cache for 24 hours
+    } catch (error: any) {
+      console.error("Error serving public file:", error);
+      res.sendStatus(500);
     }
   });
 

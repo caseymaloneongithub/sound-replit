@@ -106,23 +106,24 @@ function FlavorForm({
   const handleUploadComplete = async (result: UploadResult, isSecondary = false) => {
     if (result.successful.length > 0) {
       const uploadedFile = result.successful[0];
-      const publicUrl = uploadedFile.uploadURL?.split('?')[0] || '';
+      const gcsUrl = uploadedFile.uploadURL?.split('?')[0] || '';
       
-      // Make the file publicly readable
+      // Make the file publicly readable (sets ACL policy)
       try {
         await fetch('/api/object-storage/make-public', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileUrl: publicUrl }),
+          body: JSON.stringify({ fileUrl: gcsUrl }),
         });
       } catch (error) {
         console.error('Error making file public:', error);
-        toast({ 
-          title: "Warning", 
-          description: "Image uploaded but may not be publicly visible",
-          variant: "destructive"
-        });
       }
+      
+      // Convert GCS URL to our server's public endpoint
+      // From: https://storage.googleapis.com/bucket/public/filename.jpg
+      // To: /public/filename.jpg
+      const urlParts = gcsUrl.split('/public/');
+      const publicUrl = urlParts.length > 1 ? `/public/${urlParts[1]}` : gcsUrl;
       
       if (isSecondary) {
         setSecondaryImageUrl(publicUrl);
