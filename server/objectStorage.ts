@@ -236,6 +236,36 @@ export class ObjectStorageService {
       ttlSec: 900,
     });
   }
+
+  async makeFilePublic(fileUrl: string): Promise<void> {
+    // Extract bucket and object name from the Google Cloud Storage URL
+    const url = new URL(fileUrl);
+    const pathMatch = url.pathname.match(/^\/([^/]+)\/(.+)$/);
+    if (!pathMatch) {
+      throw new Error('Invalid file URL format');
+    }
+    
+    const [, bucketName, objectName] = pathMatch;
+    const bucket = objectStorageClient.bucket(bucketName);
+    const file = bucket.file(objectName);
+    
+    // Check if file exists
+    const [exists] = await file.exists();
+    if (!exists) {
+      throw new Error(`File not found: ${objectName}`);
+    }
+    
+    // Set ACL policy to public
+    const aclPolicy: ObjectAclPolicy = {
+      owner: 'system',
+      visibility: 'public',
+    };
+    
+    await setObjectAclPolicy(file, aclPolicy);
+    
+    // Also make the file publicly readable at the GCS level
+    await file.makePublic();
+  }
 }
 
 function parseObjectPath(path: string): {

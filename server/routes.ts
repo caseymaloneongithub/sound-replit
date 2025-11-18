@@ -925,6 +925,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Make uploaded file publicly readable
+  app.post("/api/object-storage/make-public", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { fileUrl } = req.body;
+      if (!fileUrl) {
+        return res.status(400).json({ message: "fileUrl is required" });
+      }
+      
+      const objectStorageService = new ObjectStorageService();
+      await objectStorageService.makeFilePublic(fileUrl);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error making file public:", error);
+      res.status(500).json({ message: "Error making file public: " + error.message });
+    }
+  });
+
   app.get("/objects/:objectPath(*)", async (req, res) => {
     const objectStorageService = new ObjectStorageService();
     try {

@@ -103,10 +103,26 @@ function FlavorForm({
     };
   };
 
-  const handleUploadComplete = (result: UploadResult, isSecondary = false) => {
+  const handleUploadComplete = async (result: UploadResult, isSecondary = false) => {
     if (result.successful.length > 0) {
       const uploadedFile = result.successful[0];
       const publicUrl = uploadedFile.uploadURL?.split('?')[0] || '';
+      
+      // Make the file publicly readable
+      try {
+        await fetch('/api/object-storage/make-public', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileUrl: publicUrl }),
+        });
+      } catch (error) {
+        console.error('Error making file public:', error);
+        toast({ 
+          title: "Warning", 
+          description: "Image uploaded but may not be publicly visible",
+          variant: "destructive"
+        });
+      }
       
       if (isSecondary) {
         setSecondaryImageUrl(publicUrl);
