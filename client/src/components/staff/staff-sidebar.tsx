@@ -41,6 +41,14 @@ export function StaffSidebar() {
 
   const navSections: NavSection[] = [
     {
+      title: "Product Management",
+      items: [
+        { title: "Flavor Library", href: "/admin/flavors", icon: Palette, adminOnly: true },
+        { title: "Retail Products", href: "/admin/retail-products", icon: ShoppingBag, adminOnly: true },
+        { title: "Wholesale Units", href: "/admin/wholesale-units", icon: Box, adminOnly: true },
+      ],
+    },
+    {
       title: "Wholesale",
       items: [
         { title: "Place Order", href: "/staff-portal/wholesale/place-order", icon: ShoppingCart },
@@ -64,14 +72,6 @@ export function StaffSidebar() {
       items: [
         { title: "Inventory", href: "/inventory", icon: ClipboardList },
         { title: "Revenue", href: "/reports", icon: DollarSign },
-      ],
-    },
-    {
-      title: "Product Management",
-      items: [
-        { title: "Flavor Library", href: "/admin/flavors", icon: Palette, adminOnly: true },
-        { title: "Retail Products", href: "/admin/retail-products", icon: ShoppingBag, adminOnly: true },
-        { title: "Wholesale Units", href: "/admin/wholesale-units", icon: Box, adminOnly: true },
       ],
     },
     {
