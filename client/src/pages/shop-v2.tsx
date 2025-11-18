@@ -220,7 +220,7 @@ export default function ShopV2() {
                               Weekly
                             </Button>
                             <Button
-                              onClick={() => subscriptionPurchase(product.id, 'biweekly')}
+                              onClick={() => subscriptionPurchase(product.id, 'bi-weekly')}
                               disabled={addToCartMutation.isPending}
                               variant="outline"
                               className="w-full"
@@ -230,7 +230,7 @@ export default function ShopV2() {
                               Every 2 Weeks
                             </Button>
                             <Button
-                              onClick={() => subscriptionPurchase(product.id, 'monthly')}
+                              onClick={() => subscriptionPurchase(product.id, 'every-4-weeks')}
                               disabled={addToCartMutation.isPending}
                               variant="outline"
                               className="w-full"
