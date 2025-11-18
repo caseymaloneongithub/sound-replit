@@ -114,8 +114,8 @@ export const flavors = pgTable("flavors", {
   description: text("description").notNull(),
   flavorProfile: text("flavor_profile").notNull(), // e.g., "warm spiced", "matcha green tea"
   ingredients: text("ingredients").array().notNull(),
-  imageUrl: text("image_url").notNull(),
-  imageUrls: text("image_urls").array().notNull().default(sql`ARRAY[]::text[]`),
+  primaryImageUrl: text("primary_image_url"), // Main product photo (uploaded via object storage)
+  secondaryImageUrl: text("secondary_image_url"), // Optional additional photo
   isActive: boolean("is_active").notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
 });

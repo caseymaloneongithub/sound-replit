@@ -2,57 +2,372 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Loader2, Palette } from "lucide-react";
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Loader2, Palette, Upload, X, Image as ImageIcon } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
+import { ObjectUploader } from "@/components/ObjectUploader";
 import type { Flavor } from "@shared/schema";
+import type { UploadResult } from "@uppy/core";
 
-export default function AdminFlavors() {
+// Form schema with raw ingredients string (parsed on submit)
+const flavorFormSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  description: z.string().min(1, "Description is required"),
+  flavorProfile: z.string().min(1, "Flavor profile is required"),
+  ingredientsRaw: z.string().min(1, "Ingredients are required"),
+  primaryImageUrl: z.string().optional(),
+  secondaryImageUrl: z.string().optional(),
+  isActive: z.boolean().default(true),
+  displayOrder: z.coerce.number().int().min(0).default(0),
+});
+
+type FlavorFormValues = z.infer<typeof flavorFormSchema>;
+
+function FlavorForm({ 
+  flavor, 
+  onClose, 
+  isEdit = false 
+}: { 
+  flavor?: Flavor; 
+  onClose: () => void; 
+  isEdit?: boolean;
+}) {
   const { toast } = useToast();
-  const [editingFlavor, setEditingFlavor] = useState<string | null>(null);
-  const [flavorForm, setFlavorForm] = useState({
-    name: '',
-    description: '',
-    flavorProfile: '',
-    ingredients: [] as string[],
-    imageUrl: '',
-    isActive: true,
-    displayOrder: 0
+  const [primaryImageUrl, setPrimaryImageUrl] = useState(flavor?.primaryImageUrl || "");
+  const [secondaryImageUrl, setSecondaryImageUrl] = useState(flavor?.secondaryImageUrl || "");
+
+  const form = useForm<FlavorFormValues>({
+    resolver: zodResolver(flavorFormSchema),
+    defaultValues: {
+      name: flavor?.name || "",
+      description: flavor?.description || "",
+      flavorProfile: flavor?.flavorProfile || "",
+      ingredientsRaw: flavor?.ingredients?.join(", ") || "",
+      primaryImageUrl: flavor?.primaryImageUrl || "",
+      secondaryImageUrl: flavor?.secondaryImageUrl || "",
+      isActive: flavor?.isActive ?? true,
+      displayOrder: flavor?.displayOrder || 0,
+    },
   });
 
-  const { data: flavors = [], isLoading: flavorsLoading } = useQuery<Flavor[]>({
-    queryKey: ['/api/flavors'],
-  });
-
-  const createFlavorMutation = useMutation({
+  const createMutation = useMutation({
     mutationFn: async (data: any) => apiRequest('POST', '/api/flavors', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/flavors'] });
-      setEditingFlavor(null);
-      setFlavorForm({ name: '', description: '', flavorProfile: '', ingredients: [], imageUrl: '', isActive: true, displayOrder: 0 });
       toast({ title: "Flavor created", description: "Flavor has been created successfully" });
+      onClose();
     },
     onError: (error: any) => {
       toast({ title: "Error", description: error.message || "Failed to create flavor", variant: "destructive" });
     },
   });
 
-  const updateFlavorMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => apiRequest('PATCH', `/api/flavors/${id}`, data),
+  const updateMutation = useMutation({
+    mutationFn: async (data: any) => apiRequest('PATCH', `/api/flavors/${flavor?.id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/flavors'] });
-      setEditingFlavor(null);
       toast({ title: "Flavor updated", description: "Flavor has been updated successfully" });
+      onClose();
     },
     onError: (error: any) => {
       toast({ title: "Error", description: error.message || "Failed to update flavor", variant: "destructive" });
     },
+  });
+
+  const handleGetUploadUrl = async (isSecondary = false) => {
+    const filename = `flavor-${Date.now()}-${isSecondary ? 'secondary' : 'primary'}.jpg`;
+    const response = await fetch('/api/object-storage/upload-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, directory: 'public' }),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to get upload URL');
+    }
+    
+    const data = await response.json();
+    return {
+      method: 'PUT' as const,
+      url: data.uploadUrl,
+    };
+  };
+
+  const handleUploadComplete = (result: UploadResult, isSecondary = false) => {
+    if (result.successful.length > 0) {
+      const uploadedFile = result.successful[0];
+      const publicUrl = uploadedFile.uploadURL?.split('?')[0] || '';
+      
+      if (isSecondary) {
+        setSecondaryImageUrl(publicUrl);
+        form.setValue('secondaryImageUrl', publicUrl);
+      } else {
+        setPrimaryImageUrl(publicUrl);
+        form.setValue('primaryImageUrl', publicUrl);
+      }
+      
+      toast({ 
+        title: "Image uploaded", 
+        description: `${isSecondary ? 'Secondary' : 'Primary'} image uploaded successfully` 
+      });
+    }
+  };
+
+  const removeImage = (isSecondary = false) => {
+    if (isSecondary) {
+      setSecondaryImageUrl("");
+      form.setValue('secondaryImageUrl', "");
+    } else {
+      setPrimaryImageUrl("");
+      form.setValue('primaryImageUrl', "");
+    }
+  };
+
+  const onSubmit = (values: FlavorFormValues) => {
+    // Parse ingredients from comma-separated string to array
+    const ingredients = values.ingredientsRaw
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    const submitData = {
+      name: values.name,
+      description: values.description,
+      flavorProfile: values.flavorProfile,
+      ingredients,
+      primaryImageUrl: primaryImageUrl || undefined,
+      secondaryImageUrl: secondaryImageUrl || undefined,
+      isActive: values.isActive,
+      displayOrder: values.displayOrder,
+    };
+
+    if (isEdit && flavor) {
+      updateMutation.mutate(submitData);
+    } else {
+      createMutation.mutate(submitData);
+    }
+  };
+
+  const isPending = createMutation.isPending || updateMutation.isPending;
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 py-4">
+        <FormField
+          control={form.control}
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Flavor Name</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="e.g., Bonfire, Evergreen" data-testid="input-flavor-name" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="description"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Description</FormLabel>
+              <FormControl>
+                <Textarea {...field} rows={3} data-testid="input-flavor-description" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="flavorProfile"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Flavor Profile</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="e.g., Bright, citrusy, refreshing" data-testid="input-flavor-profile" />
+              </FormControl>
+              <FormDescription>
+                Brief description of taste characteristics
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="ingredientsRaw"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Ingredients</FormLabel>
+              <FormControl>
+                <Input 
+                  {...field} 
+                  placeholder="e.g., Organic ginger root, lemon juice, turmeric" 
+                  data-testid="input-flavor-ingredients" 
+                />
+              </FormControl>
+              <FormDescription>
+                Comma-separated list (spaces allowed)
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* Primary Image Upload */}
+        <div className="space-y-2">
+          <FormLabel>Primary Image</FormLabel>
+          {primaryImageUrl ? (
+            <div className="relative inline-block">
+              <img 
+                src={primaryImageUrl} 
+                alt="Primary" 
+                className="w-32 h-32 object-cover rounded border"
+              />
+              <Button
+                type="button"
+                variant="destructive"
+                size="icon"
+                className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
+                onClick={() => removeImage(false)}
+                data-testid="button-remove-primary-image"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          ) : (
+            <ObjectUploader
+              maxNumberOfFiles={1}
+              onGetUploadParameters={() => handleGetUploadUrl(false)}
+              onComplete={(result) => handleUploadComplete(result, false)}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Upload Primary Image
+            </ObjectUploader>
+          )}
+          <p className="text-sm text-muted-foreground">Main product photo</p>
+        </div>
+
+        {/* Secondary Image Upload */}
+        <div className="space-y-2">
+          <FormLabel>Secondary Image (Optional)</FormLabel>
+          {secondaryImageUrl ? (
+            <div className="relative inline-block">
+              <img 
+                src={secondaryImageUrl} 
+                alt="Secondary" 
+                className="w-32 h-32 object-cover rounded border"
+              />
+              <Button
+                type="button"
+                variant="destructive"
+                size="icon"
+                className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
+                onClick={() => removeImage(true)}
+                data-testid="button-remove-secondary-image"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          ) : (
+            <ObjectUploader
+              maxNumberOfFiles={1}
+              onGetUploadParameters={() => handleGetUploadUrl(true)}
+              onComplete={(result) => handleUploadComplete(result, true)}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Upload Secondary Image
+            </ObjectUploader>
+          )}
+          <p className="text-sm text-muted-foreground">Additional photo (optional)</p>
+        </div>
+
+        <FormField
+          control={form.control}
+          name="displayOrder"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Display Order</FormLabel>
+              <FormControl>
+                <Input 
+                  type="number" 
+                  {...field} 
+                  onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                  data-testid="input-flavor-order" 
+                />
+              </FormControl>
+              <FormDescription>
+                Lower numbers appear first
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="isActive"
+          render={({ field }) => (
+            <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+              <FormControl>
+                <Checkbox
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                  data-testid="input-flavor-active"
+                />
+              </FormControl>
+              <div className="space-y-1 leading-none">
+                <FormLabel>Active</FormLabel>
+                <FormDescription>
+                  Inactive flavors are hidden from customers
+                </FormDescription>
+              </div>
+            </FormItem>
+          )}
+        />
+
+        <Button
+          type="submit"
+          disabled={isPending}
+          className="w-full"
+          data-testid={isEdit ? "button-update-flavor" : "button-save-flavor"}
+        >
+          {isPending ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              {isEdit ? 'Saving...' : 'Creating...'}
+            </>
+          ) : (
+            isEdit ? 'Save Changes' : 'Create Flavor'
+          )}
+        </Button>
+      </form>
+    </Form>
+  );
+}
+
+export default function AdminFlavors() {
+  const { toast } = useToast();
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [editingFlavorId, setEditingFlavorId] = useState<string | null>(null);
+
+  const { data: flavors = [], isLoading: flavorsLoading } = useQuery<Flavor[]>({
+    queryKey: ['/api/flavors'],
   });
 
   const deleteFlavorMutation = useMutation({
@@ -65,6 +380,8 @@ export default function AdminFlavors() {
       toast({ title: "Error", description: error.message || "Failed to delete flavor", variant: "destructive" });
     },
   });
+
+  const editingFlavor = flavors.find(f => f.id === editingFlavorId);
 
   if (flavorsLoading) {
     return (
@@ -95,92 +412,18 @@ export default function AdminFlavors() {
               </CardTitle>
               <CardDescription>Central repository of kombucha flavors used across retail and wholesale products</CardDescription>
             </div>
-            <Dialog open={editingFlavor === 'new'} onOpenChange={(open) => !open && setEditingFlavor(null)}>
+            <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
               <DialogTrigger asChild>
-                <Button onClick={() => setEditingFlavor('new')} data-testid="button-create-flavor">
+                <Button data-testid="button-create-flavor">
                   Create Flavor
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Create New Flavor</DialogTitle>
-                  <DialogDescription>Add a new kombucha flavor</DialogDescription>
+                  <DialogDescription>Add a new kombucha flavor with image uploads</DialogDescription>
                 </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div>
-                    <Label htmlFor="flavor-name">Flavor Name</Label>
-                    <Input
-                      id="flavor-name"
-                      value={flavorForm.name}
-                      onChange={(e) => setFlavorForm({ ...flavorForm, name: e.target.value })}
-                      data-testid="input-flavor-name"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="flavor-description">Description</Label>
-                    <Textarea
-                      id="flavor-description"
-                      value={flavorForm.description}
-                      onChange={(e) => setFlavorForm({ ...flavorForm, description: e.target.value })}
-                      rows={3}
-                      data-testid="input-flavor-description"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="flavor-profile">Flavor Profile</Label>
-                    <Input
-                      id="flavor-profile"
-                      value={flavorForm.flavorProfile}
-                      onChange={(e) => setFlavorForm({ ...flavorForm, flavorProfile: e.target.value })}
-                      placeholder="e.g., Bright, citrusy, refreshing"
-                      data-testid="input-flavor-profile"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="flavor-ingredients">Ingredients (comma-separated)</Label>
-                    <Input
-                      id="flavor-ingredients"
-                      value={flavorForm.ingredients.join(', ')}
-                      onChange={(e) => setFlavorForm({ ...flavorForm, ingredients: e.target.value.split(',').map(s => s.trim()) })}
-                      placeholder="e.g., Grapefruit, Ginger, Lemon"
-                      data-testid="input-flavor-ingredients"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="flavor-image">Image URL</Label>
-                    <Input
-                      id="flavor-image"
-                      value={flavorForm.imageUrl}
-                      onChange={(e) => setFlavorForm({ ...flavorForm, imageUrl: e.target.value })}
-                      data-testid="input-flavor-image"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="flavor-order">Display Order</Label>
-                    <Input
-                      id="flavor-order"
-                      type="number"
-                      value={flavorForm.displayOrder}
-                      onChange={(e) => setFlavorForm({ ...flavorForm, displayOrder: parseInt(e.target.value) || 0 })}
-                      data-testid="input-flavor-order"
-                    />
-                  </div>
-                  <Button
-                    onClick={() => createFlavorMutation.mutate(flavorForm)}
-                    disabled={createFlavorMutation.isPending}
-                    className="w-full"
-                    data-testid="button-save-flavor"
-                  >
-                    {createFlavorMutation.isPending ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Creating...
-                      </>
-                    ) : (
-                      'Create Flavor'
-                    )}
-                  </Button>
-                </div>
+                <FlavorForm onClose={() => setCreateDialogOpen(false)} />
               </DialogContent>
             </Dialog>
           </CardHeader>
@@ -206,116 +449,61 @@ export default function AdminFlavors() {
                     </Badge>
                   </div>
                 </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-2">{flavor.description}</p>
+                <CardContent className="space-y-4">
+                  {/* Images */}
+                  {(flavor.primaryImageUrl || flavor.secondaryImageUrl) && (
+                    <div className="flex gap-2">
+                      {flavor.primaryImageUrl && (
+                        <div className="relative">
+                          <img 
+                            src={flavor.primaryImageUrl} 
+                            alt={`${flavor.name} primary`}
+                            className="w-24 h-24 object-cover rounded border"
+                          />
+                          <Badge className="absolute bottom-1 left-1 text-xs">Primary</Badge>
+                        </div>
+                      )}
+                      {flavor.secondaryImageUrl && (
+                        <div className="relative">
+                          <img 
+                            src={flavor.secondaryImageUrl} 
+                            alt={`${flavor.name} secondary`}
+                            className="w-24 h-24 object-cover rounded border"
+                          />
+                          <Badge className="absolute bottom-1 left-1 text-xs">Secondary</Badge>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-sm text-muted-foreground">{flavor.description}</p>
                   <p className="text-xs text-muted-foreground">
                     <strong>Ingredients:</strong> {flavor.ingredients.join(', ')}
                   </p>
                 </CardContent>
                 <CardFooter className="flex gap-2 flex-wrap">
-                  <Dialog open={editingFlavor === flavor.id} onOpenChange={(open) => !open && setEditingFlavor(null)}>
+                  <Dialog open={editingFlavorId === flavor.id} onOpenChange={(open) => !open && setEditingFlavorId(null)}>
                     <DialogTrigger asChild>
                       <Button 
                         variant="outline" 
                         size="sm"
-                        onClick={() => {
-                          setEditingFlavor(flavor.id);
-                          setFlavorForm({
-                            name: flavor.name,
-                            description: flavor.description,
-                            flavorProfile: flavor.flavorProfile,
-                            ingredients: flavor.ingredients,
-                            imageUrl: flavor.imageUrl,
-                            isActive: flavor.isActive,
-                            displayOrder: flavor.displayOrder
-                          });
-                        }}
+                        onClick={() => setEditingFlavorId(flavor.id)}
                         data-testid={`button-edit-flavor-${flavor.id}`}
                       >
                         Edit
                       </Button>
                     </DialogTrigger>
-                    <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                    <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                       <DialogHeader>
                         <DialogTitle>Edit {flavor.name}</DialogTitle>
-                        <DialogDescription>Update flavor details</DialogDescription>
+                        <DialogDescription>Update flavor details and images</DialogDescription>
                       </DialogHeader>
-                      <div className="space-y-4 py-4">
-                        <div>
-                          <Label>Flavor Name</Label>
-                          <Input
-                            value={flavorForm.name}
-                            onChange={(e) => setFlavorForm({ ...flavorForm, name: e.target.value })}
-                            data-testid="input-edit-flavor-name"
-                          />
-                        </div>
-                        <div>
-                          <Label>Description</Label>
-                          <Textarea
-                            value={flavorForm.description}
-                            onChange={(e) => setFlavorForm({ ...flavorForm, description: e.target.value })}
-                            rows={3}
-                            data-testid="input-edit-flavor-description"
-                          />
-                        </div>
-                        <div>
-                          <Label>Flavor Profile</Label>
-                          <Input
-                            value={flavorForm.flavorProfile}
-                            onChange={(e) => setFlavorForm({ ...flavorForm, flavorProfile: e.target.value })}
-                            data-testid="input-edit-flavor-profile"
-                          />
-                        </div>
-                        <div>
-                          <Label>Ingredients (comma-separated)</Label>
-                          <Input
-                            value={flavorForm.ingredients.join(', ')}
-                            onChange={(e) => setFlavorForm({ ...flavorForm, ingredients: e.target.value.split(',').map(s => s.trim()) })}
-                            data-testid="input-edit-flavor-ingredients"
-                          />
-                        </div>
-                        <div>
-                          <Label>Image URL</Label>
-                          <Input
-                            value={flavorForm.imageUrl}
-                            onChange={(e) => setFlavorForm({ ...flavorForm, imageUrl: e.target.value })}
-                            data-testid="input-edit-flavor-image"
-                          />
-                        </div>
-                        <div>
-                          <Label>Display Order</Label>
-                          <Input
-                            type="number"
-                            value={flavorForm.displayOrder}
-                            onChange={(e) => setFlavorForm({ ...flavorForm, displayOrder: parseInt(e.target.value) || 0 })}
-                            data-testid="input-edit-flavor-order"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={flavorForm.isActive}
-                            onChange={(e) => setFlavorForm({ ...flavorForm, isActive: e.target.checked })}
-                            data-testid="input-edit-flavor-active"
-                          />
-                          <Label>Active</Label>
-                        </div>
-                        <Button
-                          onClick={() => updateFlavorMutation.mutate({ id: flavor.id, data: flavorForm })}
-                          disabled={updateFlavorMutation.isPending}
-                          className="w-full"
-                          data-testid="button-update-flavor"
-                        >
-                          {updateFlavorMutation.isPending ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              Saving...
-                            </>
-                          ) : (
-                            'Save Changes'
-                          )}
-                        </Button>
-                      </div>
+                      {editingFlavor && (
+                        <FlavorForm 
+                          flavor={editingFlavor} 
+                          onClose={() => setEditingFlavorId(null)} 
+                          isEdit 
+                        />
+                      )}
                     </DialogContent>
                   </Dialog>
                   <Button 
