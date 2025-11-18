@@ -6,7 +6,7 @@ Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacifi
 
 ## 🚧 Active Development (Nov 2024)
 
-**Status:** Phase 3 Complete - Retail Product Offering Functional
+**Status:** Phase 4 Complete - Customer Order History & Cart Drawer Fixed
 
 ### ✅ SECURITY FIX COMPLETED (Nov 18, 2024)
 
@@ -41,7 +41,7 @@ The application has completed the retail product offering functionality as part 
 - Phase 1: Parallel schema with flavors, retail products, and wholesale unit types
 - Phase 2: Admin UI for Flavor Library and Wholesale Unit management
 - Phase 3: Admin UI for Retail Product Offerings and Shop v2 integration
-- Phase 4: Customer Order History with Reorder Functionality
+- Phase 4: Customer Order History with Reorder Functionality + Cart Drawer Dual-System Support
 
 **NEW SYSTEM OVERVIEW:**
 - **Flavors**: Central library of kombucha flavors with images, descriptions, and ingredients
@@ -52,12 +52,19 @@ The application has completed the retail product offering functionality as part 
 - `/api/flavors` - Flavor library management (GET, POST, PATCH, DELETE)
 - `/api/retail-products` - Retail product offerings with subscription discount (GET, POST, PATCH, DELETE)
 - `/api/wholesale-unit-types` - Wholesale unit management (GET, POST, PATCH, DELETE)
-- `/api/retail-cart` - V2 cart system for retail products with subscription support
+- `/api/cart` - Legacy cart system (GET, POST, PATCH, DELETE)
+- `/api/retail-cart` - V2 cart system for retail products with subscription support (GET, POST, PATCH, DELETE)
 - `/api/my-orders` - Customer order history with efficient 2-query data fetching (GET)
 - `/api/orders/:id/reorder` - Reorder past orders with legacy product mapping (POST)
 - Shop page: `/shop-v2` (uses new retail products with subscribe & save)
 - Order history: `/my-orders` (displays order details with reorder capability)
 - Admin pages: `/admin/flavors`, `/admin/retail-products`, `/admin/wholesale-units`
+
+**Dual Cart System:**
+- **Unified Cart Drawer**: During migration, the cart drawer queries both `/api/cart` (legacy) and `/api/retail-cart` (new system) simultaneously using the `useUnifiedCart` hook
+- **Discriminated Union Types**: Cart items are tagged with `type: 'legacy'` or `type: 'retail_v2'` for safe type narrowing
+- **Synchronized Mutations**: All cart mutations (add, update, remove) invalidate both cart query keys to keep the unified view fresh
+- **Component Structure**: `UnifiedCartItemComponent` handles rendering for both cart item types with proper product data access patterns
 
 **Subscribe & Save:**
 - Configurable discount percentage per product (default 10%)

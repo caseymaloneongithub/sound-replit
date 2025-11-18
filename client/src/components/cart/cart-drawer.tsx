@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   Sheet,
@@ -10,49 +10,44 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ShoppingCart, Trash2, Plus, Minus, Loader2, Repeat } from "lucide-react";
+import { ShoppingCart } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { getCasePrice, formatCaseQuantity } from "@shared/pricing";
-
-interface CartItemWithProduct {
-  id: string;
-  productId: string;
-  quantity: number;
-  isSubscription: boolean;
-  subscriptionFrequency?: string | null;
-  product: {
-    id: string;
-    name: string;
-    retailPrice: string;
-    imageUrl: string;
-  };
-}
+import { useUnifiedCart } from "@/hooks/use-unified-cart";
+import { UnifiedCartItemComponent } from "./unified-cart-item";
 
 export function CartDrawer() {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
-  const { data: cartItems = [], isLoading } = useQuery<CartItemWithProduct[]>({
-    queryKey: ["/api/cart"],
-  });
+  const { items: unifiedItems, isLoading } = useUnifiedCart();
 
   const updateQuantityMutation = useMutation({
-    mutationFn: async ({ id, quantity }: { id: string; quantity: number }) => {
-      await apiRequest("PATCH", `/api/cart/${id}`, { quantity });
+    mutationFn: async ({ id, quantity, type }: { id: string; quantity: number; type: 'legacy' | 'retail_v2' }) => {
+      if (type === 'legacy') {
+        await apiRequest("PATCH", `/api/cart/${id}`, { quantity });
+      } else {
+        await apiRequest("PATCH", `/api/retail-cart/${id}`, { quantity });
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"] });
     },
   });
 
   const removeItemMutation = useMutation({
-    mutationFn: async (itemId: string) => {
-      await apiRequest("DELETE", `/api/cart/${itemId}`);
+    mutationFn: async ({ itemId, type }: { itemId: string; type: 'legacy' | 'retail_v2' }) => {
+      if (type === 'legacy') {
+        await apiRequest("DELETE", `/api/cart/${itemId}`);
+      } else {
+        await apiRequest("DELETE", `/api/retail-cart/${itemId}`);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"] });
       toast({
         title: "Removed from cart",
         description: "Item removed successfully",
@@ -62,7 +57,9 @@ export function CartDrawer() {
 
   const handleCheckout = () => {
     // Check if cart has subscriptions - those are not supported via cart checkout
-    const hasSubscription = cartItems.some(item => item.isSubscription);
+    const hasSubscription = unifiedItems.some(item => 
+      item.type === 'legacy' ? item.item.isSubscription : item.item.isSubscription
+    );
     
     if (hasSubscription) {
       // Show helpful message - subscriptions should be set up via /subscribe page
@@ -79,21 +76,32 @@ export function CartDrawer() {
     setLocation('/cart-checkout');
   };
 
-  const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+  const cartCount = unifiedItems.reduce((sum, item) => {
+    return sum + (item.type === 'legacy' ? item.item.quantity : item.item.quantity);
+  }, 0);
   
   // Calculate subtotal for all items using actual product prices
-  const subtotal = cartItems.reduce((sum, item) => {
-    const pricePerCase = parseFloat(item.product.retailPrice);
-    return sum + (pricePerCase * item.quantity);
+  const subtotal = unifiedItems.reduce((sum, item) => {
+    if (item.type === 'legacy') {
+      const pricePerCase = parseFloat(item.item.product.retailPrice);
+      return sum + (pricePerCase * item.item.quantity);
+    } else {
+      const pricePerCase = parseFloat(item.item.retailProduct.price);
+      return sum + (pricePerCase * item.item.quantity);
+    }
   }, 0);
   
   // Calculate taxable subtotal (only non-subscription items), using actual product prices
-  const taxableSubtotal = cartItems
-    .filter(item => !item.isSubscription)
+  const taxableSubtotal = unifiedItems
+    .filter(item => item.type === 'legacy' ? !item.item.isSubscription : !item.item.isSubscription)
     .reduce((sum, item) => {
-      // Use actual product retail price from the cart item
-      const pricePerCase = parseFloat(item.product.retailPrice);
-      return sum + (pricePerCase * item.quantity);
+      if (item.type === 'legacy') {
+        const pricePerCase = parseFloat(item.item.product.retailPrice);
+        return sum + (pricePerCase * item.item.quantity);
+      } else {
+        const pricePerCase = parseFloat(item.item.retailProduct.price);
+        return sum + (pricePerCase * item.item.quantity);
+      }
     }, 0);
   
   // Calculate sales tax (WA State 6.5% + Seattle 3.85% = 10.35%)
@@ -135,7 +143,7 @@ export function CartDrawer() {
                 </div>
               ))}
             </div>
-          ) : cartItems.length === 0 ? (
+          ) : unifiedItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <ShoppingCart className="w-16 h-16 text-muted-foreground mb-4" />
               <h3 className="text-lg font-semibold mb-2">Your cart is empty</h3>
@@ -148,98 +156,24 @@ export function CartDrawer() {
             </div>
           ) : (
             <div className="space-y-4">
-              {cartItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex gap-4 p-4 rounded-lg border"
-                  data-testid={`cart-item-${item.id}`}
-                >
-                  <img
-                    src={item.product.imageUrl}
-                    alt={item.product.name}
-                    className="w-20 h-20 object-cover rounded"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-semibold truncate" data-testid={`text-item-name-${item.id}`}>
-                      {item.product.name}
-                    </h4>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-medium" data-testid={`text-item-quantity-${item.id}`}>
-                        {formatCaseQuantity(item.quantity)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap mt-1">
-                      <p className="text-sm text-muted-foreground" data-testid={`text-item-price-${item.id}`}>
-                        ${parseFloat(item.product.retailPrice).toFixed(2)} per case
-                      </p>
-                      {item.isSubscription && (
-                        <Badge variant="secondary" className="gap-1 text-xs">
-                          <Repeat className="w-3 h-3" />
-                          {item.subscriptionFrequency === 'weekly' ? 'Weekly' :
-                           item.subscriptionFrequency === 'bi-weekly' ? 'Bi-Weekly' :
-                           'Every 4 Weeks'}
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3 mt-2">
-                      <div className="flex items-center gap-1 bg-muted rounded-full">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 rounded-full"
-                          onClick={() =>
-                            updateQuantityMutation.mutate({
-                              id: item.id,
-                              quantity: Math.max(1, item.quantity - 1),
-                            })
-                          }
-                          disabled={item.quantity <= 1 || updateQuantityMutation.isPending}
-                          data-testid={`button-decrease-${item.id}`}
-                        >
-                          <Minus className="w-3 h-3" />
-                        </Button>
-                        <span className="text-sm font-medium px-3 min-w-12 text-center" data-testid={`text-quantity-${item.id}`}>
-                          {item.quantity}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 rounded-full"
-                          onClick={() =>
-                            updateQuantityMutation.mutate({
-                              id: item.id,
-                              quantity: item.quantity + 1,
-                            })
-                          }
-                          disabled={updateQuantityMutation.isPending}
-                          data-testid={`button-increase-${item.id}`}
-                        >
-                          <Plus className="w-3 h-3" />
-                        </Button>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => removeItemMutation.mutate(item.id)}
-                        data-testid={`button-remove-${item.id}`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-bold" data-testid={`text-item-total-${item.id}`}>
-                      ${(parseFloat(item.product.retailPrice) * item.quantity).toFixed(2)}
-                    </p>
-                  </div>
-                </div>
+              {unifiedItems.map((unifiedItem) => (
+                <UnifiedCartItemComponent
+                  key={unifiedItem.item.id}
+                  unifiedItem={unifiedItem}
+                  onUpdateQuantity={(id, quantity, type) => 
+                    updateQuantityMutation.mutate({ id, quantity, type })
+                  }
+                  onRemove={(id, type) => 
+                    removeItemMutation.mutate({ itemId: id, type })
+                  }
+                  isUpdating={updateQuantityMutation.isPending}
+                />
               ))}
             </div>
           )}
         </div>
 
-        {cartItems.length > 0 && (
+        {unifiedItems.length > 0 && (
           <div className="border-t pt-6 space-y-4">
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
@@ -254,7 +188,7 @@ export function CartDrawer() {
                 </div>
               )}
               
-              {taxableSubtotal === 0 && cartItems.length > 0 && (
+              {taxableSubtotal === 0 && unifiedItems.length > 0 && (
                 <div className="text-xs text-muted-foreground">
                   * Subscriptions are not subject to sales tax
                 </div>
