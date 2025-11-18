@@ -907,6 +907,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Public file upload URL endpoint (for flavor images, etc.)
+  app.post("/api/object-storage/upload-url", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { filename, directory } = req.body;
+      if (!filename) {
+        return res.status(400).json({ message: "filename is required" });
+      }
+      
+      const objectStorageService = new ObjectStorageService();
+      const uploadUrl = await objectStorageService.getPublicUploadURL(filename, directory || 'public');
+      res.json({ uploadUrl });
+    } catch (error: any) {
+      console.error("Error getting public upload URL:", error);
+      res.status(500).json({ message: "Error getting upload URL: " + error.message });
+    }
+  });
+
   app.get("/objects/:objectPath(*)", async (req, res) => {
     const objectStorageService = new ObjectStorageService();
     try {

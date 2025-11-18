@@ -217,6 +217,24 @@ export class ObjectStorageService {
       requestedPermission: requestedPermission ?? ObjectPermission.READ,
     });
   }
+
+  async getPublicUploadURL(filename: string, directory: string = 'public'): Promise<string> {
+    const publicPaths = this.getPublicObjectSearchPaths();
+    if (publicPaths.length === 0) {
+      throw new Error('No public object paths configured');
+    }
+    
+    const publicPath = publicPaths[0];
+    const fullPath = `${publicPath}/${directory}/${filename}`;
+    const { bucketName, objectName } = parseObjectPath(fullPath);
+    
+    return signObjectURL({
+      bucketName,
+      objectName,
+      method: 'PUT',
+      ttlSec: 900,
+    });
+  }
 }
 
 function parseObjectPath(path: string): {
