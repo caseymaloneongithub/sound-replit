@@ -55,25 +55,46 @@ export function CartDrawer() {
     },
   });
 
-  const handleCheckout = () => {
-    // Check if cart has subscriptions - those are not supported via cart checkout
-    const hasSubscription = unifiedItems.some(item => 
-      item.type === 'legacy' ? item.item.isSubscription : item.item.isSubscription
-    );
-    
-    if (hasSubscription) {
-      // Show helpful message - subscriptions should be set up via /subscribe page
+  const checkoutMutation = useMutation({
+    mutationFn: async () => {
+      const hasSubscription = unifiedItems.some(item => item.item.isSubscription);
+      const hasOneTime = unifiedItems.some(item => !item.item.isSubscription);
+
+      // Check for mixed cart (not allowed)
+      if (hasSubscription && hasOneTime) {
+        throw new Error("Please checkout one-time purchases and subscriptions separately. Remove either type from your cart to continue.");
+      }
+
+      // For subscription-only carts, use Stripe Checkout Session
+      if (hasSubscription) {
+        const response = await apiRequest("POST", "/api/create-cart-checkout", {});
+        return { type: 'subscription', url: response.url };
+      }
+
+      // For one-time purchases, navigate to embedded checkout
+      return { type: 'one-time' };
+    },
+    onSuccess: (data) => {
+      setOpen(false);
+      if (data.type === 'subscription' && data.url) {
+        // Redirect to Stripe Checkout for subscriptions
+        window.location.href = data.url;
+      } else {
+        // Navigate to embedded checkout for one-time purchases
+        setLocation('/cart-checkout');
+      }
+    },
+    onError: (error: any) => {
       toast({
-        title: "Cannot checkout with subscriptions",
-        description: "Please remove subscription items from your cart. Subscriptions are managed separately via the Subscribe page.",
+        title: "Checkout Error",
+        description: error.message || "Unable to proceed with checkout",
         variant: "destructive",
       });
-      return;
-    }
-    
-    // Navigate to embedded checkout page for one-time purchases
-    setOpen(false);
-    setLocation('/cart-checkout');
+    },
+  });
+
+  const handleCheckout = () => {
+    checkoutMutation.mutate();
   };
 
   const cartCount = unifiedItems.reduce((sum, item) => {
@@ -210,9 +231,10 @@ export function CartDrawer() {
               className="w-full rounded-full"
               size="lg"
               onClick={handleCheckout}
+              disabled={checkoutMutation.isPending}
               data-testid="button-checkout"
             >
-              Proceed to Checkout
+              {checkoutMutation.isPending ? "Processing..." : "Proceed to Checkout"}
             </Button>
           </div>
         )}
