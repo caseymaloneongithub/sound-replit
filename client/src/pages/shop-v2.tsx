@@ -160,7 +160,7 @@ export default function ShopV2() {
                           <p className="text-2xl font-bold" data-testid={`text-price-${product.id}`}>
                             ${parseFloat(product.price).toFixed(2)}
                           </p>
-                          {Number(product.subscriptionDiscount) > 0 && (
+                          {product.subscriptionDiscount != null && Number(product.subscriptionDiscount) > 0 && (
                             <Badge variant="default" className="text-xs" data-testid={`badge-discount-${product.id}`}>
                               Save {Number(product.subscriptionDiscount).toFixed(0)}%
                             </Badge>
@@ -198,7 +198,7 @@ export default function ShopV2() {
                             </Button>
                           </TabsContent>
                           <TabsContent value="subscribe" className="mt-2 space-y-2">
-                            {Number(product.subscriptionDiscount) > 0 && (
+                            {product.subscriptionDiscount != null && Number(product.subscriptionDiscount) > 0 && (
                               <div className="text-center py-2 px-3 bg-accent/10 rounded-md mb-2">
                                 <p className="text-sm font-semibold text-accent">
                                   Subscribe & Save {Number(product.subscriptionDiscount).toFixed(0)}%
