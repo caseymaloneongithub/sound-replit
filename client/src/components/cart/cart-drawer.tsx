@@ -80,28 +80,34 @@ export function CartDrawer() {
     return sum + (item.type === 'legacy' ? item.item.quantity : item.item.quantity);
   }, 0);
   
-  // Calculate subtotal for all items using actual product prices
+  // Helper function to calculate price per case (with subscription discount if applicable)
+  const getPricePerCase = (unifiedItem: typeof unifiedItems[0]) => {
+    const basePrice = unifiedItem.type === 'legacy'
+      ? parseFloat(unifiedItem.item.product.retailPrice)
+      : parseFloat(unifiedItem.item.retailProduct.price);
+    
+    const isSubscription = unifiedItem.item.isSubscription;
+    const subscriptionDiscountPercentage = unifiedItem.type === 'retail_v2'
+      ? parseFloat(unifiedItem.item.retailProduct.subscriptionDiscount)
+      : 0;
+    
+    return isSubscription && subscriptionDiscountPercentage > 0
+      ? basePrice * (1 - subscriptionDiscountPercentage / 100)
+      : basePrice;
+  };
+  
+  // Calculate subtotal for all items using discounted prices where applicable
   const subtotal = unifiedItems.reduce((sum, item) => {
-    if (item.type === 'legacy') {
-      const pricePerCase = parseFloat(item.item.product.retailPrice);
-      return sum + (pricePerCase * item.item.quantity);
-    } else {
-      const pricePerCase = parseFloat(item.item.retailProduct.price);
-      return sum + (pricePerCase * item.item.quantity);
-    }
+    const pricePerCase = getPricePerCase(item);
+    return sum + (pricePerCase * item.item.quantity);
   }, 0);
   
-  // Calculate taxable subtotal (only non-subscription items), using actual product prices
+  // Calculate taxable subtotal (only non-subscription items), using discounted prices
   const taxableSubtotal = unifiedItems
-    .filter(item => item.type === 'legacy' ? !item.item.isSubscription : !item.item.isSubscription)
+    .filter(item => !item.item.isSubscription)
     .reduce((sum, item) => {
-      if (item.type === 'legacy') {
-        const pricePerCase = parseFloat(item.item.product.retailPrice);
-        return sum + (pricePerCase * item.item.quantity);
-      } else {
-        const pricePerCase = parseFloat(item.item.retailProduct.price);
-        return sum + (pricePerCase * item.item.quantity);
-      }
+      const pricePerCase = getPricePerCase(item);
+      return sum + (pricePerCase * item.item.quantity);
     }, 0);
   
   // Calculate sales tax (WA State 6.5% + Seattle 3.85% = 10.35%)

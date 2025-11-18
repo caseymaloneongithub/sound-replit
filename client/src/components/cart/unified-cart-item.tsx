@@ -25,9 +25,17 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
     ? unifiedItem.item.product.imageUrl
     : unifiedItem.item.retailProduct.flavor.primaryImageUrl) ?? '';
     
-  const pricePerCase = unifiedItem.type === 'legacy'
+  const basePrice = unifiedItem.type === 'legacy'
     ? unifiedItem.item.product.retailPrice
     : unifiedItem.item.retailProduct.price;
+
+  const subscriptionDiscountPercentage = unifiedItem.type === 'retail_v2'
+    ? parseFloat(unifiedItem.item.retailProduct.subscriptionDiscount)
+    : 0;
+
+  const pricePerCase = isSubscription && subscriptionDiscountPercentage > 0
+    ? parseFloat(basePrice) * (1 - subscriptionDiscountPercentage / 100)
+    : parseFloat(basePrice);
 
   return (
     <div
@@ -49,9 +57,20 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap mt-1">
-          <p className="text-sm text-muted-foreground" data-testid={`text-item-price-${itemId}`}>
-            ${parseFloat(pricePerCase).toFixed(2)} per case
-          </p>
+          {isSubscription && subscriptionDiscountPercentage > 0 ? (
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-medium text-primary" data-testid={`text-item-price-${itemId}`}>
+                ${pricePerCase.toFixed(2)} per case
+              </p>
+              <p className="text-xs text-muted-foreground line-through">
+                ${parseFloat(basePrice).toFixed(2)}
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground" data-testid={`text-item-price-${itemId}`}>
+              ${pricePerCase.toFixed(2)} per case
+            </p>
+          )}
           {isSubscription && (
             <Badge variant="secondary" className="gap-1 text-xs">
               <Repeat className="w-3 h-3" />
@@ -90,7 +109,7 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
         </div>
         <div className="text-right">
           <p className="font-bold" data-testid={`text-item-total-${itemId}`}>
-            ${(parseFloat(pricePerCase) * quantity).toFixed(2)}
+            ${(pricePerCase * quantity).toFixed(2)}
           </p>
         </div>
       </div>
