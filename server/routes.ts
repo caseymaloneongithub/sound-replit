@@ -3065,6 +3065,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Retail Cart V2 routes (new schema)
+  app.get("/api/retail-cart", async (req, res) => {
+    try {
+      const sessionId = req.sessionID || "guest";
+      const items = await storage.getRetailCart(sessionId);
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching retail cart: " + error.message });
+    }
+  });
+
+  app.post("/api/retail-cart", async (req, res) => {
+    try {
+      const sessionId = req.sessionID || "guest";
+      const { retailProductId, quantity, isSubscription, subscriptionFrequency } = req.body;
+      
+      const cartItem = await storage.addRetailProductToCart({
+        sessionId,
+        retailProductId,
+        quantity: quantity || 1,
+        isSubscription: isSubscription || false,
+        subscriptionFrequency: isSubscription ? subscriptionFrequency : null,
+      });
+      
+      res.json(cartItem);
+    } catch (error: any) {
+      res.status(400).json({ message: "Error adding to retail cart: " + error.message });
+    }
+  });
+
+  app.patch("/api/retail-cart/:id", async (req, res) => {
+    try {
+      const { quantity } = req.body;
+      const parsedQuantity = Number(quantity);
+      
+      if (!Number.isFinite(parsedQuantity) || parsedQuantity < 1) {
+        return res.status(400).json({ message: "Invalid quantity" });
+      }
+      
+      const updated = await storage.updateRetailCartItemQuantity(req.params.id, parsedQuantity);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error updating retail cart item: " + error.message });
+    }
+  });
+
+  app.delete("/api/retail-cart/:id", async (req, res) => {
+    try {
+      await storage.removeRetailCartItem(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error removing from retail cart: " + error.message });
+    }
+  });
+
   // Inventory management routes
   app.get("/api/inventory/low-stock", async (req, res) => {
     try {

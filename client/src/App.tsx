@@ -15,6 +15,7 @@ import ResetPassword from "@/pages/reset-password";
 import WholesaleRegister from "@/pages/wholesale-register";
 import WholesaleCustomerDashboard from "@/pages/wholesale-customer-dashboard";
 import Shop from "@/pages/shop";
+import ShopV2 from "@/pages/shop-v2";
 import MySubscriptions from "@/pages/my-subscriptions";
 import Subscribe from "@/pages/subscribe";
 import ProductSubscribe from "@/pages/product-subscribe";
@@ -55,6 +56,7 @@ function Router() {
       <WholesaleCustomerProtectedRoute path="/wholesale-customer" component={WholesaleCustomerDashboard} />
       <Route path="/" component={() => <Redirect to="/shop" />} />
       <Route path="/shop" component={Shop} />
+      <Route path="/shop-v2" component={ShopV2} />
       <Route path="/contact" component={Contact} />
       <Route path="/subscriptions" component={() => <Redirect to="/my-subscriptions" />} />
       <Route path="/my-subscriptions" component={MySubscriptions} />

@@ -3,6 +3,8 @@ import {
   type RetailProduct, type InsertRetailProduct,
   type WholesaleUnitType, type InsertWholesaleUnitType,
   type WholesaleUnitTypeFlavor, type InsertWholesaleUnitTypeFlavor,
+  type RetailCartItem, type InsertRetailCartItem,
+  type RetailOrderItemV2, type InsertRetailOrderItemV2,
   type SubscriptionPlan, type InsertSubscriptionPlan,
   type CartItem, type InsertCartItem,
   type Subscription, type InsertSubscription,
@@ -24,6 +26,8 @@ import {
   retailProducts,
   wholesaleUnitTypes,
   wholesaleUnitTypeFlavors,
+  retailCartItems,
+  retailOrderItemsV2,
   subscriptionPlans,
   cartItems,
   subscriptions,
@@ -143,6 +147,12 @@ export interface IStorage {
   updateCartItemQuantity(id: string, quantity: number): Promise<CartItem | undefined>;
   removeFromCart(id: string): Promise<void>;
   clearCart(sessionId: string): Promise<void>;
+  
+  getRetailCart(sessionId: string): Promise<Array<RetailCartItem & { retailProduct: RetailProduct & { flavor: Flavor } }>>;
+  addRetailProductToCart(item: InsertRetailCartItem): Promise<RetailCartItem>;
+  updateRetailCartItemQuantity(id: string, quantity: number): Promise<RetailCartItem | undefined>;
+  removeRetailCartItem(id: string): Promise<void>;
+  clearRetailCart(sessionId: string): Promise<void>;
   
   getSubscriptions(): Promise<Subscription[]>;
   getSubscription(id: string): Promise<Subscription | undefined>;
@@ -919,7 +929,7 @@ export class PostgresStorage implements IStorage {
     if (existing.length > 0) {
       const updated = await db
         .update(cartItems)
-        .set({ quantity: existing[0].quantity + item.quantity })
+        .set({ quantity: existing[0].quantity + (item.quantity || 1) })
         .where(eq(cartItems.id, existing[0].id))
         .returning();
       return updated[0];
@@ -944,6 +954,69 @@ export class PostgresStorage implements IStorage {
 
   async clearCart(sessionId: string): Promise<void> {
     await db.delete(cartItems).where(eq(cartItems.sessionId, sessionId));
+  }
+
+  async getRetailCart(sessionId: string): Promise<Array<RetailCartItem & { retailProduct: RetailProduct & { flavor: Flavor } }>> {
+    const items = await db
+      .select()
+      .from(retailCartItems)
+      .innerJoin(retailProducts, eq(retailCartItems.retailProductId, retailProducts.id))
+      .innerJoin(flavors, eq(retailProducts.flavorId, flavors.id))
+      .where(eq(retailCartItems.sessionId, sessionId));
+
+    return items.map(item => ({
+      ...item.retail_cart_items,
+      retailProduct: {
+        ...item.retail_products,
+        flavor: item.flavors
+      }
+    }));
+  }
+
+  async addRetailProductToCart(item: InsertRetailCartItem): Promise<RetailCartItem> {
+    const conditions = [
+      eq(retailCartItems.sessionId, item.sessionId),
+      eq(retailCartItems.retailProductId, item.retailProductId),
+      eq(retailCartItems.isSubscription, item.isSubscription || false),
+    ];
+
+    if (item.isSubscription && item.subscriptionFrequency) {
+      conditions.push(eq(retailCartItems.subscriptionFrequency, item.subscriptionFrequency));
+    }
+
+    const existing = await db
+      .select()
+      .from(retailCartItems)
+      .where(and(...conditions));
+
+    if (existing.length > 0) {
+      const updated = await db
+        .update(retailCartItems)
+        .set({ quantity: existing[0].quantity + (item.quantity || 1) })
+        .where(eq(retailCartItems.id, existing[0].id))
+        .returning();
+      return updated[0];
+    }
+
+    const result = await db.insert(retailCartItems).values(item).returning();
+    return result[0];
+  }
+
+  async updateRetailCartItemQuantity(id: string, quantity: number): Promise<RetailCartItem | undefined> {
+    const result = await db
+      .update(retailCartItems)
+      .set({ quantity })
+      .where(eq(retailCartItems.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async removeRetailCartItem(id: string): Promise<void> {
+    await db.delete(retailCartItems).where(eq(retailCartItems.id, id));
+  }
+
+  async clearRetailCart(sessionId: string): Promise<void> {
+    await db.delete(retailCartItems).where(eq(retailCartItems.sessionId, sessionId));
   }
 
   async getSubscriptions(): Promise<Subscription[]> {
