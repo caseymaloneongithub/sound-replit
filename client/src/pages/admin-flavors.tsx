@@ -13,11 +13,72 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Palette, Upload, X, Image as ImageIcon } from "lucide-react";
+import { Loader2, Palette, Upload, X, Image as ImageIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import type { Flavor } from "@shared/schema";
 import type { UploadResult } from "@uppy/core";
+
+function FlavorImageCarousel({ flavor }: { flavor: Flavor }) {
+  const images = [flavor.primaryImageUrl, flavor.secondaryImageUrl].filter(Boolean);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  
+  if (images.length === 0) {
+    return (
+      <div className="w-full h-64 bg-muted flex items-center justify-center">
+        <ImageIcon className="w-16 h-16 text-muted-foreground" />
+      </div>
+    );
+  }
+  
+  return (
+    <div className="relative group">
+      <div className="w-full h-64 overflow-hidden bg-muted">
+        <img 
+          src={images[currentIndex]} 
+          alt={`${flavor.name} - ${currentIndex === 0 ? 'Primary' : 'Secondary'}`}
+          className="w-full h-full object-cover"
+        />
+      </div>
+      
+      {images.length > 1 && (
+        <>
+          {/* Navigation arrows - only show on hover */}
+          <button
+            onClick={() => setCurrentIndex((currentIndex - 1 + images.length) % images.length)}
+            className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity"
+            data-testid={`button-prev-image-${flavor.id}`}
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setCurrentIndex((currentIndex + 1) % images.length)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity"
+            data-testid={`button-next-image-${flavor.id}`}
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+          
+          {/* Navigation dots */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+            {images.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={() => setCurrentIndex(idx)}
+                className={`w-2 h-2 rounded-full transition-all ${
+                  idx === currentIndex 
+                    ? 'bg-white w-6' 
+                    : 'bg-white/50 hover:bg-white/75'
+                }`}
+                data-testid={`button-dot-${flavor.id}-${idx}`}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 // Form schema with raw ingredients string (parsed on submit)
 const flavorFormSchema = z.object({
@@ -454,7 +515,10 @@ export default function AdminFlavors() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {flavors.map((flavor) => (
-              <Card key={flavor.id} data-testid={`card-flavor-${flavor.id}`}>
+              <Card key={flavor.id} data-testid={`card-flavor-${flavor.id}`} className="overflow-hidden">
+                {/* Image Carousel - Full Width */}
+                <FlavorImageCarousel flavor={flavor} />
+                
                 <CardHeader>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1">
@@ -467,31 +531,6 @@ export default function AdminFlavors() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {/* Images */}
-                  {(flavor.primaryImageUrl || flavor.secondaryImageUrl) && (
-                    <div className="flex gap-2">
-                      {flavor.primaryImageUrl && (
-                        <div className="relative">
-                          <img 
-                            src={flavor.primaryImageUrl} 
-                            alt={`${flavor.name} primary`}
-                            className="w-24 h-24 object-cover rounded border"
-                          />
-                          <Badge className="absolute bottom-1 left-1 text-xs">Primary</Badge>
-                        </div>
-                      )}
-                      {flavor.secondaryImageUrl && (
-                        <div className="relative">
-                          <img 
-                            src={flavor.secondaryImageUrl} 
-                            alt={`${flavor.name} secondary`}
-                            className="w-24 h-24 object-cover rounded border"
-                          />
-                          <Badge className="absolute bottom-1 left-1 text-xs">Secondary</Badge>
-                        </div>
-                      )}
-                    </div>
-                  )}
                   <p className="text-sm text-muted-foreground">{flavor.description}</p>
                   <p className="text-xs text-muted-foreground">
                     <strong>Ingredients:</strong> {flavor.ingredients.join(', ')}
