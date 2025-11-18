@@ -13,7 +13,10 @@ import {
   BarChart3,
   DollarSign,
   UserCog,
-  Building2
+  Building2,
+  Palette,
+  ShoppingBag,
+  Box
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -61,6 +64,14 @@ export function StaffSidebar() {
       items: [
         { title: "Inventory", href: "/inventory", icon: ClipboardList },
         { title: "Revenue", href: "/reports", icon: DollarSign },
+      ],
+    },
+    {
+      title: "Product Management",
+      items: [
+        { title: "Flavor Library", href: "/staff-portal?tab=flavors", icon: Palette, adminOnly: true },
+        { title: "Retail Products", href: "/staff-portal?tab=retail-products", icon: ShoppingBag, adminOnly: true },
+        { title: "Wholesale Units", href: "/staff-portal?tab=wholesale-units", icon: Box, adminOnly: true },
       ],
     },
     {
