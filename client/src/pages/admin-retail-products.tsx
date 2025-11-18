@@ -289,7 +289,7 @@ export default function AdminRetailProducts() {
                               unitType: product.unitType,
                               unitDescription: product.unitDescription,
                               price: Number(product.price),
-                              subscriptionDiscount: Number(product.subscriptionDiscount),
+                              subscriptionDiscount: product.subscriptionDiscount != null ? Number(product.subscriptionDiscount) : 10,
                               isActive: product.isActive,
                               displayOrder: product.displayOrder
                             });
