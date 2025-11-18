@@ -140,13 +140,13 @@ export interface IStorage {
   getSubscriptionPlan(id: string): Promise<SubscriptionPlan | undefined>;
   createSubscriptionPlan(plan: InsertSubscriptionPlan): Promise<SubscriptionPlan>;
   
-  getCartItems(sessionId: string): Promise<CartItem[]>;
+  getCartItems(sessionId: string, client?: any): Promise<CartItem[]>;
   addToCart(item: InsertCartItem): Promise<CartItem>;
   updateCartItemQuantity(id: string, quantity: number): Promise<CartItem | undefined>;
   removeFromCart(id: string): Promise<void>;
   clearCart(sessionId: string): Promise<void>;
   
-  getRetailCart(sessionId: string): Promise<Array<RetailCartItem & { retailProduct: RetailProduct & { flavor: Flavor } }>>;
+  getRetailCart(sessionId: string, client?: any): Promise<Array<RetailCartItem & { retailProduct: RetailProduct & { flavor: Flavor } }>>;
   addRetailProductToCart(item: InsertRetailCartItem): Promise<RetailCartItem>;
   updateRetailCartItemQuantity(id: string, quantity: number): Promise<RetailCartItem | undefined>;
   removeRetailCartItem(id: string): Promise<void>;
@@ -902,7 +902,23 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async getCartItems(sessionId: string): Promise<CartItem[]> {
+  async getCartItems(sessionId: string, client?: any): Promise<CartItem[]> {
+    if (client) {
+      // Transaction-aware with row locking
+      const result = await client.query(
+        'SELECT * FROM cart_items WHERE session_id = $1 FOR UPDATE',
+        [sessionId]
+      );
+      return result.rows.map((row: any) => ({
+        id: row.id,
+        sessionId: row.session_id,
+        productId: row.product_id,
+        quantity: row.quantity,
+        isSubscription: row.is_subscription,
+        subscriptionFrequency: row.subscription_frequency,
+        createdAt: row.created_at,
+      }));
+    }
     return await db.select().from(cartItems).where(eq(cartItems.sessionId, sessionId));
   }
 
@@ -954,7 +970,52 @@ export class PostgresStorage implements IStorage {
     await db.delete(cartItems).where(eq(cartItems.sessionId, sessionId));
   }
 
-  async getRetailCart(sessionId: string): Promise<Array<RetailCartItem & { retailProduct: RetailProduct & { flavor: Flavor } }>> {
+  async getRetailCart(sessionId: string, client?: any): Promise<Array<RetailCartItem & { retailProduct: RetailProduct & { flavor: Flavor } }>> {
+    if (client) {
+      // Transaction-aware with row locking
+      const result = await client.query(
+        `SELECT 
+          rc.*,
+          rp.id as rp_id, rp.flavor_id, rp.unit_type, rp.price, rp.subscription_discount, rp.is_active as rp_is_active,
+          f.id as f_id, f.name as f_name, f.description as f_description, f.flavor_profile, f.ingredients, 
+          f.primary_image_url, f.secondary_image_url, f.is_active as f_is_active
+        FROM retail_cart_items rc
+        INNER JOIN retail_products rp ON rc.retail_product_id = rp.id
+        INNER JOIN flavors f ON rp.flavor_id = f.id
+        WHERE rc.session_id = $1
+        FOR UPDATE OF rc`,
+        [sessionId]
+      );
+      
+      return result.rows.map((row: any) => ({
+        id: row.id,
+        sessionId: row.session_id,
+        retailProductId: row.retail_product_id,
+        quantity: row.quantity,
+        isSubscription: row.is_subscription,
+        subscriptionFrequency: row.subscription_frequency,
+        createdAt: row.created_at,
+        retailProduct: {
+          id: row.rp_id,
+          flavorId: row.flavor_id,
+          unitType: row.unit_type,
+          price: row.price,
+          subscriptionDiscount: row.subscription_discount,
+          isActive: row.rp_is_active,
+          flavor: {
+            id: row.f_id,
+            name: row.f_name,
+            description: row.f_description,
+            flavorProfile: row.flavor_profile,
+            ingredients: row.ingredients,
+            primaryImageUrl: row.primary_image_url,
+            secondaryImageUrl: row.secondary_image_url,
+            isActive: row.f_is_active,
+          }
+        }
+      }));
+    }
+    
     const items = await db
       .select()
       .from(retailCartItems)
