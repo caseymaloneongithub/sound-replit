@@ -29,7 +29,7 @@ export default function AdminRetailProducts() {
     queryKey: ['/api/flavors'],
   });
 
-  const { data: retailProducts = [], isLoading: retailProductsLoading } = useQuery<RetailProduct[]>({
+  const { data: retailProducts = [], isLoading: retailProductsLoading } = useQuery<Array<RetailProduct & { flavor: Flavor }>>({
     queryKey: ['/api/retail-products'],
   });
 
@@ -198,13 +198,23 @@ export default function AdminRetailProducts() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {retailProducts.map((product) => {
-              const flavor = flavors.find(f => f.id === product.flavorId);
               return (
-                <Card key={product.id} data-testid={`card-retail-product-${product.id}`}>
+                <Card key={product.id} data-testid={`card-retail-product-${product.id}`} className="overflow-hidden">
+                  {/* Flavor Image */}
+                  {product.flavor.primaryImageUrl && (
+                    <div className="w-full h-48 overflow-hidden bg-muted">
+                      <img 
+                        src={product.flavor.primaryImageUrl} 
+                        alt={product.flavor.name}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  )}
+                  
                   <CardHeader>
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1">
-                        <CardTitle>{flavor?.name || 'Unknown Flavor'}</CardTitle>
+                        <CardTitle>{product.flavor.name}</CardTitle>
                         <CardDescription>{product.unitType}</CardDescription>
                       </div>
                       <Badge variant={product.isActive ? "default" : "secondary"}>
@@ -220,7 +230,10 @@ export default function AdminRetailProducts() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Price:</span>
-                        <span className="font-semibold">${Number(product.price).toFixed(2)}</span>
+                        <span className="font-semibold text-lg">${Number(product.price).toFixed(2)}</span>
+                      </div>
+                      <div className="mt-4 pt-4 border-t">
+                        <p className="text-xs text-muted-foreground">{product.flavor.description}</p>
                       </div>
                     </div>
                   </CardContent>
