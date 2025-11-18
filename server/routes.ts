@@ -1366,6 +1366,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid payment intent ID" });
       }
       
+      // Fetch tax metadata from payment intent if available
+      let taxMode = 'exclusive';
+      let taxRateBps = 1035; // Default 10.35%
+      let taxAmountCents = 0;
+      let isTaxExempt = false;
+      
+      if (validated.paymentIntentId && stripe) {
+        try {
+          const paymentIntent = await stripe.paymentIntents.retrieve(validated.paymentIntentId);
+          
+          // Extract tax information from metadata
+          if (paymentIntent.metadata.taxRate) {
+            const taxRate = parseFloat(paymentIntent.metadata.taxRate);
+            taxRateBps = Math.round(taxRate * 10000); // Convert to basis points
+          }
+          
+          if (paymentIntent.metadata.taxAmount) {
+            taxAmountCents = Math.round(parseFloat(paymentIntent.metadata.taxAmount) * 100);
+          }
+          
+          // If no tax amount, this is tax exempt (subscription or other)
+          if (taxAmountCents === 0) {
+            isTaxExempt = true;
+          }
+        } catch (error) {
+          console.error("Error fetching payment intent for tax metadata:", error);
+          // Continue with defaults if unable to fetch
+        }
+      }
+      
       await storage.createRetailCheckoutSession({
         sessionId,
         paymentIntentId: validated.paymentIntentId || null,
@@ -1373,6 +1403,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerEmail: validated.customerEmail,
         customerPhone: validated.customerPhone,
         userId: req.user?.id || null,
+        taxMode,
+        taxRateBps,
+        taxAmountCents,
+        isTaxExempt,
       });
       
       res.json({ success: true });
@@ -2026,9 +2060,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               );
               
               if (existingOrderResult.rows.length === 0) {
-                // Get checkout session with customer info
+                // 🔒 SECURITY: Lock checkout session to prevent race conditions
                 const checkoutSessionResult = await client.query(
-                  'SELECT * FROM retail_checkout_sessions WHERE payment_intent_id = $1 LIMIT 1',
+                  'SELECT * FROM retail_checkout_sessions WHERE payment_intent_id = $1 FOR UPDATE',
                   [paymentIntent.id]
                 );
                 
@@ -2044,9 +2078,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 
                 const checkoutSession = checkoutSessionResult.rows[0];
                 
-                // Get cart items (both legacy and retail v2)
-                const cartItems = await storage.getCartItems(sessionId);
-                const retailItems = await storage.getRetailCart(sessionId);
+                // 🔒 SECURITY: Lock cart rows to prevent concurrent modifications
+                const cartItems = await storage.getCartItems(sessionId, client);
+                const retailItems = await storage.getRetailCart(sessionId, client);
                 
                 // Cart must not be empty - fail if it is (prevents race conditions and tampering)
                 if (cartItems.length === 0 && retailItems.length === 0) {
@@ -2055,7 +2089,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   throw new Error('Cart is empty - cannot verify or fulfill payment');
                 }
                 
-                // Recompute subtotal from cart items for security (don't trust client metadata)
+                // 🔒 SECURITY: Recompute subtotal from locked cart items (don't trust client metadata)
                 let recomputedSubtotalCents = 0;
                 
                 // Add legacy cart items
@@ -2087,16 +2121,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   recomputedSubtotalCents += priceInCents * item.quantity;
                 }
                 
-                // Calculate tax and total
-                const TAX_RATE = 0.1035;
-                const recomputedTaxCents = Math.round(recomputedSubtotalCents * TAX_RATE);
+                // 🔒 SECURITY: Use stored tax metadata from checkout session (not hardcoded rate)
+                // This ensures we verify against the exact tax calculated at checkout time
+                const storedTaxAmountCents = checkoutSession.tax_amount_cents || 0;
+                const storedTaxRateBps = checkoutSession.tax_rate_bps || 1035;
+                const isTaxExempt = checkoutSession.is_tax_exempt || false;
+                
+                // Calculate expected tax from stored rate for verification
+                let recomputedTaxCents = 0;
+                if (!isTaxExempt && storedTaxRateBps > 0) {
+                  const taxRate = storedTaxRateBps / 10000; // Convert basis points to decimal
+                  recomputedTaxCents = Math.round(recomputedSubtotalCents * taxRate);
+                }
+                
                 const recomputedTotalCents = recomputedSubtotalCents + recomputedTaxCents;
                 
-                // Verify Stripe amount matches recomputed total
+                // 🔒 SECURITY: Verify Stripe amount matches recomputed total
                 if (Math.abs(paymentIntent.amount - recomputedTotalCents) > 1) {
                   console.error(`[WEBHOOK] Payment amount verification FAILED!`);
                   console.error(`[WEBHOOK] Stripe charged: ${paymentIntent.amount} cents`);
                   console.error(`[WEBHOOK] Recomputed total: ${recomputedTotalCents} cents (subtotal: ${recomputedSubtotalCents}, tax: ${recomputedTaxCents})`);
+                  console.error(`[WEBHOOK] Stored tax from checkout: ${storedTaxAmountCents} cents at ${storedTaxRateBps} bps, exempt: ${isTaxExempt}`);
                   console.error(`[WEBHOOK] This may indicate a tampering attempt or pricing mismatch`);
                   throw new Error('Payment amount verification failed - amount mismatch');
                 }
@@ -2108,7 +2153,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const isSubscriptionOrder = cartItems.some(item => item.isSubscription) || 
                                             retailItems.some(item => item.isSubscription);
                 
-                // Create retail order
+                // Create retail order using verified amounts
                 const orderResult = await client.query(
                   `INSERT INTO retail_orders (
                     order_number, user_id, customer_name, customer_email, customer_phone,
@@ -2121,9 +2166,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     checkoutSession.customer_email,
                     checkoutSession.customer_phone,
                     'pending',
-                    paymentIntent.metadata.subtotal || '0',
-                    paymentIntent.metadata.taxAmount || '0',
-                    (paymentIntent.amount / 100).toFixed(2),
+                    (recomputedSubtotalCents / 100).toFixed(2),
+                    (recomputedTaxCents / 100).toFixed(2),
+                    (recomputedTotalCents / 100).toFixed(2),
                     paymentIntent.id,
                     isSubscriptionOrder
                   ]
