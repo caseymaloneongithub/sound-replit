@@ -34,7 +34,13 @@ export default function AdminRetailProducts() {
   });
 
   const createRetailProductMutation = useMutation({
-    mutationFn: async (data: any) => apiRequest('POST', '/api/retail-products', data),
+    mutationFn: async (data: any) => {
+      const payload = {
+        ...data,
+        price: data.price.toFixed(2), // Serialize to string for decimal schema
+      };
+      return apiRequest('POST', '/api/retail-products', payload);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/retail-products'] });
       setEditingRetailProduct(null);
@@ -47,7 +53,13 @@ export default function AdminRetailProducts() {
   });
 
   const updateRetailProductMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => apiRequest('PATCH', `/api/retail-products/${id}`, data),
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      const payload = {
+        ...data,
+        price: data.price.toFixed(2), // Serialize to string for decimal schema
+      };
+      return apiRequest('PATCH', `/api/retail-products/${id}`, payload);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/retail-products'] });
       setEditingRetailProduct(null);

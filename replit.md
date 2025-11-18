@@ -6,9 +6,27 @@ Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacifi
 
 ## 🚧 Active Schema Migration (Nov 2024)
 
-**Status:** Phase 1 Complete - Parallel Schema Established
+**Status:** Phase 3 Complete - Retail Product Offering Functional
 
-The application is undergoing a staged migration to completely separate retail and wholesale product management with centrally-managed flavors. Both old and new schemas coexist to allow incremental development without downtime.
+The application has completed the retail product offering functionality as part of the migration to completely separate retail and wholesale product management with centrally-managed flavors. Both old and new schemas coexist to allow incremental development without downtime.
+
+**Completed:**
+- Phase 1: Parallel schema with flavors, retail products, and wholesale unit types
+- Phase 2: Admin UI for Flavor Library and Wholesale Unit management
+- Phase 3: Admin UI for Retail Product Offerings and Shop v2 integration
+
+**NEW SYSTEM OVERVIEW:**
+- **Flavors**: Central library of kombucha flavors with images, descriptions, and ingredients
+- **Retail Products**: Flavor + unit type combinations (e.g., "Mist 6-pack", "Cascade 12-pack") with individual prices
+- **Wholesale Units**: Unit types with default pricing and flavor availability for B2B customers
+
+**Key Endpoints:**
+- `/api/flavors` - Flavor library management (GET, POST, PATCH, DELETE)
+- `/api/retail-products` - Retail product offerings (GET, POST, PATCH, DELETE)
+- `/api/wholesale-unit-types` - Wholesale unit management (GET, POST, PATCH, DELETE)
+- `/api/retail-cart` - V2 cart system for retail products
+- Shop page: `/shop-v2` (uses new retail products)
+- Admin pages: `/admin/flavors`, `/admin/retail-products`, `/admin/wholesale-units`
 
 **See MIGRATION_PLAN.md for detailed migration roadmap.**
 
@@ -35,7 +53,9 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   **Retail Order Tracking**: Secure two-phase order creation workflow linked to Stripe payment webhooks. Orders have statuses (`pending` → `ready_for_pickup` → `fulfilled`/`cancelled`) managed by staff.
 -   **Subscription Management**: Supports multi-product subscriptions with flexible quantities. Customers can add/remove products, change delivery frequency, delay/advance pickups (with specific rules and cutoff times), cancel subscriptions, and update payment methods via Stripe Customer Portal integration. A local subscription billing system uses a daily cron job to charge customers via Stripe PaymentIntents, handling async payments, retries, and compensating rollbacks. Retail subscription pickups are restricted to Monday-Thursday (9am-3pm).
 -   **Inventory Management System**: Staff can record production batches, increasing stock with an audit trail. All inventory updates use atomic PostgreSQL transactions with pessimistic locking. Fulfillment automatically deducts inventory.
--   **Staff Portal**: A unified management portal for staff and admin users for managing retail and wholesale orders, inventory (production recording, stock overview, adjustments), a CRM system for lead tracking (with touch point history, search, and filter), and admin features (product specs, user management). Super admins can impersonate users. Staff can also create new wholesale product types directly from the Wholesale Pricing Management page.
+-   **Flavor Library (NEW)**: Central repository of kombucha flavors with primary/secondary images, descriptions, flavor profiles, and ingredients. Images are served via `/public/:filename` endpoint to work around Replit Object Storage public access restrictions. Full-width image carousels display both images with navigation dots.
+-   **Retail Product Offerings (NEW)**: Admin interface for creating retail products by linking flavors to unit types (6-pack, 12-pack, case, kegs) with specific prices. Products display on Shop v2 page grouped by unit type, filtered by active status, with flavor images and descriptions. Prices are serialized as strings for decimal schema compatibility.
+-   **Staff Portal**: A unified management portal for staff and admin users for managing retail and wholesale orders, inventory (production recording, stock overview, adjustments), a CRM system for lead tracking (with touch point history, search, and filter), and admin features (flavor library, retail products, wholesale units, product specs, user management). Super admins can impersonate users. Staff can also create new wholesale product types directly from the Wholesale Pricing Management page.
 
 ### Development & Build Process
 
