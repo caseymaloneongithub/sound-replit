@@ -303,12 +303,23 @@ export default function CartCheckout() {
 
   // Calculate subtotal from unified cart (for display only, server calculates actual)
   const subtotal = unifiedCart.reduce((sum, cartItem) => {
-    if (cartItem.type === 'legacy') {
-      const pricePerCase = parseFloat(cartItem.item.product.retailPrice);
-      return sum + (pricePerCase * cartItem.item.quantity);
-    } else {
-      const pricePerUnit = parseFloat(cartItem.item.retailProduct.price);
-      return sum + (pricePerUnit * cartItem.item.quantity);
+    try {
+      if (cartItem.type === 'legacy') {
+        const priceStr = cartItem.item.product?.retailPrice;
+        if (!priceStr) return sum;
+        const pricePerCase = parseFloat(priceStr);
+        if (!isFinite(pricePerCase) || pricePerCase < 0) return sum;
+        return sum + (pricePerCase * cartItem.item.quantity);
+      } else {
+        const priceStr = cartItem.item.retailProduct?.price;
+        if (!priceStr) return sum;
+        const pricePerUnit = parseFloat(priceStr);
+        if (!isFinite(pricePerUnit) || pricePerUnit < 0) return sum;
+        return sum + (pricePerUnit * cartItem.item.quantity);
+      }
+    } catch (e) {
+      console.error("Error calculating cart item price:", e, cartItem);
+      return sum;
     }
   }, 0);
 
@@ -338,6 +349,10 @@ export default function CartCheckout() {
               {unifiedCart.map((cartItem) => {
                 if (cartItem.type === 'legacy') {
                   const item = cartItem.item;
+                  const price = item.product.retailPrice ? parseFloat(item.product.retailPrice) : 0;
+                  const validPrice = Number.isFinite(price) && price >= 0 ? price : 0;
+                  const itemTotal = validPrice * item.quantity;
+                  
                   return (
                     <div key={item.id} className="flex gap-4" data-testid={`summary-item-${item.id}`}>
                       <img
@@ -348,18 +363,22 @@ export default function CartCheckout() {
                       <div className="flex-1 min-w-0">
                         <h4 className="font-medium truncate">{item.product.name}</h4>
                         <p className="text-sm text-muted-foreground">
-                          {item.quantity} {item.quantity === 1 ? 'case' : 'cases'} × ${parseFloat(item.product.retailPrice).toFixed(2)}
+                          {item.quantity} {item.quantity === 1 ? 'case' : 'cases'} × ${validPrice.toFixed(2)}
                         </p>
                       </div>
                       <div className="text-right">
                         <p className="font-semibold">
-                          ${(parseFloat(item.product.retailPrice) * item.quantity).toFixed(2)}
+                          ${itemTotal.toFixed(2)}
                         </p>
                       </div>
                     </div>
                   );
                 } else {
                   const item = cartItem.item;
+                  const price = item.retailProduct.price ? parseFloat(item.retailProduct.price) : 0;
+                  const validPrice = Number.isFinite(price) && price >= 0 ? price : 0;
+                  const itemTotal = validPrice * item.quantity;
+                  
                   return (
                     <div key={item.id} className="flex gap-4" data-testid={`summary-item-${item.id}`}>
                       <div className="w-16 h-16 overflow-hidden rounded">
@@ -378,7 +397,7 @@ export default function CartCheckout() {
                       <div className="flex-1 min-w-0">
                         <h4 className="font-medium truncate">{item.retailProduct.flavor.name}</h4>
                         <p className="text-sm text-muted-foreground">
-                          {item.quantity} × ${parseFloat(item.retailProduct.price).toFixed(2)}
+                          {item.quantity} × ${validPrice.toFixed(2)}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {item.retailProduct.unitDescription}
@@ -386,7 +405,7 @@ export default function CartCheckout() {
                       </div>
                       <div className="text-right">
                         <p className="font-semibold">
-                          ${(parseFloat(item.retailProduct.price) * item.quantity).toFixed(2)}
+                          ${itemTotal.toFixed(2)}
                         </p>
                       </div>
                     </div>

@@ -1361,13 +1361,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const item of legacyItems) {
         const pricing = await getProductPricing(item.productId);
         if (!pricing) throw new Error(`Product pricing ${item.productId} not found`);
-        const priceInCents = Math.round(parseFloat(pricing.retailPrice) * 100);
+        if (!pricing.retailPrice) throw new Error(`Product ${item.productId} has no retail price`);
+        
+        const priceInDollars = parseFloat(pricing.retailPrice);
+        if (!isFinite(priceInDollars) || priceInDollars < 0) {
+          throw new Error(`Invalid price for product ${item.productId}: ${pricing.retailPrice}`);
+        }
+        
+        const priceInCents = Math.round(priceInDollars * 100);
         subtotalCents += priceInCents * item.quantity;
       }
       
       // Add retail v2 cart items (price is in dollars, convert to cents)
       for (const item of retailItems) {
-        const priceInCents = Math.round(parseFloat(item.retailProduct.price) * 100);
+        if (!item.retailProduct) throw new Error(`Cart item ${item.id} missing retail product data`);
+        if (!item.retailProduct.price) throw new Error(`Retail product ${item.retailProductId} has no price`);
+        
+        const priceInDollars = parseFloat(item.retailProduct.price);
+        if (!isFinite(priceInDollars) || priceInDollars < 0) {
+          throw new Error(`Invalid price for retail product ${item.retailProductId}: ${item.retailProduct.price}`);
+        }
+        
+        const priceInCents = Math.round(priceInDollars * 100);
         subtotalCents += priceInCents * item.quantity;
       }
 
