@@ -22,11 +22,17 @@ The application has completed the retail product offering functionality as part 
 
 **Key Endpoints:**
 - `/api/flavors` - Flavor library management (GET, POST, PATCH, DELETE)
-- `/api/retail-products` - Retail product offerings (GET, POST, PATCH, DELETE)
+- `/api/retail-products` - Retail product offerings with subscription discount (GET, POST, PATCH, DELETE)
 - `/api/wholesale-unit-types` - Wholesale unit management (GET, POST, PATCH, DELETE)
-- `/api/retail-cart` - V2 cart system for retail products
-- Shop page: `/shop-v2` (uses new retail products)
+- `/api/retail-cart` - V2 cart system for retail products with subscription support
+- Shop page: `/shop-v2` (uses new retail products with subscribe & save)
 - Admin pages: `/admin/flavors`, `/admin/retail-products`, `/admin/wholesale-units`
+
+**Subscribe & Save:**
+- Configurable discount percentage per product (default 10%)
+- Three subscription frequencies: weekly, bi-weekly, monthly
+- Discounted price displayed in shop interface
+- Automatic price calculation: basePrice * (1 - discountPercentage / 100)
 
 **See MIGRATION_PLAN.md for detailed migration roadmap.**
 
@@ -54,7 +60,7 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   **Subscription Management**: Supports multi-product subscriptions with flexible quantities. Customers can add/remove products, change delivery frequency, delay/advance pickups (with specific rules and cutoff times), cancel subscriptions, and update payment methods via Stripe Customer Portal integration. A local subscription billing system uses a daily cron job to charge customers via Stripe PaymentIntents, handling async payments, retries, and compensating rollbacks. Retail subscription pickups are restricted to Monday-Thursday (9am-3pm).
 -   **Inventory Management System**: Staff can record production batches, increasing stock with an audit trail. All inventory updates use atomic PostgreSQL transactions with pessimistic locking. Fulfillment automatically deducts inventory.
 -   **Flavor Library (NEW)**: Central repository of kombucha flavors with primary/secondary images, descriptions, flavor profiles, and ingredients. Images are served via `/public/:filename` endpoint to work around Replit Object Storage public access restrictions. Full-width image carousels display both images with navigation dots.
--   **Retail Product Offerings (NEW)**: Admin interface for creating retail products by linking flavors to unit types (6-pack, 12-pack, case, kegs) with specific prices. Products display on Shop v2 page grouped by unit type, filtered by active status, with flavor images and descriptions. Prices are serialized as strings for decimal schema compatibility.
+-   **Retail Product Offerings (NEW)**: Admin interface for creating retail products by linking flavors to unit types (6-pack, 12-pack, case, kegs) with specific prices. Each product includes a configurable subscription discount percentage (default 10%) for subscribe & save functionality. Products display on Shop v2 page grouped by unit type, filtered by active status, with flavor images and descriptions. Subscription options include weekly, bi-weekly (every 2 weeks), and monthly (every 4 weeks) frequencies. Prices are serialized as strings for decimal schema compatibility.
 -   **Staff Portal**: A unified management portal for staff and admin users for managing retail and wholesale orders, inventory (production recording, stock overview, adjustments), a CRM system for lead tracking (with touch point history, search, and filter), and admin features (flavor library, retail products, wholesale units, product specs, user management). Super admins can impersonate users. Staff can also create new wholesale product types directly from the Wholesale Pricing Management page.
 
 ### Development & Build Process
