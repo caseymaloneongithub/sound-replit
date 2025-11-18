@@ -156,9 +156,16 @@ export default function ShopV2() {
                         <p className="text-sm text-muted-foreground mb-3" data-testid={`text-unit-${product.id}`}>
                           {product.unitDescription}
                         </p>
-                        <p className="text-2xl font-bold" data-testid={`text-price-${product.id}`}>
-                          ${parseFloat(product.price).toFixed(2)}
-                        </p>
+                        <div className="flex items-baseline gap-2">
+                          <p className="text-2xl font-bold" data-testid={`text-price-${product.id}`}>
+                            ${parseFloat(product.price).toFixed(2)}
+                          </p>
+                          {Number(product.subscriptionDiscount) > 0 && (
+                            <Badge variant="default" className="text-xs" data-testid={`badge-discount-${product.id}`}>
+                              Save {Number(product.subscriptionDiscount).toFixed(0)}%
+                            </Badge>
+                          )}
+                        </div>
                       </CardContent>
                       <CardFooter className="p-4 pt-0 flex-col gap-2">
                         <Tabs defaultValue="one-time" className="w-full">
@@ -191,6 +198,17 @@ export default function ShopV2() {
                             </Button>
                           </TabsContent>
                           <TabsContent value="subscribe" className="mt-2 space-y-2">
+                            {Number(product.subscriptionDiscount) > 0 && (
+                              <div className="text-center py-2 px-3 bg-accent/10 rounded-md mb-2">
+                                <p className="text-sm font-semibold text-accent">
+                                  Subscribe & Save {Number(product.subscriptionDiscount).toFixed(0)}%
+                                </p>
+                                <p className="text-lg font-bold mt-1" data-testid={`text-subscription-price-${product.id}`}>
+                                  ${(parseFloat(product.price) * (1 - Number(product.subscriptionDiscount) / 100)).toFixed(2)}
+                                </p>
+                                <p className="text-xs text-muted-foreground">per delivery</p>
+                              </div>
+                            )}
                             <Button
                               onClick={() => subscriptionPurchase(product.id, 'weekly')}
                               disabled={addToCartMutation.isPending}
