@@ -69,9 +69,9 @@ export function StaffSidebar() {
     {
       title: "Product Management",
       items: [
-        { title: "Flavor Library", href: "/staff-portal?tab=flavors", icon: Palette, adminOnly: true },
-        { title: "Retail Products", href: "/staff-portal?tab=retail-products", icon: ShoppingBag, adminOnly: true },
-        { title: "Wholesale Units", href: "/staff-portal?tab=wholesale-units", icon: Box, adminOnly: true },
+        { title: "Flavor Library", href: "/admin/flavors", icon: Palette, adminOnly: true },
+        { title: "Retail Products", href: "/admin/retail-products", icon: ShoppingBag, adminOnly: true },
+        { title: "Wholesale Units", href: "/admin/wholesale-units", icon: Box, adminOnly: true },
       ],
     },
     {
