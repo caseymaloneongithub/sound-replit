@@ -890,14 +890,52 @@ export default function StaffPortal() {
             </TabsContent>
           )}
           
+          {/* NEW SCHEMA - Overview Card (shown at top of all new schema tabs) */}
+          {user?.isAdmin && (activeTab === 'flavors' || activeTab === 'retail-products' || activeTab === 'wholesale-units') && (
+            <Card className="bg-primary/5 border-primary/20">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Palette className="w-5 h-5" />
+                  New Product Management System
+                </CardTitle>
+                <CardDescription className="space-y-2">
+                  <p className="font-medium">This is the new flavor-centric product management system with three interconnected parts:</p>
+                  <div className="grid gap-2 mt-2">
+                    <div className="flex items-start gap-2">
+                      <Palette className="w-4 h-4 mt-0.5 text-primary" />
+                      <div>
+                        <strong className="text-foreground">Flavors (Central Library)</strong> - Master list of all kombucha flavors used by BOTH retail and wholesale
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <ShoppingBag className="w-4 h-4 mt-0.5 text-accent" />
+                      <div>
+                        <strong className="text-foreground">Retail Products</strong> - Combines flavors with unit types (case, keg) and individual retail pricing
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Box className="w-4 h-4 mt-0.5 text-orange-600" />
+                      <div>
+                        <strong className="text-foreground">Wholesale Units</strong> - Defines wholesale packaging types with default pricing and available flavors
+                      </div>
+                    </div>
+                  </div>
+                </CardDescription>
+              </CardHeader>
+            </Card>
+          )}
+          
           {/* NEW SCHEMA - Flavors Management */}
           {user?.isAdmin && (
             <TabsContent value="flavors" className="space-y-4">
-              <Card>
+              <Card className="border-primary/30">
                 <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
                   <div>
-                    <CardTitle>Flavor Management</CardTitle>
-                    <CardDescription>Manage centrally-defined flavors for retail and wholesale products</CardDescription>
+                    <CardTitle className="flex items-center gap-2">
+                      <Palette className="w-5 h-5 text-primary" />
+                      Flavor Library
+                    </CardTitle>
+                    <CardDescription>Central repository of kombucha flavors used across retail and wholesale products</CardDescription>
                   </div>
                   <Dialog open={editingFlavor === 'new'} onOpenChange={(open) => !open && setEditingFlavor(null)}>
                     <DialogTrigger asChild>
@@ -1146,11 +1184,14 @@ export default function StaffPortal() {
           {/* NEW SCHEMA - Retail Products Management */}
           {user?.isAdmin && (
             <TabsContent value="retail-products" className="space-y-4">
-              <Card>
+              <Card className="border-accent/30">
                 <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
                   <div>
-                    <CardTitle>Retail Product Management</CardTitle>
-                    <CardDescription>Manage flavor + unit combinations with individual pricing</CardDescription>
+                    <CardTitle className="flex items-center gap-2">
+                      <ShoppingBag className="w-5 h-5 text-accent" />
+                      Retail Product Offerings
+                    </CardTitle>
+                    <CardDescription>Create specific products by combining flavors with unit types and setting retail prices</CardDescription>
                   </div>
                   <Dialog open={editingRetailProduct === 'new'} onOpenChange={(open) => !open && setEditingRetailProduct(null)}>
                     <DialogTrigger asChild>
@@ -1411,11 +1452,14 @@ export default function StaffPortal() {
           {/* NEW SCHEMA - Wholesale Unit Types Management */}
           {user?.isAdmin && (
             <TabsContent value="wholesale-units" className="space-y-4">
-              <Card>
+              <Card className="border-orange-600/30">
                 <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
                   <div>
-                    <CardTitle>Wholesale Unit Type Management</CardTitle>
-                    <CardDescription>Manage wholesale unit types with default pricing and flavor availability</CardDescription>
+                    <CardTitle className="flex items-center gap-2">
+                      <Box className="w-5 h-5 text-orange-600" />
+                      Wholesale Packaging Types
+                    </CardTitle>
+                    <CardDescription>Define wholesale unit types with default pricing and which flavors are available for each unit</CardDescription>
                   </div>
                   <Dialog open={editingWholesaleUnitType === 'new'} onOpenChange={(open) => !open && setEditingWholesaleUnitType(null)}>
                     <DialogTrigger asChild>
