@@ -916,7 +916,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const objectStorageService = new ObjectStorageService();
-      const uploadUrl = await objectStorageService.getPublicUploadURL(filename, directory || 'public');
+      // Don't pass directory since publicPath already points to the public directory
+      const uploadUrl = await objectStorageService.getPublicUploadURL(filename, directory === 'public' ? '' : directory);
       res.json({ uploadUrl });
     } catch (error: any) {
       console.error("Error getting public upload URL:", error);

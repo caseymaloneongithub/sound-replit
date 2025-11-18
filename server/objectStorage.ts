@@ -218,14 +218,15 @@ export class ObjectStorageService {
     });
   }
 
-  async getPublicUploadURL(filename: string, directory: string = 'public'): Promise<string> {
+  async getPublicUploadURL(filename: string, directory: string = ''): Promise<string> {
     const publicPaths = this.getPublicObjectSearchPaths();
     if (publicPaths.length === 0) {
       throw new Error('No public object paths configured');
     }
     
     const publicPath = publicPaths[0];
-    const fullPath = `${publicPath}/${directory}/${filename}`;
+    // If directory is provided, use it; otherwise just append filename to public path
+    const fullPath = directory ? `${publicPath}/${directory}/${filename}` : `${publicPath}/${filename}`;
     const { bucketName, objectName } = parseObjectPath(fullPath);
     
     return signObjectURL({
