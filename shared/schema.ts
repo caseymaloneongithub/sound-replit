@@ -127,6 +127,7 @@ export const retailProducts = pgTable("retail_products", {
   unitType: text("unit_type").notNull(), // 'case', '1/6-barrel', '1/2-barrel'
   unitDescription: text("unit_description").notNull(), // e.g., "12 bottles", "5.16 gallons"
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
+  subscriptionDiscount: decimal("subscription_discount", { precision: 5, scale: 2 }).notNull().default('10.00'), // Percentage discount for subscriptions (e.g., 10.00 = 10%)
   isActive: boolean("is_active").notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
 });
