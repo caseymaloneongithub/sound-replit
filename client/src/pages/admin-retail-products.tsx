@@ -21,6 +21,7 @@ export default function AdminRetailProducts() {
     unitType: '',
     unitDescription: '',
     price: 0,
+    subscriptionDiscount: 10,
     isActive: true,
     displayOrder: 0
   });
@@ -38,13 +39,14 @@ export default function AdminRetailProducts() {
       const payload = {
         ...data,
         price: data.price.toFixed(2), // Serialize to string for decimal schema
+        subscriptionDiscount: data.subscriptionDiscount.toFixed(2), // Serialize to string for decimal schema
       };
       return apiRequest('POST', '/api/retail-products', payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/retail-products'] });
       setEditingRetailProduct(null);
-      setRetailProductForm({ flavorId: '', unitType: '', unitDescription: '', price: 0, isActive: true, displayOrder: 0 });
+      setRetailProductForm({ flavorId: '', unitType: '', unitDescription: '', price: 0, subscriptionDiscount: 10, isActive: true, displayOrder: 0 });
       toast({ title: "Retail product created", description: "Retail product has been created successfully" });
     },
     onError: (error: any) => {
@@ -57,6 +59,7 @@ export default function AdminRetailProducts() {
       const payload = {
         ...data,
         price: data.price.toFixed(2), // Serialize to string for decimal schema
+        subscriptionDiscount: data.subscriptionDiscount.toFixed(2), // Serialize to string for decimal schema
       };
       return apiRequest('PATCH', `/api/retail-products/${id}`, payload);
     },
@@ -172,6 +175,22 @@ export default function AdminRetailProducts() {
                     />
                   </div>
                   <div>
+                    <Label htmlFor="retail-subscription-discount">Subscription Discount (%)</Label>
+                    <Input
+                      id="retail-subscription-discount"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={retailProductForm.subscriptionDiscount}
+                      onChange={(e) => setRetailProductForm({ ...retailProductForm, subscriptionDiscount: parseFloat(e.target.value) || 0 })}
+                      data-testid="input-retail-subscription-discount"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Percentage discount for subscribe & save (default: 10%)
+                    </p>
+                  </div>
+                  <div>
                     <Label htmlFor="retail-display-order">Display Order</Label>
                     <Input
                       id="retail-display-order"
@@ -244,6 +263,10 @@ export default function AdminRetailProducts() {
                         <span className="text-muted-foreground">Price:</span>
                         <span className="font-semibold text-lg">${Number(product.price).toFixed(2)}</span>
                       </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Subscribe & Save:</span>
+                        <span className="font-semibold text-accent">{Number(product.subscriptionDiscount).toFixed(0)}% off</span>
+                      </div>
                       <div className="mt-4 pt-4 border-t">
                         <p className="text-xs text-muted-foreground">{product.flavor.description}</p>
                       </div>
@@ -262,6 +285,7 @@ export default function AdminRetailProducts() {
                               unitType: product.unitType,
                               unitDescription: product.unitDescription,
                               price: Number(product.price),
+                              subscriptionDiscount: Number(product.subscriptionDiscount),
                               isActive: product.isActive,
                               displayOrder: product.displayOrder
                             });
@@ -320,6 +344,21 @@ export default function AdminRetailProducts() {
                               onChange={(e) => setRetailProductForm({ ...retailProductForm, price: parseFloat(e.target.value) || 0 })}
                               data-testid="input-edit-retail-price"
                             />
+                          </div>
+                          <div>
+                            <Label>Subscription Discount (%)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              max="100"
+                              value={retailProductForm.subscriptionDiscount}
+                              onChange={(e) => setRetailProductForm({ ...retailProductForm, subscriptionDiscount: parseFloat(e.target.value) || 0 })}
+                              data-testid="input-edit-retail-subscription-discount"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Percentage discount for subscribe & save
+                            </p>
                           </div>
                           <div>
                             <Label>Display Order</Label>
