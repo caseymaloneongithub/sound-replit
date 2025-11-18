@@ -54,7 +54,7 @@ import {
   type WholesalePricing, type InsertWholesalePricing,
   type InventoryAdjustment, type InsertInventoryAdjustment,
 } from "@shared/schema";
-import { eq, and, or, desc, sql } from "drizzle-orm";
+import { eq, and, or, desc, sql, inArray } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import session from "express-session";
@@ -222,6 +222,10 @@ export interface IStorage {
     order: RetailOrder;
     items: Array<RetailOrderItem & { product: Product }>;
   } | undefined>;
+  getRetailOrdersWithDetailsByUserId(userId: string): Promise<Array<{
+    order: RetailOrder;
+    items: Array<RetailOrderItem & { product: Product }>;
+  }>>;
   createRetailOrder(order: InsertRetailOrder): Promise<RetailOrder>;
   createRetailOrderItem(item: InsertRetailOrderItem): Promise<RetailOrderItem>;
   updateRetailOrderStatus(id: string, status: string, userId?: string): Promise<RetailOrder | undefined>;
@@ -1808,6 +1812,50 @@ export class PostgresStorage implements IStorage {
         product: item.product,
       })),
     };
+  }
+
+  async getRetailOrdersWithDetailsByUserId(userId: string): Promise<Array<{
+    order: RetailOrder;
+    items: Array<RetailOrderItem & { product: Product }>;
+  }>> {
+    const orders = await this.getRetailOrdersByUserId(userId);
+    
+    if (orders.length === 0) return [];
+
+    const orderIds = orders.map(o => o.id);
+    
+    const allItems = await db
+      .select({
+        id: retailOrderItems.id,
+        orderId: retailOrderItems.orderId,
+        productId: retailOrderItems.productId,
+        quantity: retailOrderItems.quantity,
+        unitPrice: retailOrderItems.unitPrice,
+        product: products,
+      })
+      .from(retailOrderItems)
+      .innerJoin(products, eq(products.id, retailOrderItems.productId))
+      .where(sql`${retailOrderItems.orderId} = ANY(ARRAY[${sql.join(orderIds.map(id => sql`${id}::text`), sql`, `)}])`);
+
+    const itemsByOrderId = allItems.reduce((acc, item) => {
+      if (!acc[item.orderId]) {
+        acc[item.orderId] = [];
+      }
+      acc[item.orderId].push({
+        id: item.id,
+        orderId: item.orderId,
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        product: item.product,
+      });
+      return acc;
+    }, {} as Record<string, Array<RetailOrderItem & { product: Product }>>);
+
+    return orders.map(order => ({
+      order,
+      items: itemsByOrderId[order.id] || [],
+    }));
   }
 
   async createRetailOrder(order: InsertRetailOrder): Promise<RetailOrder> {

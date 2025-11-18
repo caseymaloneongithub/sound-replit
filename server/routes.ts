@@ -2,8 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, inventoryAdjustments, subscriptions, Subscription, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema } from "@shared/schema";
-import { eq, sql } from "drizzle-orm";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, inventoryAdjustments, subscriptions, Subscription, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts } from "@shared/schema";
+import { eq, sql, and } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
 import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
@@ -2404,6 +2404,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('[ERROR] Failed to fetch user subscriptions:', error);
       res.status(500).json({ message: "Error fetching user subscriptions: " + error.message });
+    }
+  });
+
+  app.get("/api/my-orders", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const ordersWithDetails = await storage.getRetailOrdersWithDetailsByUserId(userId);
+      res.json(ordersWithDetails);
+    } catch (error: any) {
+      console.error('[ERROR] Failed to fetch user orders:', error);
+      res.status(500).json({ message: "Error fetching orders: " + error.message });
+    }
+  });
+
+  app.post("/api/orders/:id/reorder", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const orderId = req.params.id;
+      const sessionId = req.sessionID || "guest";
+      
+      const orderDetails = await storage.getRetailOrderWithDetails(orderId);
+      if (!orderDetails) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+      
+      if (orderDetails.order.userId !== userId) {
+        return res.status(403).json({ message: "Unauthorized" });
+      }
+      
+      let itemsAdded = 0;
+      const flavors = await storage.getFlavors(true);
+      const allProductTypes = await storage.getProductTypes();
+      
+      for (const item of orderDetails.items) {
+        const product = await storage.getProduct(item.productId);
+        if (!product) {
+          console.warn(`[WARN] Product ${item.productId} not found, skipping reorder item`);
+          continue;
+        }
+        
+        const flavor = flavors.find(f => f.name === product.name);
+        if (!flavor) {
+          console.warn(`[WARN] Flavor '${product.name}' not found in flavor library, skipping item`);
+          continue;
+        }
+        
+        const productType = allProductTypes.find(pt => pt.id === product.productTypeId);
+        if (!productType) {
+          console.warn(`[WARN] Product type ${product.productTypeId} not found, skipping item`);
+          continue;
+        }
+        
+        const retailProduct = await db.query.retailProducts.findFirst({
+          where: and(
+            eq(retailProducts.flavorId, flavor.id),
+            eq(retailProducts.unitType, productType.unitType),
+            eq(retailProducts.isActive, true)
+          )
+        });
+        
+        if (!retailProduct) {
+          console.warn(`[WARN] Retail product not found for flavor ${flavor.name} (${flavor.id}) and unit type ${productType.unitType}, skipping item`);
+          continue;
+        }
+        
+        await storage.addRetailProductToCart({
+          sessionId,
+          retailProductId: retailProduct.id,
+          quantity: item.quantity,
+          isSubscription: false,
+          subscriptionFrequency: null,
+        });
+        
+        itemsAdded++;
+      }
+      
+      if (itemsAdded === 0) {
+        return res.status(400).json({ message: "Unable to add items to cart. Products may no longer be available." });
+      }
+      
+      res.json({ success: true, message: `${itemsAdded} item(s) added to cart`, itemsAdded });
+    } catch (error: any) {
+      console.error('[ERROR] Failed to reorder:', error);
+      res.status(500).json({ message: "Error reordering: " + error.message });
     }
   });
 

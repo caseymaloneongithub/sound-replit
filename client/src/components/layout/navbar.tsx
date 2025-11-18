@@ -39,6 +39,15 @@ export function Navbar() {
               My Subscriptions
             </Button>
           )}
+          {user && (
+            <Button 
+              variant={location === '/my-orders' ? 'default' : 'ghost'}
+              onClick={() => setLocation('/my-orders')}
+              data-testid="nav-my-orders"
+            >
+              My Orders
+            </Button>
+          )}
           {user && (user.isAdmin || user.role === 'staff') && (
             <Button 
               variant={location === '/staff-portal' ? 'default' : 'ghost'}
@@ -119,6 +128,19 @@ export function Navbar() {
                     className="justify-start"
                   >
                     My Subscriptions
+                  </Button>
+                )}
+                {user && (
+                  <Button 
+                    variant={location === '/my-orders' ? 'default' : 'ghost'}
+                    onClick={() => {
+                      setLocation('/my-orders');
+                      setMobileMenuOpen(false);
+                    }}
+                    data-testid="nav-mobile-my-orders"
+                    className="justify-start"
+                  >
+                    My Orders
                   </Button>
                 )}
                 {user && (user.isAdmin || user.role === 'staff') && (
