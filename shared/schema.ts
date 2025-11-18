@@ -151,6 +151,25 @@ export const wholesaleUnitTypeFlavors = pgTable("wholesale_unit_type_flavors", {
   uniqueUnitTypeFlavor: unique().on(table.unitTypeId, table.flavorId),
 }));
 
+// NEW SCHEMA - Retail Cart Items (references retailProducts)
+export const retailCartItems = pgTable("retail_cart_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: text("session_id").notNull(),
+  retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id),
+  quantity: integer("quantity").notNull().default(1),
+  isSubscription: boolean("is_subscription").notNull().default(false),
+  subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
+});
+
+// NEW SCHEMA - Retail Order Items V2 (references retailProducts)
+export const retailOrderItemsV2 = pgTable("retail_order_items_v2", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => retailOrders.id),
+  retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id),
+  quantity: integer("quantity").notNull(),
+  unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
+});
+
 export const subscriptionPlans = pgTable("subscription_plans", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -334,6 +353,8 @@ export const insertFlavorSchema = createInsertSchema(flavors).omit({ id: true })
 export const insertRetailProductSchema = createInsertSchema(retailProducts).omit({ id: true });
 export const insertWholesaleUnitTypeSchema = createInsertSchema(wholesaleUnitTypes).omit({ id: true });
 export const insertWholesaleUnitTypeFlavorSchema = createInsertSchema(wholesaleUnitTypeFlavors).omit({ id: true });
+export const insertRetailCartItemSchema = createInsertSchema(retailCartItems).omit({ id: true });
+export const insertRetailOrderItemV2Schema = createInsertSchema(retailOrderItemsV2).omit({ id: true });
 
 // Insert schemas - COMMON (used by both old and new)
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, isAdmin: true, role: true });
@@ -372,6 +393,8 @@ export type InsertFlavor = z.infer<typeof insertFlavorSchema>;
 export type InsertRetailProduct = z.infer<typeof insertRetailProductSchema>;
 export type InsertWholesaleUnitType = z.infer<typeof insertWholesaleUnitTypeSchema>;
 export type InsertWholesaleUnitTypeFlavor = z.infer<typeof insertWholesaleUnitTypeFlavorSchema>;
+export type InsertRetailCartItem = z.infer<typeof insertRetailCartItemSchema>;
+export type InsertRetailOrderItemV2 = z.infer<typeof insertRetailOrderItemV2Schema>;
 
 // Insert types - COMMON
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -403,6 +426,8 @@ export type Flavor = typeof flavors.$inferSelect;
 export type RetailProduct = typeof retailProducts.$inferSelect;
 export type WholesaleUnitType = typeof wholesaleUnitTypes.$inferSelect;
 export type WholesaleUnitTypeFlavor = typeof wholesaleUnitTypeFlavors.$inferSelect;
+export type RetailCartItem = typeof retailCartItems.$inferSelect;
+export type RetailOrderItemV2 = typeof retailOrderItemsV2.$inferSelect;
 
 // Select types - COMMON
 export type User = typeof users.$inferSelect;
