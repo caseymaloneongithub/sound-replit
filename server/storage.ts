@@ -27,6 +27,7 @@ import {
   wholesaleUnitTypeFlavors,
   retailCartItems,
   retailOrderItemsV2,
+  retailSubscriptionItems,
   subscriptionPlans,
   cartItems,
   subscriptions,
@@ -806,6 +807,25 @@ export class PostgresStorage implements IStorage {
   }
 
   async deleteRetailProduct(id: string): Promise<void> {
+    // Check if product is in any cart items
+    const cartItems = await db.select().from(retailCartItems).where(eq(retailCartItems.retailProductId, id)).limit(1);
+    if (cartItems.length > 0) {
+      throw new Error("Cannot delete product: it is currently in customer carts");
+    }
+
+    // Check if product is in any orders
+    const orderItems = await db.select().from(retailOrderItemsV2).where(eq(retailOrderItemsV2.retailProductId, id)).limit(1);
+    if (orderItems.length > 0) {
+      throw new Error("Cannot delete product: it has been ordered by customers");
+    }
+
+    // Check if product is in any subscriptions
+    const subscriptionItems = await db.select().from(retailSubscriptionItems).where(eq(retailSubscriptionItems.retailProductId, id)).limit(1);
+    if (subscriptionItems.length > 0) {
+      throw new Error("Cannot delete product: it is part of active subscriptions");
+    }
+
+    // If no references exist, safe to delete
     await db.delete(retailProducts).where(eq(retailProducts.id, id));
   }
 
