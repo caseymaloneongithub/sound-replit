@@ -265,7 +265,7 @@ export default function AdminRetailProducts() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Subscribe & Save:</span>
-                        <span className="font-semibold text-accent">
+                        <span className="font-semibold text-lg">
                           {product.subscriptionDiscount !== null && product.subscriptionDiscount !== undefined 
                             ? `${Number(product.subscriptionDiscount).toFixed(0)}% off`
                             : '10% off'}
