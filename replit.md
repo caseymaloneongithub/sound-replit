@@ -4,9 +4,28 @@
 
 Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacific Northwest kombucha brewery. The platform supports retail product and subscription purchases, and wholesale orders for business clients. Key capabilities include product browsing, subscription management, Stripe payment integration, comprehensive inventory tracking, retail and wholesale order tracking with fulfillment management, wholesale customer management, delivery scheduling, daily delivery reporting, and an admin dashboard. The business aims to provide a seamless online experience for purchasing artisanal kombucha, expanding market reach, and streamlining B2B operations.
 
-## 🚧 Active Schema Migration (Nov 2024)
+## 🚧 Active Development (Nov 2024)
 
 **Status:** Phase 3 Complete - Retail Product Offering Functional
+
+### ⚠️ CRITICAL SECURITY WORK NEEDED
+
+**Payment Verification Race Condition Identified:**
+The current webhook payment verification has a high-severity race condition where cart data is fetched outside the database transaction. This allows potential payment tampering or race conditions during checkout.
+
+**Required Fixes:**
+1. **Transaction-Aware Cart Fetching**: Move cart queries inside DB transaction with `FOR UPDATE` locks
+2. **Dynamic Tax Verification**: Use stored tax metadata from checkout session instead of hard-coded rates
+3. **Comprehensive Amount Verification**: Ensure Stripe amounts match recomputed totals using locked, consistent data
+
+**Schema Changes Started:**
+- ✅ Added tax metadata fields to `retail_checkout_sessions` table (tax_mode, tax_rate_bps, tax_amount_cents, is_tax_exempt)
+- ⏳ Need to push schema changes with `npm run db:push --force`
+- ⏳ Update checkout session creation to populate tax fields
+- ⏳ Add storage methods for transaction-aware cart fetching with row locks
+- ⏳ Update webhook to use locked cart fetching and stored tax metadata
+
+**Security Status:** The payment webhook currently recomputes totals server-side but does NOT use transactional locking, leaving a window for race conditions. This should be fixed before processing real customer payments.
 
 The application has completed the retail product offering functionality as part of the migration to completely separate retail and wholesale product management with centrally-managed flavors. Both old and new schemas coexist to allow incremental development without downtime.
 
@@ -55,7 +74,7 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   **Case-Based Ordering**: All orders are for cases of 12 bottles. Pricing is stored per-case, with frontend logic displaying quantities in cases and bottles. Wholesale pricing supports custom overrides per customer.
 -   **Authentication & Authorization**: Supports username/password, passwordless SMS code login (Twilio), and passwordless email code login (Gmail) via Passport.js. Registration requires SMS verification. A role-based authorization system defines 'user', 'wholesale_customer', 'staff', 'admin', and 'super_admin' levels with granular API route protection. Separate portals exist for retail, wholesale, and staff/admin, each with dedicated login pages. Password reset functionality is available via email.
 -   **Wholesale Contact & Inquiries**: A public contact form is available for wholesale inquiries and general questions, featuring Zod validation and full keyboard accessibility.
--   **Payment Processing**: Stripe is integrated for one-time purchases (embedded checkout) and recurring subscriptions (Stripe Checkout Sessions). Webhooks handle payment confirmations and subscription lifecycle events. Sales tax (10.35%) is applied to retail one-time purchases only.
+-   **Payment Processing**: Stripe is integrated for one-time purchases (embedded checkout) and recurring subscriptions (Stripe Checkout Sessions). Webhooks handle payment confirmations and subscription lifecycle events. Sales tax (10.35%) is applied to retail one-time purchases only. **Security**: Payment webhook recomputes order totals server-side from cart items to prevent tampering - never trusts client-provided metadata.
 -   **Retail Order Tracking**: Secure two-phase order creation workflow linked to Stripe payment webhooks. Orders have statuses (`pending` → `ready_for_pickup` → `fulfilled`/`cancelled`) managed by staff.
 -   **Subscription Management**: Supports multi-product subscriptions with flexible quantities. Customers can add/remove products, change delivery frequency, delay/advance pickups (with specific rules and cutoff times), cancel subscriptions, and update payment methods via Stripe Customer Portal integration. A local subscription billing system uses a daily cron job to charge customers via Stripe PaymentIntents, handling async payments, retries, and compensating rollbacks. Retail subscription pickups are restricted to Monday-Thursday (9am-3pm).
 -   **Inventory Management System**: Staff can record production batches, increasing stock with an audit trail. All inventory updates use atomic PostgreSQL transactions with pessimistic locking. Fulfillment automatically deducts inventory.

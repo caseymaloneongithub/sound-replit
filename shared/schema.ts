@@ -171,6 +171,40 @@ export const retailOrderItemsV2 = pgTable("retail_order_items_v2", {
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
 });
 
+// NEW SCHEMA - Retail Subscriptions V2 (references retailProducts)
+export const retailSubscriptions = pgTable("retail_subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  customerName: text("customer_name").notNull(),
+  customerEmail: text("customer_email").notNull(),
+  customerPhone: text("customer_phone").notNull(),
+  subscriptionFrequency: text("subscription_frequency").notNull(), // 'weekly', 'bi-weekly', or 'every-4-weeks'
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  stripeCheckoutSessionId: text("stripe_checkout_session_id").unique(),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripePaymentMethodId: text("stripe_payment_method_id"),
+  status: text("status").notNull().default('active'), // 'active', 'paused', 'cancelled'
+  billingType: text("billing_type").notNull().default('stripe_managed'), // 'stripe_managed' or 'local_managed'
+  billingStatus: text("billing_status").notNull().default('active'), // 'active', 'awaiting_auth', 'awaiting_confirmation', 'retrying'
+  nextChargeAt: timestamp("next_charge_at"),
+  retryCount: integer("retry_count").notNull().default(0),
+  lastPaymentIntentId: text("last_payment_intent_id"),
+  lastRefundId: text("last_refund_id"),
+  lastRefundedAt: timestamp("last_refunded_at"),
+  processingLock: boolean("processing_lock").notNull().default(false),
+  startDate: timestamp("start_date").notNull().defaultNow(),
+  nextDeliveryDate: timestamp("next_delivery_date"),
+  cancelledAt: timestamp("cancelled_at"),
+});
+
+// NEW SCHEMA - Retail Subscription Items V2 (junction table)
+export const retailSubscriptionItems = pgTable("retail_subscription_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  subscriptionId: varchar("subscription_id").notNull().references(() => retailSubscriptions.id, { onDelete: 'cascade' }),
+  retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id),
+  quantity: integer("quantity").notNull().default(1),
+});
+
 export const subscriptionPlans = pgTable("subscription_plans", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -244,6 +278,10 @@ export const retailCheckoutSessions = pgTable("retail_checkout_sessions", {
   customerEmail: text("customer_email").notNull(),
   customerPhone: text("customer_phone").notNull(),
   userId: varchar("user_id").references(() => users.id),
+  taxMode: text("tax_mode").notNull().default('exclusive'), // 'exclusive', 'inclusive', 'none'
+  taxRateBps: integer("tax_rate_bps").notNull().default(1035), // 10.35% = 1035 basis points
+  taxAmountCents: integer("tax_amount_cents").notNull().default(0),
+  isTaxExempt: boolean("is_tax_exempt").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -356,6 +394,8 @@ export const insertWholesaleUnitTypeSchema = createInsertSchema(wholesaleUnitTyp
 export const insertWholesaleUnitTypeFlavorSchema = createInsertSchema(wholesaleUnitTypeFlavors).omit({ id: true });
 export const insertRetailCartItemSchema = createInsertSchema(retailCartItems).omit({ id: true });
 export const insertRetailOrderItemV2Schema = createInsertSchema(retailOrderItemsV2).omit({ id: true });
+export const insertRetailSubscriptionSchema = createInsertSchema(retailSubscriptions).omit({ id: true, startDate: true, cancelledAt: true });
+export const insertRetailSubscriptionItemSchema = createInsertSchema(retailSubscriptionItems).omit({ id: true });
 
 // Insert schemas - COMMON (used by both old and new)
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, isAdmin: true, role: true });
@@ -396,6 +436,8 @@ export type InsertWholesaleUnitType = z.infer<typeof insertWholesaleUnitTypeSche
 export type InsertWholesaleUnitTypeFlavor = z.infer<typeof insertWholesaleUnitTypeFlavorSchema>;
 export type InsertRetailCartItem = z.infer<typeof insertRetailCartItemSchema>;
 export type InsertRetailOrderItemV2 = z.infer<typeof insertRetailOrderItemV2Schema>;
+export type InsertRetailSubscription = z.infer<typeof insertRetailSubscriptionSchema>;
+export type InsertRetailSubscriptionItem = z.infer<typeof insertRetailSubscriptionItemSchema>;
 
 // Insert types - COMMON
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -429,6 +471,8 @@ export type WholesaleUnitType = typeof wholesaleUnitTypes.$inferSelect;
 export type WholesaleUnitTypeFlavor = typeof wholesaleUnitTypeFlavors.$inferSelect;
 export type RetailCartItem = typeof retailCartItems.$inferSelect;
 export type RetailOrderItemV2 = typeof retailOrderItemsV2.$inferSelect;
+export type RetailSubscription = typeof retailSubscriptions.$inferSelect;
+export type RetailSubscriptionItem = typeof retailSubscriptionItems.$inferSelect;
 
 // Select types - COMMON
 export type User = typeof users.$inferSelect;

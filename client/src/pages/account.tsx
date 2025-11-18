@@ -87,6 +87,11 @@ export default function Account() {
     queryKey: ["/api/subscription-plans"],
   });
 
+  const { data: orders, isLoading: ordersLoading } = useQuery<any[]>({
+    queryKey: ["/api/my-orders"],
+    enabled: !!user,
+  });
+
   const getPlanForSubscription = (sub: Subscription) => {
     return plans?.find(p => p.id === sub.planId);
   };
@@ -428,6 +433,62 @@ export default function Account() {
               </div>
             </div>
           )}
+
+          {/* Order History Section */}
+          <div>
+            <h2 className="text-2xl font-bold mb-4">Order History</h2>
+            {ordersLoading && (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            )}
+            {!ordersLoading && (!orders || orders.length === 0) && (
+              <Card>
+                <CardContent className="py-8">
+                  <p className="text-center text-muted-foreground">No orders yet. Visit the shop to place your first order!</p>
+                </CardContent>
+              </Card>
+            )}
+            {!ordersLoading && orders && orders.length > 0 && (
+              <div className="grid gap-4">
+                {orders.map((order: any) => (
+                  <Card key={order.id}>
+                    <CardHeader>
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <CardTitle>Order #{order.orderNumber}</CardTitle>
+                          <CardDescription>
+                            {format(new Date(order.orderDate), 'MMM d, yyyy')}
+                          </CardDescription>
+                        </div>
+                        <Badge variant={order.status === 'fulfilled' ? 'default' : order.status === 'cancelled' ? 'destructive' : 'secondary'}>
+                          {order.status.replace('_', ' ')}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid md:grid-cols-3 gap-4">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Total</p>
+                          <p className="font-medium">${parseFloat(order.totalAmount).toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Status</p>
+                          <p className="font-medium capitalize">{order.status.replace('_', ' ')}</p>
+                        </div>
+                        {order.pickupDate && (
+                          <div>
+                            <p className="text-sm text-muted-foreground">Pickup Date</p>
+                            <p className="font-medium">{format(new Date(order.pickupDate), 'MMM d, yyyy')}</p>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
 
           {activeSubscriptions.length > 0 && (
             <div>

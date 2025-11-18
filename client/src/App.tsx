@@ -55,8 +55,9 @@ function Router() {
       <Route path="/wholesale/register" component={WholesaleRegister} />
       <WholesaleCustomerProtectedRoute path="/wholesale-customer" component={WholesaleCustomerDashboard} />
       <Route path="/" component={() => <Redirect to="/shop" />} />
-      <Route path="/shop" component={Shop} />
-      <Route path="/shop-v2" component={ShopV2} />
+      <Route path="/shop" component={ShopV2} />
+      <Route path="/shop-legacy" component={Shop} />
+      <Route path="/shop-v2" component={() => <Redirect to="/shop" />} />
       <Route path="/contact" component={Contact} />
       <Route path="/subscriptions" component={() => <Redirect to="/my-subscriptions" />} />
       <Route path="/my-subscriptions" component={MySubscriptions} />

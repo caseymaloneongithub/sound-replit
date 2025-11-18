@@ -1398,17 +1398,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Check if cart has both subscription and one-time items
-      const hasSubscription = legacyItems.some(item => item.isSubscription) || retailItems.some(item => item.isSubscription);
+      const hasLegacySubscription = legacyItems.some(item => item.isSubscription);
+      const hasRetailSubscription = retailItems.some(item => item.isSubscription);
       const hasOneTime = legacyItems.some(item => !item.isSubscription) || retailItems.some(item => !item.isSubscription);
 
-      if (hasSubscription && hasOneTime) {
+      // Don't allow mixing subscription types (legacy vs retail v2)
+      if (hasLegacySubscription && hasRetailSubscription) {
+        return res.status(400).json({
+          message: "Cannot mix legacy and new subscription products. Please checkout separately."
+        });
+      }
+
+      if ((hasLegacySubscription || hasRetailSubscription) && hasOneTime) {
         return res.status(400).json({ 
           message: "Please checkout one-time purchases and subscriptions separately. Remove either the one-time or subscription items from your cart to continue."
         });
       }
 
       // Payment Intents only work for one-time payments, not subscriptions
-      if (hasSubscription) {
+      if (hasLegacySubscription || hasRetailSubscription) {
         return res.status(400).json({
           message: "Subscriptions require a different checkout flow. Please use the subscription checkout page."
         });
@@ -1433,13 +1441,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Add retail v2 cart items (price is in dollars, convert to cents)
+      // Apply subscription discount if item is a subscription
       for (const item of retailItems) {
         if (!item.retailProduct) throw new Error(`Cart item ${item.id} missing retail product data`);
         if (!item.retailProduct.price) throw new Error(`Retail product ${item.retailProductId} has no price`);
         
-        const priceInDollars = parseFloat(item.retailProduct.price);
+        let priceInDollars = parseFloat(item.retailProduct.price);
         if (!isFinite(priceInDollars) || priceInDollars < 0) {
           throw new Error(`Invalid price for retail product ${item.retailProductId}: ${item.retailProduct.price}`);
+        }
+        
+        // Apply subscription discount if this is a subscription item
+        if (item.isSubscription && item.retailProduct.subscriptionDiscount != null) {
+          const discountPercent = parseFloat(item.retailProduct.subscriptionDiscount.toString());
+          if (isFinite(discountPercent) && discountPercent > 0) {
+            priceInDollars = priceInDollars * (1 - discountPercent / 100);
+          }
         }
         
         const priceInCents = Math.round(priceInDollars * 100);
@@ -2027,51 +2044,127 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 
                 const checkoutSession = checkoutSessionResult.rows[0];
                 
-                // Get cart items
+                // Get cart items (both legacy and retail v2)
                 const cartItems = await storage.getCartItems(sessionId);
+                const retailItems = await storage.getRetailCart(sessionId);
                 
-                if (cartItems.length > 0) {
-                  // Generate order number
-                  const orderNumber = await storage.generateNextOrderNumber();
+                // Cart must not be empty - fail if it is (prevents race conditions and tampering)
+                if (cartItems.length === 0 && retailItems.length === 0) {
+                  console.error(`[WEBHOOK] Cart is empty for session ${sessionId} - payment received but no items to fulfill`);
+                  console.error(`[WEBHOOK] This may indicate a race condition or tampering attempt`);
+                  throw new Error('Cart is empty - cannot verify or fulfill payment');
+                }
+                
+                // Recompute subtotal from cart items for security (don't trust client metadata)
+                let recomputedSubtotalCents = 0;
+                
+                // Add legacy cart items
+                for (const item of cartItems) {
+                  const pricing = await getProductPricing(item.productId);
+                  if (!pricing) {
+                    console.error(`[WEBHOOK] Product pricing ${item.productId} not found`);
+                    throw new Error(`Product pricing not found - cannot verify payment`);
+                  }
+                  if (!pricing.retailPrice) {
+                    console.error(`[WEBHOOK] Product ${item.productId} has no retail price`);
+                    throw new Error(`Product missing price - cannot verify payment`);
+                  }
+                  const priceInCents = Math.round(parseFloat(pricing.retailPrice) * 100);
+                  recomputedSubtotalCents += priceInCents * item.quantity;
+                }
+                
+                // Add retail v2 cart items (no discounts for one-time purchases)
+                for (const item of retailItems) {
+                  if (!item.retailProduct) {
+                    console.error(`[WEBHOOK] Cart item ${item.id} missing retail product data`);
+                    throw new Error(`Cart item missing product data - cannot verify payment`);
+                  }
+                  if (!item.retailProduct.price) {
+                    console.error(`[WEBHOOK] Retail product ${item.retailProductId} has no price`);
+                    throw new Error(`Product missing price - cannot verify payment`);
+                  }
+                  const priceInCents = Math.round(parseFloat(item.retailProduct.price) * 100);
+                  recomputedSubtotalCents += priceInCents * item.quantity;
+                }
+                
+                // Calculate tax and total
+                const TAX_RATE = 0.1035;
+                const recomputedTaxCents = Math.round(recomputedSubtotalCents * TAX_RATE);
+                const recomputedTotalCents = recomputedSubtotalCents + recomputedTaxCents;
+                
+                // Verify Stripe amount matches recomputed total
+                if (Math.abs(paymentIntent.amount - recomputedTotalCents) > 1) {
+                  console.error(`[WEBHOOK] Payment amount verification FAILED!`);
+                  console.error(`[WEBHOOK] Stripe charged: ${paymentIntent.amount} cents`);
+                  console.error(`[WEBHOOK] Recomputed total: ${recomputedTotalCents} cents (subtotal: ${recomputedSubtotalCents}, tax: ${recomputedTaxCents})`);
+                  console.error(`[WEBHOOK] This may indicate a tampering attempt or pricing mismatch`);
+                  throw new Error('Payment amount verification failed - amount mismatch');
+                }
+                
+                // Generate order number
+                const orderNumber = await storage.generateNextOrderNumber();
+                
+                // Determine if this is a subscription order
+                const isSubscriptionOrder = cartItems.some(item => item.isSubscription) || 
+                                            retailItems.some(item => item.isSubscription);
+                
+                // Create retail order
+                const orderResult = await client.query(
+                  `INSERT INTO retail_orders (
+                    order_number, user_id, customer_name, customer_email, customer_phone,
+                    status, subtotal, tax_amount, total_amount, stripe_payment_intent_id, is_subscription_order
+                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+                  [
+                    orderNumber,
+                    checkoutSession.user_id,
+                    checkoutSession.customer_name,
+                    checkoutSession.customer_email,
+                    checkoutSession.customer_phone,
+                    'pending',
+                    paymentIntent.metadata.subtotal || '0',
+                    paymentIntent.metadata.taxAmount || '0',
+                    (paymentIntent.amount / 100).toFixed(2),
+                    paymentIntent.id,
+                    isSubscriptionOrder
+                  ]
+                );
+                
+                const orderId = orderResult.rows[0].id;
+                
+                // Create legacy order items
+                for (const item of cartItems) {
+                  const pricing = await getProductPricing(item.productId);
+                  if (pricing) {
+                    await client.query(
+                      'INSERT INTO retail_order_items (order_id, product_id, quantity, unit_price) VALUES ($1, $2, $3, $4)',
+                      [orderId, item.productId, item.quantity, pricing.retailPrice]
+                    );
+                  }
+                }
+                
+                // Create retail v2 order items
+                for (const item of retailItems) {
+                  if (!item.retailProduct) continue;
                   
-                  // Create retail order
-                  const orderResult = await client.query(
-                    `INSERT INTO retail_orders (
-                      order_number, user_id, customer_name, customer_email, customer_phone,
-                      status, subtotal, tax_amount, total_amount, stripe_payment_intent_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-                    [
-                      orderNumber,
-                      checkoutSession.user_id,
-                      checkoutSession.customer_name,
-                      checkoutSession.customer_email,
-                      checkoutSession.customer_phone,
-                      'pending',
-                      paymentIntent.metadata.subtotal || '0',
-                      paymentIntent.metadata.taxAmount || '0',
-                      (paymentIntent.amount / 100).toFixed(2),
-                      paymentIntent.id
-                    ]
-                  );
-                  
-                  const orderId = orderResult.rows[0].id;
-                  
-                  // Create order items
-                  for (const item of cartItems) {
-                    const pricing = await getProductPricing(item.productId);
-                    if (pricing) {
-                      await client.query(
-                        'INSERT INTO retail_order_items (order_id, product_id, quantity, unit_price) VALUES ($1, $2, $3, $4)',
-                        [orderId, item.productId, item.quantity, pricing.retailPrice]
-                      );
+                  // Calculate price with subscription discount if applicable
+                  let unitPrice = parseFloat(item.retailProduct.price);
+                  if (item.isSubscription && item.retailProduct.subscriptionDiscount != null) {
+                    const discountPercent = parseFloat(item.retailProduct.subscriptionDiscount.toString());
+                    if (isFinite(discountPercent) && discountPercent > 0) {
+                      unitPrice = unitPrice * (1 - discountPercent / 100);
                     }
                   }
                   
-                  // Delete checkout session (mark as consumed)
-                  await client.query('DELETE FROM retail_checkout_sessions WHERE id = $1', [checkoutSession.id]);
-                  
-                  console.log(`[WEBHOOK] Created retail order ${orderNumber} for payment intent ${paymentIntent.id}`);
+                  await client.query(
+                    'INSERT INTO retail_order_items_v2 (order_id, retail_product_id, quantity, unit_price) VALUES ($1, $2, $3, $4)',
+                    [orderId, item.retailProductId, item.quantity, unitPrice.toFixed(2)]
+                  );
                 }
+                
+                // Delete checkout session (mark as consumed)
+                await client.query('DELETE FROM retail_checkout_sessions WHERE id = $1', [checkoutSession.id]);
+                
+                console.log(`[WEBHOOK] Created retail order ${orderNumber} for payment intent ${paymentIntent.id}`);
               } else {
                 console.log(`[WEBHOOK] Order already exists for payment intent ${paymentIntent.id} - skipping creation (idempotent)`);
               }
@@ -2085,10 +2178,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               client.release();
             }
             
-            // Always clear cart (outside transaction)
+            // Always clear both carts (outside transaction)
             if (sessionId) {
               await storage.clearCart(sessionId);
-              console.log(`[WEBHOOK] Cleared cart for session ${sessionId} after successful payment`);
+              await storage.clearRetailCart(sessionId);
+              console.log(`[WEBHOOK] Cleared carts for session ${sessionId} after successful payment`);
             }
           }
           break;
@@ -3233,6 +3327,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(product);
     } catch (error: any) {
       res.status(500).json({ message: "Error updating stock: " + error.message });
+    }
+  });
+
+  // Customer-facing order history endpoint
+  app.get("/api/my-orders", isAuthenticated, async (req: any, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+      
+      const orders = await storage.getRetailOrdersByUserId(req.user.id);
+      res.json(orders);
+    } catch (error: any) {
+      console.error("Error fetching user orders:", error);
+      res.status(500).json({ message: "Failed to fetch orders" });
     }
   });
 
