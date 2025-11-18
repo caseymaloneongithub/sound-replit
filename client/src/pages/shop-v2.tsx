@@ -157,7 +157,7 @@ export default function ShopV2() {
                           {product.unitDescription}
                         </p>
                         <p className="text-2xl font-bold" data-testid={`text-price-${product.id}`}>
-                          ${(parseFloat(product.price) / 100).toFixed(2)}
+                          ${parseFloat(product.price).toFixed(2)}
                         </p>
                       </CardContent>
                       <CardFooter className="p-4 pt-0 flex-col gap-2">

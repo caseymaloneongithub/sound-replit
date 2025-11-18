@@ -13,6 +13,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useUnifiedCart } from "@/hooks/use-unified-cart";
 
 const STRIPE_PUBLIC_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
 const stripePromise: Promise<Stripe | null> = STRIPE_PUBLIC_KEY 
@@ -116,8 +117,9 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
           variant: "destructive",
         });
       } else {
-        // Clear cart query cache
+        // Clear both cart query caches
         queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"] });
         
         setLocation('/checkout/success');
       }
@@ -220,14 +222,12 @@ export default function CartCheckout() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
-  const { data: cartItems = [], isLoading } = useQuery<CartItemWithProduct[]>({
-    queryKey: ["/api/cart"],
-  });
+  const { items: unifiedCart, isLoading, totalCount } = useUnifiedCart();
 
   useEffect(() => {
     if (isLoading) return;
 
-    if (cartItems.length === 0) {
+    if (totalCount === 0) {
       toast({
         title: "Cart is empty",
         description: "Add items to your cart before checking out",
@@ -261,7 +261,7 @@ export default function CartCheckout() {
         });
         setLocation('/shop');
       });
-  }, [cartItems.length, isLoading, setLocation, toast]);
+  }, [totalCount, isLoading, setLocation, toast]);
 
   if (isLoading) {
     return (
@@ -301,10 +301,15 @@ export default function CartCheckout() {
     );
   }
 
-  // Calculate item summary
-  const subtotal = cartItems.reduce((sum, item) => {
-    const pricePerCase = parseFloat(item.product.retailPrice);
-    return sum + (pricePerCase * item.quantity);
+  // Calculate subtotal from unified cart (for display only, server calculates actual)
+  const subtotal = unifiedCart.reduce((sum, cartItem) => {
+    if (cartItem.type === 'legacy') {
+      const pricePerCase = parseFloat(cartItem.item.product.retailPrice);
+      return sum + (pricePerCase * cartItem.item.quantity);
+    } else {
+      const pricePerUnit = parseFloat(cartItem.item.retailProduct.price);
+      return sum + (pricePerUnit * cartItem.item.quantity);
+    }
   }, 0);
 
   return (
@@ -326,30 +331,68 @@ export default function CartCheckout() {
             <CardHeader>
               <CardTitle className="text-2xl">Order Summary</CardTitle>
               <CardDescription>
-                {cartItems.length} {cartItems.length === 1 ? 'item' : 'items'}
+                {totalCount} {totalCount === 1 ? 'item' : 'items'}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {cartItems.map((item) => (
-                <div key={item.id} className="flex gap-4" data-testid={`summary-item-${item.id}`}>
-                  <img
-                    src={item.product.imageUrl}
-                    alt={item.product.name}
-                    className="w-16 h-16 object-cover rounded"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-medium truncate">{item.product.name}</h4>
-                    <p className="text-sm text-muted-foreground">
-                      {item.quantity} {item.quantity === 1 ? 'case' : 'cases'} × ${parseFloat(item.product.retailPrice).toFixed(2)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-semibold">
-                      ${(parseFloat(item.product.retailPrice) * item.quantity).toFixed(2)}
-                    </p>
-                  </div>
-                </div>
-              ))}
+              {unifiedCart.map((cartItem) => {
+                if (cartItem.type === 'legacy') {
+                  const item = cartItem.item;
+                  return (
+                    <div key={item.id} className="flex gap-4" data-testid={`summary-item-${item.id}`}>
+                      <img
+                        src={item.product.imageUrl}
+                        alt={item.product.name}
+                        className="w-16 h-16 object-cover rounded"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-medium truncate">{item.product.name}</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {item.quantity} {item.quantity === 1 ? 'case' : 'cases'} × ${parseFloat(item.product.retailPrice).toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold">
+                          ${(parseFloat(item.product.retailPrice) * item.quantity).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                } else {
+                  const item = cartItem.item;
+                  return (
+                    <div key={item.id} className="flex gap-4" data-testid={`summary-item-${item.id}`}>
+                      <div className="w-16 h-16 overflow-hidden rounded">
+                        {item.retailProduct.flavor.primaryImageUrl ? (
+                          <img
+                            src={item.retailProduct.flavor.primaryImageUrl}
+                            alt={item.retailProduct.flavor.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-muted flex items-center justify-center text-xs text-muted-foreground">
+                            No image
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-medium truncate">{item.retailProduct.flavor.name}</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {item.quantity} × ${parseFloat(item.retailProduct.price).toFixed(2)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {item.retailProduct.unitDescription}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold">
+                          ${(parseFloat(item.retailProduct.price) * item.quantity).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+              })}
 
               <div className="border-t pt-4 space-y-2">
                 <div className="flex justify-between text-sm">

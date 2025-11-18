@@ -1322,7 +1322,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create Stripe Payment Intent for embedded cart checkout
+  // Create Stripe Payment Intent for embedded cart checkout (supports both old and new cart)
   app.post("/api/create-cart-payment-intent", async (req: any, res) => {
     try {
       if (!stripe) {
@@ -1330,15 +1330,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const sessionId = req.sessionID || "guest";
-      const items = await storage.getCartItems(sessionId);
+      const legacyItems = await storage.getCartItems(sessionId);
+      const retailItems = await storage.getRetailCart(sessionId);
       
-      if (items.length === 0) {
+      if (legacyItems.length === 0 && retailItems.length === 0) {
         return res.status(400).json({ message: "Cart is empty" });
       }
 
       // Check if cart has both subscription and one-time items
-      const hasSubscription = items.some(item => item.isSubscription);
-      const hasOneTime = items.some(item => !item.isSubscription);
+      const hasSubscription = legacyItems.some(item => item.isSubscription) || retailItems.some(item => item.isSubscription);
+      const hasOneTime = legacyItems.some(item => !item.isSubscription) || retailItems.some(item => !item.isSubscription);
 
       if (hasSubscription && hasOneTime) {
         return res.status(400).json({ 
@@ -1355,10 +1356,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Calculate total amount in cents using actual product prices
       let subtotalCents = 0;
-      for (const item of items) {
+      
+      // Add legacy cart items
+      for (const item of legacyItems) {
         const pricing = await getProductPricing(item.productId);
         if (!pricing) throw new Error(`Product pricing ${item.productId} not found`);
         const priceInCents = Math.round(parseFloat(pricing.retailPrice) * 100);
+        subtotalCents += priceInCents * item.quantity;
+      }
+      
+      // Add retail v2 cart items (price is in dollars, convert to cents)
+      for (const item of retailItems) {
+        const priceInCents = Math.round(parseFloat(item.retailProduct.price) * 100);
         subtotalCents += priceInCents * item.quantity;
       }
 
@@ -1381,6 +1390,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           subtotal: (subtotalCents / 100).toFixed(2),
           taxRate: TAX_RATE.toString(),
           taxAmount: (taxAmountCents / 100).toFixed(2),
+          hasLegacyItems: legacyItems.length > 0 ? 'true' : 'false',
+          hasRetailV2Items: retailItems.length > 0 ? 'true' : 'false',
         },
       });
 
