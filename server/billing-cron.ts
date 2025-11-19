@@ -106,7 +106,30 @@ export async function finalizeSubscriptionCharge(paymentIntentId: string): Promi
       .leftJoin(products, eq(subscriptionItems.productId, products.id))
       .where(eq(subscriptionItems.subscriptionId, sub.id));
 
-    const totalAmount = items.reduce((sum, item) => sum + (CASE_PRICE_WITH_DISCOUNT * item.quantity), 0);
+    // Extract tax information from PaymentIntent metadata, or calculate from amount charged
+    let subtotal: number;
+    let taxAmount: number;
+    let totalAmount: number;
+    
+    if (paymentIntent.metadata.subtotal && paymentIntent.metadata.taxAmount && paymentIntent.metadata.totalAmount) {
+      // Use metadata if available
+      subtotal = parseFloat(paymentIntent.metadata.subtotal);
+      taxAmount = parseFloat(paymentIntent.metadata.taxAmount);
+      totalAmount = parseFloat(paymentIntent.metadata.totalAmount);
+    } else {
+      // Metadata missing - derive from actual charge amount to maintain data integrity
+      // The customer was charged paymentIntent.amount, which includes tax
+      const amountCharged = paymentIntent.amount / 100; // Convert cents to dollars
+      const TAX_RATE = 0.1035; // 10.35%
+      
+      // Work backwards: totalAmount = subtotal * (1 + TAX_RATE)
+      // Therefore: subtotal = totalAmount / (1 + TAX_RATE)
+      subtotal = amountCharged / (1 + TAX_RATE);
+      taxAmount = amountCharged - subtotal;
+      totalAmount = amountCharged;
+      
+      console.warn(`[BILLING] PaymentIntent ${paymentIntentId} missing tax metadata, derived from charge amount: subtotal=$${subtotal.toFixed(2)}, tax=$${taxAmount.toFixed(2)}, total=$${totalAmount.toFixed(2)}`);
+    }
 
     try {
       // Create order in transaction
@@ -122,8 +145,8 @@ export async function finalizeSubscriptionCharge(paymentIntentId: string): Promi
           customerEmail: sub.customerEmail,
           customerPhone: sub.customerPhone,
           status: 'pending',
-          subtotal: totalAmount.toFixed(2),
-          taxAmount: '0',
+          subtotal: subtotal.toFixed(2),
+          taxAmount: taxAmount.toFixed(2),
           totalAmount: totalAmount.toFixed(2),
           stripePaymentIntentId: paymentIntentId,
           isSubscriptionOrder: true,
@@ -259,8 +282,17 @@ async function processSubscriptionBilling(subscription: any, items: any[]) {
     return false;
   }
 
-  // Calculate total amount
-  const totalAmount = items.reduce((sum, item) => sum + (CASE_PRICE_WITH_DISCOUNT * item.quantity), 0);
+  // Calculate subtotal amount
+  const subtotal = items.reduce((sum, item) => sum + (CASE_PRICE_WITH_DISCOUNT * item.quantity), 0);
+  
+  // Calculate sales tax (WA State 6.5% + Seattle City 3.85% = 10.35%)
+  const TAX_RATE = 0.1035;
+  const taxAmount = subtotal * TAX_RATE;
+  const totalAmount = subtotal + taxAmount;
+  
+  // Convert to cents and round
+  const subtotalCents = Math.round(subtotal * 100);
+  const taxCents = Math.round(taxAmount * 100);
   const amountInCents = Math.round(totalAmount * 100);
 
   try {
@@ -275,6 +307,10 @@ async function processSubscriptionBilling(subscription: any, items: any[]) {
       metadata: {
         subscriptionId: subscription.id,
         type: 'subscription_renewal',
+        subtotal: (subtotalCents / 100).toFixed(2),
+        taxRate: TAX_RATE.toString(),
+        taxAmount: (taxCents / 100).toFixed(2),
+        totalAmount: (amountInCents / 100).toFixed(2),
       },
     });
 

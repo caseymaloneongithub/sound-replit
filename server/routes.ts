@@ -1368,13 +1368,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Calculate sales tax for retail orders (WA State 6.5% + Seattle City 3.85% = 10.35%)
-      // Tax only applies to one-time purchases, not subscriptions
+      // Tax applies to all purchases including subscriptions
       const TAX_RATE = 0.1035; // 10.35%
       
-      // Calculate subtotal from non-subscription items only
+      // Calculate subtotal from all items (including subscriptions)
       const legacyTaxable = await Promise.all(
         legacyItems
-          .filter(item => !item.isSubscription)
           .map(async (item) => {
             const pricing = await getProductPricing(item.productId);
             if (!pricing) return 0;
@@ -1384,9 +1383,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ).then(amounts => amounts.reduce((sum, amount) => sum + amount, 0));
 
       const retailTaxable = retailItems
-        .filter(item => !item.isSubscription)
         .reduce((sum, item) => {
-          const price = parseFloat(item.retailProduct.price);
+          // For subscriptions, apply discount if applicable
+          let price = parseFloat(item.retailProduct.price);
+          if (item.isSubscription && item.retailProduct.subscriptionDiscount != null) {
+            const discountPercent = parseFloat(item.retailProduct.subscriptionDiscount.toString());
+            if (isFinite(discountPercent) && discountPercent > 0) {
+              price = price * (1 - discountPercent / 100);
+            }
+          }
           const priceCents = Math.round(price * 100);
           return sum + (priceCents * item.quantity);
         }, 0);
@@ -1397,8 +1402,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Calculate tax amount in cents
         const taxAmount = Math.round(taxableSubtotal * TAX_RATE);
         
-        // Add tax as a separate line item
-        lineItems.push({
+        // For subscriptions, determine the recurring interval from the first subscription item
+        let taxLineItem: any = {
           price_data: {
             currency: 'usd',
             product_data: {
@@ -1408,7 +1413,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
             unit_amount: taxAmount,
           },
           quantity: 1,
-        });
+        };
+        
+        // If this is a subscription, make the tax recurring
+        if (hasSubscription) {
+          const subItem = legacyItems.find(item => item.isSubscription) || retailItems.find(item => item.isSubscription);
+          if (subItem) {
+            const frequency = subItem.subscriptionFrequency || 'weekly';
+            const intervalCount = 
+              frequency === 'weekly' ? 1 :
+              frequency === 'bi-weekly' ? 2 :
+              4;
+            
+            taxLineItem.price_data.recurring = {
+              interval: 'week' as const,
+              interval_count: intervalCount,
+            };
+          }
+        }
+        
+        lineItems.push(taxLineItem);
         
         // Store tax info in metadata for reference
         metadata.taxRate = TAX_RATE.toString();
@@ -1474,11 +1498,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           if (paymentIntent.metadata.taxAmount) {
             taxAmountCents = Math.round(parseFloat(paymentIntent.metadata.taxAmount) * 100);
-          }
-          
-          // If no tax amount, this is tax exempt (subscription or other)
-          if (taxAmountCents === 0) {
-            isTaxExempt = true;
           }
         } catch (error) {
           console.error("Error fetching payment intent for tax metadata:", error);
@@ -2294,6 +2313,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
               }
               
+              // Calculate sales tax (WA State 6.5% + Seattle City 3.85% = 10.35%)
+              const TAX_RATE = 0.1035;
+              const taxAmount = subtotal * TAX_RATE;
+              const totalAmount = subtotal + taxAmount;
+              
               // Create retail order
               const [newOrder] = await tx.insert(retailOrders).values({
                 orderNumber,
@@ -2303,8 +2327,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 customerPhone: subscription.customerPhone || '',
                 status: 'pending',
                 subtotal: subtotal.toFixed(2),
-                taxAmount: '0.00', // No tax on subscriptions
-                totalAmount: subtotal.toFixed(2),
+                taxAmount: taxAmount.toFixed(2),
+                totalAmount: totalAmount.toFixed(2),
                 stripeInvoiceId: invoice.id,
                 isSubscriptionOrder: true,
               }).returning();
