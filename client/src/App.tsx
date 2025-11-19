@@ -38,7 +38,6 @@ import Inventory from "@/pages/inventory";
 import Reports from "@/pages/reports";
 import Account from "@/pages/account";
 import StaffPortal from "@/pages/staff-portal";
-import AdminProducts from "@/pages/admin-products";
 import AdminFlavors from "@/pages/admin-flavors";
 import AdminRetailProducts from "@/pages/admin-retail-products";
 import AdminWholesaleUnits from "@/pages/admin-wholesale-units";
@@ -93,7 +92,6 @@ function Router() {
       <StaffProtectedRoute path="/retail/orders" component={RetailOrders} />
       <StaffProtectedRoute path="/retail/customers" component={RetailCustomers} />
       <StaffProtectedRoute path="/retail/pickup-report" component={RetailPickupReport} />
-      <StaffProtectedRoute path="/admin/products" component={AdminProducts} />
       <StaffProtectedRoute path="/admin/flavors" component={AdminFlavors} />
       <StaffProtectedRoute path="/admin/retail-products" component={AdminRetailProducts} />
       <StaffProtectedRoute path="/admin/wholesale-units" component={AdminWholesaleUnits} />

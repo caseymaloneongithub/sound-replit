@@ -63,7 +63,6 @@ export function StaffSidebar() {
       items: [
         { title: "Orders", href: "/retail/orders", icon: ShoppingCart },
         { title: "Customers", href: "/retail/customers", icon: Users },
-        { title: "Products", href: "/admin/products", icon: Package, adminOnly: true },
         { title: "Pickup Report", href: "/retail/pickup-report", icon: FileText },
       ],
     },
