@@ -21,7 +21,7 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 ### Core Features
 
 -   **Case-Based Ordering**: All orders are for cases of 12 bottles. Pricing is stored per-case, with frontend logic displaying quantities in cases and bottles. Wholesale pricing supports custom overrides per customer.
--   **Authentication & Authorization**: Supports username/password, passwordless SMS code login (Twilio), and passwordless email code login (Gmail) via Passport.js. Registration requires SMS verification. A role-based authorization system defines 'user', 'wholesale_customer', 'staff', 'admin', and 'super_admin' levels with granular API route protection. Separate portals exist for retail, wholesale, and staff/admin, each with dedicated login pages. Password reset functionality is available via email.
+-   **Authentication & Authorization**: Supports username/password login and passwordless email code login (Gmail) via Passport.js. Registration is simplified and does not require phone verification. A role-based authorization system defines 'user', 'wholesale_customer', 'staff', 'admin', and 'super_admin' levels with granular API route protection. Separate portals exist for retail, wholesale, and staff/admin, each with dedicated login pages. Password reset functionality is available via email.
 -   **Wholesale Contact & Inquiries**: A public contact form is available for wholesale inquiries and general questions, featuring Zod validation and full keyboard accessibility.
 -   **Payment Processing**: Stripe is integrated for one-time purchases (embedded checkout) and recurring subscriptions (Stripe Checkout Sessions). Webhooks handle payment confirmations and subscription lifecycle events. Sales tax (10.35%) is applied to all retail orders including both one-time purchases and subscriptions. Payment webhook recomputes order totals server-side from cart items to prevent tampering.
 -   **Retail Order Tracking**: Secure two-phase order creation workflow linked to Stripe payment webhooks. Orders have statuses (`pending` → `ready_for_pickup` → `fulfilled`/`cancelled`) managed by staff. Customers can view their complete order history at `/my-orders` with a "Reorder" button.
@@ -37,7 +37,6 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 
 -   **Stripe**: Payment processing, subscription billing.
 -   **Neon Database**: Primary PostgreSQL data storage.
--   **Twilio**: SMS-based phone number verification and passwordless login.
 -   **Gmail/Nodemailer**: For passwordless email login and password reset emails.
 
 ### Key NPM Packages
@@ -55,8 +54,5 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   `VITE_STRIPE_PUBLIC_KEY`
 -   `STRIPE_WEBHOOK_SECRET`
 -   `NODE_ENV`
--   `TWILIO_ACCOUNT_SID`
--   `TWILIO_AUTH_TOKEN`
--   `TWILIO_PHONE_NUMBER`
 -   `GMAIL_USER`
 -   `GMAIL_APP_PASSWORD`
