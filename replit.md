@@ -6,7 +6,7 @@ Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacifi
 
 ## 🚧 Active Development (Nov 2024)
 
-**Status:** Phase 4 Complete - Customer Order History & Cart Drawer Fixed
+**Status:** Phase 5 Complete - Retail Subscription Billing System Implemented
 
 ### ✅ SECURITY FIX COMPLETED (Nov 18, 2024)
 
@@ -42,6 +42,7 @@ The application has completed the retail product offering functionality as part 
 - Phase 2: Admin UI for Flavor Library and Wholesale Unit management
 - Phase 3: Admin UI for Retail Product Offerings and Shop v2 integration
 - Phase 4: Customer Order History with Reorder Functionality + Cart Drawer Dual-System Support
+- Phase 5: Retail Subscription Billing System with Stripe Webhook Integration
 
 **NEW SYSTEM OVERVIEW:**
 - **Flavors**: Central library of kombucha flavors with images, descriptions, and ingredients
@@ -68,9 +69,20 @@ The application has completed the retail product offering functionality as part 
 
 **Subscribe & Save:**
 - Configurable discount percentage per product (default 10%)
-- Three subscription frequencies: weekly, bi-weekly, monthly
+- Three subscription frequencies: weekly, bi-weekly, every-4-weeks
 - Discounted price displayed in shop interface
 - Automatic price calculation: basePrice * (1 - discountPercentage / 100)
+
+**Retail Subscription Billing (NEW - Nov 19, 2024):**
+- **Stripe-Managed Subscriptions**: Retail subscriptions use Stripe's native subscription billing (vs legacy locally-managed subscriptions)
+- **Automatic Order Creation**: Webhook handler creates orders automatically when Stripe charges customers (invoice.payment_succeeded event)
+- **Idempotency**: Unique constraints on stripeCheckoutSessionId and invoice-based order checks prevent duplicate subscriptions/orders
+- **Storage Methods**: 6 new methods added to IStorage for retail subscription CRUD operations (getRetailSubscriptionByStripeId, createRetailSubscription, etc.)
+- **Webhook Handlers**:
+  - `checkout.session.completed`: Creates retail subscription record with items when customer completes checkout
+  - `invoice.payment_succeeded`: Creates subscription renewal orders with discounted pricing, updates nextDeliveryDate
+- **Database Tables**: retailSubscriptions (with stripeSubscriptionId, billingType, billingStatus, subscriptionFrequency, nextDeliveryDate) and retailSubscriptionItems
+- **Dual System Support**: Webhooks handle both legacy and retail subscriptions seamlessly
 
 **See MIGRATION_PLAN.md for detailed migration roadmap.**
 
