@@ -153,6 +153,16 @@ export const wholesaleUnitTypeFlavors = pgTable("wholesale_unit_type_flavors", {
   uniqueUnitTypeFlavor: unique().on(table.unitTypeId, table.flavorId),
 }));
 
+// Wholesale Customer Pricing - Custom pricing per customer and unit type
+export const wholesaleCustomerPricing = pgTable("wholesale_customer_pricing", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id, { onDelete: 'cascade' }),
+  unitTypeId: varchar("unit_type_id").notNull().references(() => wholesaleUnitTypes.id, { onDelete: 'cascade' }),
+  customPrice: decimal("custom_price", { precision: 10, scale: 2 }).notNull(),
+}, (table) => ({
+  uniqueCustomerUnitType: unique().on(table.customerId, table.unitTypeId),
+}));
+
 // NEW SCHEMA - Retail Cart Items (references retailProducts)
 export const retailCartItems = pgTable("retail_cart_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -394,6 +404,7 @@ export const insertFlavorSchema = createInsertSchema(flavors).omit({ id: true })
 export const insertRetailProductSchema = createInsertSchema(retailProducts).omit({ id: true });
 export const insertWholesaleUnitTypeSchema = createInsertSchema(wholesaleUnitTypes).omit({ id: true });
 export const insertWholesaleUnitTypeFlavorSchema = createInsertSchema(wholesaleUnitTypeFlavors).omit({ id: true });
+export const insertWholesaleCustomerPricingSchema = createInsertSchema(wholesaleCustomerPricing).omit({ id: true });
 export const insertRetailCartItemSchema = createInsertSchema(retailCartItems).omit({ id: true });
 export const insertRetailOrderItemV2Schema = createInsertSchema(retailOrderItemsV2).omit({ id: true });
 export const insertRetailSubscriptionSchema = createInsertSchema(retailSubscriptions).omit({ id: true, startDate: true, cancelledAt: true });
@@ -436,6 +447,7 @@ export type InsertFlavor = z.infer<typeof insertFlavorSchema>;
 export type InsertRetailProduct = z.infer<typeof insertRetailProductSchema>;
 export type InsertWholesaleUnitType = z.infer<typeof insertWholesaleUnitTypeSchema>;
 export type InsertWholesaleUnitTypeFlavor = z.infer<typeof insertWholesaleUnitTypeFlavorSchema>;
+export type InsertWholesaleCustomerPricing = z.infer<typeof insertWholesaleCustomerPricingSchema>;
 export type InsertRetailCartItem = z.infer<typeof insertRetailCartItemSchema>;
 export type InsertRetailOrderItemV2 = z.infer<typeof insertRetailOrderItemV2Schema>;
 export type InsertRetailSubscription = z.infer<typeof insertRetailSubscriptionSchema>;
@@ -471,6 +483,7 @@ export type Flavor = typeof flavors.$inferSelect;
 export type RetailProduct = typeof retailProducts.$inferSelect;
 export type WholesaleUnitType = typeof wholesaleUnitTypes.$inferSelect;
 export type WholesaleUnitTypeFlavor = typeof wholesaleUnitTypeFlavors.$inferSelect;
+export type WholesaleCustomerPricing = typeof wholesaleCustomerPricing.$inferSelect;
 export type RetailCartItem = typeof retailCartItems.$inferSelect;
 export type RetailOrderItemV2 = typeof retailOrderItemsV2.$inferSelect;
 export type RetailSubscription = typeof retailSubscriptions.$inferSelect;

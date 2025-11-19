@@ -3,8 +3,11 @@ import {
   type RetailProduct, type InsertRetailProduct,
   type WholesaleUnitType, type InsertWholesaleUnitType,
   type WholesaleUnitTypeFlavor, type InsertWholesaleUnitTypeFlavor,
+  type WholesaleCustomerPricing, type InsertWholesaleCustomerPricing,
   type RetailCartItem, type InsertRetailCartItem,
   type RetailOrderItemV2, type InsertRetailOrderItemV2,
+  type RetailSubscription, type InsertRetailSubscription,
+  type RetailSubscriptionItem, type InsertRetailSubscriptionItem,
   type SubscriptionPlan, type InsertSubscriptionPlan,
   type CartItem, type InsertCartItem,
   type Subscription, type InsertSubscription,
@@ -25,8 +28,10 @@ import {
   retailProducts,
   wholesaleUnitTypes,
   wholesaleUnitTypeFlavors,
+  wholesaleCustomerPricing,
   retailCartItems,
   retailOrderItemsV2,
+  retailSubscriptions,
   retailSubscriptionItems,
   subscriptionPlans,
   cartItems,
@@ -134,6 +139,11 @@ export interface IStorage {
   updateWholesaleUnitType(id: string, updates: Partial<InsertWholesaleUnitType>): Promise<WholesaleUnitType | undefined>;
   deleteWholesaleUnitType(id: string): Promise<void>;
   setWholesaleUnitTypeFlavors(unitTypeId: string, flavorIds: string[]): Promise<void>;
+  
+  getWholesaleCustomerPricing(customerId: string): Promise<WholesaleCustomerPricing[]>;
+  getWholesaleCustomerPrice(customerId: string, unitTypeId: string): Promise<WholesaleCustomerPricing | undefined>;
+  setWholesaleCustomerPrice(pricing: InsertWholesaleCustomerPricing): Promise<WholesaleCustomerPricing>;
+  deleteWholesaleCustomerPrice(id: string): Promise<void>;
   getInventoryAdjustments(filters?: { productId?: string; reason?: string; limit?: number }): Promise<Array<InventoryAdjustment & { productName: string }>>;
   checkStockAvailability(productId: string, requiredQuantity: number): Promise<{ available: boolean; currentStock: number; deficit?: number }>;
   
@@ -926,6 +936,42 @@ export class PostgresStorage implements IStorage {
         }))
       );
     }
+  }
+
+  async getWholesaleCustomerPricing(customerId: string): Promise<WholesaleCustomerPricing[]> {
+    return await db.select().from(wholesaleCustomerPricing).where(eq(wholesaleCustomerPricing.customerId, customerId));
+  }
+
+  async getWholesaleCustomerPrice(customerId: string, unitTypeId: string): Promise<WholesaleCustomerPricing | undefined> {
+    const result = await db
+      .select()
+      .from(wholesaleCustomerPricing)
+      .where(
+        and(
+          eq(wholesaleCustomerPricing.customerId, customerId),
+          eq(wholesaleCustomerPricing.unitTypeId, unitTypeId)
+        )
+      );
+    return result[0];
+  }
+
+  async setWholesaleCustomerPrice(pricing: InsertWholesaleCustomerPricing): Promise<WholesaleCustomerPricing> {
+    const existing = await this.getWholesaleCustomerPrice(pricing.customerId, pricing.unitTypeId);
+    if (existing) {
+      const result = await db
+        .update(wholesaleCustomerPricing)
+        .set({ customPrice: pricing.customPrice })
+        .where(eq(wholesaleCustomerPricing.id, existing.id))
+        .returning();
+      return result[0];
+    } else {
+      const result = await db.insert(wholesaleCustomerPricing).values(pricing).returning();
+      return result[0];
+    }
+  }
+
+  async deleteWholesaleCustomerPrice(id: string): Promise<void> {
+    await db.delete(wholesaleCustomerPricing).where(eq(wholesaleCustomerPricing.id, id));
   }
 
   async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {

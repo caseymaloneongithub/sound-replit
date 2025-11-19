@@ -1004,6 +1004,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Wholesale Customer Pricing routes
+  app.get("/api/wholesale-customer-pricing/:customerId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const pricing = await storage.getWholesaleCustomerPricing(req.params.customerId);
+      res.json(pricing);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching customer pricing: " + error.message });
+    }
+  });
+
+  app.post("/api/wholesale-customer-pricing", isAdmin, async (req, res) => {
+    try {
+      const { customerId, unitTypeId, customPrice } = req.body;
+      const pricing = await storage.setWholesaleCustomerPrice({
+        customerId,
+        unitTypeId,
+        customPrice: customPrice.toString()
+      });
+      res.json(pricing);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error setting customer pricing: " + error.message });
+    }
+  });
+
+  app.delete("/api/wholesale-customer-pricing/:id", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteWholesaleCustomerPrice(req.params.id);
+      res.json({ message: "Customer pricing deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting customer pricing: " + error.message });
+    }
+  });
+
   // Product Types routes
   app.get("/api/product-types", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
