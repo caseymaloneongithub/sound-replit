@@ -263,7 +263,7 @@ export async function sendEmailVerificationCode(params: EmailVerificationCodePar
   const mailOptions = {
     from: process.env.GMAIL_USER,
     to: params.email,
-    subject: 'Your Verification Code - Puget Sound Kombucha Co.',
+    subject: `${params.code} - Your Verification Code - Puget Sound Kombucha Co.`,
     text: `
 Your verification code is: ${params.code}
 
