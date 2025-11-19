@@ -43,6 +43,7 @@ import AdminFlavors from "@/pages/admin-flavors";
 import AdminRetailProducts from "@/pages/admin-retail-products";
 import AdminWholesaleUnits from "@/pages/admin-wholesale-units";
 import Contact from "@/pages/contact";
+import Cart from "@/pages/cart";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -65,6 +66,7 @@ function Router() {
       <Route path="/my-orders" component={OrderHistory} />
       <Route path="/subscribe/:id" component={Subscribe} />
       <Route path="/product-subscribe/:id" component={ProductSubscribe} />
+      <Route path="/cart" component={Cart} />
       <Route path="/checkout" component={Checkout} />
       <Route path="/cart-checkout" component={CartCheckout} />
       <Route path="/checkout/success" component={CheckoutSuccess} />

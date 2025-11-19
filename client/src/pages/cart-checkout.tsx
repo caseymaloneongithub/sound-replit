@@ -628,6 +628,7 @@ export default function CartCheckout() {
                 stripe={stripePromise} 
                 options={{ 
                   clientSecret,
+                  loader: 'never',
                   appearance: {
                     variables: {
                       colorPrimary: '#0F172A',
