@@ -112,7 +112,7 @@ export default function AdminWholesaleUnits() {
         return apiRequest('POST', '/api/wholesale-customer-pricing', {
           customerId,
           unitTypeId: id,
-          customPrice: price
+          customPrice: price.toString()
         });
       });
       
@@ -128,6 +128,7 @@ export default function AdminWholesaleUnits() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/wholesale-unit-types'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/wholesale-customer-pricing'] });
       setEditingWholesaleUnitType(null);
       setCustomerPricing({});
       toast({ title: "Wholesale unit type updated", description: "Wholesale unit type and pricing have been updated successfully" });
