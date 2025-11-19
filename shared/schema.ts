@@ -264,7 +264,8 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   userId: varchar("user_id").references(() => users.id),
   businessName: text("business_name").notNull(),
   contactName: text("contact_name").notNull(),
-  email: text("email").notNull().unique(),
+  email: text("email").notNull().unique(), // Primary contact email (kept for backwards compatibility)
+  emails: text("emails").array().notNull().default(sql`ARRAY[]::text[]`), // All authorized email addresses
   phone: text("phone").notNull(),
   address: text("address").notNull(),
   allowOnlinePayment: boolean("allow_online_payment").notNull().default(false),
