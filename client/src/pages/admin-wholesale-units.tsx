@@ -31,7 +31,14 @@ export default function AdminWholesaleUnits() {
   });
 
   const createWholesaleUnitTypeMutation = useMutation({
-    mutationFn: async (data: any) => apiRequest('POST', '/api/wholesale-unit-types', data),
+    mutationFn: async (data: any) => {
+      // Convert defaultPrice to string for decimal type
+      const payload = {
+        ...data,
+        defaultPrice: data.defaultPrice.toString()
+      };
+      return apiRequest('POST', '/api/wholesale-unit-types', payload);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/wholesale-unit-types'] });
       setEditingWholesaleUnitType(null);
@@ -44,7 +51,14 @@ export default function AdminWholesaleUnits() {
   });
 
   const updateWholesaleUnitTypeMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => apiRequest('PATCH', `/api/wholesale-unit-types/${id}`, data),
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      // Convert defaultPrice to string for decimal type if present
+      const payload = data.defaultPrice !== undefined ? {
+        ...data,
+        defaultPrice: data.defaultPrice.toString()
+      } : data;
+      return apiRequest('PATCH', `/api/wholesale-unit-types/${id}`, payload);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/wholesale-unit-types'] });
       setEditingWholesaleUnitType(null);
