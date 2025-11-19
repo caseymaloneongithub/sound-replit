@@ -6,13 +6,12 @@ import { useLocation } from "wouter";
 import { Navbar } from "@/components/layout/navbar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import type { Subscription, SubscriptionPlan, UpdateProfile } from "@shared/schema";
+import type { Subscription, UpdateProfile } from "@shared/schema";
 import { updateProfileSchema } from "@shared/schema";
-import { Loader2, Calendar, Package, User, LogOut, Edit } from "lucide-react";
+import { Loader2, Calendar, Package, User, LogOut, Edit, CreditCard } from "lucide-react";
 import { format } from "date-fns";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -83,27 +82,22 @@ export default function Account() {
     enabled: !!user,
   });
 
-  const { data: plans } = useQuery<SubscriptionPlan[]>({
-    queryKey: ["/api/subscription-plans"],
+  const createBillingPortalMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/create-billing-portal", {});
+    },
+    onSuccess: (data: { url: string }) => {
+      // Redirect to Stripe billing portal
+      window.location.href = data.url;
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to open billing portal",
+        variant: "destructive",
+      });
+    },
   });
-
-  const { data: orders, isLoading: ordersLoading } = useQuery<any[]>({
-    queryKey: ["/api/my-orders"],
-    enabled: !!user,
-  });
-
-  const getPlanForSubscription = (sub: Subscription) => {
-    return plans?.find(p => p.id === sub.planId);
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'default';
-      case 'paused': return 'secondary';
-      case 'cancelled': return 'destructive';
-      default: return 'outline';
-    }
-  };
 
   if (isLoading || subscriptionsLoading) {
     return (
@@ -125,7 +119,7 @@ export default function Account() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-4xl font-bold mb-2" data-testid="text-account-title">My Account</h1>
-            <p className="text-muted-foreground">Manage your subscriptions and account settings</p>
+            <p className="text-muted-foreground">Manage your profile and payment settings</p>
           </div>
           <Button
             variant="outline"
@@ -328,179 +322,50 @@ export default function Account() {
               )}
             </CardContent>
           </Card>
+          <Card data-testid="card-payment-method">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5" />
+                Payment Method
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">
+                Manage your payment methods and billing information through Stripe's secure portal.
+              </p>
+              <Button 
+                onClick={() => createBillingPortalMutation.mutate()}
+                disabled={createBillingPortalMutation.isPending || !user.stripeCustomerId}
+                data-testid="button-update-payment-method"
+                className="w-full"
+              >
+                {createBillingPortalMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Opening...
+                  </>
+                ) : (
+                  <>
+                    <CreditCard className="w-4 h-4 mr-2" />
+                    Update Payment Method
+                  </>
+                )}
+              </Button>
+              {!user.stripeCustomerId && (
+                <p className="text-sm text-muted-foreground mt-2">
+                  You need to have an active subscription to manage payment methods.
+                </p>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-bold mb-4">Active Subscriptions</h2>
-            {activeSubscriptions.length === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <Package className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                  <p className="text-muted-foreground mb-4">You don't have any active subscriptions</p>
-                  <Button onClick={() => window.location.href = '/subscriptions'} data-testid="button-browse-plans">
-                    Browse Plans
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid gap-4">
-                {activeSubscriptions.map((sub) => {
-                  const plan = getPlanForSubscription(sub);
-                  return (
-                    <Card key={sub.id} data-testid={`card-subscription-${sub.id}`}>
-                      <CardHeader>
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <CardTitle>{plan?.name || 'Subscription'}</CardTitle>
-                            <CardDescription>
-                              {plan?.bottleCount} bottles • {plan?.frequency}
-                            </CardDescription>
-                          </div>
-                          <Badge variant={getStatusColor(sub.status)} data-testid={`badge-status-${sub.id}`}>
-                            {sub.status}
-                          </Badge>
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid md:grid-cols-2 gap-4 mb-4">
-                          {sub.startDate && (
-                            <div>
-                              <p className="text-sm text-muted-foreground">Started</p>
-                              <p className="font-medium">{format(new Date(sub.startDate), 'MMM d, yyyy')}</p>
-                            </div>
-                          )}
-                          {sub.nextDeliveryDate && (
-                            <div>
-                              <p className="text-sm text-muted-foreground">Next Pickup</p>
-                              <p className="font-medium">{format(new Date(sub.nextDeliveryDate), 'MMM d, yyyy')}</p>
-                            </div>
-                          )}
-                          <div>
-                            <p className="text-sm text-muted-foreground">Price</p>
-                            <p className="font-medium">${plan?.price}/{plan?.frequency === 'weekly' ? 'week' : 'month'}</p>
-                          </div>
-                        </div>
-                        <Button 
-                          className="w-full" 
-                          onClick={() => setLocation('/my-subscriptions')}
-                          data-testid={`button-manage-subscription-${sub.id}`}
-                        >
-                          Manage Subscription
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
+        {activeSubscriptions.length > 0 && (
+          <div className="mt-8">
+            <h2 className="text-2xl font-bold mb-4">Pickup Information</h2>
+            <PickupInfo />
           </div>
-
-          {inactiveSubscriptions.length > 0 && (
-            <div>
-              <h2 className="text-2xl font-bold mb-4">Past Subscriptions</h2>
-              <div className="grid gap-4">
-                {inactiveSubscriptions.map((sub) => {
-                  const plan = getPlanForSubscription(sub);
-                  return (
-                    <Card key={sub.id} className="opacity-75">
-                      <CardHeader>
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <CardTitle>{plan?.name || 'Subscription'}</CardTitle>
-                            <CardDescription>
-                              {plan?.bottleCount} bottles • {plan?.frequency}
-                            </CardDescription>
-                          </div>
-                          <Badge variant={getStatusColor(sub.status)}>
-                            {sub.status}
-                          </Badge>
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid md:grid-cols-2 gap-4">
-                          {sub.startDate && (
-                            <div>
-                              <p className="text-sm text-muted-foreground">Started</p>
-                              <p className="font-medium">{format(new Date(sub.startDate), 'MMM d, yyyy')}</p>
-                            </div>
-                          )}
-                          <div>
-                            <p className="text-sm text-muted-foreground">Price</p>
-                            <p className="font-medium">${plan?.price}/{plan?.frequency === 'weekly' ? 'week' : 'month'}</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Order History Section */}
-          <div>
-            <h2 className="text-2xl font-bold mb-4">Order History</h2>
-            {ordersLoading && (
-              <div className="flex justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-primary" />
-              </div>
-            )}
-            {!ordersLoading && (!orders || orders.length === 0) && (
-              <Card>
-                <CardContent className="py-8">
-                  <p className="text-center text-muted-foreground">No orders yet. Visit the shop to place your first order!</p>
-                </CardContent>
-              </Card>
-            )}
-            {!ordersLoading && orders && orders.length > 0 && (
-              <div className="grid gap-4">
-                {orders.map((order: any) => (
-                  <Card key={order.id}>
-                    <CardHeader>
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <CardTitle>Order #{order.orderNumber}</CardTitle>
-                          <CardDescription>
-                            {order.orderDate && format(new Date(order.orderDate), 'MMM d, yyyy')}
-                          </CardDescription>
-                        </div>
-                        <Badge variant={order.status === 'fulfilled' ? 'default' : order.status === 'cancelled' ? 'destructive' : 'secondary'}>
-                          {order.status ? order.status.replace('_', ' ') : 'pending'}
-                        </Badge>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="grid md:grid-cols-3 gap-4">
-                        <div>
-                          <p className="text-sm text-muted-foreground">Total</p>
-                          <p className="font-medium">${order.totalAmount ? parseFloat(order.totalAmount).toFixed(2) : '0.00'}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-muted-foreground">Status</p>
-                          <p className="font-medium capitalize">{order.status ? order.status.replace('_', ' ') : 'pending'}</p>
-                        </div>
-                        {order.pickupDate && (
-                          <div>
-                            <p className="text-sm text-muted-foreground">Pickup Date</p>
-                            <p className="font-medium">{format(new Date(order.pickupDate), 'MMM d, yyyy')}</p>
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {activeSubscriptions.length > 0 && (
-            <div>
-              <h2 className="text-2xl font-bold mb-4">Pickup Information</h2>
-              <PickupInfo />
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
