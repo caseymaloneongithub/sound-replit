@@ -466,7 +466,7 @@ export default function Account() {
                           </CardDescription>
                         </div>
                         <Badge variant={order.status === 'fulfilled' ? 'default' : order.status === 'cancelled' ? 'destructive' : 'secondary'}>
-                          {order.status.replace('_', ' ')}
+                          {order.status ? order.status.replace('_', ' ') : 'pending'}
                         </Badge>
                       </div>
                     </CardHeader>
@@ -474,11 +474,11 @@ export default function Account() {
                       <div className="grid md:grid-cols-3 gap-4">
                         <div>
                           <p className="text-sm text-muted-foreground">Total</p>
-                          <p className="font-medium">${parseFloat(order.totalAmount).toFixed(2)}</p>
+                          <p className="font-medium">${order.totalAmount ? parseFloat(order.totalAmount).toFixed(2) : '0.00'}</p>
                         </div>
                         <div>
                           <p className="text-sm text-muted-foreground">Status</p>
-                          <p className="font-medium capitalize">{order.status.replace('_', ' ')}</p>
+                          <p className="font-medium capitalize">{order.status ? order.status.replace('_', ' ') : 'pending'}</p>
                         </div>
                         {order.pickupDate && (
                           <div>
