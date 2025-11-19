@@ -10,7 +10,6 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendVerificationCode, generateVerificationCode } from "./twilio";
 import { sendEmailVerificationCode } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
@@ -123,77 +122,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   };
 
-  // SMS verification routes
-  app.post("/api/send-verification-code", async (req, res) => {
-    try {
-      const { phoneNumber } = req.body;
-      
-      if (!phoneNumber) {
-        return res.status(400).json({ message: "Phone number is required" });
-      }
-
-      // Generate 6-digit code
-      const code = generateVerificationCode();
-      
-      // Store code in database with 5-minute expiration
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-      await storage.createVerificationCode({
-        phoneNumber,
-        code,
-        expiresAt,
-        verified: false
-      });
-
-      // Send SMS
-      await sendVerificationCode(phoneNumber, code);
-
-      res.json({ message: "Verification code sent" });
-    } catch (error: any) {
-      console.error("Error sending verification code:", error);
-      res.status(500).json({ message: "Error sending verification code: " + error.message });
-    }
-  });
-
-  app.post("/api/verify-code", async (req, res) => {
-    try {
-      const { phoneNumber, code } = req.body;
-      
-      if (!phoneNumber || !code) {
-        return res.status(400).json({ message: "Phone number and code are required" });
-      }
-
-      // Get latest verification code for this phone number
-      const verificationCode = await storage.getLatestVerificationCode(phoneNumber);
-      
-      if (!verificationCode) {
-        return res.status(400).json({ message: "No verification code found" });
-      }
-
-      // Check if code is expired
-      if (new Date() > verificationCode.expiresAt) {
-        return res.status(400).json({ message: "Verification code has expired" });
-      }
-
-      // Check if code matches
-      if (verificationCode.code !== code) {
-        return res.status(400).json({ message: "Invalid verification code" });
-      }
-
-      // Check if already verified
-      if (verificationCode.verified) {
-        return res.status(400).json({ message: "Verification code already used" });
-      }
-
-      // Mark as verified
-      await storage.markVerificationCodeAsVerified(verificationCode.id);
-
-      res.json({ message: "Phone number verified successfully", verified: true });
-    } catch (error: any) {
-      console.error("Error verifying code:", error);
-      res.status(500).json({ message: "Error verifying code: " + error.message });
-    }
-  });
-
   // Check if email already has an account
   app.post("/api/check-email", async (req, res) => {
     try {
@@ -241,7 +169,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Generate 6-digit code
-      const code = generateVerificationCode();
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
       
       // Store code in database with 5-minute expiration
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
@@ -499,122 +427,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(orderDetails);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching order: " + error.message });
-    }
-  });
-
-  // SMS login routes
-  app.post("/api/login/sms/request", async (req, res) => {
-    try {
-      const { phoneNumber } = req.body;
-      
-      if (!phoneNumber) {
-        return res.status(400).json({ message: "Phone number is required" });
-      }
-
-      // Check if user exists with this phone number
-      const user = await storage.getUserByPhoneNumber(phoneNumber);
-      
-      // Always return success to prevent phone number enumeration
-      // Only send SMS if user actually exists
-      if (user) {
-        // Generate 6-digit code
-        const code = generateVerificationCode();
-        
-        console.log(`[SMS Login] Sending code ${code} to ${phoneNumber}`);
-        
-        // Store code in database with 5-minute expiration
-        const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-        await storage.createVerificationCode({
-          phoneNumber,
-          code,
-          purpose: 'login',
-          expiresAt,
-          verified: false,
-        });
-
-        // Send SMS
-        try {
-          await sendVerificationCode(phoneNumber, code);
-          console.log(`[SMS Login] Successfully sent code to ${phoneNumber}`);
-        } catch (smsError: any) {
-          console.error(`[SMS Login] Failed to send SMS to ${phoneNumber}:`, smsError);
-          // Don't throw - we still want to return success for security
-        }
-      } else {
-        // Log potential enumeration attempt
-        console.warn(`SMS login code requested for non-existent phone: ${phoneNumber}`);
-      }
-
-      // Always return success to prevent enumeration
-      res.json({ message: "If an account exists with this phone number, a login code has been sent" });
-    } catch (error: any) {
-      console.error("Error sending login code:", error);
-      res.status(500).json({ message: "Error sending login code: " + error.message });
-    }
-  });
-
-  app.post("/api/login/sms/verify", async (req, res) => {
-    try {
-      const { phoneNumber, code } = req.body;
-      
-      if (!phoneNumber || !code) {
-        return res.status(400).json({ message: "Phone number and code are required" });
-      }
-
-      // Get latest login verification code for this phone number
-      const verificationCode = await storage.getLatestVerificationCodeByPurpose(phoneNumber, 'login');
-      
-      if (!verificationCode) {
-        return res.status(400).json({ message: "No login code found. Please request a new code." });
-      }
-
-      // Check if code is expired
-      if (new Date() > verificationCode.expiresAt) {
-        return res.status(400).json({ message: "Login code has expired. Please request a new code." });
-      }
-
-      // Check if code was already consumed
-      if (verificationCode.consumedAt) {
-        return res.status(400).json({ message: "Login code already used. Please request a new code." });
-      }
-
-      // Check attempt limit (3 attempts max)
-      if (verificationCode.attempts >= 3) {
-        return res.status(400).json({ message: "Too many attempts. Please request a new code." });
-      }
-
-      // Check if code matches
-      if (verificationCode.code !== code) {
-        // Increment attempts counter
-        await storage.incrementVerificationAttempts(verificationCode.id);
-        const attemptsLeft = 3 - (verificationCode.attempts + 1);
-        return res.status(400).json({ 
-          message: `Invalid code. ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining.`
-        });
-      }
-
-      // Get user by phone number
-      const user = await storage.getUserByPhoneNumber(phoneNumber);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Mark code as consumed
-      await storage.markVerificationCodeAsConsumed(verificationCode.id);
-
-      // Log user in using passport's req.login
-      req.login(user, (err) => {
-        if (err) {
-          console.error("Error logging in user:", err);
-          return res.status(500).json({ message: "Error logging in" });
-        }
-        // Don't send password back
-        const { password, ...userWithoutPassword } = user;
-        res.json(userWithoutPassword);
-      });
-    } catch (error: any) {
-      console.error("Error verifying login code:", error);
-      res.status(500).json({ message: "Error verifying login code: " + error.message });
     }
   });
 
