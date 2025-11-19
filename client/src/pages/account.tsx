@@ -110,7 +110,6 @@ export default function Account() {
   if (!user) return null;
 
   const activeSubscriptions = subscriptions?.filter(s => s.status === 'active') || [];
-  const inactiveSubscriptions = subscriptions?.filter(s => s.status !== 'active') || [];
 
   return (
     <div className="min-h-screen bg-background">
