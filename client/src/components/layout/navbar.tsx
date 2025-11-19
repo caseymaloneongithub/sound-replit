@@ -39,47 +39,72 @@ export function Navbar() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" data-testid="menu-user-options">
-                  <DropdownMenuItem 
-                    onClick={() => setLocation('/account')}
-                    data-testid="menu-item-profile"
-                  >
-                    <UserCircle className="w-4 h-4 mr-2" />
-                    Profile
-                  </DropdownMenuItem>
-                  <DropdownMenuItem 
-                    onClick={() => setLocation('/my-subscriptions')}
-                    data-testid="menu-item-my-subscriptions"
-                  >
-                    <ShoppingBag className="w-4 h-4 mr-2" />
-                    My Subscriptions
-                  </DropdownMenuItem>
-                  <DropdownMenuItem 
-                    onClick={() => setLocation('/my-orders')}
-                    data-testid="menu-item-my-orders"
-                  >
-                    <ShoppingBag className="w-4 h-4 mr-2" />
-                    My Orders
-                  </DropdownMenuItem>
-                  {(user.isAdmin || user.role === 'staff') && (
-                    <DropdownMenuItem 
-                      onClick={() => setLocation('/staff-portal')}
-                      data-testid="menu-item-staff-portal"
-                    >
-                      <Shield className="w-4 h-4 mr-2" />
-                      Staff Portal
-                    </DropdownMenuItem>
+                  {user.role === 'wholesale_customer' ? (
+                    <>
+                      <DropdownMenuItem 
+                        onClick={() => setLocation('/wholesale-customer')}
+                        data-testid="menu-item-orders"
+                      >
+                        <ShoppingBag className="w-4 h-4 mr-2" />
+                        Orders
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={async () => {
+                          await logoutMutation.mutateAsync();
+                          setLocation('/wholesale/login');
+                        }}
+                        disabled={logoutMutation.isPending}
+                        data-testid="menu-item-logout"
+                      >
+                        <LogOut className="w-4 h-4 mr-2" />
+                        {logoutMutation.isPending ? 'Logging out...' : 'Log Out'}
+                      </DropdownMenuItem>
+                    </>
+                  ) : (
+                    <>
+                      <DropdownMenuItem 
+                        onClick={() => setLocation('/account')}
+                        data-testid="menu-item-profile"
+                      >
+                        <UserCircle className="w-4 h-4 mr-2" />
+                        Profile
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={() => setLocation('/my-subscriptions')}
+                        data-testid="menu-item-my-subscriptions"
+                      >
+                        <ShoppingBag className="w-4 h-4 mr-2" />
+                        My Subscriptions
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={() => setLocation('/my-orders')}
+                        data-testid="menu-item-my-orders"
+                      >
+                        <ShoppingBag className="w-4 h-4 mr-2" />
+                        My Orders
+                      </DropdownMenuItem>
+                      {(user.isAdmin || user.role === 'staff') && (
+                        <DropdownMenuItem 
+                          onClick={() => setLocation('/staff-portal')}
+                          data-testid="menu-item-staff-portal"
+                        >
+                          <Shield className="w-4 h-4 mr-2" />
+                          Staff Portal
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem 
+                        onClick={async () => {
+                          await logoutMutation.mutateAsync();
+                          setLocation('/auth');
+                        }}
+                        disabled={logoutMutation.isPending}
+                        data-testid="menu-item-logout"
+                      >
+                        <LogOut className="w-4 h-4 mr-2" />
+                        {logoutMutation.isPending ? 'Logging out...' : 'Log Out'}
+                      </DropdownMenuItem>
+                    </>
                   )}
-                  <DropdownMenuItem 
-                    onClick={async () => {
-                      await logoutMutation.mutateAsync();
-                      setLocation('/auth');
-                    }}
-                    disabled={logoutMutation.isPending}
-                    data-testid="menu-item-logout"
-                  >
-                    <LogOut className="w-4 h-4 mr-2" />
-                    {logoutMutation.isPending ? 'Logging out...' : 'Log Out'}
-                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
