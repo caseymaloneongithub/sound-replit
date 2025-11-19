@@ -97,11 +97,18 @@ export default function WholesaleLogin() {
       // Update the auth context with the logged-in user
       queryClient.setQueryData(["/api/user"], data.user);
       
+      // Invalidate to ensure all components using useAuth get the update
+      await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+      
       toast({
         title: "Welcome back!",
         description: "You have successfully logged in.",
       });
-      setLocation("/wholesale-customer");
+      
+      // Give React Query a moment to update before redirecting
+      setTimeout(() => {
+        setLocation("/wholesale-customer");
+      }, 100);
     } catch (error: any) {
       toast({
         title: "Error",
