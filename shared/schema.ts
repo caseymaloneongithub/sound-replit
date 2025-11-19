@@ -321,7 +321,7 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id),
   orderDate: timestamp("order_date").notNull().defaultNow(),
   deliveryDate: timestamp("delivery_date"),
-  status: text("status").notNull().default('pending'), // 'pending', 'delivered'
+  status: text("status").notNull().default('pending'), // 'pending', 'packaged', 'delivered'
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
   fulfilledAt: timestamp("fulfilled_at"),
   fulfilledByUserId: varchar("fulfilled_by_user_id").references(() => users.id),
