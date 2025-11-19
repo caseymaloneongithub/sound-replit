@@ -25,18 +25,13 @@ const customerSchema = z.object({
   customerName: z.string().min(2, "Name must be at least 2 characters"),
   customerEmail: z.string().email("Invalid email address"),
   customerPhone: z.string().min(10, "Phone number must be at least 10 digits"),
-  createAccount: z.boolean().optional(),
-  password: z.string().optional(),
-  confirmPassword: z.string().optional(),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  confirmPassword: z.string().min(6, "Please confirm your password"),
 }).refine((data) => {
-  // If createAccount is true, password is required and must match confirmPassword
-  if (data.createAccount) {
-    return data.password && data.password.length >= 6 && data.password === data.confirmPassword;
-  }
-  return true;
+  return data.password === data.confirmPassword;
 }, {
-  message: "Password must be at least 6 characters and passwords must match",
-  path: ["password"],
+  message: "Passwords must match",
+  path: ["confirmPassword"],
 });
 
 type CustomerForm = z.infer<typeof customerSchema>;
@@ -70,6 +65,8 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [customerInfo, setCustomerInfo] = useState<CustomerForm | null>(null);
   const [step, setStep] = useState<'info' | 'payment'>('info');
+  const [emailExists, setEmailExists] = useState(false);
+  const [checkingEmail, setCheckingEmail] = useState(false);
 
   const form = useForm<CustomerForm>({
     resolver: zodResolver(customerSchema),
@@ -77,13 +74,30 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
       customerName: "",
       customerEmail: "",
       customerPhone: "",
-      createAccount: false,
       password: "",
       confirmPassword: "",
     },
   });
   
-  const createAccount = form.watch("createAccount");
+  const customerEmail = form.watch("customerEmail");
+
+  const checkEmail = async (email: string) => {
+    if (!email || !email.includes('@')) {
+      setEmailExists(false);
+      return;
+    }
+
+    setCheckingEmail(true);
+    try {
+      const response = await apiRequest("POST", "/api/check-email", { email });
+      setEmailExists(response.exists);
+    } catch (error) {
+      console.error("Error checking email:", error);
+      setEmailExists(false);
+    } finally {
+      setCheckingEmail(false);
+    }
+  };
 
   const handleCustomerInfo = async (data: CustomerForm) => {
     try {
@@ -147,32 +161,30 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
           variant: "destructive",
         });
       } else if (paymentIntent?.status === 'succeeded') {
-        // If user wants to create an account, create it now
-        if (customerInfo.createAccount && customerInfo.password) {
-          try {
-            await apiRequest("POST", "/api/checkout/create-account", {
-              customerName: customerInfo.customerName,
-              customerEmail: customerInfo.customerEmail,
-              customerPhone: customerInfo.customerPhone,
-              password: customerInfo.password,
-            });
-            
-            // Refresh user auth state
-            queryClient.invalidateQueries({ queryKey: ["/api/user"] });
-            
-            toast({
-              title: "Account Created",
-              description: "Your account has been created successfully!",
-            });
-          } catch (accountError: any) {
-            // Log but don't fail the order - they can still access their order
-            console.error("Account creation failed:", accountError);
-            toast({
-              title: "Order Complete",
-              description: "Your order was successful, but we couldn't create your account. You can create one later.",
-              variant: "default",
-            });
-          }
+        // Create account for the customer
+        try {
+          await apiRequest("POST", "/api/checkout/create-account", {
+            customerName: customerInfo.customerName,
+            customerEmail: customerInfo.customerEmail,
+            customerPhone: customerInfo.customerPhone,
+            password: customerInfo.password,
+          });
+          
+          // Refresh user auth state
+          queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+          
+          toast({
+            title: "Account Created",
+            description: "Your account has been created successfully!",
+          });
+        } catch (accountError: any) {
+          // Log but don't fail the order - they can still access their order
+          console.error("Account creation failed:", accountError);
+          toast({
+            title: "Order Complete",
+            description: "Your order was successful, but we couldn't create your account. You can create one later.",
+            variant: "default",
+          });
         }
         
         // Clear both cart query caches
@@ -215,11 +227,29 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
               id="customerEmail"
               type="email"
               {...form.register("customerEmail")}
-             
+              onBlur={(e) => checkEmail(e.target.value)}
               data-testid="input-customer-email"
             />
             {form.formState.errors.customerEmail && (
               <p className="text-sm text-destructive">{form.formState.errors.customerEmail.message}</p>
+            )}
+            {emailExists && (
+              <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-md p-3 flex items-start gap-2">
+                <LogIn className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-amber-800 dark:text-amber-200">
+                    An account with this email already exists.{' '}
+                    <button
+                      type="button"
+                      onClick={() => setLocation('/auth?redirect=/cart-checkout')}
+                      className="font-medium underline hover:no-underline"
+                      data-testid="link-login"
+                    >
+                      Please log in instead
+                    </button>
+                  </p>
+                </div>
+              </div>
             )}
           </div>
           <div className="space-y-2">
@@ -237,51 +267,53 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
           </div>
           
           <div className="border-t pt-4 mt-4">
-            <div className="flex items-center space-x-2 mb-4">
-              <input
-                type="checkbox"
-                id="createAccount"
-                {...form.register("createAccount")}
-                className="rounded border-gray-300"
-                data-testid="checkbox-create-account"
-              />
-              <Label htmlFor="createAccount" className="cursor-pointer font-normal flex items-center gap-2">
-                <UserPlus className="w-4 h-4" />
-                Create an account to track your orders
-              </Label>
+            <div className="flex items-center gap-2 mb-4">
+              <UserPlus className="w-4 h-4" />
+              <h3 className="font-medium">Create Your Account</h3>
             </div>
+            <p className="text-sm text-muted-foreground mb-4">
+              Set a password to create your account and track your orders.
+            </p>
             
-            {createAccount && (
-              <div className="space-y-4 pl-6 border-l-2">
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    {...form.register("password")}
-                    placeholder="At least 6 characters"
-                    data-testid="input-password"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="confirmPassword">Confirm Password</Label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    {...form.register("confirmPassword")}
-                    placeholder="Re-enter password"
-                    data-testid="input-confirm-password"
-                  />
-                </div>
-                {form.formState.errors.password && (
-                  <p className="text-sm text-destructive">{form.formState.errors.password.message}</p>
-                )}
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  {...form.register("password")}
+                  placeholder="At least 6 characters"
+                  data-testid="input-password"
+                  disabled={emailExists}
+                />
               </div>
-            )}
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm Password</Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  {...form.register("confirmPassword")}
+                  placeholder="Re-enter password"
+                  data-testid="input-confirm-password"
+                  disabled={emailExists}
+                />
+              </div>
+              {form.formState.errors.password && (
+                <p className="text-sm text-destructive">{form.formState.errors.password.message}</p>
+              )}
+              {form.formState.errors.confirmPassword && (
+                <p className="text-sm text-destructive">{form.formState.errors.confirmPassword.message}</p>
+              )}
+            </div>
           </div>
         </div>
-        <Button type="submit" className="w-full" data-testid="button-continue-to-payment">
-          Continue to Payment
+        <Button 
+          type="submit" 
+          className="w-full" 
+          disabled={emailExists || checkingEmail}
+          data-testid="button-continue-to-payment"
+        >
+          {checkingEmail ? "Checking email..." : "Continue to Payment"}
         </Button>
       </form>
     );

@@ -194,6 +194,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Check if email already has an account
+  app.post("/api/check-email", async (req, res) => {
+    try {
+      const { email } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: "Invalid email address" });
+      }
+
+      // Check if user exists with this email
+      const user = await storage.getUserByEmail(email);
+      
+      res.json({ exists: !!user });
+    } catch (error: any) {
+      console.error("Error checking email:", error);
+      res.status(500).json({ message: "Error checking email: " + error.message });
+    }
+  });
+
   // Email verification routes
   app.post("/api/send-email-verification-code", async (req, res) => {
     try {
