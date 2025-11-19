@@ -1191,28 +1191,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const sessionId = req.sessionID || "guest";
-      const items = await storage.getCartItems(sessionId);
+      const legacyItems = await storage.getCartItems(sessionId);
+      const retailItems = await storage.getRetailCart(sessionId);
       
-      if (items.length === 0) {
+      if (legacyItems.length === 0 && retailItems.length === 0) {
         return res.status(400).json({ message: "Cart is empty" });
       }
 
       // Check if cart has both subscription and one-time items
-      const hasSubscription = items.some(item => item.isSubscription);
-      const hasOneTime = items.some(item => !item.isSubscription);
+      const hasLegacySubscription = legacyItems.some(item => item.isSubscription);
+      const hasRetailSubscription = retailItems.some(item => item.isSubscription);
+      const hasOneTime = legacyItems.some(item => !item.isSubscription) || retailItems.some(item => !item.isSubscription);
 
-      if (hasSubscription && hasOneTime) {
+      // Don't allow mixing subscription types (legacy vs retail)
+      if (hasLegacySubscription && hasRetailSubscription) {
+        return res.status(400).json({
+          message: "Cannot mix legacy and new subscription products. Please checkout separately."
+        });
+      }
+
+      if ((hasLegacySubscription || hasRetailSubscription) && hasOneTime) {
         return res.status(400).json({ 
           message: "Please checkout one-time purchases and subscriptions separately. Remove either the one-time or subscription items from your cart to continue."
         });
       }
 
+      const hasSubscription = hasLegacySubscription || hasRetailSubscription;
+
       const baseUrl = process.env.REPL_SLUG 
         ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
         : 'http://localhost:5000';
 
-      const lineItems = await Promise.all(
-        items.map(async (item) => {
+      // Create line items for both legacy and retail cart items
+      const legacyLineItems = await Promise.all(
+        legacyItems.map(async (item) => {
           const product = await storage.getProduct(item.productId);
           if (!product) throw new Error(`Product ${item.productId} not found`);
           
@@ -1220,11 +1232,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ? product.imageUrl 
             : `${baseUrl}${product.imageUrl}`;
           
-          // Use centralized case pricing
           const casePrice = getCasePriceCents(item.isSubscription);
 
           if (item.isSubscription) {
-            // For subscriptions, create recurring price
             const frequencyLabel = 
               item.subscriptionFrequency === 'weekly' ? 'Weekly' :
               item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
@@ -1252,7 +1262,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               quantity: item.quantity,
             };
           } else {
-            // One-time purchase
             return {
               price_data: {
                 currency: 'usd',
@@ -1268,16 +1277,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
+      const retailLineItems = await Promise.all(
+        retailItems.map(async (item) => {
+          const retailProduct = item.retailProduct;
+          const flavor = retailProduct.flavor;
+          
+          const imageUrl = flavor.primaryImageUrl?.startsWith('http') 
+            ? flavor.primaryImageUrl 
+            : flavor.primaryImageUrl
+              ? `${baseUrl}/public/${flavor.primaryImageUrl}`
+              : undefined;
+          
+          // Calculate price with subscription discount if applicable
+          const basePrice = parseFloat(retailProduct.price);
+          const discountPercentage = item.isSubscription ? parseFloat(retailProduct.subscriptionDiscount) : 0;
+          const finalPrice = item.isSubscription && discountPercentage > 0
+            ? basePrice * (1 - discountPercentage / 100)
+            : basePrice;
+          const casePriceCents = Math.round(finalPrice * 100);
+
+          if (item.isSubscription) {
+            const frequencyLabel = 
+              item.subscriptionFrequency === 'weekly' ? 'Weekly' :
+              item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
+              'Every 4 Weeks';
+            
+            const intervalCount = 
+              item.subscriptionFrequency === 'weekly' ? 1 :
+              item.subscriptionFrequency === 'bi-weekly' ? 2 :
+              4;
+            
+            return {
+              price_data: {
+                currency: 'usd',
+                product_data: {
+                  name: `${flavor.name} ${retailProduct.unitDescription} (${item.subscriptionFrequency})`,
+                  description: `${frequencyLabel} subscription`,
+                  images: imageUrl ? [imageUrl] : [],
+                },
+                unit_amount: casePriceCents,
+                recurring: {
+                  interval: 'week' as const,
+                  interval_count: intervalCount,
+                },
+              },
+              quantity: item.quantity,
+            };
+          } else {
+            return {
+              price_data: {
+                currency: 'usd',
+                product_data: {
+                  name: `${flavor.name} ${retailProduct.unitDescription}`,
+                  images: imageUrl ? [imageUrl] : [],
+                },
+                unit_amount: casePriceCents,
+              },
+              quantity: item.quantity,
+            };
+          }
+        })
+      );
+
+      const lineItems = [...legacyLineItems, ...retailLineItems];
+
       // For subscriptions, include product info in metadata
       const metadata: Record<string, string> = {
         sessionId,
         type: hasSubscription ? 'subscription_purchase' : 'cart_purchase',
       };
       
-      if (hasSubscription && items.length > 0) {
-        const subItem = items.find(item => item.isSubscription);
+      if (hasSubscription) {
+        const legacySubItem = legacyItems.find(item => item.isSubscription);
+        const retailSubItem = retailItems.find(item => item.isSubscription);
+        const subItem = legacySubItem || retailSubItem;
         if (subItem) {
-          metadata.productId = subItem.productId;
+          if (legacySubItem) {
+            metadata.productId = legacySubItem.productId;
+          } else if (retailSubItem) {
+            metadata.retailProductId = retailSubItem.retailProductId;
+          }
           metadata.subscriptionFrequency = subItem.subscriptionFrequency || 'weekly';
         }
       }
@@ -1291,18 +1370,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Tax only applies to one-time purchases, not subscriptions
       const TAX_RATE = 0.1035; // 10.35%
       
-      // Calculate subtotal from non-subscription items only, using actual product prices
-      const taxableSubtotal = await Promise.all(
-        items
+      // Calculate subtotal from non-subscription items only
+      const legacyTaxable = await Promise.all(
+        legacyItems
           .filter(item => !item.isSubscription)
           .map(async (item) => {
             const pricing = await getProductPricing(item.productId);
             if (!pricing) return 0;
-            // Use actual product retail price in cents
             const priceInCents = Math.round(parseFloat(pricing.retailPrice) * 100);
             return priceInCents * item.quantity;
           })
       ).then(amounts => amounts.reduce((sum, amount) => sum + amount, 0));
+
+      const retailTaxable = retailItems
+        .filter(item => !item.isSubscription)
+        .reduce((sum, item) => {
+          const price = parseFloat(item.retailProduct.price);
+          const priceCents = Math.round(price * 100);
+          return sum + (priceCents * item.quantity);
+        }, 0);
+
+      const taxableSubtotal = legacyTaxable + retailTaxable;
       
       if (taxableSubtotal > 0) {
         // Calculate tax amount in cents
