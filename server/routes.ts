@@ -642,6 +642,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/wholesale/customer/pricing", isAuthenticated, isWholesaleCustomer, async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+      
+      // Get wholesale customer record for authenticated user
+      const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      if (!customer) {
+        return res.status(404).json({ message: "Wholesale customer record not found" });
+      }
+
+      // Get custom pricing for this customer
+      const pricing = await storage.getWholesalePricing(customer.id);
+      res.json(pricing);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching pricing: " + error.message });
+    }
+  });
+
+  app.post("/api/wholesale/customer/orders", isAuthenticated, isWholesaleCustomer, async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+      
+      // Get wholesale customer record for authenticated user
+      const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      if (!customer) {
+        return res.status(404).json({ message: "Wholesale customer record not found" });
+      }
+
+      const { items, notes } = req.body;
+      
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: "Order must contain at least one item" });
+      }
+
+      // Create order for the logged-in customer
+      const order = await storage.createWholesaleOrder({
+        customerId: customer.id,
+        notes,
+      }, items);
+
+      res.json(order);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error creating order: " + error.message });
+    }
+  });
+
   // Product routes
   app.get("/api/products", async (req: any, res) => {
     try {
