@@ -309,6 +309,131 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Wholesale-specific email authentication
+  app.post("/api/wholesale/send-email-code", async (req, res) => {
+    try {
+      const { email } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: "Invalid email address" });
+      }
+
+      // Check if this email belongs to any wholesale customer
+      const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
+      if (!wholesaleCustomer) {
+        return res.status(400).json({ message: "No wholesale account found with this email" });
+      }
+
+      // Generate 6-digit code
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      
+      // Store code in database with 5-minute expiration
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      await storage.createEmailVerificationCode({
+        email,
+        code,
+        expiresAt,
+        verified: false,
+        purpose: 'login'
+      });
+
+      // Try to send email
+      try {
+        await sendEmailVerificationCode({ email, code });
+        console.log(`[WHOLESALE AUTH] Verification code sent to ${email}`);
+      } catch (emailError: any) {
+        console.warn(`[WHOLESALE AUTH] Failed to send verification email to ${email}:`, emailError.message);
+        console.log(`[WHOLESALE AUTH] Verification code for ${email} stored in database: ${code}`);
+      }
+
+      res.json({ message: "Verification code sent to your email" });
+    } catch (error: any) {
+      console.error("Error sending wholesale email verification code:", error);
+      res.status(500).json({ message: "Error sending verification code: " + error.message });
+    }
+  });
+
+  app.post("/api/wholesale/verify-email-code", async (req, res) => {
+    try {
+      const { email, code } = req.body;
+      
+      if (!email || !code) {
+        return res.status(400).json({ message: "Email and code are required" });
+      }
+
+      // Get latest verification code for this email
+      const verificationCode = await storage.getLatestEmailVerificationCode(email);
+      
+      if (!verificationCode) {
+        return res.status(400).json({ message: "No verification code found" });
+      }
+
+      // Check if code is expired
+      if (new Date() > verificationCode.expiresAt) {
+        return res.status(400).json({ message: "Verification code has expired" });
+      }
+
+      // Check if code matches
+      if (verificationCode.code !== code) {
+        // Increment attempts
+        await storage.incrementEmailVerificationAttempts(verificationCode.id);
+        return res.status(400).json({ message: "Invalid verification code" });
+      }
+
+      // Check if already verified
+      if (verificationCode.verified) {
+        return res.status(400).json({ message: "Verification code already used" });
+      }
+
+      // Mark as verified
+      await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
+
+      // Get the wholesale customer for this email
+      const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
+      if (!wholesaleCustomer) {
+        return res.status(400).json({ message: "No wholesale account found with this email" });
+      }
+
+      // Get or create user account for this wholesale customer
+      let user = wholesaleCustomer.userId ? await storage.getUser(wholesaleCustomer.userId) : undefined;
+      
+      if (!user) {
+        // Create a new user account for this wholesale customer
+        const username = email.split('@')[0] + '-' + wholesaleCustomer.id.substring(0, 8);
+        user = await storage.createUser({
+          username,
+          email,
+          role: 'wholesale_customer',
+          firstName: wholesaleCustomer.contactName.split(' ')[0],
+          lastName: wholesaleCustomer.contactName.split(' ').slice(1).join(' ') || undefined,
+        });
+
+        // Link the user to the wholesale customer
+        await storage.updateWholesaleCustomer(wholesaleCustomer.id, {
+          userId: user.id
+        });
+      }
+
+      // Log the user in
+      req.login(user, (err) => {
+        if (err) {
+          console.error("Wholesale login error:", err);
+          return res.status(500).json({ message: "Error logging in" });
+        }
+        res.json({ message: "Email verified and logged in successfully", user });
+      });
+    } catch (error: any) {
+      console.error("Error verifying wholesale email code:", error);
+      res.status(500).json({ message: "Error verifying code: " + error.message });
+    }
+  });
+
   // Update user profile
   app.patch("/api/update-profile", isAuthenticated, async (req, res) => {
     try {

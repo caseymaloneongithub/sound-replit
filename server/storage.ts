@@ -181,6 +181,7 @@ export interface IStorage {
   getWholesaleCustomers(): Promise<WholesaleCustomer[]>;
   getWholesaleCustomer(id: string): Promise<WholesaleCustomer | undefined>;
   getWholesaleCustomerByEmail(email: string): Promise<WholesaleCustomer | undefined>;
+  getWholesaleCustomerByAnyEmail(email: string): Promise<WholesaleCustomer | undefined>;
   getWholesaleCustomerByUserId(userId: string): Promise<WholesaleCustomer | undefined>;
   createWholesaleCustomer(customer: InsertWholesaleCustomer): Promise<WholesaleCustomer>;
   updateWholesaleCustomer(id: string, updates: Partial<InsertWholesaleCustomer>): Promise<WholesaleCustomer | undefined>;
@@ -1352,6 +1353,17 @@ export class PostgresStorage implements IStorage {
 
   async getWholesaleCustomerByEmail(email: string): Promise<WholesaleCustomer | undefined> {
     const result = await db.select().from(wholesaleCustomers).where(eq(wholesaleCustomers.email, email));
+    return result[0];
+  }
+
+  async getWholesaleCustomerByAnyEmail(email: string): Promise<WholesaleCustomer | undefined> {
+    // Check both the primary email field and the emails array
+    const result = await db.select().from(wholesaleCustomers).where(
+      or(
+        eq(wholesaleCustomers.email, email),
+        sql`${email} = ANY(${wholesaleCustomers.emails})`
+      )
+    );
     return result[0];
   }
 
