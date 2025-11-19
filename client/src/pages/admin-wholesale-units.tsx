@@ -429,6 +429,48 @@ export default function AdminWholesaleUnits() {
                           <p className="text-sm text-muted-foreground mb-3">
                             Set custom prices for specific customers. Leave empty to use default price.
                           </p>
+
+                          {/* Show customers with custom pricing */}
+                          {Object.keys(customerPricing).length > 0 && (
+                            <div className="mb-4">
+                              <Label className="text-sm font-medium text-primary mb-2 block">
+                                Customers with Custom Pricing ({Object.keys(customerPricing).length})
+                              </Label>
+                              <div className="border border-primary/20 rounded-md p-3 bg-primary/5 space-y-2">
+                                {Object.keys(customerPricing).map((customerId) => {
+                                  const customer = wholesaleCustomers.find(c => c.id === customerId);
+                                  if (!customer) return null;
+                                  return (
+                                    <div key={customer.id} className="flex items-center gap-3 bg-background rounded-md p-2">
+                                      <div className="flex-1">
+                                        <p className="text-sm font-medium">{customer.businessName}</p>
+                                        <p className="text-xs text-muted-foreground">{customer.contactName}</p>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <Badge variant="secondary" className="text-xs">
+                                          ${Number(customerPricing[customer.id]).toFixed(2)}
+                                        </Badge>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-7 w-7"
+                                          onClick={() => {
+                                            const newPricing = { ...customerPricing };
+                                            delete newPricing[customer.id];
+                                            setCustomerPricing(newPricing);
+                                          }}
+                                          data-testid={`button-clear-custom-price-${customer.id}`}
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
                           <Input
                             placeholder="Search customers by business name or contact..."
                             value={customerSearchTerm}
