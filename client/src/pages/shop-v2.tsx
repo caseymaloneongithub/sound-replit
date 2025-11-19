@@ -106,7 +106,7 @@ export default function ShopV2() {
             <img 
               src={logo} 
               alt="Puget Sound Kombucha Co." 
-              className="h-84 mx-auto"
+              className="h-48 mx-auto"
               style={{ filter: 'brightness(0) invert(1)' }}
             />
           </div>
