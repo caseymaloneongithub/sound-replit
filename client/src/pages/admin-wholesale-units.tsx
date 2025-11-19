@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -10,9 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Box } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import { Loader2, Box, DollarSign, X } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import type { WholesaleUnitType, Flavor } from "@shared/schema";
+import type { WholesaleUnitType, Flavor, WholesaleCustomer, WholesaleCustomerPricing } from "@shared/schema";
 
 export default function AdminWholesaleUnits() {
   const { toast } = useToast();
@@ -26,6 +27,7 @@ export default function AdminWholesaleUnits() {
     isActive: true,
     displayOrder: 0
   });
+  const [customerPricing, setCustomerPricing] = useState<Record<string, number>>({});
 
   const { data: wholesaleUnitTypes = [], isLoading: wholesaleUnitTypesLoading } = useQuery<(WholesaleUnitType & { flavors?: Flavor[] })[]>({
     queryKey: ['/api/wholesale-unit-types'],
@@ -35,6 +37,39 @@ export default function AdminWholesaleUnits() {
   const { data: allFlavors = [], isLoading: flavorsLoading } = useQuery<Flavor[]>({
     queryKey: ['/api/flavors'],
   });
+
+  const { data: wholesaleCustomers = [] } = useQuery<WholesaleCustomer[]>({
+    queryKey: ['/api/wholesale/customers'],
+  });
+
+  // Fetch customer pricing when editing a unit type
+  const { data: existingCustomerPricing = [], refetch: refetchPricing } = useQuery<WholesaleCustomerPricing[]>({
+    queryKey: ['/api/wholesale-customer-pricing', editingWholesaleUnitType],
+    queryFn: async () => {
+      if (!editingWholesaleUnitType || editingWholesaleUnitType === 'new') return [];
+      // We need to fetch all pricing for all customers and filter by unit type
+      const allPricing = await Promise.all(
+        wholesaleCustomers.map(customer =>
+          apiRequest('GET', `/api/wholesale-customer-pricing/${customer.id}`)
+        )
+      );
+      return allPricing.flat().filter((p: WholesaleCustomerPricing) => p.unitTypeId === editingWholesaleUnitType);
+    },
+    enabled: !!editingWholesaleUnitType && editingWholesaleUnitType !== 'new',
+  });
+
+  // Update local state when existing pricing loads
+  useEffect(() => {
+    if (existingCustomerPricing.length > 0) {
+      const pricingMap: Record<string, number> = {};
+      existingCustomerPricing.forEach((pricing) => {
+        pricingMap[pricing.customerId] = Number(pricing.customPrice);
+      });
+      setCustomerPricing(pricingMap);
+    } else if (editingWholesaleUnitType) {
+      setCustomerPricing({});
+    }
+  }, [existingCustomerPricing, editingWholesaleUnitType]);
 
   const createWholesaleUnitTypeMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -59,7 +94,7 @@ export default function AdminWholesaleUnits() {
   });
 
   const updateWholesaleUnitTypeMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+    mutationFn: async ({ id, data, pricing }: { id: string; data: any; pricing: Record<string, number> }) => {
       // Convert defaultPrice to string for decimal type if present
       const { availableFlavors, ...rest } = data;
       const payload = {
@@ -67,12 +102,34 @@ export default function AdminWholesaleUnits() {
         ...(rest.defaultPrice !== undefined && { defaultPrice: rest.defaultPrice.toString() }),
         flavorIds: availableFlavors
       };
-      return apiRequest('PATCH', `/api/wholesale-unit-types/${id}`, payload);
+      
+      // Update the unit type
+      const result = await apiRequest('PATCH', `/api/wholesale-unit-types/${id}`, payload);
+      
+      // Update customer pricing
+      const pricingUpdates = Object.entries(pricing).map(([customerId, price]) => {
+        return apiRequest('POST', '/api/wholesale-customer-pricing', {
+          customerId,
+          unitTypeId: id,
+          customPrice: price
+        });
+      });
+      
+      // Delete pricing for customers not in the pricing map
+      const existingPricing = existingCustomerPricing.filter(p => !pricing[p.customerId]);
+      const deletions = existingPricing.map(p =>
+        apiRequest('DELETE', `/api/wholesale-customer-pricing/${p.id}`)
+      );
+      
+      await Promise.all([...pricingUpdates, ...deletions]);
+      
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/wholesale-unit-types'] });
       setEditingWholesaleUnitType(null);
-      toast({ title: "Wholesale unit type updated", description: "Wholesale unit type has been updated successfully" });
+      setCustomerPricing({});
+      toast({ title: "Wholesale unit type updated", description: "Wholesale unit type and pricing have been updated successfully" });
     },
     onError: (error: any) => {
       toast({ title: "Error", description: error.message || "Failed to update wholesale unit type", variant: "destructive" });
@@ -360,6 +417,73 @@ export default function AdminWholesaleUnits() {
                           />
                           <Label>Active</Label>
                         </div>
+
+                        <Separator className="my-4" />
+
+                        <div>
+                          <div className="flex items-center gap-2 mb-3">
+                            <DollarSign className="w-4 h-4 text-primary" />
+                            <Label className="text-base font-semibold">Customer-Specific Pricing</Label>
+                          </div>
+                          <p className="text-sm text-muted-foreground mb-3">
+                            Set custom prices for specific customers. Leave empty to use default price.
+                          </p>
+                          <div className="border rounded-md p-4 max-h-60 overflow-y-auto space-y-3">
+                            {wholesaleCustomers.length === 0 ? (
+                              <p className="text-sm text-muted-foreground text-center py-4">No wholesale customers yet</p>
+                            ) : (
+                              wholesaleCustomers.map((customer) => (
+                                <div key={customer.id} className="flex items-center gap-3">
+                                  <div className="flex-1">
+                                    <p className="text-sm font-medium">{customer.businessName}</p>
+                                    <p className="text-xs text-muted-foreground">{customer.contactName}</p>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      placeholder={`Default: $${Number(wholesaleUnitTypeForm.defaultPrice).toFixed(2)}`}
+                                      value={customerPricing[customer.id] || ''}
+                                      onChange={(e) => {
+                                        const value = parseFloat(e.target.value);
+                                        if (e.target.value === '' || isNaN(value)) {
+                                          const newPricing = { ...customerPricing };
+                                          delete newPricing[customer.id];
+                                          setCustomerPricing(newPricing);
+                                        } else {
+                                          setCustomerPricing({
+                                            ...customerPricing,
+                                            [customer.id]: value
+                                          });
+                                        }
+                                      }}
+                                      className="w-32"
+                                      data-testid={`input-customer-price-${customer.id}`}
+                                    />
+                                    {customerPricing[customer.id] && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => {
+                                          const newPricing = { ...customerPricing };
+                                          delete newPricing[customer.id];
+                                          setCustomerPricing(newPricing);
+                                        }}
+                                        data-testid={`button-clear-customer-price-${customer.id}`}
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+
+                        <Separator className="my-4" />
+
                         <div>
                           <Label>Available Flavors</Label>
                           <div className="border rounded-md p-4 max-h-60 overflow-y-auto space-y-2">
@@ -397,7 +521,11 @@ export default function AdminWholesaleUnits() {
                           </div>
                         </div>
                         <Button
-                          onClick={() => updateWholesaleUnitTypeMutation.mutate({ id: unitType.id, data: wholesaleUnitTypeForm })}
+                          onClick={() => updateWholesaleUnitTypeMutation.mutate({ 
+                            id: unitType.id, 
+                            data: wholesaleUnitTypeForm,
+                            pricing: customerPricing
+                          })}
                           disabled={updateWholesaleUnitTypeMutation.isPending}
                           className="w-full"
                           data-testid="button-update-wholesale-unit"
