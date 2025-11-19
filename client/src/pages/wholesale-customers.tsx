@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Mail, Phone, MapPin, Plus, Loader2, CreditCard, Users } from "lucide-react";
+import { Mail, Phone, MapPin, Plus, Loader2, CreditCard, Users, Edit, X } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,9 +16,13 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
+import { Badge } from "@/components/ui/badge";
 
 export default function WholesaleCustomers() {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<WholesaleCustomer | null>(null);
+  const [newEmail, setNewEmail] = useState("");
   const { toast } = useToast();
 
   const { data: customers, isLoading } = useQuery<WholesaleCustomer[]>({
@@ -79,6 +83,64 @@ export default function WholesaleCustomers() {
       });
     },
   });
+
+  const updateEmailsMutation = useMutation({
+    mutationFn: async ({ id, emails }: { id: string; emails: string[] }) => {
+      const response = await apiRequest("PATCH", `/api/wholesale/customers/${id}`, { emails });
+      return await response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
+      toast({
+        title: "Updated",
+        description: "Authorized emails updated successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update emails",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleAddEmail = () => {
+    if (!selectedCustomer || !newEmail) return;
+    
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newEmail)) {
+      toast({
+        title: "Invalid Email",
+        description: "Please enter a valid email address",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const currentEmails = selectedCustomer.emails || [];
+    if (currentEmails.includes(newEmail)) {
+      toast({
+        title: "Duplicate Email",
+        description: "This email is already authorized",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const updatedEmails = [...currentEmails, newEmail];
+    updateEmailsMutation.mutate({ id: selectedCustomer.id, emails: updatedEmails });
+    setNewEmail("");
+  };
+
+  const handleRemoveEmail = (email: string) => {
+    if (!selectedCustomer) return;
+    
+    const currentEmails = selectedCustomer.emails || [];
+    const updatedEmails = currentEmails.filter(e => e !== email);
+    updateEmailsMutation.mutate({ id: selectedCustomer.id, emails: updatedEmails });
+  };
 
   const onSubmit = (data: z.infer<typeof insertWholesaleCustomerSchema>) => {
     createCustomerMutation.mutate(data);
@@ -246,22 +308,37 @@ export default function WholesaleCustomers() {
                               <MapPin className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
                               <span className="text-muted-foreground">{customer.address}</span>
                             </div>
-                            <div className="flex items-center justify-between pt-2 border-t">
-                              <div className="flex items-center gap-2">
-                                <CreditCard className="w-4 h-4 text-muted-foreground" />
-                                <Label htmlFor={`payment-${customer.id}`} className="text-sm cursor-pointer">
-                                  Allow Online Payment
-                                </Label>
+                            <div className="space-y-3 pt-2 border-t">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <CreditCard className="w-4 h-4 text-muted-foreground" />
+                                  <Label htmlFor={`payment-${customer.id}`} className="text-sm cursor-pointer">
+                                    Allow Online Payment
+                                  </Label>
+                                </div>
+                                <Switch
+                                  id={`payment-${customer.id}`}
+                                  checked={customer.allowOnlinePayment}
+                                  onCheckedChange={(checked) => {
+                                    togglePaymentMutation.mutate({ id: customer.id, allowOnlinePayment: checked });
+                                  }}
+                                  disabled={togglePaymentMutation.isPending}
+                                  data-testid={`switch-payment-${customer.id}`}
+                                />
                               </div>
-                              <Switch
-                                id={`payment-${customer.id}`}
-                                checked={customer.allowOnlinePayment}
-                                onCheckedChange={(checked) => {
-                                  togglePaymentMutation.mutate({ id: customer.id, allowOnlinePayment: checked });
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => {
+                                  setSelectedCustomer(customer);
+                                  setEmailDialogOpen(true);
                                 }}
-                                disabled={togglePaymentMutation.isPending}
-                                data-testid={`switch-payment-${customer.id}`}
-                              />
+                                data-testid={`button-manage-emails-${customer.id}`}
+                              >
+                                <Mail className="w-4 h-4 mr-2" />
+                                Manage Authorized Emails
+                              </Button>
                             </div>
                           </CardContent>
                         </Card>
@@ -276,6 +353,91 @@ export default function WholesaleCustomers() {
                 </CardContent>
               </Card>
       </div>
+
+      {/* Email Management Dialog */}
+      <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Manage Authorized Emails</DialogTitle>
+            <DialogDescription>
+              {selectedCustomer?.businessName} - Add or remove email addresses that can log into this wholesale account
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            {/* Primary Email (read-only) */}
+            <div>
+              <Label className="text-sm font-medium">Primary Email</Label>
+              <div className="flex items-center gap-2 mt-2">
+                <Badge variant="secondary" className="flex items-center gap-1">
+                  <Mail className="w-3 h-3" />
+                  {selectedCustomer?.email}
+                </Badge>
+                <span className="text-xs text-muted-foreground">(Primary contact)</span>
+              </div>
+            </div>
+
+            {/* Authorized Emails */}
+            <div>
+              <Label className="text-sm font-medium">Additional Authorized Emails</Label>
+              <div className="mt-2 space-y-2">
+                {selectedCustomer?.emails && selectedCustomer.emails.length > 0 ? (
+                  selectedCustomer.emails.map((email) => (
+                    <div key={email} className="flex items-center justify-between gap-2 p-2 border rounded-md">
+                      <span className="text-sm">{email}</span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => handleRemoveEmail(email)}
+                        disabled={updateEmailsMutation.isPending}
+                        data-testid={`button-remove-email-${email}`}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-muted-foreground">No additional emails authorized</p>
+                )}
+              </div>
+            </div>
+
+            {/* Add New Email */}
+            <div>
+              <Label className="text-sm font-medium">Add New Email</Label>
+              <div className="flex gap-2 mt-2">
+                <Input
+                  type="email"
+                  placeholder="email@example.com"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddEmail();
+                    }
+                  }}
+                  data-testid="input-new-email"
+                />
+                <Button
+                  onClick={handleAddEmail}
+                  disabled={!newEmail || updateEmailsMutation.isPending}
+                  data-testid="button-add-email"
+                >
+                  {updateEmailsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEmailDialogOpen(false)} data-testid="button-close-email-dialog">
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </StaffLayout>
   );
 }
