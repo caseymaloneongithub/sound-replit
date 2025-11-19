@@ -178,8 +178,48 @@ export function setupAuth(app: Express) {
       // Invalidate verification code after successful registration
       await storage.markVerificationCodeAsVerified(verificationCode.id);
 
-      req.login(user, (err) => {
+      // Save old session ID to migrate cart
+      const oldSessionId = req.sessionID;
+
+      req.login(user, async (err) => {
         if (err) return next(err);
+        
+        // Migrate cart items from old session to new session if they're different
+        if (oldSessionId && oldSessionId !== req.sessionID) {
+          try {
+            const oldLegacyCart = await storage.getCartItems(oldSessionId);
+            const oldRetailCart = await storage.getRetailCart(oldSessionId);
+            
+            // Add old cart items to new session
+            for (const item of oldLegacyCart) {
+              await storage.addToCart({
+                sessionId: req.sessionID,
+                productId: item.productId,
+                quantity: item.quantity,
+                isSubscription: item.isSubscription,
+                subscriptionFrequency: item.subscriptionFrequency,
+              });
+            }
+            
+            for (const item of oldRetailCart) {
+              await storage.addRetailProductToCart({
+                sessionId: req.sessionID,
+                retailProductId: item.retailProductId,
+                quantity: item.quantity,
+                isSubscription: item.isSubscription,
+                subscriptionFrequency: item.subscriptionFrequency,
+              });
+            }
+            
+            // Clear old cart
+            await storage.clearCart(oldSessionId);
+            await storage.clearRetailCart(oldSessionId);
+          } catch (cartMigrationError) {
+            console.error('[Register] Cart migration error:', cartMigrationError);
+            // Don't fail registration if cart migration fails
+          }
+        }
+        
         // Don't send password back
         const { password: _, ...userWithoutPassword } = user;
         res.status(201).json(userWithoutPassword);
@@ -190,14 +230,55 @@ export function setupAuth(app: Express) {
     }
   });
 
-  app.post("/api/login", (req, res, next) => {
-    passport.authenticate("local", (err: any, user: SelectUser | false, info: any) => {
+  app.post("/api/login", async (req, res, next) => {
+    passport.authenticate("local", async (err: any, user: SelectUser | false, info: any) => {
       if (err) return next(err);
       if (!user) {
         return res.status(401).send(info?.message || "Authentication failed");
       }
-      req.login(user, (err) => {
+      
+      // Save old session ID to migrate cart
+      const oldSessionId = req.sessionID;
+      
+      req.login(user, async (err) => {
         if (err) return next(err);
+        
+        // Migrate cart items from old session to new session if they're different
+        if (oldSessionId && oldSessionId !== req.sessionID) {
+          try {
+            const oldLegacyCart = await storage.getCartItems(oldSessionId);
+            const oldRetailCart = await storage.getRetailCart(oldSessionId);
+            
+            // Add old cart items to new session
+            for (const item of oldLegacyCart) {
+              await storage.addToCart({
+                sessionId: req.sessionID,
+                productId: item.productId,
+                quantity: item.quantity,
+                isSubscription: item.isSubscription,
+                subscriptionFrequency: item.subscriptionFrequency,
+              });
+            }
+            
+            for (const item of oldRetailCart) {
+              await storage.addRetailProductToCart({
+                sessionId: req.sessionID,
+                retailProductId: item.retailProductId,
+                quantity: item.quantity,
+                isSubscription: item.isSubscription,
+                subscriptionFrequency: item.subscriptionFrequency,
+              });
+            }
+            
+            // Clear old cart
+            await storage.clearCart(oldSessionId);
+            await storage.clearRetailCart(oldSessionId);
+          } catch (cartMigrationError) {
+            console.error('[Login] Cart migration error:', cartMigrationError);
+            // Don't fail login if cart migration fails
+          }
+        }
+        
         // Don't send password back
         const { password, ...userWithoutPassword } = user;
         res.status(200).json(userWithoutPassword);

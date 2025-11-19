@@ -9,11 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, LogIn, UserPlus } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useUnifiedCart } from "@/hooks/use-unified-cart";
+import { useAuth } from "@/hooks/use-auth";
 
 const STRIPE_PUBLIC_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
 const stripePromise: Promise<Stripe | null> = STRIPE_PUBLIC_KEY 
@@ -221,8 +222,17 @@ export default function CartCheckout() {
   const [paymentInfo, setPaymentInfo] = useState<PaymentIntentResponse | null>(null);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { user, isLoading: isAuthLoading } = useAuth();
 
   const { items: unifiedCart, isLoading, totalCount } = useUnifiedCart();
+  
+  // Check if cart contains subscription items
+  const hasSubscriptions = unifiedCart.some(cartItem => {
+    if (cartItem.type === 'retail_v2') {
+      return cartItem.item.isSubscription;
+    }
+    return false;
+  });
 
   useEffect(() => {
     if (isLoading) return;
@@ -263,10 +273,64 @@ export default function CartCheckout() {
       });
   }, [totalCount, isLoading, setLocation, toast]);
 
-  if (isLoading) {
+  if (isLoading || isAuthLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // Require authentication for subscriptions
+  if (hasSubscriptions && !user) {
+    return (
+      <div className="min-h-screen bg-background py-12 px-6">
+        <div className="max-w-2xl mx-auto">
+          <Button
+            variant="ghost"
+            className="mb-6 gap-2"
+            onClick={() => setLocation('/shop-v2')}
+            data-testid="button-back-to-shop"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Shop
+          </Button>
+          
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-2xl">Account Required for Subscriptions</CardTitle>
+              <CardDescription>
+                To manage your subscriptions and ensure uninterrupted delivery, please create an account or sign in.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="bg-muted p-4 rounded-lg space-y-2">
+                <h3 className="font-medium">Why create an account?</h3>
+                <ul className="space-y-1 text-sm text-muted-foreground">
+                  <li>• Manage your subscription preferences and delivery schedule</li>
+                  <li>• View order history and upcoming deliveries</li>
+                  <li>• Update payment methods and contact information</li>
+                  <li>• Pause, modify, or cancel subscriptions anytime</li>
+                </ul>
+              </div>
+              
+              <div className="grid gap-3 pt-2">
+                <Button 
+                  className="w-full gap-2" 
+                  onClick={() => setLocation('/auth?redirect=/cart-checkout')}
+                  data-testid="button-login"
+                >
+                  <LogIn className="w-4 h-4" />
+                  Sign In or Create Account
+                </Button>
+              </div>
+              
+              <p className="text-xs text-center text-muted-foreground pt-2">
+                Your cart will be saved when you return
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }

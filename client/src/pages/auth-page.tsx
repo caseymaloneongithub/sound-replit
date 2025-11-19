@@ -63,6 +63,10 @@ export default function AuthPage() {
   const { loginMutation, registerMutation } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  
+  // Get redirect URL from query params
+  const searchParams = new URLSearchParams(window.location.search);
+  const redirectUrl = searchParams.get('redirect') || '/';
   const [codeSent, setCodeSent] = useState(false);
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
@@ -258,7 +262,7 @@ export default function AuthPage() {
         title: "Success",
         description: "Logged in successfully",
       });
-      setLocation("/");
+      setLocation(redirectUrl);
     } catch (error: any) {
       toast({
         title: "Error",
@@ -327,7 +331,7 @@ export default function AuthPage() {
         title: "Success",
         description: "Logged in successfully",
       });
-      setLocation("/");
+      setLocation(redirectUrl);
     } catch (error: any) {
       toast({
         title: "Error",
@@ -341,7 +345,7 @@ export default function AuthPage() {
 
   const onLogin = async (values: z.infer<typeof loginSchema>) => {
     await loginMutation.mutateAsync(values);
-    setLocation("/");
+    setLocation(redirectUrl);
   };
 
   const onRegister = async (values: z.infer<typeof registerSchema>) => {
@@ -356,7 +360,7 @@ export default function AuthPage() {
     
     const { confirmPassword, verificationCode, ...userData } = values;
     await registerMutation.mutateAsync(userData);
-    setLocation("/");
+    setLocation(redirectUrl);
   };
 
   return (

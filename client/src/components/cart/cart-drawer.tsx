@@ -15,11 +15,13 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useUnifiedCart } from "@/hooks/use-unified-cart";
 import { UnifiedCartItemComponent } from "./unified-cart-item";
+import { useAuth } from "@/hooks/use-auth";
 
 export function CartDrawer() {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const { user } = useAuth();
 
   const { items: unifiedItems, isLoading } = useUnifiedCart();
 
@@ -94,6 +96,20 @@ export function CartDrawer() {
   });
 
   const handleCheckout = () => {
+    // Check if cart has subscriptions
+    const hasSubscription = unifiedItems.some(item => item.item.isSubscription);
+    
+    // Require authentication for subscriptions
+    if (hasSubscription && !user) {
+      setOpen(false);
+      setLocation('/auth?redirect=/shop');
+      toast({
+        title: "Account Required",
+        description: "Please sign in or create an account to subscribe",
+      });
+      return;
+    }
+    
     checkoutMutation.mutate();
   };
 
