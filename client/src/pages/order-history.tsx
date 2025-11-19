@@ -8,6 +8,7 @@ import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
+import { Navbar } from "@/components/layout/navbar";
 
 type OrderWithDetails = {
   order: RetailOrder;
@@ -74,7 +75,9 @@ export default function OrderHistory() {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <>
+      <Navbar />
+      <div className="container mx-auto px-4 py-8">
         <div className="mb-6">
           <h1 className="text-3xl font-bold mb-2" data-testid="heading-order-history">Order History</h1>
           <p className="text-muted-foreground">View all your past orders and their status</p>
@@ -208,6 +211,7 @@ export default function OrderHistory() {
             </CardContent>
           </Card>
         )}
-    </div>
+      </div>
+    </>
   );
 }
