@@ -1837,6 +1837,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
             break;
           }
           
+          // Handle retail subscription purchases (Stripe-managed)
+          if (session.metadata?.type === 'subscription_purchase' && session.metadata?.retailProductId && session.subscription) {
+            // Check for existing retail subscription with this session ID (idempotency)
+            const existing = await storage.getRetailSubscriptionBySessionId(session.id);
+            if (existing) {
+              console.log(`[WEBHOOK] Retail subscription already exists for session ${session.id}, skipping`);
+              break;
+            }
+            
+            const stripeSubscription = await stripe.subscriptions.retrieve(session.subscription as string);
+            
+            // Get customer details
+            const customer = session.customer_details;
+            if (!customer?.email) {
+              console.error("[WEBHOOK] No customer email in session");
+              break;
+            }
+            
+            // Calculate next pickup date
+            const frequency = session.metadata.subscriptionFrequency || 'weekly';
+            const daysUntilNext = 
+              frequency === 'weekly' ? 7 :
+              frequency === 'bi-weekly' ? 14 :
+              28;
+            
+            const tentativeNextDate = new Date();
+            tentativeNextDate.setDate(tentativeNextDate.getDate() + daysUntilNext);
+            const nextPickupDate = normalizeToAllowedPickupDay(tentativeNextDate);
+            
+            // Create retail subscription record
+            const retailSubscriptionData: any = {
+              customerName: customer.name || 'Unknown',
+              customerEmail: customer.email,
+              customerPhone: customer.phone || '',
+              stripeCheckoutSessionId: session.id,
+              stripeSubscriptionId: stripeSubscription.id,
+              stripeCustomerId: stripeSubscription.customer as string,
+              billingType: 'stripe_managed',
+              billingStatus: 'active',
+              frequency: frequency as 'weekly' | 'bi-weekly' | 'every-4-weeks',
+              nextPickupDate: nextPickupDate,
+            };
+            
+            if (session.metadata?.userId) {
+              retailSubscriptionData.userId = session.metadata.userId;
+            }
+            
+            const newRetailSubscription = await storage.createRetailSubscription(retailSubscriptionData);
+            
+            // Add subscription items from cart
+            const retailCartItems = await storage.getRetailCart(session.metadata.sessionId);
+            const subscriptionItems = retailCartItems.filter(item => item.isSubscription);
+            
+            for (const item of subscriptionItems) {
+              await storage.addRetailSubscriptionItem({
+                subscriptionId: newRetailSubscription.id,
+                retailProductId: item.retailProductId,
+                quantity: item.quantity,
+              });
+            }
+            
+            // Clear cart
+            if (session.metadata.sessionId) {
+              await storage.clearRetailCart(session.metadata.sessionId);
+            }
+            
+            console.log(`[WEBHOOK] ✅ Created Stripe-managed retail subscription ${newRetailSubscription.id} for Stripe subscription ${stripeSubscription.id}`);
+            break;
+          }
+          
           // Handle legacy Stripe-managed subscriptions
           if (!session.subscription) {
             console.error("No subscription ID in checkout session");
@@ -1937,11 +2007,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           console.log(`[WEBHOOK] Processing subscription renewal invoice ${invoice.id} for subscription ${subscriptionId}`);
           
-          // Get the subscription from our database
+          // Check for legacy subscription first
           const subscription = await storage.getSubscriptionByStripeId(subscriptionId);
           
+          // Check for retail subscription if legacy not found
+          const retailSubscription = !subscription ? await storage.getRetailSubscriptionByStripeId(subscriptionId) : null;
+          
+          if (!subscription && !retailSubscription) {
+            console.error(`[WEBHOOK] No subscription (legacy or retail) found for Stripe ID ${subscriptionId}`);
+            break;
+          }
+          
+          // Handle retail subscription
+          if (retailSubscription) {
+            if (retailSubscription.billingStatus !== 'active') {
+              console.log(`[WEBHOOK] Retail subscription ${retailSubscription.id} is not active (status: ${retailSubscription.billingStatus}), skipping order creation`);
+              break;
+            }
+            
+            // Get retail subscription items
+            const retailSubItems = await storage.getRetailSubscriptionItems(retailSubscription.id);
+            
+            if (retailSubItems.length === 0) {
+              console.error(`[WEBHOOK] No items found for retail subscription ${retailSubscription.id}`);
+              break;
+            }
+            
+            // Create order for retail subscription
+            try {
+              await db.transaction(async (tx) => {
+                // Check for existing order (idempotency)
+                const existingOrders = await tx
+                  .select({ id: retailOrders.id })
+                  .from(retailOrders)
+                  .where(eq(retailOrders.stripeInvoiceId, invoice.id))
+                  .limit(1);
+                
+                if (existingOrders.length > 0) {
+                  console.log(`[WEBHOOK] Order already exists for invoice ${invoice.id} - skipping creation (idempotent)`);
+                  return;
+                }
+                
+                // Generate order number
+                const maxOrderResult = await tx
+                  .select({ maxNumber: sql<string>`COALESCE(MAX(CAST(SUBSTRING(order_number FROM 4) AS INTEGER)), 0)` })
+                  .from(retailOrders)
+                  .where(sql`order_number ~ '^ORD[0-9]+$'`);
+                
+                const nextNumber = parseInt(maxOrderResult[0]?.maxNumber || '0') + 1;
+                const orderNumber = `ORD${String(nextNumber).padStart(6, '0')}`;
+                
+                // Calculate total from retail subscription items
+                let subtotal = 0;
+                for (const item of retailSubItems) {
+                  const basePrice = parseFloat(item.retailProduct.price);
+                  const discountPercent = item.retailProduct.subscriptionDiscount || 10;
+                  const discountedPrice = basePrice * (1 - discountPercent / 100);
+                  subtotal += discountedPrice * item.quantity;
+                }
+                
+                // Create retail order
+                const [newOrder] = await tx.insert(retailOrders).values({
+                  orderNumber,
+                  userId: retailSubscription.userId,
+                  customerName: retailSubscription.customerName,
+                  customerEmail: retailSubscription.customerEmail,
+                  customerPhone: retailSubscription.customerPhone || '',
+                  status: 'pending',
+                  subtotal: subtotal.toFixed(2),
+                  taxAmount: '0.00',
+                  totalAmount: subtotal.toFixed(2),
+                  stripeInvoiceId: invoice.id,
+                  isSubscriptionOrder: true,
+                }).returning();
+                
+                // Create order items with retail products (no inventory deduction yet - retail products don't have stock tracking)
+                for (const item of retailSubItems) {
+                  const basePrice = parseFloat(item.retailProduct.price);
+                  const discountPercent = item.retailProduct.subscriptionDiscount || 10;
+                  const discountedPrice = basePrice * (1 - discountPercent / 100);
+                  
+                  // Map retail product to legacy product for order item storage
+                  // This is a temporary solution until we fully migrate order items to use retail products
+                  const { productId: legacyProductId } = await tx
+                    .select({ productId: products.id })
+                    .from(products)
+                    .where(eq(products.name, `${item.retailProduct.flavor.name} ${item.retailProduct.unitType}`))
+                    .limit(1)
+                    .then(rows => rows[0] || { productId: item.retailProduct.id });
+                  
+                  await tx.insert(retailOrderItems).values({
+                    orderId: newOrder.id,
+                    productId: legacyProductId,
+                    quantity: item.quantity,
+                    unitPrice: discountedPrice.toFixed(2),
+                  });
+                }
+                
+                // Update subscription's next delivery date
+                const daysUntilNext = 
+                  retailSubscription.frequency === 'weekly' ? 7 :
+                  retailSubscription.frequency === 'bi-weekly' ? 14 :
+                  28;
+                
+                const nextDate = new Date();
+                nextDate.setDate(nextDate.getDate() + daysUntilNext);
+                
+                await tx
+                  .update(retailSubscriptions)
+                  .set({ nextPickupDate: nextDate })
+                  .where(eq(retailSubscriptions.id, retailSubscription.id));
+                
+                console.log(`[WEBHOOK] ✅ Created retail subscription order ${orderNumber} for invoice ${invoice.id}`);
+              });
+            } catch (error) {
+              console.error(`[WEBHOOK] Error creating retail subscription order for invoice ${invoice.id}:`, error);
+              throw error;
+            }
+            
+            break;
+          }
+          
+          // Handle legacy subscription (existing code)
           if (!subscription) {
-            console.error(`[WEBHOOK] Subscription not found for Stripe ID ${subscriptionId}`);
             break;
           }
           
