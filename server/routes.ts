@@ -1876,8 +1876,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               stripeCustomerId: stripeSubscription.customer as string,
               billingType: 'stripe_managed',
               billingStatus: 'active',
-              frequency: frequency as 'weekly' | 'bi-weekly' | 'every-4-weeks',
-              nextPickupDate: nextPickupDate,
+              subscriptionFrequency: frequency as 'weekly' | 'bi-weekly' | 'every-4-weeks',
+              nextDeliveryDate: nextPickupDate,
             };
             
             if (session.metadata?.userId) {
@@ -2106,8 +2106,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 
                 // Update subscription's next delivery date
                 const daysUntilNext = 
-                  retailSubscription.frequency === 'weekly' ? 7 :
-                  retailSubscription.frequency === 'bi-weekly' ? 14 :
+                  retailSubscription.subscriptionFrequency === 'weekly' ? 7 :
+                  retailSubscription.subscriptionFrequency === 'bi-weekly' ? 14 :
                   28;
                 
                 const nextDate = new Date();
@@ -2115,7 +2115,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 
                 await tx
                   .update(retailSubscriptions)
-                  .set({ nextPickupDate: nextDate })
+                  .set({ nextDeliveryDate: nextDate })
                   .where(eq(retailSubscriptions.id, retailSubscription.id));
                 
                 console.log(`[WEBHOOK] ✅ Created retail subscription order ${orderNumber} for invoice ${invoice.id}`);
