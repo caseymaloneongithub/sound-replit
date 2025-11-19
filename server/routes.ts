@@ -324,7 +324,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid email address" });
       }
 
-      // Check if this email belongs to any wholesale customer
+      // SECURITY: Check if this email belongs to a wholesale customer
       const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
       if (!wholesaleCustomer) {
         return res.status(400).json({ message: "No wholesale account found with this email" });
@@ -333,23 +333,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Generate 6-digit code
       const code = Math.floor(100000 + Math.random() * 900000).toString();
       
-      // Store code in database with 5-minute expiration
+      // SECURITY: Store code with wholesale customer ID binding to prevent code reuse across accounts
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
       await storage.createEmailVerificationCode({
         email,
         code,
         expiresAt,
         verified: false,
-        purpose: 'login'
+        purpose: 'login',
+        wholesaleCustomerId: wholesaleCustomer.id // Bind code to specific wholesale customer
       });
 
       // Try to send email
       try {
         await sendEmailVerificationCode({ email, code });
-        console.log(`[WHOLESALE AUTH] Verification code sent to ${email}`);
+        console.log(`[WHOLESALE AUTH] Verification code sent to ${email} for customer ${wholesaleCustomer.id}`);
       } catch (emailError: any) {
         console.warn(`[WHOLESALE AUTH] Failed to send verification email to ${email}:`, emailError.message);
-        console.log(`[WHOLESALE AUTH] Verification code for ${email} stored in database: ${code}`);
+        console.log(`[WHOLESALE AUTH] Verification code for ${email} (customer ${wholesaleCustomer.id}) stored in database: ${code}`);
       }
 
       res.json({ message: "Verification code sent to your email" });
@@ -367,11 +368,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Email and code are required" });
       }
 
+      // SECURITY: First verify the email belongs to a wholesale customer BEFORE checking code
+      const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
+      if (!wholesaleCustomer) {
+        return res.status(400).json({ message: "No wholesale account found with this email" });
+      }
+
       // Get latest verification code for this email
       const verificationCode = await storage.getLatestEmailVerificationCode(email);
       
       if (!verificationCode) {
         return res.status(400).json({ message: "No verification code found" });
+      }
+
+      // SECURITY: Verify the code is bound to the correct wholesale customer
+      // This prevents code reuse if emails are reassigned between customers
+      if (verificationCode.wholesaleCustomerId !== wholesaleCustomer.id) {
+        console.error(`[WHOLESALE AUTH] Code mismatch: code bound to ${verificationCode.wholesaleCustomerId}, but email ${email} belongs to ${wholesaleCustomer.id}`);
+        return res.status(400).json({ message: "Invalid verification code" });
       }
 
       // Check if code is expired
@@ -394,21 +408,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Mark as verified
       await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
 
-      // Get the wholesale customer for this email
-      const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
-      if (!wholesaleCustomer) {
-        return res.status(400).json({ message: "No wholesale account found with this email" });
-      }
-
       // Get or create user account for this wholesale customer
       let user = wholesaleCustomer.userId ? await storage.getUser(wholesaleCustomer.userId) : undefined;
       
       if (!user) {
-        // Create a new user account for this wholesale customer
-        const username = email.split('@')[0] + '-' + wholesaleCustomer.id.substring(0, 8);
+        // SECURITY: Use the wholesale customer's PRIMARY email for the user account, not the login email
+        // This ensures consistency and prevents email confusion
+        const username = wholesaleCustomer.email.split('@')[0] + '-' + wholesaleCustomer.id.substring(0, 8);
         user = await storage.createUser({
           username,
-          email,
+          email: wholesaleCustomer.email, // Use primary email from customer record
           role: 'wholesale_customer',
           firstName: wholesaleCustomer.contactName.split(' ')[0],
           lastName: wholesaleCustomer.contactName.split(' ').slice(1).join(' ') || undefined,
@@ -418,6 +427,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateWholesaleCustomer(wholesaleCustomer.id, {
           userId: user.id
         });
+        
+        console.log(`[WHOLESALE AUTH] Created user account ${user.id} for wholesale customer ${wholesaleCustomer.id}`);
       }
 
       // Log the user in
@@ -426,6 +437,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.error("Wholesale login error:", err);
           return res.status(500).json({ message: "Error logging in" });
         }
+        console.log(`[WHOLESALE AUTH] User ${user.id} logged in via email ${email} for customer ${wholesaleCustomer.id}`);
         res.json({ message: "Email verified and logged in successfully", user });
       });
     } catch (error: any) {

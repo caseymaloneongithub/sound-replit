@@ -57,7 +57,8 @@ export const emailVerificationCodes = pgTable("email_verification_codes", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: varchar("email").notNull(),
   code: varchar("code", { length: 6 }).notNull(),
-  purpose: text("purpose").notNull().default('login'), // 'login' | 'registration'
+  purpose: text("purpose").notNull().default('login'), // 'login' | 'registration'  
+  wholesaleCustomerId: varchar("wholesale_customer_id"), // Link to wholesale customer for wholesale auth
   expiresAt: timestamp("expires_at").notNull(),
   verified: boolean("verified").notNull().default(false),
   consumedAt: timestamp("consumed_at"),
@@ -411,7 +412,7 @@ export const insertWholesaleCustomerSchema = createInsertSchema(wholesaleCustome
 export const insertWholesaleOrderSchema = createInsertSchema(wholesaleOrders).omit({ id: true, orderDate: true, fulfilledAt: true });
 export const insertWholesaleOrderItemSchema = createInsertSchema(wholesaleOrderItems).omit({ id: true });
 export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
-export const insertEmailVerificationCodeSchema = createInsertSchema(emailVerificationCodes).omit({ id: true, createdAt: true });
+export const insertEmailVerificationCodeSchema = createInsertSchema(emailVerificationCodes).omit({ id: true, createdAt: true, consumedAt: true });
 export const insertImpersonationLogSchema = createInsertSchema(impersonationLogs).omit({ id: true, startedAt: true });
 export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertLeadTouchPointSchema = createInsertSchema(leadTouchPoints).omit({ id: true, createdAt: true });
