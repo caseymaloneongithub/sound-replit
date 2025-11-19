@@ -364,14 +364,16 @@ export default function Account() {
                       </CardHeader>
                       <CardContent>
                         <div className="grid md:grid-cols-2 gap-4 mb-4">
-                          <div>
-                            <p className="text-sm text-muted-foreground">Started</p>
-                            <p className="font-medium">{format(new Date(sub.startDate!), 'MMM d, yyyy')}</p>
-                          </div>
+                          {sub.startDate && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Started</p>
+                              <p className="font-medium">{format(new Date(sub.startDate), 'MMM d, yyyy')}</p>
+                            </div>
+                          )}
                           {sub.nextDeliveryDate && (
                             <div>
                               <p className="text-sm text-muted-foreground">Next Pickup</p>
-                              <p className="font-medium">{format(new Date(sub.nextDeliveryDate!), 'MMM d, yyyy')}</p>
+                              <p className="font-medium">{format(new Date(sub.nextDeliveryDate), 'MMM d, yyyy')}</p>
                             </div>
                           )}
                           <div>
@@ -417,10 +419,12 @@ export default function Account() {
                       </CardHeader>
                       <CardContent>
                         <div className="grid md:grid-cols-2 gap-4">
-                          <div>
-                            <p className="text-sm text-muted-foreground">Started</p>
-                            <p className="font-medium">{format(new Date(sub.startDate!), 'MMM d, yyyy')}</p>
-                          </div>
+                          {sub.startDate && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Started</p>
+                              <p className="font-medium">{format(new Date(sub.startDate), 'MMM d, yyyy')}</p>
+                            </div>
+                          )}
                           <div>
                             <p className="text-sm text-muted-foreground">Price</p>
                             <p className="font-medium">${plan?.price}/{plan?.frequency === 'weekly' ? 'week' : 'month'}</p>
@@ -458,7 +462,7 @@ export default function Account() {
                         <div>
                           <CardTitle>Order #{order.orderNumber}</CardTitle>
                           <CardDescription>
-                            {format(new Date(order.orderDate), 'MMM d, yyyy')}
+                            {order.orderDate && format(new Date(order.orderDate), 'MMM d, yyyy')}
                           </CardDescription>
                         </div>
                         <Badge variant={order.status === 'fulfilled' ? 'default' : order.status === 'cancelled' ? 'destructive' : 'secondary'}>
