@@ -86,8 +86,7 @@ export default function WholesaleCustomers() {
 
   const updateEmailsMutation = useMutation({
     mutationFn: async ({ id, emails }: { id: string; emails: string[] }) => {
-      const response = await apiRequest("PATCH", `/api/wholesale/customers/${id}`, { emails });
-      return await response.json();
+      return await apiRequest("PATCH", `/api/wholesale/customers/${id}`, { emails });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
