@@ -103,9 +103,12 @@ export default function ShopV2() {
           style={{ backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url(${seattleHero})` }}
         >
           <div className="text-center text-white px-4">
-            <img src={logo} alt="Puget Sound Kombucha Co." className="h-24 mx-auto mb-4" />
-            <h1 className="text-4xl font-bold mb-2" data-testid="text-hero-title">Handcrafted Kombucha</h1>
-            <p className="text-xl" data-testid="text-hero-subtitle">From the Pacific Northwest</p>
+            <img 
+              src={logo} 
+              alt="Puget Sound Kombucha Co." 
+              className="h-84 mx-auto"
+              style={{ filter: 'brightness(0) invert(1)' }}
+            />
           </div>
         </div>
 
