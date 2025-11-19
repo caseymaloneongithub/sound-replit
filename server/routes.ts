@@ -1134,8 +1134,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         frequency === 'bi-weekly' ? 2 :
         4; // every-4-weeks
 
-      const baseUrl = process.env.REPL_SLUG 
-        ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
+      const baseUrl = process.env.REPLIT_DOMAINS
+        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
         : 'http://localhost:5000';
 
       const imageUrl = product.imageUrl?.startsWith('http') 
@@ -1219,8 +1219,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const hasSubscription = hasLegacySubscription || hasRetailSubscription;
 
-      const baseUrl = process.env.REPL_SLUG 
-        ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
+      const baseUrl = process.env.REPLIT_DOMAINS
+        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
         : 'http://localhost:5000';
 
       // Create line items for both legacy and retail cart items
@@ -1647,8 +1647,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "This plan is not available for online purchase" });
       }
 
-      const baseUrl = process.env.REPL_SLUG 
-        ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
+      const baseUrl = process.env.REPLIT_DOMAINS
+        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
         : 'http://localhost:5000';
 
       const successUrl = `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`;
@@ -3545,8 +3545,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Online payment not enabled for this customer" });
       }
 
-      const baseUrl = process.env.REPL_SLUG 
-        ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
+      const baseUrl = process.env.REPLIT_DOMAINS
+        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
         : 'http://localhost:5000';
 
       // Create line items from order items
