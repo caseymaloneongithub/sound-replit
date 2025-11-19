@@ -315,3 +315,112 @@ Puget Sound Kombucha Co.
     throw error;
   }
 }
+
+interface OrderReceiptEmailParams {
+  customerEmail: string;
+  customerName: string;
+  orderNumber: string;
+  orderItems: Array<{ productName: string; quantity: number; unitPrice: string }>;
+  subtotal: number;
+  taxAmount?: number;
+  total: number;
+  orderType: 'one-time' | 'subscription';
+}
+
+export async function sendOrderReceiptEmail(params: OrderReceiptEmailParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send order receipt email to:', params.customerEmail);
+    console.log('[EMAIL] Order number:', params.orderNumber);
+    console.log('[EMAIL] Total:', params.total);
+    return;
+  }
+
+  const itemsList = params.orderItems
+    .map(item => `- ${item.productName} - ${item.quantity} case${item.quantity > 1 ? 's' : ''} @ $${item.unitPrice} each`)
+    .join('\n');
+
+  const taxLine = params.taxAmount ? `\nSales Tax: $${params.taxAmount.toFixed(2)}` : '';
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.customerEmail,
+    subject: `Order Confirmation #${params.orderNumber} - Puget Sound Kombucha Co.`,
+    text: `
+Hi ${params.customerName},
+
+Thank you for your ${params.orderType === 'subscription' ? 'subscription' : 'order'}! Here's your receipt:
+
+Order Number: ${params.orderNumber}
+
+Items:
+${itemsList}
+
+Subtotal: $${params.subtotal.toFixed(2)}${taxLine}
+Total: $${params.total.toFixed(2)}
+
+${params.orderType === 'subscription' 
+  ? 'Your subscription is now active. You will receive your first pickup notification soon.'
+  : 'Your order will be ready for pickup soon. We will notify you when it\'s ready.'}
+
+Thank you for choosing Puget Sound Kombucha Co.!
+
+Best regards,
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <div style="background-color: #16a34a; color: white; padding: 24px; border-radius: 8px 8px 0 0;">
+    <h1 style="margin: 0; font-size: 24px;">Order Confirmation</h1>
+  </div>
+  
+  <div style="padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+    <p>Hi ${params.customerName},</p>
+    
+    <p>Thank you for your ${params.orderType === 'subscription' ? 'subscription' : 'order'}! Here's your receipt:</p>
+    
+    <div style="background-color: #f9fafb; padding: 16px; border-radius: 6px; margin: 20px 0;">
+      <p style="margin: 0; font-weight: bold;">Order Number: ${params.orderNumber}</p>
+    </div>
+    
+    <h2 style="font-size: 18px; margin-top: 24px;">Order Items</h2>
+    <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+      ${params.orderItems.map(item => `
+        <tr>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${item.productName}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${item.quantity} case${item.quantity > 1 ? 's' : ''}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">$${item.unitPrice}</td>
+        </tr>
+      `).join('')}
+    </table>
+    
+    <div style="text-align: right; margin-top: 20px;">
+      <p style="margin: 4px 0;">Subtotal: <strong>$${params.subtotal.toFixed(2)}</strong></p>
+      ${params.taxAmount ? `<p style="margin: 4px 0;">Sales Tax: <strong>$${params.taxAmount.toFixed(2)}</strong></p>` : ''}
+      <p style="margin: 4px 0; font-size: 18px; color: #16a34a;">Total: <strong>$${params.total.toFixed(2)}</strong></p>
+    </div>
+    
+    <div style="background-color: #ecfdf5; padding: 16px; border-left: 4px solid #16a34a; margin-top: 24px; border-radius: 4px;">
+      <p style="margin: 0;">
+        ${params.orderType === 'subscription' 
+          ? 'Your subscription is now active. You will receive your first pickup notification soon.'
+          : 'Your order will be ready for pickup soon. We will notify you when it\'s ready.'}
+      </p>
+    </div>
+    
+    <p style="margin-top: 32px;">Thank you for choosing Puget Sound Kombucha Co.!</p>
+    <p>Best regards,<br>Puget Sound Kombucha Co.</p>
+  </div>
+</div>
+    `.trim(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent order receipt to ${params.customerEmail} for order ${params.orderNumber}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send order receipt email:', error);
+    throw error;
+  }
+}

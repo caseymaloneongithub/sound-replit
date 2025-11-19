@@ -2578,6 +2578,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 await client.query('DELETE FROM retail_checkout_sessions WHERE id = $1', [checkoutSession.id]);
                 
                 console.log(`[WEBHOOK] Created retail order ${orderNumber} for payment intent ${paymentIntent.id}`);
+                
+                // Send order confirmation email (non-blocking)
+                const { sendOrderReceiptEmail } = await import('./email');
+                const orderItems = [];
+                
+                // Collect legacy cart items for email
+                for (const item of cartItems) {
+                  const product = await storage.getProduct(item.productId);
+                  const pricing = await getProductPricing(item.productId);
+                  if (product && pricing) {
+                    orderItems.push({
+                      productName: product.name,
+                      quantity: item.quantity,
+                      unitPrice: pricing.retailPrice || '0.00',
+                    });
+                  }
+                }
+                
+                // Collect retail v2 cart items for email
+                for (const item of retailItems) {
+                  if (item.retailProduct && item.retailProduct.flavor) {
+                    let unitPrice = parseFloat(item.retailProduct.price);
+                    if (item.isSubscription && item.retailProduct.subscriptionDiscount != null) {
+                      const discountPercent = parseFloat(item.retailProduct.subscriptionDiscount.toString());
+                      if (isFinite(discountPercent) && discountPercent > 0) {
+                        unitPrice = unitPrice * (1 - discountPercent / 100);
+                      }
+                    }
+                    // Use flavor name + unit description for the product name
+                    const productName = `${item.retailProduct.flavor.name} - ${item.retailProduct.unitDescription}`;
+                    orderItems.push({
+                      productName,
+                      quantity: item.quantity,
+                      unitPrice: unitPrice.toFixed(2),
+                    });
+                  }
+                }
+                
+                sendOrderReceiptEmail({
+                  customerEmail: checkoutSession.customer_email,
+                  customerName: checkoutSession.customer_name,
+                  orderNumber,
+                  orderItems,
+                  subtotal: recomputedSubtotalCents / 100,
+                  taxAmount: recomputedTaxCents > 0 ? recomputedTaxCents / 100 : undefined,
+                  total: recomputedTotalCents / 100,
+                  orderType: isSubscriptionOrder ? 'subscription' : 'one-time',
+                }).catch(emailError => {
+                  console.error(`[WEBHOOK] Failed to send order receipt email for ${orderNumber}:`, emailError);
+                  // Don't fail the webhook if email fails
+                });
               } else {
                 console.log(`[WEBHOOK] Order already exists for payment intent ${paymentIntent.id} - skipping creation (idempotent)`);
               }
