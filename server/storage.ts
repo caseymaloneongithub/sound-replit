@@ -169,6 +169,15 @@ export interface IStorage {
   removeSubscriptionItem(id: string, subscriptionId: string): Promise<void>;
   updateSubscriptionItemQuantity(id: string, quantity: number): Promise<SubscriptionItem | undefined>;
   
+  // NEW SCHEMA - Retail Subscriptions
+  getRetailSubscriptionByStripeId(stripeSubscriptionId: string): Promise<RetailSubscription | undefined>;
+  getRetailSubscriptionBySessionId(sessionId: string): Promise<RetailSubscription | undefined>;
+  createRetailSubscription(subscription: InsertRetailSubscription): Promise<RetailSubscription>;
+  updateRetailSubscriptionByStripeId(stripeSubscriptionId: string, updates: Partial<RetailSubscription>): Promise<RetailSubscription | undefined>;
+  
+  getRetailSubscriptionItems(subscriptionId: string): Promise<Array<RetailSubscriptionItem & { retailProduct: RetailProduct & { flavor: Flavor } }>>;
+  addRetailSubscriptionItem(item: InsertRetailSubscriptionItem): Promise<RetailSubscriptionItem>;
+  
   getWholesaleCustomers(): Promise<WholesaleCustomer[]>;
   getWholesaleCustomer(id: string): Promise<WholesaleCustomer | undefined>;
   getWholesaleCustomerByEmail(email: string): Promise<WholesaleCustomer | undefined>;
@@ -1267,6 +1276,66 @@ export class PostgresStorage implements IStorage {
       .update(subscriptionItems)
       .set({ quantity })
       .where(eq(subscriptionItems.id, id))
+      .returning();
+    return result[0];
+  }
+
+  // NEW SCHEMA - Retail Subscriptions
+  async getRetailSubscriptionByStripeId(stripeSubscriptionId: string): Promise<RetailSubscription | undefined> {
+    const result = await db.select().from(retailSubscriptions).where(eq(retailSubscriptions.stripeSubscriptionId, stripeSubscriptionId));
+    return result[0];
+  }
+
+  async getRetailSubscriptionBySessionId(sessionId: string): Promise<RetailSubscription | undefined> {
+    const result = await db.select().from(retailSubscriptions).where(eq(retailSubscriptions.stripeCheckoutSessionId, sessionId));
+    return result[0];
+  }
+
+  async createRetailSubscription(subscription: InsertRetailSubscription): Promise<RetailSubscription> {
+    const result = await db.insert(retailSubscriptions).values(subscription).returning();
+    return result[0];
+  }
+
+  async updateRetailSubscriptionByStripeId(stripeSubscriptionId: string, updates: Partial<RetailSubscription>): Promise<RetailSubscription | undefined> {
+    const result = await db
+      .update(retailSubscriptions)
+      .set(updates)
+      .where(eq(retailSubscriptions.stripeSubscriptionId, stripeSubscriptionId))
+      .returning();
+    return result[0];
+  }
+
+  async getRetailSubscriptionItems(subscriptionId: string): Promise<Array<RetailSubscriptionItem & { retailProduct: RetailProduct & { flavor: Flavor } }>> {
+    const results = await db
+      .select({
+        id: retailSubscriptionItems.id,
+        subscriptionId: retailSubscriptionItems.subscriptionId,
+        retailProductId: retailSubscriptionItems.retailProductId,
+        quantity: retailSubscriptionItems.quantity,
+        retailProduct: retailProducts,
+        flavor: flavors,
+      })
+      .from(retailSubscriptionItems)
+      .leftJoin(retailProducts, eq(retailSubscriptionItems.retailProductId, retailProducts.id))
+      .leftJoin(flavors, eq(retailProducts.flavorId, flavors.id))
+      .where(eq(retailSubscriptionItems.subscriptionId, subscriptionId));
+
+    return results.map(r => ({
+      id: r.id,
+      subscriptionId: r.subscriptionId,
+      retailProductId: r.retailProductId,
+      quantity: r.quantity,
+      retailProduct: {
+        ...r.retailProduct!,
+        flavor: r.flavor!,
+      },
+    }));
+  }
+
+  async addRetailSubscriptionItem(item: InsertRetailSubscriptionItem): Promise<RetailSubscriptionItem> {
+    const result = await db
+      .insert(retailSubscriptionItems)
+      .values(item)
       .returning();
     return result[0];
   }
