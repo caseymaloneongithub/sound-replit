@@ -1506,6 +1506,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Create account during checkout (after successful payment)
+  const createAccountSchema = z.object({
+    customerName: z.string().min(2),
+    customerEmail: z.string().email(),
+    customerPhone: z.string().min(10),
+    password: z.string().min(6),
+  });
+
+  app.post("/api/checkout/create-account", async (req: any, res) => {
+    try {
+      const validated = createAccountSchema.parse(req.body);
+      
+      // Import hashPassword function
+      const { hashPassword } = await import('./auth');
+      
+      // Check if user already exists with this email or phone
+      const existingEmailUser = await storage.getUserByEmail(validated.customerEmail);
+      if (existingEmailUser) {
+        return res.status(400).json({ message: "An account with this email already exists" });
+      }
+      
+      const existingPhoneUser = await storage.getUserByPhoneNumber(validated.customerPhone);
+      if (existingPhoneUser) {
+        return res.status(400).json({ message: "An account with this phone number already exists" });
+      }
+      
+      // Split name into first and last name
+      const nameParts = validated.customerName.trim().split(' ');
+      const firstName = nameParts[0];
+      const lastName = nameParts.slice(1).join(' ') || firstName;
+      
+      // Generate username from email
+      const username = validated.customerEmail.split('@')[0];
+      
+      // Check if username exists, if so add a number
+      let finalUsername = username;
+      let counter = 1;
+      while (await storage.getUserByUsername(finalUsername)) {
+        finalUsername = `${username}${counter}`;
+        counter++;
+      }
+      
+      // Create user directly in database to set role and isAdmin
+      const result = await db.insert(users).values({
+        username: finalUsername,
+        email: validated.customerEmail,
+        phoneNumber: validated.customerPhone,
+        firstName,
+        lastName,
+        password: await hashPassword(validated.password),
+        role: 'user',
+        isAdmin: false,
+      }).returning();
+      
+      const user = result[0];
+      
+      // Create Stripe customer (non-blocking)
+      createStripeCustomer({
+        userId: user.id,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        username: user.username,
+      }).catch(error => {
+        console.error("[Checkout Account Creation] Failed to create Stripe customer:", error);
+      });
+      
+      // Log the user in
+      await new Promise((resolve, reject) => {
+        req.login(user, (err: any) => {
+          if (err) return reject(err);
+          resolve(undefined);
+        });
+      });
+      
+      res.json({ success: true, user: { id: user.id, username: user.username, email: user.email } });
+    } catch (error: any) {
+      console.error("Error creating checkout account:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid input: " + error.message });
+      }
+      res.status(500).json({ message: "Error creating account: " + error.message });
+    }
+  });
+
   // Create Stripe Payment Intent for embedded cart checkout (supports both old and new cart)
   app.post("/api/create-cart-payment-intent", async (req: any, res) => {
     try {

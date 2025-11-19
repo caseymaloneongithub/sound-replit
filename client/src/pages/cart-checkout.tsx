@@ -25,6 +25,18 @@ const customerSchema = z.object({
   customerName: z.string().min(2, "Name must be at least 2 characters"),
   customerEmail: z.string().email("Invalid email address"),
   customerPhone: z.string().min(10, "Phone number must be at least 10 digits"),
+  createAccount: z.boolean().optional(),
+  password: z.string().optional(),
+  confirmPassword: z.string().optional(),
+}).refine((data) => {
+  // If createAccount is true, password is required and must match confirmPassword
+  if (data.createAccount) {
+    return data.password && data.password.length >= 6 && data.password === data.confirmPassword;
+  }
+  return true;
+}, {
+  message: "Password must be at least 6 characters and passwords must match",
+  path: ["password"],
 });
 
 type CustomerForm = z.infer<typeof customerSchema>;
@@ -65,8 +77,13 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
       customerName: "",
       customerEmail: "",
       customerPhone: "",
+      createAccount: false,
+      password: "",
+      confirmPassword: "",
     },
   });
+  
+  const createAccount = form.watch("createAccount");
 
   const handleCustomerInfo = async (data: CustomerForm) => {
     try {
@@ -130,6 +147,34 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
           variant: "destructive",
         });
       } else if (paymentIntent?.status === 'succeeded') {
+        // If user wants to create an account, create it now
+        if (customerInfo.createAccount && customerInfo.password) {
+          try {
+            await apiRequest("POST", "/api/checkout/create-account", {
+              customerName: customerInfo.customerName,
+              customerEmail: customerInfo.customerEmail,
+              customerPhone: customerInfo.customerPhone,
+              password: customerInfo.password,
+            });
+            
+            // Refresh user auth state
+            queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+            
+            toast({
+              title: "Account Created",
+              description: "Your account has been created successfully!",
+            });
+          } catch (accountError: any) {
+            // Log but don't fail the order - they can still access their order
+            console.error("Account creation failed:", accountError);
+            toast({
+              title: "Order Complete",
+              description: "Your order was successful, but we couldn't create your account. You can create one later.",
+              variant: "default",
+            });
+          }
+        }
+        
         // Clear both cart query caches
         await queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
         await queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"] });
@@ -188,6 +233,50 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
             />
             {form.formState.errors.customerPhone && (
               <p className="text-sm text-destructive">{form.formState.errors.customerPhone.message}</p>
+            )}
+          </div>
+          
+          <div className="border-t pt-4 mt-4">
+            <div className="flex items-center space-x-2 mb-4">
+              <input
+                type="checkbox"
+                id="createAccount"
+                {...form.register("createAccount")}
+                className="rounded border-gray-300"
+                data-testid="checkbox-create-account"
+              />
+              <Label htmlFor="createAccount" className="cursor-pointer font-normal flex items-center gap-2">
+                <UserPlus className="w-4 h-4" />
+                Create an account to track your orders
+              </Label>
+            </div>
+            
+            {createAccount && (
+              <div className="space-y-4 pl-6 border-l-2">
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    {...form.register("password")}
+                    placeholder="At least 6 characters"
+                    data-testid="input-password"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword">Confirm Password</Label>
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    {...form.register("confirmPassword")}
+                    placeholder="Re-enter password"
+                    data-testid="input-confirm-password"
+                  />
+                </div>
+                {form.formState.errors.password && (
+                  <p className="text-sm text-destructive">{form.formState.errors.password.message}</p>
+                )}
+              </div>
             )}
           </div>
         </div>
