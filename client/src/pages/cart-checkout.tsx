@@ -131,10 +131,11 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
         });
       } else if (paymentIntent?.status === 'succeeded') {
         // Clear both cart query caches
-        queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"] });
         
-        setLocation('/checkout/success');
+        // Redirect to success page with payment intent ID
+        setLocation(`/checkout/success?payment_intent=${paymentIntent.id}`);
       }
     } catch (err: any) {
       toast({
