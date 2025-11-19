@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Menu, User, Shield, Building2, ShoppingBag, UserCircle, ChevronDown } from "lucide-react";
+import { Menu, User, Shield, Building2, ShoppingBag, UserCircle, ChevronDown, LogOut } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { CartDrawer } from "@/components/cart/cart-drawer";
@@ -15,7 +15,7 @@ import logo from "@assets/text-stacked-black_1762299663824.png";
 
 export function Navbar() {
   const [location, setLocation] = useLocation();
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, logoutMutation } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   return (
@@ -69,6 +69,17 @@ export function Navbar() {
                       Staff Portal
                     </DropdownMenuItem>
                   )}
+                  <DropdownMenuItem 
+                    onClick={async () => {
+                      await logoutMutation.mutateAsync();
+                      setLocation('/auth');
+                    }}
+                    disabled={logoutMutation.isPending}
+                    data-testid="menu-item-logout"
+                  >
+                    <LogOut className="w-4 h-4 mr-2" />
+                    {logoutMutation.isPending ? 'Logging out...' : 'Log Out'}
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
