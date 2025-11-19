@@ -172,13 +172,10 @@ export default function Shop() {
           <img 
             src={logo} 
             alt="Puget Sound Kombucha Company" 
-            className="h-42 md:h-52 mx-auto mb-8"
-            style={{ filter: 'brightness(0) invert(1)' }}
+            className="mx-auto mb-8"
+            style={{ filter: 'brightness(0) invert(1)', height: '336px' }}
             data-testid="logo-hero"
           />
-          <p className="text-xl md:text-2xl text-white/90 mb-8 max-w-2xl mx-auto">
-            Craft kombucha from the Pacific Northwest. Handcrafted with organic ingredients.
-          </p>
           <div className="flex gap-4 justify-center flex-wrap">
             <Button 
               size="lg" 
