@@ -29,48 +29,48 @@ export function Navbar() {
           />
         </Link>
 
-        <nav className="hidden md:flex items-center gap-1">
-          {user && (
-            <Button 
-              variant={location === '/my-subscriptions' ? 'default' : 'ghost'}
-              onClick={() => setLocation('/my-subscriptions')}
-              data-testid="nav-my-subscriptions"
-            >
-              My Subscriptions
-            </Button>
-          )}
-          {user && (
-            <Button 
-              variant={location === '/my-orders' ? 'default' : 'ghost'}
-              onClick={() => setLocation('/my-orders')}
-              data-testid="nav-my-orders"
-            >
-              My Orders
-            </Button>
-          )}
-          {user && (user.isAdmin || user.role === 'staff') && (
-            <Button 
-              variant={location === '/staff-portal' ? 'default' : 'ghost'}
-              onClick={() => setLocation('/staff-portal')}
-              data-testid="nav-staff"
-            >
-              <Shield className="w-4 h-4 mr-2" />
-              Staff Portal
-            </Button>
-          )}
-        </nav>
-
         <div className="flex items-center gap-2">
           {!isLoading && (
             user ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setLocation('/account')}
-                data-testid="button-account"
-              >
-                <User className="w-5 h-5" />
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" data-testid="button-user-menu">
+                    <User className="w-5 h-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" data-testid="menu-user-options">
+                  <DropdownMenuItem 
+                    onClick={() => setLocation('/account')}
+                    data-testid="menu-item-profile"
+                  >
+                    <UserCircle className="w-4 h-4 mr-2" />
+                    Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => setLocation('/my-subscriptions')}
+                    data-testid="menu-item-my-subscriptions"
+                  >
+                    <ShoppingBag className="w-4 h-4 mr-2" />
+                    My Subscriptions
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => setLocation('/my-orders')}
+                    data-testid="menu-item-my-orders"
+                  >
+                    <ShoppingBag className="w-4 h-4 mr-2" />
+                    My Orders
+                  </DropdownMenuItem>
+                  {(user.isAdmin || user.role === 'staff') && (
+                    <DropdownMenuItem 
+                      onClick={() => setLocation('/staff-portal')}
+                      data-testid="menu-item-staff-portal"
+                    >
+                      <Shield className="w-4 h-4 mr-2" />
+                      Staff Portal
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
