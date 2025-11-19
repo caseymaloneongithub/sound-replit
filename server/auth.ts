@@ -117,30 +117,18 @@ export function setupAuth(app: Express) {
 
   app.post("/api/register", async (req, res, next) => {
     try {
-      const { phoneNumber, username, password } = req.body;
-
-      if (!phoneNumber) {
-        return res.status(400).send("Phone number is required");
-      }
+      const { username, password, email } = req.body;
 
       if (!password) {
         return res.status(400).send("Password is required");
       }
 
-      // Check if phone number has been verified
-      const verificationCode = await storage.getLatestVerificationCode(phoneNumber);
-      
-      if (!verificationCode) {
-        return res.status(400).send("Phone number not verified. Please request a verification code.");
+      if (!username) {
+        return res.status(400).send("Username is required");
       }
 
-      if (!verificationCode.verified) {
-        return res.status(400).send("Phone number not verified. Please verify your code.");
-      }
-
-      // Check if verification code has expired
-      if (new Date() > verificationCode.expiresAt) {
-        return res.status(400).send("Verification code has expired. Please request a new code.");
+      if (!email) {
+        return res.status(400).send("Email is required");
       }
 
       // Check if username already exists
@@ -149,10 +137,10 @@ export function setupAuth(app: Express) {
         return res.status(400).send("Username already exists");
       }
 
-      // Check if phone number already registered
-      const existingPhoneUser = await storage.getUserByPhoneNumber(phoneNumber);
-      if (existingPhoneUser) {
-        return res.status(400).send("Phone number already registered");
+      // Check if email already registered
+      const existingEmailUser = await storage.getUserByEmail(email);
+      if (existingEmailUser) {
+        return res.status(400).send("Email already registered");
       }
 
       // Create user
@@ -166,7 +154,7 @@ export function setupAuth(app: Express) {
         createStripeCustomer({
           userId: user.id,
           email: user.email,
-          phoneNumber: user.phoneNumber,
+          phoneNumber: user.phoneNumber || null,
           firstName: user.firstName,
           lastName: user.lastName,
           username: user.username,
@@ -174,9 +162,6 @@ export function setupAuth(app: Express) {
           console.error("[Registration] Failed to create Stripe customer:", error);
         });
       }
-
-      // Invalidate verification code after successful registration
-      await storage.markVerificationCodeAsVerified(verificationCode.id);
 
       // Save old session ID to migrate cart
       const oldSessionId = req.sessionID;
