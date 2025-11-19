@@ -76,8 +76,8 @@ export function StaffSidebar() {
     {
       title: "Administration",
       items: [
-        { title: "CRM", href: "/staff-portal?tab=crm", icon: Building2 },
-        { title: "User Management", href: "/staff-portal?tab=users", icon: UserCog, adminOnly: true },
+        { title: "CRM", href: "/crm", icon: Building2 },
+        { title: "User Management", href: "/user-management", icon: UserCog, adminOnly: true },
       ],
     },
   ];

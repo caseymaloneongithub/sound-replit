@@ -98,7 +98,13 @@ function Router() {
       <StaffProtectedRoute path="/inventory" component={Inventory} />
       <StaffProtectedRoute path="/reports" component={Reports} />
       <Route path="/account" component={Account} />
-      <StaffProtectedRoute path="/staff-portal" component={StaffPortal} />
+      
+      {/* CRM and User Management routes using staff portal with query params */}
+      <StaffProtectedRoute path="/crm" component={StaffPortal} />
+      <StaffProtectedRoute path="/user-management" component={StaffPortal} />
+      
+      {/* Redirect /staff-portal to wholesale orders by default */}
+      <Route path="/staff-portal" component={() => <Redirect to="/staff-portal/wholesale/orders" />} />
       <Route component={NotFound} />
     </Switch>
   );

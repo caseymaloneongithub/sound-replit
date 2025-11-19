@@ -128,7 +128,7 @@ export default function StaffLogin() {
         title: "Welcome back!",
         description: "You have successfully logged in.",
       });
-      setLocation("/staff-portal");
+      setLocation("/staff-portal/wholesale/orders");
     } catch (error: any) {
       toast({
         title: "Error",
@@ -157,7 +157,7 @@ export default function StaffLogin() {
         title: "Welcome back!",
         description: "You have successfully logged in.",
       });
-      setLocation("/staff-portal");
+      setLocation("/staff-portal/wholesale/orders");
     } catch (error: any) {
       toast({
         title: "Login failed",

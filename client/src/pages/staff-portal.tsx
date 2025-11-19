@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useSearch } from "wouter";
+import { useSearch, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -49,19 +49,25 @@ type UserWithImpersonation = User & {
 
 export default function StaffPortal() {
   const { toast } = useToast();
+  const [location] = useLocation();
   
-  // Read tab from URL query parameter using wouter's useSearch hook
+  // Read tab from URL query parameter or route path
   const searchString = useSearch();
   const urlParams = new URLSearchParams(searchString);
-  const tabFromUrl = urlParams.get('tab') || 'orders';
-  const [activeTab, setActiveTab] = useState(tabFromUrl);
   
-  // Update tab when URL search params change
+  // Determine tab based on route or query param
+  const getTabFromUrl = () => {
+    if (location === '/crm') return 'crm';
+    if (location === '/user-management') return 'users';
+    return urlParams.get('tab') || 'orders';
+  };
+  
+  const [activeTab, setActiveTab] = useState(getTabFromUrl());
+  
+  // Update tab when URL or search params change
   useEffect(() => {
-    const params = new URLSearchParams(searchString);
-    const tab = params.get('tab') || 'orders';
-    setActiveTab(tab);
-  }, [searchString]);
+    setActiveTab(getTabFromUrl());
+  }, [searchString, location]);
   
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
   const [productForm, setProductForm] = useState<ProductFormData>({
