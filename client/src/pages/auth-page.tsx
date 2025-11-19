@@ -174,6 +174,16 @@ export default function AuthPage() {
           <h1 className="text-3xl font-bold mb-2">Puget Sound Kombucha Co.</h1>
           <p className="text-muted-foreground">Artisanal craft kombucha from the Pacific Northwest</p>
           <p className="text-sm text-muted-foreground mt-2">Shop • Subscribe • Pickup</p>
+          
+          <div className="flex items-center justify-center gap-4 mt-6">
+            <Link href="/staff/login" className="text-lg text-muted-foreground hover:text-primary hover:underline" data-testid="link-to-staff-login">
+              Staff Login
+            </Link>
+            <span className="text-lg text-muted-foreground">•</span>
+            <Link href="/wholesale/login" className="text-lg text-muted-foreground hover:text-primary hover:underline" data-testid="link-to-wholesale-login">
+              Wholesale Login
+            </Link>
+          </div>
         </div>
 
         <Tabs defaultValue="login" className="w-full">
@@ -244,10 +254,8 @@ export default function AuthPage() {
                           {loginMutation.isPending ? "Logging in..." : "Login"}
                         </Button>
                         <div className="text-center mt-4">
-                          <Link href="/forgot-password">
-                            <a className="text-sm text-primary hover:underline" data-testid="link-forgot-password">
-                              Forgot Password?
-                            </a>
+                          <Link href="/forgot-password" className="text-sm text-primary hover:underline" data-testid="link-forgot-password">
+                            Forgot Password?
                           </Link>
                         </div>
                       </form>
@@ -466,22 +474,6 @@ export default function AuthPage() {
             </Card>
           </TabsContent>
         </Tabs>
-
-        <div className="mt-6 text-center space-y-2">
-          <div className="flex items-center justify-center gap-4 text-sm">
-            <Link href="/staff/login">
-              <a className="text-muted-foreground hover:text-primary hover:underline" data-testid="link-to-staff-login">
-                Staff Login
-              </a>
-            </Link>
-            <span className="text-muted-foreground">•</span>
-            <Link href="/wholesale/login">
-              <a className="text-muted-foreground hover:text-primary hover:underline" data-testid="link-to-wholesale-login">
-                Wholesale Login
-              </a>
-            </Link>
-          </div>
-        </div>
       </div>
     </div>
   );
