@@ -47,8 +47,8 @@ export default function WholesaleCustomerDashboard() {
   }
 
   const pendingOrders = orders?.filter(o => o.status === 'pending') || [];
-  const processingOrders = orders?.filter(o => o.status === 'processing') || [];
-  const shippedOrders = orders?.filter(o => o.status === 'shipped') || [];
+  const packagedOrders = orders?.filter(o => o.status === 'packaged') || [];
+  const deliveredOrders = orders?.filter(o => o.status === 'delivered') || [];
 
   return (
     <div className="min-h-screen bg-background">
@@ -82,21 +82,21 @@ export default function WholesaleCustomerDashboard() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Processing</CardTitle>
+              <CardTitle className="text-sm font-medium">Packaged</CardTitle>
               <Package className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold" data-testid="text-processing-count">{processingOrders.length}</div>
+              <div className="text-2xl font-bold" data-testid="text-packaged-count">{packagedOrders.length}</div>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Shipped</CardTitle>
+              <CardTitle className="text-sm font-medium">Delivered</CardTitle>
               <MapPin className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold" data-testid="text-shipped-count">{shippedOrders.length}</div>
+              <div className="text-2xl font-bold" data-testid="text-delivered-count">{deliveredOrders.length}</div>
             </CardContent>
           </Card>
         </div>
