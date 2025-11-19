@@ -28,6 +28,7 @@ export default function AdminWholesaleUnits() {
     displayOrder: 0
   });
   const [customerPricing, setCustomerPricing] = useState<Record<string, number>>({});
+  const [customerSearchTerm, setCustomerSearchTerm] = useState('');
 
   const { data: wholesaleUnitTypes = [], isLoading: wholesaleUnitTypesLoading } = useQuery<(WholesaleUnitType & { flavors?: Flavor[] })[]>({
     queryKey: ['/api/wholesale-unit-types'],
@@ -428,11 +429,27 @@ export default function AdminWholesaleUnits() {
                           <p className="text-sm text-muted-foreground mb-3">
                             Set custom prices for specific customers. Leave empty to use default price.
                           </p>
+                          <Input
+                            placeholder="Search customers by business name or contact..."
+                            value={customerSearchTerm}
+                            onChange={(e) => setCustomerSearchTerm(e.target.value)}
+                            className="mb-3"
+                            data-testid="input-search-customers"
+                          />
                           <div className="border rounded-md p-4 max-h-60 overflow-y-auto space-y-3">
                             {wholesaleCustomers.length === 0 ? (
                               <p className="text-sm text-muted-foreground text-center py-4">No wholesale customers yet</p>
                             ) : (
-                              wholesaleCustomers.map((customer) => (
+                              wholesaleCustomers
+                                .filter((customer) => {
+                                  if (!customerSearchTerm) return true;
+                                  const searchLower = customerSearchTerm.toLowerCase();
+                                  return (
+                                    customer.businessName.toLowerCase().includes(searchLower) ||
+                                    customer.contactName.toLowerCase().includes(searchLower)
+                                  );
+                                })
+                                .map((customer) => (
                                 <div key={customer.id} className="flex items-center gap-3">
                                   <div className="flex-1">
                                     <p className="text-sm font-medium">{customer.businessName}</p>
@@ -478,6 +495,17 @@ export default function AdminWholesaleUnits() {
                                   </div>
                                 </div>
                               ))
+                            )}
+                            {wholesaleCustomers.length > 0 && 
+                             wholesaleCustomers.filter((customer) => {
+                               if (!customerSearchTerm) return true;
+                               const searchLower = customerSearchTerm.toLowerCase();
+                               return (
+                                 customer.businessName.toLowerCase().includes(searchLower) ||
+                                 customer.contactName.toLowerCase().includes(searchLower)
+                               );
+                             }).length === 0 && (
+                              <p className="text-sm text-muted-foreground text-center py-4">No customers match your search</p>
                             )}
                           </div>
                         </div>
