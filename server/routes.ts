@@ -687,26 +687,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedItems = [];
 
       for (const item of items) {
-        const product = await storage.getProduct(item.productId);
-        if (!product) {
-          return res.status(400).json({ message: `Product ${item.productId} not found` });
+        if (!item.unitTypeId || !item.flavorId || !item.quantity || item.quantity <= 0) {
+          return res.status(400).json({ message: "Invalid item data: unitTypeId, flavorId, and quantity are required" });
         }
 
-        // Get custom pricing or default wholesale price
-        const customPrice = await storage.getWholesalePrice(customer.id, product.productTypeId);
-        const productTypes = await storage.getProductTypes();
-        const productType = productTypes.find(pt => pt.id === product.productTypeId);
-        
-        if (!productType) {
-          return res.status(400).json({ message: `Product type ${product.productTypeId} not found` });
+        const unitType = await storage.getWholesaleUnitType(item.unitTypeId);
+        if (!unitType) {
+          return res.status(400).json({ message: `Unit type ${item.unitTypeId} not found` });
         }
 
-        const unitPrice = customPrice ? Number(customPrice.customPrice) : Number(productType.wholesalePrice);
+        // Verify flavor exists
+        const allFlavors = await storage.getFlavors();
+        const flavor = allFlavors.find(f => f.id === item.flavorId);
+        if (!flavor) {
+          return res.status(400).json({ message: `Flavor ${item.flavorId} not found` });
+        }
+
+        // Get custom pricing or default unit type price
+        const customPrice = await storage.getWholesaleCustomerPrice(customer.id, item.unitTypeId);
+        const unitPrice = customPrice ? Number(customPrice.customPrice) : Number(unitType.defaultPrice);
         const lineTotal = unitPrice * item.quantity;
         totalAmount += lineTotal;
 
         validatedItems.push({
-          productId: item.productId,
+          unitTypeId: item.unitTypeId,
+          flavorId: item.flavorId,
           quantity: item.quantity,
           unitPrice: unitPrice.toFixed(2),
         });
@@ -728,7 +733,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const item of validatedItems) {
         await storage.createWholesaleOrderItem({
           orderId: createdOrder.id,
-          productId: item.productId,
+          unitTypeId: item.unitTypeId,
+          flavorId: item.flavorId,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
         });
@@ -3714,31 +3720,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedItems = [];
       
       for (const item of items) {
-        if (!item.productId || !item.quantity || item.quantity <= 0) {
-          return res.status(400).json({ message: "Invalid item data" });
+        if (!item.unitTypeId || !item.flavorId || !item.quantity || item.quantity <= 0) {
+          return res.status(400).json({ message: "Invalid item data: unitTypeId, flavorId, and quantity are required" });
         }
         
-        const product = await storage.getProduct(item.productId);
-        if (!product) {
-          return res.status(404).json({ message: `Product ${item.productId} not found` });
+        const unitType = await storage.getWholesaleUnitType(item.unitTypeId);
+        if (!unitType) {
+          return res.status(404).json({ message: `Unit type ${item.unitTypeId} not found` });
         }
         
-        const pricing = await getProductPricing(item.productId);
-        if (!pricing) {
-          return res.status(404).json({ message: `Product pricing ${item.productId} not found` });
+        // Verify flavor exists
+        const allFlavors = await storage.getFlavors();
+        const flavor = allFlavors.find(f => f.id === item.flavorId);
+        if (!flavor) {
+          return res.status(400).json({ message: `Flavor ${item.flavorId} not found` });
         }
         
-        // Check for customer-specific pricing using productTypeId
-        const customPricing = await storage.getWholesalePrice(order.customerId, product.productTypeId);
-        const perBottlePrice = customPricing ? Number(customPricing.customPrice) : Number(pricing.wholesalePrice);
-        const perCasePrice = perBottlePrice * CASE_SIZE;
-        const itemTotal = perCasePrice * item.quantity;
+        // Check for customer-specific pricing
+        const customPricing = await storage.getWholesaleCustomerPrice(order.customerId, item.unitTypeId);
+        const unitPrice = customPricing ? Number(customPricing.customPrice) : Number(unitType.defaultPrice);
+        const itemTotal = unitPrice * item.quantity;
         serverCalculatedTotal += itemTotal;
         
         validatedItems.push({
-          productId: item.productId,
+          unitTypeId: item.unitTypeId,
+          flavorId: item.flavorId,
           quantity: item.quantity,
-          unitPrice: perCasePrice.toFixed(2),
+          unitPrice: unitPrice.toFixed(2),
         });
       }
       
@@ -3755,7 +3763,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const item of validatedItems) {
         await storage.createWholesaleOrderItem({
           orderId: createdOrder.id,
-          productId: item.productId,
+          unitTypeId: item.unitTypeId,
+          flavorId: item.flavorId,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
         });

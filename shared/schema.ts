@@ -343,7 +343,9 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
 export const wholesaleOrderItems = pgTable("wholesale_order_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orderId: varchar("order_id").notNull().references(() => wholesaleOrders.id),
-  productId: varchar("product_id").notNull().references(() => products.id),
+  productId: varchar("product_id").references(() => products.id), // Made nullable for backward compatibility
+  unitTypeId: varchar("unit_type_id").references(() => wholesaleUnitTypes.id),
+  flavorId: varchar("flavor_id").references(() => flavors.id),
   quantity: integer("quantity").notNull(),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
 });
