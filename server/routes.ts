@@ -560,7 +560,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Wholesale customer endpoints - for customers to view their own orders
+  // Wholesale customer endpoints - for customers to view their own information and orders
+  app.get("/api/wholesale-customer", isAuthenticated, isWholesaleCustomer, async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+      
+      // Get wholesale customer record for authenticated user
+      const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      if (!customer) {
+        return res.status(404).json({ message: "Wholesale customer record not found" });
+      }
+
+      res.json(customer);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching customer info: " + error.message });
+    }
+  });
+
   app.get("/api/wholesale-customer/orders", isAuthenticated, isWholesaleCustomer, async (req, res) => {
     try {
       if (!req.user) {

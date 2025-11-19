@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Package, FileText, MapPin, Calendar } from "lucide-react";
 import { useLocation } from "wouter";
 import { format } from "date-fns";
+import type { WholesaleCustomer } from "@shared/schema";
 
 type WholesaleOrder = {
   id: string;
@@ -27,9 +28,15 @@ export default function WholesaleCustomerDashboard() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
 
-  const { data: orders, isLoading } = useQuery<WholesaleOrder[]>({
+  const { data: customer, isLoading: customerLoading } = useQuery<WholesaleCustomer>({
+    queryKey: ["/api/wholesale-customer"],
+  });
+
+  const { data: orders, isLoading: ordersLoading } = useQuery<WholesaleOrder[]>({
     queryKey: ["/api/wholesale-customer/orders"],
   });
+
+  const isLoading = customerLoading || ordersLoading;
 
   if (isLoading) {
     return (
@@ -48,7 +55,9 @@ export default function WholesaleCustomerDashboard() {
       <div className="container mx-auto py-8 space-y-8">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold" data-testid="text-page-title">Wholesale Dashboard</h1>
+            <h1 className="text-3xl font-bold" data-testid="text-page-title">
+              {customer?.businessName ? `${customer.businessName} - Wholesale Dashboard` : 'Wholesale Dashboard'}
+            </h1>
             <p className="text-muted-foreground mt-1">Manage your wholesale orders and view history</p>
           </div>
           <Button 
