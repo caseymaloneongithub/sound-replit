@@ -3882,6 +3882,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Order not found" });
       }
       
+      // Send ready for pickup email
+      if (parsed.data.status === 'ready_for_pickup') {
+        try {
+          const { sendReadyForPickupEmail } = await import('./email');
+          const orderItems = [];
+          
+          // Get legacy order items
+          const legacyItems = await db
+            .select({
+              id: retailOrderItems.id,
+              orderId: retailOrderItems.orderId,
+              productId: retailOrderItems.productId,
+              quantity: retailOrderItems.quantity,
+              unitPrice: retailOrderItems.unitPrice,
+              product: products,
+            })
+            .from(retailOrderItems)
+            .innerJoin(products, eq(products.id, retailOrderItems.productId))
+            .where(eq(retailOrderItems.orderId, req.params.id));
+            
+          for (const item of legacyItems) {
+            if (item.product) {
+              orderItems.push({
+                productName: item.product.name,
+                quantity: item.quantity,
+              });
+            }
+          }
+          
+          // Get retail v2 items
+          const v2Items = await db
+            .select({
+              id: retailOrderItemsV2.id,
+              orderId: retailOrderItemsV2.orderId,
+              retailProductId: retailOrderItemsV2.retailProductId,
+              quantity: retailOrderItemsV2.quantity,
+              unitPrice: retailOrderItemsV2.unitPrice,
+              retailProduct: retailProducts,
+              flavor: flavors,
+            })
+            .from(retailOrderItemsV2)
+            .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
+            .innerJoin(flavors, eq(flavors.id, retailProducts.flavorId))
+            .where(eq(retailOrderItemsV2.orderId, req.params.id));
+          
+          for (const item of v2Items) {
+            if (item.retailProduct && item.flavor) {
+              const productName = `${item.flavor.name} - ${item.retailProduct.unitDescription}`;
+              orderItems.push({
+                productName,
+                quantity: item.quantity,
+              });
+            }
+          }
+
+          if (orderItems.length > 0) {
+            await sendReadyForPickupEmail({
+              customerEmail: order.customerEmail,
+              customerName: order.customerName,
+              orderNumber: order.orderNumber,
+              orderItems,
+            });
+            console.log(`[EMAIL] Sent ready for pickup notification for order ${order.orderNumber}`);
+          }
+        } catch (emailError: any) {
+          console.error('[EMAIL] Failed to send ready for pickup notification:', emailError);
+          // Don't fail the status update if email fails
+        }
+      }
+      
       res.json(order);
     } catch (error: any) {
       console.error("Error updating retail order status:", error);
