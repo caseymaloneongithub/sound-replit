@@ -239,6 +239,7 @@ export interface IStorage {
   createRetailOrder(order: InsertRetailOrder): Promise<RetailOrder>;
   createRetailOrderItem(item: InsertRetailOrderItem): Promise<RetailOrderItem>;
   updateRetailOrderStatus(id: string, status: string, userId?: string): Promise<RetailOrder | undefined>;
+  cancelRetailOrderWithInventoryRestore(id: string, staffUserId: string, reason: string): Promise<void>;
   generateNextOrderNumber(): Promise<string>;
   updateWholesaleOrderFulfillment(id: string, userId: string): Promise<WholesaleOrder | undefined>;
   
@@ -2026,6 +2027,53 @@ export class PostgresStorage implements IStorage {
         .where(eq(retailOrders.id, id))
         .returning();
       return result[0];
+    }
+  }
+
+  async cancelRetailOrderWithInventoryRestore(id: string, staffUserId: string, reason: string): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get order items using the same transaction client
+      const orderItemsResult = await client.query(
+        'SELECT id, order_id, product_id, quantity, unit_price FROM retail_order_items WHERE order_id = $1',
+        [id]
+      );
+      
+      const orderItems = orderItemsResult.rows;
+
+      // Restore inventory for each item by creating positive adjustments
+      for (const item of orderItems) {
+        await client.query(
+          `INSERT INTO inventory_adjustments 
+          (product_id, quantity, reason, staff_user_id, order_id, order_type)
+          VALUES ($1, $2, $3, $4, $5, $6)`,
+          [item.product_id, item.quantity, reason, staffUserId, id, 'retail']
+        );
+
+        // Update product stock
+        await client.query(
+          `UPDATE products 
+           SET stock_quantity = stock_quantity + $1,
+               in_stock = CASE WHEN stock_quantity + $1 > 0 THEN true ELSE in_stock END
+           WHERE id = $2`,
+          [item.quantity, item.product_id]
+        );
+      }
+
+      // Update order status to cancelled
+      await client.query(
+        'UPDATE retail_orders SET status = $1 WHERE id = $2',
+        ['cancelled', id]
+      );
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
   }
 

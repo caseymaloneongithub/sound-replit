@@ -2,8 +2,10 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShoppingCart, Loader2, Package } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { ShoppingCart, Loader2, Package, XCircle } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { RetailOrder } from "@shared/schema";
@@ -50,6 +52,47 @@ export default function RetailOrders() {
       toast({
         title: "Error",
         description: error.message || "Failed to update order status",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const cancelOrderWithRefundMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      return await apiRequest('POST', `/api/retail/orders/${orderId}/cancel-with-refund`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/retail/orders'] });
+      toast({
+        title: "Order cancelled",
+        description: "Order has been cancelled and refund has been processed",
+      });
+    },
+    onError: async (error: any) => {
+      let errorMessage = "Failed to cancel order with refund";
+      let errorDetails = "";
+      
+      // Try to parse JSON error response
+      if (error instanceof Response) {
+        try {
+          const errorData = await error.json();
+          errorMessage = errorData.message || errorMessage;
+          if (errorData.action) {
+            errorDetails = errorData.action;
+          }
+          if (errorData.paymentIntentId) {
+            errorDetails += `\nPayment Intent: ${errorData.paymentIntentId}`;
+          }
+        } catch {
+          // If parsing fails, use default message
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      toast({
+        title: "Error",
+        description: errorDetails ? `${errorMessage}\n${errorDetails}` : errorMessage,
         variant: "destructive",
       });
     },
@@ -105,23 +148,58 @@ export default function RetailOrders() {
                         <br />
                         Tax: ${Number(order.taxAmount).toFixed(2)}
                       </div>
-                      <Select
-                        value={order.status}
-                        onValueChange={(status) => 
-                          updateOrderStatusMutation.mutate({ orderId: order.id, status })
-                        }
-                        disabled={updateOrderStatusMutation.isPending || order.status === 'fulfilled' || order.status === 'cancelled'}
-                      >
-                        <SelectTrigger className="w-[180px]" data-testid={`select-retail-order-status-${order.id}`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="pending" data-testid="status-pending">Pending</SelectItem>
-                          <SelectItem value="ready_for_pickup" data-testid="status-ready-for-pickup">Ready for Pickup</SelectItem>
-                          <SelectItem value="fulfilled" data-testid="status-fulfilled">Fulfilled</SelectItem>
-                          <SelectItem value="cancelled" data-testid="status-cancelled">Cancelled</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <div className="flex gap-2 flex-wrap justify-end">
+                        <Select
+                          value={order.status}
+                          onValueChange={(status) => 
+                            updateOrderStatusMutation.mutate({ orderId: order.id, status })
+                          }
+                          disabled={updateOrderStatusMutation.isPending || order.status === 'fulfilled' || order.status === 'cancelled'}
+                        >
+                          <SelectTrigger className="w-[180px]" data-testid={`select-retail-order-status-${order.id}`}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="pending" data-testid="status-pending">Pending</SelectItem>
+                            <SelectItem value="ready_for_pickup" data-testid="status-ready-for-pickup">Ready for Pickup</SelectItem>
+                            <SelectItem value="fulfilled" data-testid="status-fulfilled">Fulfilled</SelectItem>
+                            <SelectItem value="cancelled" data-testid="status-cancelled">Cancelled</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {order.status !== 'cancelled' && order.status !== 'fulfilled' && order.stripePaymentIntentId && (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button 
+                                variant="destructive" 
+                                size="sm"
+                                disabled={cancelOrderWithRefundMutation.isPending}
+                                data-testid={`button-cancel-order-${order.id}`}
+                              >
+                                <XCircle className="w-4 h-4 mr-2" />
+                                Cancel with Refund
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Cancel Order with Refund?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This will cancel order #{order.orderNumber} and process a full refund of ${Number(order.totalAmount).toFixed(2)} to the customer's payment method. 
+                                  This action cannot be undone.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel data-testid="button-cancel-refund-dialog">Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => cancelOrderWithRefundMutation.mutate(order.id)}
+                                  data-testid="button-confirm-refund"
+                                >
+                                  Confirm Refund
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        )}
+                      </div>
                       {order.fulfilledAt && (
                         <p className="text-xs text-muted-foreground mt-1">
                           Fulfilled: {new Date(order.fulfilledAt).toLocaleString()}

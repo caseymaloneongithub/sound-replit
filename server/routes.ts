@@ -3790,6 +3790,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/retail/orders/:id/cancel-with-refund", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      if (!stripe) {
+        return res.status(500).json({ message: "Stripe is not configured" });
+      }
+
+      const order = await storage.getRetailOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      if (order.status === 'cancelled') {
+        return res.status(400).json({ message: "Order is already cancelled" });
+      }
+
+      if (order.status === 'fulfilled') {
+        return res.status(400).json({ message: "Cannot cancel a fulfilled order" });
+      }
+
+      if (!order.stripePaymentIntentId) {
+        return res.status(400).json({ message: "No payment found for this order" });
+      }
+
+      // Cancel order and restore inventory in a transaction FIRST
+      // This ensures database consistency even if Stripe refund fails
+      let orderCancelled = false;
+      try {
+        await storage.cancelRetailOrderWithInventoryRestore(
+          req.params.id,
+          req.user!.id,
+          `Order ${order.orderNumber} cancelled - pending refund`
+        );
+        orderCancelled = true;
+        console.log('[CANCEL ORDER] Order cancelled and inventory restored for order:', order.orderNumber);
+      } catch (dbError: any) {
+        // Database transaction failed - order is NOT cancelled
+        console.error('[CANCEL ORDER] Database transaction failed:', dbError);
+        return res.status(500).json({ 
+          message: "Failed to cancel order in database",
+          details: dbError.message 
+        });
+      }
+
+      // Process refund via Stripe AFTER database transaction succeeds
+      // If this fails, the order is cancelled but we can retry the refund manually
+      try {
+        const refund = await stripe.refunds.create({
+          payment_intent: order.stripePaymentIntentId,
+        });
+
+        console.log('[CANCEL ORDER] Refund created:', refund.id, 'for order:', order.orderNumber);
+
+        res.json({ 
+          success: true, 
+          refundId: refund.id,
+          message: "Order cancelled and refund processed successfully" 
+        });
+      } catch (refundError: any) {
+        // Order is already cancelled, but refund failed
+        // Log the error and return appropriate message to staff
+        console.error('[CANCEL ORDER] Stripe refund failed for cancelled order:', order.orderNumber, refundError);
+        
+        return res.status(500).json({ 
+          message: "Order was cancelled and inventory restored, but Stripe refund failed. Please manually issue refund in Stripe Dashboard.",
+          orderNumber: order.orderNumber,
+          orderId: order.id,
+          paymentIntentId: order.stripePaymentIntentId,
+          stripeError: refundError.message,
+          action: "Issue refund manually or retry this endpoint"
+        });
+      }
+    } catch (error: any) {
+      // Unexpected error
+      console.error("Unexpected error in cancel-with-refund:", error);
+      res.status(500).json({ message: error.message || "Unexpected error occurred" });
+    }
+  });
+
   // Staff portal routes
   // Update wholesale order status
   app.patch("/api/staff/orders/:id/status", isAuthenticated, isStaffOrAdmin, async (req, res) => {
