@@ -118,6 +118,7 @@ function App() {
       <TooltipProvider>
         <AuthProvider>
           <ImpersonationBanner />
+          <Navbar />
           <Toaster />
           <Router />
         </AuthProvider>

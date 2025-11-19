@@ -418,10 +418,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         user = await storage.createUser({
           username,
           email: wholesaleCustomer.email, // Use primary email from customer record
-          role: 'wholesale_customer',
           firstName: wholesaleCustomer.contactName.split(' ')[0],
           lastName: wholesaleCustomer.contactName.split(' ').slice(1).join(' ') || undefined,
         });
+
+        // Set the role to wholesale_customer
+        user = await storage.updateUserRole(user.id, 'wholesale_customer') || user;
 
         // Link the user to the wholesale customer
         await storage.updateWholesaleCustomer(wholesaleCustomer.id, {
@@ -680,14 +682,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Order must contain at least one item" });
       }
 
-      // Create order for the logged-in customer
-      const order = await storage.createWholesaleOrder({
-        customerId: customer.id,
-        notes,
-      }, items);
+      // Calculate prices for items and total
+      let totalAmount = 0;
+      const validatedItems = [];
 
-      res.json(order);
+      for (const item of items) {
+        const product = await storage.getProduct(item.productId);
+        if (!product) {
+          return res.status(400).json({ message: `Product ${item.productId} not found` });
+        }
+
+        // Get custom pricing or default wholesale price
+        const customPrice = await storage.getWholesalePrice(customer.id, product.productTypeId);
+        const productTypes = await storage.getProductTypes();
+        const productType = productTypes.find(pt => pt.id === product.productTypeId);
+        
+        if (!productType) {
+          return res.status(400).json({ message: `Product type ${product.productTypeId} not found` });
+        }
+
+        const unitPrice = customPrice ? Number(customPrice.customPrice) : Number(productType.wholesalePrice);
+        const lineTotal = unitPrice * item.quantity;
+        totalAmount += lineTotal;
+
+        validatedItems.push({
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: unitPrice.toFixed(2),
+        });
+      }
+
+      // Generate invoice number
+      const invoiceNumber = `WO-${Date.now()}`;
+
+      // Create order for the logged-in customer
+      const orderData = {
+        customerId: customer.id,
+        invoiceNumber,
+        totalAmount: totalAmount.toFixed(2),
+        notes: notes || undefined,
+      };
+
+      const createdOrder = await storage.createWholesaleOrder(orderData);
+      
+      for (const item of validatedItems) {
+        await storage.createWholesaleOrderItem({
+          orderId: createdOrder.id,
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+        });
+      }
+
+      res.json(createdOrder);
     } catch (error: any) {
+      console.error("Wholesale customer order creation error:", error);
       res.status(500).json({ message: "Error creating order: " + error.message });
     }
   });
