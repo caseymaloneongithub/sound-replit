@@ -251,6 +251,23 @@ export default function ShopV2() {
             </div>
           ))}
         </div>
+
+        <div className="bg-muted/50 py-12 mt-12">
+          <div className="max-w-4xl mx-auto px-6 text-center">
+            <p className="text-lg md:text-xl mb-4">
+              <span className="font-semibold">Retailers and Distributors:</span> Get in touch with us{" "}
+              <a 
+                href="/contact" 
+                className="hover:underline font-semibold"
+                style={{ color: '#F2C179' }}
+                data-testid="link-wholesale-contact"
+              >
+                here
+              </a>{" "}
+              for wholesale pricing.
+            </p>
+          </div>
+        </div>
       </div>
     </>
   );
