@@ -424,3 +424,91 @@ Puget Sound Kombucha Co.
     throw error;
   }
 }
+
+interface ReadyForPickupEmailParams {
+  customerEmail: string;
+  customerName: string;
+  orderNumber: string;
+  orderItems: Array<{ productName: string; quantity: number }>;
+}
+
+export async function sendReadyForPickupEmail(params: ReadyForPickupEmailParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send ready for pickup email to:', params.customerEmail);
+    console.log('[EMAIL] Order number:', params.orderNumber);
+    return;
+  }
+
+  const itemsList = params.orderItems
+    .map(item => `- ${item.productName} (${item.quantity} case${item.quantity > 1 ? 's' : ''})`)
+    .join('\n');
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.customerEmail,
+    subject: `Your Order is Ready for Pickup! #${params.orderNumber}`,
+    text: `
+Hi ${params.customerName},
+
+Great news! Your order is ready for pickup.
+
+Order Number: ${params.orderNumber}
+
+Items ready for pickup:
+${itemsList}
+
+Pickup Hours: Monday-Thursday, 9am-3pm
+
+Please come by during our pickup hours to collect your order.
+
+Thank you for choosing Puget Sound Kombucha Co.!
+
+Best regards,
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <div style="background-color: #16a34a; color: white; padding: 24px; border-radius: 8px 8px 0 0;">
+    <h1 style="margin: 0; font-size: 24px;">🎉 Your Order is Ready for Pickup!</h1>
+  </div>
+  
+  <div style="padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+    <p>Hi ${params.customerName},</p>
+    
+    <p>Great news! Your order is ready for pickup.</p>
+    
+    <div style="background-color: #f9fafb; padding: 16px; border-radius: 6px; margin: 20px 0;">
+      <p style="margin: 0; font-weight: bold;">Order Number: ${params.orderNumber}</p>
+    </div>
+    
+    <h2 style="font-size: 18px; margin-top: 24px;">Items Ready for Pickup</h2>
+    <ul style="margin: 16px 0; padding-left: 20px;">
+      ${params.orderItems.map(item => `
+        <li style="padding: 4px 0;">${item.productName} (${item.quantity} case${item.quantity > 1 ? 's' : ''})</li>
+      `).join('')}
+    </ul>
+    
+    <div style="background-color: #ecfdf5; padding: 16px; border-left: 4px solid #16a34a; margin-top: 24px; border-radius: 4px;">
+      <p style="margin: 0 0 8px 0; font-weight: bold;">Pickup Hours</p>
+      <p style="margin: 0;">Monday-Thursday, 9am-3pm</p>
+    </div>
+    
+    <p style="margin-top: 24px;">Please come by during our pickup hours to collect your order.</p>
+    
+    <p style="margin-top: 32px;">Thank you for choosing Puget Sound Kombucha Co.!</p>
+    <p>Best regards,<br>Puget Sound Kombucha Co.</p>
+  </div>
+</div>
+    `.trim(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent ready for pickup notification to ${params.customerEmail} for order ${params.orderNumber}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send ready for pickup email:', error);
+    throw error;
+  }
+}
