@@ -1596,8 +1596,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const paymentIntent = await stripe.paymentIntents.create({
         amount: totalAmountCents,
         currency: 'usd',
-        automatic_payment_methods: {
-          enabled: true,
+        payment_method_types: ['card'],
+        payment_method_options: {
+          card: {
+            request_three_d_secure: 'automatic',
+          },
         },
         metadata: {
           sessionId,

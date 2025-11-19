@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { useStripe, Elements, PaymentElement, useElements } from '@stripe/react-stripe-js';
+import { useStripe, Elements, CardElement, useElements } from '@stripe/react-stripe-js';
 import { loadStripe, Stripe } from '@stripe/stripe-js';
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -102,14 +102,26 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
     setIsProcessing(true);
 
     try {
-      const { error } = await stripe.confirmPayment({
-        elements,
-        confirmParams: {
-          return_url: `${window.location.origin}/checkout/success`,
+      const cardElement = elements.getElement(CardElement);
+      
+      if (!cardElement) {
+        throw new Error('Card element not found');
+      }
+
+      const { error, paymentIntent } = await stripe.confirmCardPayment(
+        paymentInfo.clientSecret,
+        {
+          payment_method: {
+            card: cardElement,
+            billing_details: {
+              name: customerInfo.customerName,
+              email: customerInfo.customerEmail,
+              phone: customerInfo.customerPhone,
+            },
+          },
           receipt_email: customerInfo.customerEmail,
-        },
-        redirect: 'if_required',
-      });
+        }
+      );
 
       if (error) {
         toast({
@@ -117,7 +129,7 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
           description: error.message,
           variant: "destructive",
         });
-      } else {
+      } else if (paymentIntent?.status === 'succeeded') {
         // Clear both cart query caches
         queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
         queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"] });
@@ -203,7 +215,26 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
             Edit Information
           </Button>
         </div>
-        <PaymentElement />
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Card Details</label>
+          <div className="border rounded-md p-3">
+            <CardElement 
+              options={{
+                disableLink: true,
+                style: {
+                  base: {
+                    fontSize: '16px',
+                    color: '#0F172A',
+                    '::placeholder': {
+                      color: '#94A3B8',
+                    },
+                  },
+                },
+                hidePostalCode: false,
+              }}
+            />
+          </div>
+        </div>
       </div>
       <Button 
         type="submit" 
@@ -503,7 +534,17 @@ export default function CartCheckout() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Elements stripe={stripePromise} options={{ clientSecret }}>
+              <Elements 
+                stripe={stripePromise} 
+                options={{ 
+                  clientSecret,
+                  appearance: {
+                    variables: {
+                      colorPrimary: '#0F172A',
+                    }
+                  }
+                }}
+              >
                 <CheckoutForm paymentInfo={paymentInfo} />
               </Elements>
             </CardContent>
