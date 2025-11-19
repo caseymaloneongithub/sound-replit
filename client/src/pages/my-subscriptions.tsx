@@ -137,8 +137,8 @@ export default function MySubscriptions() {
       return await apiRequest("POST", "/api/create-billing-portal", {});
     },
     onSuccess: (data: { url: string }) => {
-      // Redirect to Stripe billing portal
-      window.location.href = data.url;
+      // Open Stripe billing portal in new tab
+      window.open(data.url, '_blank');
     },
     onError: (error: any) => {
       toast({
