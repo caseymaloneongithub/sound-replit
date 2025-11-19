@@ -8,6 +8,12 @@ Puget Sound Kombucha Co. is a full-stack e-commerce web application for a Pacifi
 
 Preferred communication style: Simple, everyday language.
 
+## Business Contact Information
+
+-   **Email**: emily@soundkombucha.com
+-   **Phone**: 206-789-5219
+-   **Address**: 4501 Shilshole Ave NW, Seattle, WA 98107
+
 ## System Architecture
 
 ### Frontend
