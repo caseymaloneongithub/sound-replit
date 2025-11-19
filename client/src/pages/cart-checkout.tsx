@@ -25,13 +25,17 @@ const customerSchema = z.object({
   customerName: z.string().min(2, "Name must be at least 2 characters"),
   customerEmail: z.string().email("Invalid email address"),
   customerPhone: z.string().min(10, "Phone number must be at least 10 digits"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  confirmPassword: z.string().min(6, "Please confirm your password"),
+  password: z.string().optional(),
+  confirmPassword: z.string().optional(),
 }).refine((data) => {
-  return data.password === data.confirmPassword;
+  // Only validate password match if passwords are provided
+  if (data.password || data.confirmPassword) {
+    return data.password && data.password.length >= 6 && data.password === data.confirmPassword;
+  }
+  return true;
 }, {
-  message: "Passwords must match",
-  path: ["confirmPassword"],
+  message: "Password must be at least 6 characters and passwords must match",
+  path: ["password"],
 });
 
 type CustomerForm = z.infer<typeof customerSchema>;
@@ -62,11 +66,14 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
   const elements = useElements();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const { user } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
   const [customerInfo, setCustomerInfo] = useState<CustomerForm | null>(null);
   const [step, setStep] = useState<'info' | 'payment'>('info');
   const [emailExists, setEmailExists] = useState(false);
   const [checkingEmail, setCheckingEmail] = useState(false);
+
+  const isLoggedIn = !!user;
 
   const form = useForm<CustomerForm>({
     resolver: zodResolver(customerSchema),
@@ -81,7 +88,25 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
   
   const customerEmail = form.watch("customerEmail");
 
+  // Pre-fill form with user data if logged in
+  useEffect(() => {
+    if (user) {
+      const fullName = user.firstName && user.lastName 
+        ? `${user.firstName} ${user.lastName}`
+        : user.username;
+      
+      form.setValue("customerName", fullName);
+      form.setValue("customerEmail", user.email || "");
+      form.setValue("customerPhone", user.phoneNumber || "");
+    }
+  }, [user, form]);
+
   const checkEmail = async (email: string) => {
+    // Skip email check if user is logged in
+    if (isLoggedIn) {
+      return;
+    }
+
     if (!email || !email.includes('@')) {
       setEmailExists(false);
       return;
@@ -161,30 +186,32 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
           variant: "destructive",
         });
       } else if (paymentIntent?.status === 'succeeded') {
-        // Create account for the customer
-        try {
-          await apiRequest("POST", "/api/checkout/create-account", {
-            customerName: customerInfo.customerName,
-            customerEmail: customerInfo.customerEmail,
-            customerPhone: customerInfo.customerPhone,
-            password: customerInfo.password,
-          });
-          
-          // Refresh user auth state
-          queryClient.invalidateQueries({ queryKey: ["/api/user"] });
-          
-          toast({
-            title: "Account Created",
-            description: "Your account has been created successfully!",
-          });
-        } catch (accountError: any) {
-          // Log but don't fail the order - they can still access their order
-          console.error("Account creation failed:", accountError);
-          toast({
-            title: "Order Complete",
-            description: "Your order was successful, but we couldn't create your account. You can create one later.",
-            variant: "default",
-          });
+        // Create account for the customer only if not logged in
+        if (!isLoggedIn && customerInfo.password) {
+          try {
+            await apiRequest("POST", "/api/checkout/create-account", {
+              customerName: customerInfo.customerName,
+              customerEmail: customerInfo.customerEmail,
+              customerPhone: customerInfo.customerPhone,
+              password: customerInfo.password,
+            });
+            
+            // Refresh user auth state
+            queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+            
+            toast({
+              title: "Account Created",
+              description: "Your account has been created successfully!",
+            });
+          } catch (accountError: any) {
+            // Log but don't fail the order - they can still access their order
+            console.error("Account creation failed:", accountError);
+            toast({
+              title: "Order Complete",
+              description: "Your order was successful, but we couldn't create your account. You can create one later.",
+              variant: "default",
+            });
+          }
         }
         
         // Clear both cart query caches
@@ -228,12 +255,13 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
               type="email"
               {...form.register("customerEmail")}
               onBlur={(e) => checkEmail(e.target.value)}
+              disabled={isLoggedIn}
               data-testid="input-customer-email"
             />
             {form.formState.errors.customerEmail && (
               <p className="text-sm text-destructive">{form.formState.errors.customerEmail.message}</p>
             )}
-            {emailExists && (
+            {!isLoggedIn && emailExists && (
               <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-md p-3 flex items-start gap-2">
                 <LogIn className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
@@ -266,46 +294,48 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
             )}
           </div>
           
-          <div className="border-t pt-4 mt-4">
-            <div className="flex items-center gap-2 mb-4">
-              <UserPlus className="w-4 h-4" />
-              <h3 className="font-medium">Create Your Account</h3>
-            </div>
-            <p className="text-sm text-muted-foreground mb-4">
-              Set a password to create your account and track your orders.
-            </p>
-            
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  {...form.register("password")}
-                  placeholder="At least 6 characters"
-                  data-testid="input-password"
-                  disabled={emailExists}
-                />
+          {!isLoggedIn && (
+            <div className="border-t pt-4 mt-4">
+              <div className="flex items-center gap-2 mb-4">
+                <UserPlus className="w-4 h-4" />
+                <h3 className="font-medium">Create Your Account</h3>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="confirmPassword">Confirm Password</Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  {...form.register("confirmPassword")}
-                  placeholder="Re-enter password"
-                  data-testid="input-confirm-password"
-                  disabled={emailExists}
-                />
+              <p className="text-sm text-muted-foreground mb-4">
+                Set a password to create your account and track your orders.
+              </p>
+              
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    {...form.register("password")}
+                    placeholder="At least 6 characters"
+                    data-testid="input-password"
+                    disabled={emailExists}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword">Confirm Password</Label>
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    {...form.register("confirmPassword")}
+                    placeholder="Re-enter password"
+                    data-testid="input-confirm-password"
+                    disabled={emailExists}
+                  />
+                </div>
+                {form.formState.errors.password && (
+                  <p className="text-sm text-destructive">{form.formState.errors.password.message}</p>
+                )}
+                {form.formState.errors.confirmPassword && (
+                  <p className="text-sm text-destructive">{form.formState.errors.confirmPassword.message}</p>
+                )}
               </div>
-              {form.formState.errors.password && (
-                <p className="text-sm text-destructive">{form.formState.errors.password.message}</p>
-              )}
-              {form.formState.errors.confirmPassword && (
-                <p className="text-sm text-destructive">{form.formState.errors.confirmPassword.message}</p>
-              )}
             </div>
-          </div>
+          )}
         </div>
         <Button 
           type="submit" 
