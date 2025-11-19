@@ -4,7 +4,6 @@ import { Product } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Navbar } from "@/components/layout/navbar";
 import { ShoppingCart, Plus, Check, Repeat, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -157,7 +156,6 @@ export default function Shop() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Navbar />
       <div className="relative h-[70vh] md:h-[70vh] flex items-center justify-center overflow-hidden">
         <div className="absolute inset-0 z-0">
           <img 

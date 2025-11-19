@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Subscription, Product } from "@shared/schema";
-import { Navbar } from "@/components/layout/navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -235,7 +234,6 @@ export default function MySubscriptions() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Navbar />
       <div className="max-w-6xl mx-auto px-6 py-12">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
           <div>

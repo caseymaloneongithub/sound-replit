@@ -8,7 +8,6 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Navbar } from "@/components/layout/navbar";
 import { Loader2, ArrowLeft, Repeat, Check } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import type { Product } from "@shared/schema";
@@ -90,7 +89,6 @@ export default function ProductSubscribe() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
-        <Navbar />
         <div className="flex items-center justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-primary" data-testid="loader-product" />
         </div>
@@ -101,7 +99,6 @@ export default function ProductSubscribe() {
   if (!product) {
     return (
       <div className="min-h-screen bg-background">
-        <Navbar />
         <div className="flex items-center justify-center py-24">
           <div className="text-center">
             <h2 className="text-2xl font-bold mb-4">Product not found</h2>
@@ -121,8 +118,6 @@ export default function ProductSubscribe() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Navbar />
-      
       <div className="max-w-4xl mx-auto px-6 py-12">
         <Button
           variant="ghost"

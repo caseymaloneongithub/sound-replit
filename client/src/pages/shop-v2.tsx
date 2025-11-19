@@ -4,7 +4,6 @@ import type { RetailProduct, Flavor } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Navbar } from "@/components/layout/navbar";
 import { ShoppingCart, Plus, Check } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -85,63 +84,58 @@ export default function ShopV2() {
 
   if (isLoading) {
     return (
-      <>
-        <Navbar />
-        <div className="min-h-screen flex items-center justify-center">
-          <p className="text-muted-foreground">Loading products...</p>
-        </div>
-      </>
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-muted-foreground">Loading products...</p>
+      </div>
     );
   }
 
   return (
-    <>
-      <Navbar />
-      <div className="min-h-screen bg-background">
-        <div 
-          className="relative h-96 bg-cover bg-center flex items-center justify-center"
-          style={{ backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url(${seattleHero})` }}
-        >
-          <div className="text-center text-white px-4">
-            <img 
-              src={logo} 
-              alt="Puget Sound Kombucha Co." 
-              className="h-48 mx-auto"
-              style={{ filter: 'brightness(0) invert(1)' }}
-            />
-          </div>
+    <div className="min-h-screen bg-background">
+      <div 
+        className="relative h-96 bg-cover bg-center flex items-center justify-center"
+        style={{ backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url(${seattleHero})` }}
+      >
+        <div className="text-center text-white px-4">
+          <img 
+            src={logo} 
+            alt="Puget Sound Kombucha Co." 
+            className="h-48 mx-auto"
+            style={{ filter: 'brightness(0) invert(1)' }}
+          />
+        </div>
+      </div>
+
+      <div className="bg-muted/50 py-12">
+        <div className="max-w-4xl mx-auto px-6 text-center">
+          <p className="text-lg md:text-xl mb-4">
+            <span className="font-semibold">Retailers and Distributors:</span> Get in touch with us{" "}
+            <a 
+              href="/contact" 
+              className="hover:underline font-semibold"
+              style={{ color: '#F2C179' }}
+              data-testid="link-wholesale-contact"
+            >
+              here
+            </a>{" "}
+            for wholesale pricing.
+          </p>
+        </div>
+      </div>
+
+      <div className="container mx-auto px-4 py-8">
+        <div className="mb-8">
+          <h2 className="text-3xl font-bold mb-2" data-testid="text-products-title">Shop Our Kombucha</h2>
+          <p className="text-muted-foreground" data-testid="text-products-subtitle">Choose from cases, kegs, and more</p>
         </div>
 
-        <div className="bg-muted/50 py-12">
-          <div className="max-w-4xl mx-auto px-6 text-center">
-            <p className="text-lg md:text-xl mb-4">
-              <span className="font-semibold">Retailers and Distributors:</span> Get in touch with us{" "}
-              <a 
-                href="/contact" 
-                className="hover:underline font-semibold"
-                style={{ color: '#F2C179' }}
-                data-testid="link-wholesale-contact"
-              >
-                here
-              </a>{" "}
-              for wholesale pricing.
-            </p>
-          </div>
-        </div>
-
-        <div className="container mx-auto px-4 py-8">
-          <div className="mb-8">
-            <h2 className="text-3xl font-bold mb-2" data-testid="text-products-title">Shop Our Kombucha</h2>
-            <p className="text-muted-foreground" data-testid="text-products-subtitle">Choose from cases, kegs, and more</p>
-          </div>
-
-          {Object.entries(groupedProducts).map(([unitType, unitProducts]) => (
-            <div key={unitType} className="mb-12">
-              <h3 className="text-2xl font-semibold mb-4 capitalize" data-testid={`text-unit-type-${unitType}`}>
-                {unitType === 'case' ? 'Cases (12 Bottles)' : unitType.replace(/-/g, ' ')}
-              </h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {Object.entries(groupedProducts).map(([unitType, unitProducts]) => (
+          <div key={unitType} className="mb-12">
+            <h3 className="text-2xl font-semibold mb-4 capitalize" data-testid={`text-unit-type-${unitType}`}>
+              {unitType === 'case' ? 'Cases (12 Bottles)' : unitType.replace(/-/g, ' ')}
+            </h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {unitProducts
                   .filter(p => p.isActive && p.flavor.isActive)
                   .sort((a, b) => a.displayOrder - b.displayOrder)
@@ -264,11 +258,10 @@ export default function ShopV2() {
                       </CardFooter>
                     </Card>
                   ))}
-              </div>
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
-    </>
+    </div>
   );
 }
