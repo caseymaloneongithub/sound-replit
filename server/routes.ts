@@ -1147,6 +1147,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create Stripe Checkout Session for subscription
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
+        payment_method_types: ['card'],
         customer: req.user.stripeCustomerId || undefined,
         customer_email: req.user.stripeCustomerId ? undefined : req.user.email,
         line_items: [{
@@ -1417,6 +1418,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const session = await stripe.checkout.sessions.create({
         mode: hasSubscription ? 'subscription' : 'payment',
+        payment_method_types: ['card'],
         line_items: lineItems,
         success_url: `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${baseUrl}/shop`,
@@ -1654,6 +1656,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
+        payment_method_types: ['card'],
         line_items: [
           {
             price: plan.stripePriceId,
@@ -3560,6 +3563,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const session = await stripe.checkout.sessions.create({
         mode: 'payment',
+        payment_method_types: ['card'],
         line_items: lineItems,
         customer_email: customer.email,
         metadata: {
