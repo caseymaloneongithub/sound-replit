@@ -107,8 +107,8 @@ export default function Contact() {
                   </div>
                   <div>
                     <p className="font-medium">Email</p>
-                    <a href="mailto:info@pugetsoundkombucha.com" className="text-muted-foreground hover:text-primary transition-colors">
-                      info@pugetsoundkombucha.com
+                    <a href="mailto:emily@soundkombucha.com" className="text-muted-foreground hover:text-primary transition-colors">
+                      emily@soundkombucha.com
                     </a>
                   </div>
                 </div>
@@ -119,8 +119,8 @@ export default function Contact() {
                   </div>
                   <div>
                     <p className="font-medium">Phone</p>
-                    <a href="tel:+12065551234" className="text-muted-foreground hover:text-primary transition-colors">
-                      (206) 555-1234
+                    <a href="tel:+12067895219" className="text-muted-foreground hover:text-primary transition-colors">
+                      206-789-5219
                     </a>
                   </div>
                 </div>
@@ -132,8 +132,8 @@ export default function Contact() {
                   <div>
                     <p className="font-medium">Brewery Location</p>
                     <p className="text-muted-foreground">
-                      Seattle, WA<br />
-                      Pacific Northwest
+                      4501 Shilshole Ave NW<br />
+                      Seattle, WA 98107
                     </p>
                   </div>
                 </div>
