@@ -31,7 +31,7 @@ const getEmailHeader = (title: string) => {
   // Use CID reference for logo if available, otherwise use text-only header
   // CID (Content ID) attachments work reliably in Gmail, Outlook, and other major email clients
   const logoHtml = hasLogo
-    ? `<img src="cid:${LOGO_CID}" alt="Puget Sound Kombucha Co." style="max-width: 200px; height: auto; margin-bottom: 16px;" />`
+    ? `<img src="cid:${LOGO_CID}" alt="Puget Sound Kombucha Co." style="max-width: 200px; height: auto; margin-bottom: 16px; filter: brightness(0) invert(1);" />`
     : `<span style="color: ${BRAND_COLORS.white}; font-size: 24px; font-weight: bold; letter-spacing: 1px;">PUGET SOUND KOMBUCHA CO.</span>`;
   
   return `
