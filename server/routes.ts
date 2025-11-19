@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, inventoryAdjustments, subscriptions, Subscription, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems } from "@shared/schema";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, subscriptions, Subscription, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems } from "@shared/schema";
 import { eq, sql, and } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -3752,6 +3752,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error fetching user orders:", error);
       res.status(500).json({ message: "Failed to fetch orders" });
+    }
+  });
+
+  // Resend order confirmation email
+  app.post("/api/orders/:orderId/resend-email", isAuthenticated, async (req: any, res) => {
+    try {
+      const orderId = req.params.orderId;
+      
+      // Get the order
+      const order = await storage.getRetailOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      // Verify user owns this order or is staff
+      if (order.userId !== req.user!.id && req.user!.role !== 'staff' && req.user!.role !== 'admin' && req.user!.role !== 'super_admin') {
+        return res.status(403).json({ message: "Not authorized to resend email for this order" });
+      }
+
+      // Collect order items for email
+      const { sendOrderReceiptEmail } = await import('./email');
+      const orderItems = [];
+      
+      // Get legacy order items
+      const legacyItems = await db
+        .select({
+          id: retailOrderItems.id,
+          orderId: retailOrderItems.orderId,
+          productId: retailOrderItems.productId,
+          quantity: retailOrderItems.quantity,
+          unitPrice: retailOrderItems.unitPrice,
+          product: products,
+        })
+        .from(retailOrderItems)
+        .innerJoin(products, eq(products.id, retailOrderItems.productId))
+        .where(eq(retailOrderItems.orderId, orderId));
+        
+      for (const item of legacyItems) {
+        if (item.product) {
+          orderItems.push({
+            productName: item.product.name,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+          });
+        }
+      }
+      
+      // Get retail v2 items
+      const v2Items = await db.query.retailOrderItemsV2.findMany({
+        where: eq(retailOrderItemsV2.orderId, orderId),
+        with: {
+          retailProduct: {
+            with: {
+              flavor: true,
+            },
+          },
+        },
+      });
+      
+      for (const item of v2Items) {
+        if (item.retailProduct && item.retailProduct.flavor) {
+          const productName = `${item.retailProduct.flavor.name} - ${item.retailProduct.unitDescription}`;
+          orderItems.push({
+            productName,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+          });
+        }
+      }
+
+      if (orderItems.length === 0) {
+        return res.status(400).json({ message: "No order items found to send in email" });
+      }
+
+      // Send the email
+      await sendOrderReceiptEmail({
+        customerEmail: order.customerEmail,
+        customerName: order.customerName,
+        orderNumber: order.orderNumber,
+        orderItems,
+        subtotal: parseFloat(order.subtotal),
+        taxAmount: order.taxAmount ? parseFloat(order.taxAmount) : undefined,
+        total: parseFloat(order.totalAmount),
+        orderType: order.isSubscriptionOrder ? 'subscription' : 'one-time',
+      });
+
+      console.log(`[EMAIL] Manually resent order confirmation for ${order.orderNumber} to ${order.customerEmail}`);
+      
+      res.json({ 
+        success: true, 
+        message: `Order confirmation email sent to ${order.customerEmail}` 
+      });
+    } catch (error: any) {
+      console.error("Error resending order email:", error);
+      res.status(500).json({ message: error.message || "Failed to resend order confirmation email" });
     }
   });
 

@@ -3,7 +3,7 @@ import { RetailOrder, RetailOrderItem, Product } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Package, Calendar, ShoppingCart } from "lucide-react";
+import { Package, Calendar, ShoppingCart, Mail } from "lucide-react";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -39,6 +39,25 @@ export default function OrderHistory() {
       toast({
         title: "Error",
         description: error.message || "Failed to reorder items",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const resendEmailMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      return await apiRequest("POST", `/api/orders/${orderId}/resend-email`);
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: "Email sent",
+        description: data.message || "Order confirmation email has been resent",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to resend confirmation email",
         variant: "destructive",
       });
     },
@@ -117,6 +136,16 @@ export default function OrderHistory() {
                       <Badge variant={getStatusBadgeVariant(order.status)} data-testid={`badge-status-${order.id}`}>
                         {getStatusLabel(order.status)}
                       </Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => resendEmailMutation.mutate(order.id)}
+                        disabled={resendEmailMutation.isPending}
+                        data-testid={`button-resend-email-${order.id}`}
+                      >
+                        <Mail className="h-4 w-4 mr-1" />
+                        Resend Email
+                      </Button>
                       {order.status !== 'cancelled' && (
                         <Button
                           variant="outline"
