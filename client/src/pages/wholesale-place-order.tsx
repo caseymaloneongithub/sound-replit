@@ -33,13 +33,9 @@ export default function WholesalePlaceOrder() {
     queryKey: ["/api/wholesale/customers"],
   });
 
-  const { data: unitTypes = [] } = useQuery<(WholesaleUnitType & { flavorIds?: string[] })[]>({
+  const { data: unitTypes = [] } = useQuery<(WholesaleUnitType & { flavors?: Flavor[] })[]>({
     queryKey: ["/api/wholesale-unit-types"],
     queryFn: async () => apiRequest('GET', '/api/wholesale-unit-types?includeFlavors=true'),
-  });
-
-  const { data: flavors = [] } = useQuery<Flavor[]>({
-    queryKey: ["/api/flavors"],
   });
 
   // Fetch customer-specific pricing when a customer is selected
@@ -54,10 +50,7 @@ export default function WholesalePlaceOrder() {
 
   // Get available flavors for selected unit type
   const availableFlavors = selectedUnitTypeId
-    ? unitTypes
-        .find(ut => ut.id === selectedUnitTypeId)
-        ?.flavorIds?.map((id: string) => flavors.find(f => f.id === id))
-        .filter(Boolean) as Flavor[] || []
+    ? unitTypes.find(ut => ut.id === selectedUnitTypeId)?.flavors || []
     : [];
 
   // Reset selections when customer or unit type changes
@@ -183,7 +176,12 @@ export default function WholesalePlaceOrder() {
   };
 
   const getFlavorName = (flavorId: string): string => {
-    return flavors.find(f => f.id === flavorId)?.name || "";
+    // Find flavor from all unit types since we don't have a separate flavors query
+    for (const unitType of unitTypes) {
+      const flavor = unitType.flavors?.find(f => f.id === flavorId);
+      if (flavor) return flavor.name;
+    }
+    return "";
   };
 
   return (
