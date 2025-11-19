@@ -2359,7 +2359,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 let subtotal = 0;
                 for (const item of retailSubItems) {
                   const basePrice = parseFloat(item.retailProduct.price);
-                  const discountPercent = item.retailProduct.subscriptionDiscount || 10;
+                  const discountPercent = parseFloat(item.retailProduct.subscriptionDiscount || '10');
                   const discountedPrice = basePrice * (1 - discountPercent / 100);
                   subtotal += discountedPrice * item.quantity;
                 }
@@ -2382,7 +2382,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 // Create order items with retail products (no inventory deduction yet - retail products don't have stock tracking)
                 for (const item of retailSubItems) {
                   const basePrice = parseFloat(item.retailProduct.price);
-                  const discountPercent = item.retailProduct.subscriptionDiscount || 10;
+                  const discountPercent = parseFloat(item.retailProduct.subscriptionDiscount || '10');
                   const discountedPrice = basePrice * (1 - discountPercent / 100);
                   
                   // Map retail product to legacy product for order item storage
