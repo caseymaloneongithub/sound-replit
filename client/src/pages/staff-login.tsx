@@ -123,12 +123,17 @@ export default function StaffLogin() {
 
       // Update the auth context with the logged-in user
       queryClient.setQueryData(["/api/user"], data.user);
+      queryClient.invalidateQueries({ queryKey: ["/api/user"] });
       
       toast({
         title: "Welcome back!",
         description: "You have successfully logged in.",
       });
-      setLocation("/staff-portal/wholesale/orders");
+      
+      // Add small delay to ensure auth state propagates
+      setTimeout(() => {
+        setLocation("/staff-portal/wholesale/orders");
+      }, 100);
     } catch (error: any) {
       toast({
         title: "Error",
@@ -153,11 +158,18 @@ export default function StaffLogin() {
         return;
       }
 
+      // Invalidate queries to ensure auth state updates
+      queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+      
       toast({
         title: "Welcome back!",
         description: "You have successfully logged in.",
       });
-      setLocation("/staff-portal/wholesale/orders");
+      
+      // Add small delay to ensure auth state propagates
+      setTimeout(() => {
+        setLocation("/staff-portal/wholesale/orders");
+      }, 100);
     } catch (error: any) {
       toast({
         title: "Login failed",
