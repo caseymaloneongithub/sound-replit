@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, subscriptions, Subscription, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems } from "@shared/schema";
+import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, subscriptions, Subscription, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, flavors } from "@shared/schema";
 import { eq, sql, and } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -3800,20 +3800,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Get retail v2 items
-      const v2Items = await db.query.retailOrderItemsV2.findMany({
-        where: eq(retailOrderItemsV2.orderId, orderId),
-        with: {
-          retailProduct: {
-            with: {
-              flavor: true,
-            },
-          },
-        },
-      });
+      const v2Items = await db
+        .select({
+          id: retailOrderItemsV2.id,
+          orderId: retailOrderItemsV2.orderId,
+          retailProductId: retailOrderItemsV2.retailProductId,
+          quantity: retailOrderItemsV2.quantity,
+          unitPrice: retailOrderItemsV2.unitPrice,
+          retailProduct: retailProducts,
+          flavor: flavors,
+        })
+        .from(retailOrderItemsV2)
+        .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
+        .innerJoin(flavors, eq(flavors.id, retailProducts.flavorId))
+        .where(eq(retailOrderItemsV2.orderId, orderId));
       
       for (const item of v2Items) {
-        if (item.retailProduct && item.retailProduct.flavor) {
-          const productName = `${item.retailProduct.flavor.name} - ${item.retailProduct.unitDescription}`;
+        if (item.retailProduct && item.flavor) {
+          const productName = `${item.flavor.name} - ${item.retailProduct.unitDescription}`;
           orderItems.push({
             productName,
             quantity: item.quantity,
