@@ -9,9 +9,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Box } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import type { WholesaleUnitType } from "@shared/schema";
+import type { WholesaleUnitType, Flavor } from "@shared/schema";
 
 export default function AdminWholesaleUnits() {
   const { toast } = useToast();
@@ -26,16 +27,23 @@ export default function AdminWholesaleUnits() {
     displayOrder: 0
   });
 
-  const { data: wholesaleUnitTypes = [], isLoading: wholesaleUnitTypesLoading } = useQuery<WholesaleUnitType[]>({
+  const { data: wholesaleUnitTypes = [], isLoading: wholesaleUnitTypesLoading } = useQuery<(WholesaleUnitType & { flavors?: Flavor[] })[]>({
     queryKey: ['/api/wholesale-unit-types'],
+    queryFn: async () => apiRequest('GET', '/api/wholesale-unit-types?includeFlavors=true'),
+  });
+
+  const { data: allFlavors = [], isLoading: flavorsLoading } = useQuery<Flavor[]>({
+    queryKey: ['/api/flavors'],
   });
 
   const createWholesaleUnitTypeMutation = useMutation({
     mutationFn: async (data: any) => {
       // Convert defaultPrice to string for decimal type
+      const { availableFlavors, ...rest } = data;
       const payload = {
-        ...data,
-        defaultPrice: data.defaultPrice.toString()
+        ...rest,
+        defaultPrice: rest.defaultPrice.toString(),
+        flavorIds: availableFlavors
       };
       return apiRequest('POST', '/api/wholesale-unit-types', payload);
     },
@@ -53,10 +61,12 @@ export default function AdminWholesaleUnits() {
   const updateWholesaleUnitTypeMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
       // Convert defaultPrice to string for decimal type if present
-      const payload = data.defaultPrice !== undefined ? {
-        ...data,
-        defaultPrice: data.defaultPrice.toString()
-      } : data;
+      const { availableFlavors, ...rest } = data;
+      const payload = {
+        ...rest,
+        ...(rest.defaultPrice !== undefined && { defaultPrice: rest.defaultPrice.toString() }),
+        flavorIds: availableFlavors
+      };
       return apiRequest('PATCH', `/api/wholesale-unit-types/${id}`, payload);
     },
     onSuccess: () => {
@@ -172,6 +182,42 @@ export default function AdminWholesaleUnits() {
                       data-testid="input-wholesale-display-order"
                     />
                   </div>
+                  <div>
+                    <Label>Available Flavors</Label>
+                    <div className="border rounded-md p-4 max-h-60 overflow-y-auto space-y-2">
+                      {flavorsLoading ? (
+                        <div className="flex items-center justify-center py-4">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        </div>
+                      ) : (
+                        allFlavors.map((flavor) => (
+                          <div key={flavor.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`flavor-${flavor.id}`}
+                              checked={wholesaleUnitTypeForm.availableFlavors.includes(flavor.id)}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setWholesaleUnitTypeForm({
+                                    ...wholesaleUnitTypeForm,
+                                    availableFlavors: [...wholesaleUnitTypeForm.availableFlavors, flavor.id]
+                                  });
+                                } else {
+                                  setWholesaleUnitTypeForm({
+                                    ...wholesaleUnitTypeForm,
+                                    availableFlavors: wholesaleUnitTypeForm.availableFlavors.filter(id => id !== flavor.id)
+                                  });
+                                }
+                              }}
+                              data-testid={`checkbox-flavor-${flavor.id}`}
+                            />
+                            <Label htmlFor={`flavor-${flavor.id}`} className="cursor-pointer">
+                              {flavor.name}
+                            </Label>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                   <Button
                     onClick={() => createWholesaleUnitTypeMutation.mutate(wholesaleUnitTypeForm)}
                     disabled={createWholesaleUnitTypeMutation.isPending}
@@ -215,10 +261,22 @@ export default function AdminWholesaleUnits() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-muted-foreground mb-2">{unitType.description}</p>
-                  <div className="flex justify-between text-sm">
+                  <div className="flex justify-between text-sm mb-3">
                     <span className="text-muted-foreground">Default Price:</span>
                     <span className="font-semibold">${Number(unitType.defaultPrice).toFixed(2)}</span>
                   </div>
+                  {unitType.flavors && unitType.flavors.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs text-muted-foreground mb-2">Available Flavors:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {unitType.flavors.map((flavor) => (
+                          <Badge key={flavor.id} variant="secondary" className="text-xs">
+                            {flavor.name}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
                 <CardFooter className="flex gap-2 flex-wrap">
                   <Dialog open={editingWholesaleUnitType === unitType.id} onOpenChange={(open) => !open && setEditingWholesaleUnitType(null)}>
@@ -233,7 +291,7 @@ export default function AdminWholesaleUnits() {
                             unitType: unitType.unitType,
                             description: unitType.description,
                             defaultPrice: Number(unitType.defaultPrice),
-                            availableFlavors: [],
+                            availableFlavors: unitType.flavors?.map(f => f.id) || [],
                             isActive: unitType.isActive,
                             displayOrder: unitType.displayOrder
                           });
@@ -301,6 +359,42 @@ export default function AdminWholesaleUnits() {
                             data-testid="input-edit-wholesale-active"
                           />
                           <Label>Active</Label>
+                        </div>
+                        <div>
+                          <Label>Available Flavors</Label>
+                          <div className="border rounded-md p-4 max-h-60 overflow-y-auto space-y-2">
+                            {flavorsLoading ? (
+                              <div className="flex items-center justify-center py-4">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              </div>
+                            ) : (
+                              allFlavors.map((flavor) => (
+                                <div key={flavor.id} className="flex items-center space-x-2">
+                                  <Checkbox
+                                    id={`edit-flavor-${flavor.id}`}
+                                    checked={wholesaleUnitTypeForm.availableFlavors.includes(flavor.id)}
+                                    onCheckedChange={(checked) => {
+                                      if (checked) {
+                                        setWholesaleUnitTypeForm({
+                                          ...wholesaleUnitTypeForm,
+                                          availableFlavors: [...wholesaleUnitTypeForm.availableFlavors, flavor.id]
+                                        });
+                                      } else {
+                                        setWholesaleUnitTypeForm({
+                                          ...wholesaleUnitTypeForm,
+                                          availableFlavors: wholesaleUnitTypeForm.availableFlavors.filter(id => id !== flavor.id)
+                                        });
+                                      }
+                                    }}
+                                    data-testid={`checkbox-edit-flavor-${flavor.id}`}
+                                  />
+                                  <Label htmlFor={`edit-flavor-${flavor.id}`} className="cursor-pointer">
+                                    {flavor.name}
+                                  </Label>
+                                </div>
+                              ))
+                            )}
+                          </div>
                         </div>
                         <Button
                           onClick={() => updateWholesaleUnitTypeMutation.mutate({ id: unitType.id, data: wholesaleUnitTypeForm })}
