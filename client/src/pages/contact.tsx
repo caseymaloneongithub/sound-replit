@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Mail, Phone, MapPin, Send, Check } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
 
 const contactFormSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
@@ -46,15 +47,24 @@ export default function Contact() {
   }, [isSubmitted]);
 
   const onSubmit = async (data: ContactFormData) => {
-    console.log("Contact form submission:", data);
-    
-    setSubmittedData(data);
-    setIsSubmitted(true);
-    
-    toast({
-      title: "Message sent!",
-      description: "We'll get back to you within 1-2 business days.",
-    });
+    try {
+      await apiRequest("POST", "/api/contact", data);
+      
+      setSubmittedData(data);
+      setIsSubmitted(true);
+      
+      toast({
+        title: "Message sent!",
+        description: "We'll get back to you within 1-2 business days.",
+      });
+    } catch (error: any) {
+      console.error("Error submitting contact form:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send message. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleSendAnother = () => {

@@ -10,7 +10,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { getObjectAclPolicy } from "./objectAcl";
@@ -121,6 +121,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Error verifying wholesale customer status" });
     }
   };
+
+  // Contact form submission
+  app.post("/api/contact", async (req, res) => {
+    try {
+      const contactFormSchema = z.object({
+        name: z.string().min(2, "Name must be at least 2 characters"),
+        email: z.string().email("Please enter a valid email"),
+        phone: z.string().optional(),
+        company: z.string().optional(),
+        message: z.string().min(10, "Message must be at least 10 characters"),
+      });
+
+      const validatedData = contactFormSchema.parse(req.body);
+
+      // Get all staff member emails (staff, admin, super_admin)
+      const staffUsers = await db
+        .select({ email: users.email })
+        .from(users)
+        .where(
+          sql`${users.role} IN ('staff', 'admin', 'super_admin') AND ${users.email} IS NOT NULL`
+        );
+
+      const staffEmails = staffUsers
+        .map(u => u.email)
+        .filter((email): email is string => email !== null);
+
+      // Send notification to staff
+      if (staffEmails.length > 0) {
+        await sendContactFormNotification({
+          staffEmails,
+          contactName: validatedData.name,
+          contactEmail: validatedData.email,
+          contactPhone: validatedData.phone,
+          contactCompany: validatedData.company,
+          message: validatedData.message,
+        });
+      }
+
+      res.json({ 
+        success: true, 
+        message: "Your message has been sent successfully" 
+      });
+    } catch (error: any) {
+      console.error("Error processing contact form:", error);
+      
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          message: "Invalid form data", 
+          errors: error.errors 
+        });
+      }
+      
+      res.status(500).json({ 
+        message: "Error processing contact form: " + error.message 
+      });
+    }
+  });
 
   // Check if email already has an account
   app.post("/api/check-email", async (req, res) => {

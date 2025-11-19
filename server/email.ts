@@ -597,3 +597,83 @@ Puget Sound Kombucha Co.
     throw error;
   }
 }
+
+interface ContactFormNotificationParams {
+  staffEmails: string[];
+  contactName: string;
+  contactEmail: string;
+  contactPhone?: string;
+  contactCompany?: string;
+  message: string;
+}
+
+export async function sendContactFormNotification(params: ContactFormNotificationParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send contact form notification to staff');
+    console.log('[EMAIL] Contact from:', params.contactName, params.contactEmail);
+    console.log('[EMAIL] Message:', params.message);
+    return;
+  }
+
+  if (!params.staffEmails || params.staffEmails.length === 0) {
+    console.log('[EMAIL] No staff emails provided, skipping notification');
+    return;
+  }
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.staffEmails.join(', '),
+    subject: `New Contact Form Submission from ${params.contactName}`,
+    text: `
+New Contact Form Submission
+
+From: ${params.contactName}
+Email: ${params.contactEmail}
+${params.contactPhone ? `Phone: ${params.contactPhone}` : ''}
+${params.contactCompany ? `Company: ${params.contactCompany}` : ''}
+
+Message:
+${params.message}
+
+---
+This notification was sent to all staff members.
+    `.trim(),
+    html: `
+<div style="max-width: 600px; margin: 0 auto; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 16px; line-height: 1.6; color: ${BRAND_COLORS.darkGrey};">
+  ${getEmailHeader('New Contact Form Submission')}
+  
+  <div style="padding: 32px 24px; background-color: ${BRAND_COLORS.white};">
+    <p style="margin-top: 0; color: ${BRAND_COLORS.darkGrey};">A new inquiry has been submitted through the contact form:</p>
+    
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 20px; border-radius: 4px; margin: 24px 0; border-left: 4px solid ${BRAND_COLORS.black};">
+      <h2 style="margin: 0 0 16px 0; font-size: 18px; color: ${BRAND_COLORS.black};">Contact Information</h2>
+      <p style="margin: 8px 0;"><strong>Name:</strong> ${params.contactName}</p>
+      <p style="margin: 8px 0;"><strong>Email:</strong> <a href="mailto:${params.contactEmail}" style="color: ${BRAND_COLORS.black};">${params.contactEmail}</a></p>
+      ${params.contactPhone ? `<p style="margin: 8px 0;"><strong>Phone:</strong> ${params.contactPhone}</p>` : ''}
+      ${params.contactCompany ? `<p style="margin: 8px 0;"><strong>Company:</strong> ${params.contactCompany}</p>` : ''}
+    </div>
+    
+    <div style="margin: 24px 0;">
+      <h2 style="font-size: 18px; margin-bottom: 12px; color: ${BRAND_COLORS.black}; border-bottom: 2px solid ${BRAND_COLORS.black}; padding-bottom: 8px;">Message</h2>
+      <p style="white-space: pre-wrap; color: ${BRAND_COLORS.darkGrey}; background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin: 0;">${params.message}</p>
+    </div>
+    
+    <p style="margin-top: 32px; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; font-style: italic;">This notification was sent to all staff members.</p>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent contact form notification to ${params.staffEmails.length} staff member(s)`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send contact form notification:', error);
+    throw error;
+  }
+}
