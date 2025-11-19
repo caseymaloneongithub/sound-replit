@@ -88,8 +88,14 @@ export default function WholesaleCustomers() {
     mutationFn: async ({ id, emails }: { id: string; emails: string[] }) => {
       return await apiRequest("PATCH", `/api/wholesale/customers/${id}`, { emails });
     },
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
+      
+      // Update the selectedCustomer to reflect the new emails immediately
+      if (selectedCustomer && selectedCustomer.id === variables.id) {
+        setSelectedCustomer({ ...selectedCustomer, emails: variables.emails });
+      }
+      
       toast({
         title: "Updated",
         description: "Authorized emails updated successfully",
