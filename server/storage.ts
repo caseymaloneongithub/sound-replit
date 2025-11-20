@@ -212,6 +212,7 @@ export interface IStorage {
   generateNextInvoiceNumber(): Promise<string>;
   
   getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]>;
+  getAllWholesaleOrderItems(): Promise<WholesaleOrderItem[]>;
   createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem>;
   
   getAllWholesalePricing(): Promise<WholesalePricing[]>;
@@ -1581,6 +1582,10 @@ export class PostgresStorage implements IStorage {
 
   async getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]> {
     return await db.select().from(wholesaleOrderItems).where(eq(wholesaleOrderItems.orderId, orderId));
+  }
+
+  async getAllWholesaleOrderItems(): Promise<WholesaleOrderItem[]> {
+    return await db.select().from(wholesaleOrderItems);
   }
 
   async createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem> {

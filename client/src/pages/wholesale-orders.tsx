@@ -62,6 +62,11 @@ export default function WholesaleOrders() {
     queryKey: ["/api/flavors"],
   });
 
+  // Fetch all order items for all orders
+  const { data: allOrderItems = [] } = useQuery<WholesaleOrderItem[]>({
+    queryKey: ["/api/wholesale/all-order-items"],
+  });
+
   const { data: orderItems = [] } = useQuery<WholesaleOrderItem[]>({
     queryKey: ["/api/wholesale/orders", selectedOrderId, "items"],
     enabled: !!selectedOrderId,
@@ -157,8 +162,71 @@ export default function WholesaleOrders() {
       );
     }
 
+    // Calculate totals for this status
+    const totalOrders = filteredOrders.length;
+    const totalAmount = filteredOrders.reduce((sum, order) => sum + Number(order.totalAmount), 0);
+
+    // Consolidate items for all orders in this status
+    const orderIds = filteredOrders.map(order => order.id);
+    const statusItems = allOrderItems.filter(item => 
+      orderIds.includes(item.orderId) && item.unitTypeId && item.flavorId
+    );
+    
+    // Group items by unitTypeId + flavorId combination
+    const consolidatedItems = statusItems.reduce((acc, item) => {
+      if (!item.unitTypeId || !item.flavorId) return acc;
+      
+      const key = `${item.unitTypeId}-${item.flavorId}`;
+      if (!acc[key]) {
+        acc[key] = {
+          unitTypeId: item.unitTypeId,
+          flavorId: item.flavorId,
+          quantity: 0,
+        };
+      }
+      acc[key].quantity += item.quantity;
+      return acc;
+    }, {} as Record<string, { unitTypeId: string; flavorId: string; quantity: number }>);
+
+    const consolidatedList = Object.values(consolidatedItems);
+
     return (
       <div className="space-y-4">
+        {/* Consolidated Items Summary */}
+        {consolidatedList.length > 0 && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-lg">Items to Prepare</h3>
+                <Badge variant="secondary" data-testid={`badge-item-count-${status}`}>
+                  {consolidatedList.length} {consolidatedList.length === 1 ? 'item type' : 'item types'}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {consolidatedList.map((item) => {
+                  const unitType = unitTypes.find(ut => ut.id === item.unitTypeId);
+                  const flavor = flavors.find(f => f.id === item.flavorId);
+                  return (
+                    <div
+                      key={`${item.unitTypeId}-${item.flavorId}`}
+                      className="flex items-center justify-between p-3 border rounded-md"
+                      data-testid={`item-summary-${item.unitTypeId}-${item.flavorId}`}
+                    >
+                      <div>
+                        <div className="font-medium">{flavor?.name || 'Unknown Flavor'}</div>
+                        <div className="text-sm text-muted-foreground">{unitType?.name || 'Unknown Unit'}</div>
+                      </div>
+                      <Badge variant="outline" className="ml-2">
+                        Qty: {item.quantity}
+                      </Badge>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="flex justify-end">
           <Button
             variant="outline"
@@ -186,6 +254,18 @@ export default function WholesaleOrders() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {/* Summary Row */}
+              <TableRow className="bg-muted/50 font-semibold" data-testid={`row-summary-${status}`}>
+                <TableCell colSpan={6}>
+                  Total {getStatusLabel(status)} Orders
+                </TableCell>
+                <TableCell className="text-right" data-testid={`text-total-amount-${status}`}>
+                  ${totalAmount.toFixed(2)}
+                </TableCell>
+                <TableCell className="text-muted-foreground" data-testid={`text-total-orders-${status}`}>
+                  {totalOrders} {totalOrders === 1 ? 'order' : 'orders'}
+                </TableCell>
+              </TableRow>
               {filteredOrders.map((order) => {
                 const customer = customers?.find(c => c.id === order.customerId);
                 const isExpanded = expandedRows.has(order.id);

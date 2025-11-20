@@ -3786,6 +3786,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/wholesale/all-order-items", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const items = await storage.getAllWholesaleOrderItems();
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching all order items: " + error.message });
+    }
+  });
+
   app.get("/api/wholesale/orders/:id/invoice", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
