@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { WholesaleOrder, WholesaleCustomer, WholesaleOrderItem, Product } from "@shared/schema";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -9,7 +9,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { ShoppingCart, Eye, CalendarIcon, FileText, ArrowUpDown, Loader2 } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ShoppingCart, Eye, CalendarIcon, FileText, ArrowUpDown, Loader2, ChevronRight, ChevronDown } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -35,7 +37,7 @@ function getStatusLabel(status: string): string {
 
 export default function WholesaleOrders() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
-  const [deliveryDate, setDeliveryDate] = useState<Date | undefined>(undefined);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState('pending');
   const [sortOrders, setSortOrders] = useState<Record<string, 'asc' | 'desc'>>({
     pending: 'asc',      // oldest to newest by default
@@ -85,8 +87,8 @@ export default function WholesaleOrders() {
   });
 
   const updateDeliveryDateMutation = useMutation({
-    mutationFn: async (date: Date | null) => {
-      return await apiRequest("PATCH", `/api/wholesale/orders/${selectedOrderId}`, { 
+    mutationFn: async ({ orderId, date }: { orderId: string; date: Date | null }) => {
+      return await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, { 
         deliveryDate: date ? date.toISOString() : null 
       });
     },
@@ -113,6 +115,18 @@ export default function WholesaleOrders() {
     }));
   };
 
+  const toggleRowExpansion = (orderId: string) => {
+    setExpandedRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(orderId)) {
+        newSet.delete(orderId);
+      } else {
+        newSet.add(orderId);
+      }
+      return newSet;
+    });
+  };
+
   const getFilteredAndSortedOrders = (status: string) => {
     const filtered = orders.filter(order => order.status === status);
     const sortOrder = sortOrders[status] || 'desc';
@@ -124,7 +138,7 @@ export default function WholesaleOrders() {
     });
   };
 
-  const renderOrdersList = (status: string) => {
+  const renderOrdersTable = (status: string) => {
     const filteredOrders = getFilteredAndSortedOrders(status);
     const sortOrder = sortOrders[status] || 'desc';
 
@@ -152,86 +166,181 @@ export default function WholesaleOrders() {
             {sortOrder === 'asc' ? 'Oldest to Newest' : 'Newest to Oldest'}
           </Button>
         </div>
-        {filteredOrders.map((order) => {
-          const customer = customers?.find(c => c.id === order.customerId);
-          return (
-            <Card key={order.id} data-testid={`card-wholesale-order-${order.id}`}>
-              <CardHeader>
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex-1 min-w-[200px]">
-                    <CardTitle className="text-lg mb-1">
-                      {customer?.businessName || 'Unknown Customer'}
-                    </CardTitle>
-                    <CardDescription className="space-y-1">
-                      <div><strong>Invoice:</strong> {order.invoiceNumber}</div>
-                      <div><strong>Contact:</strong> {customer?.contactName}</div>
-                      <div><strong>Email:</strong> {customer?.email}</div>
-                      <div><strong>Phone:</strong> {customer?.phone}</div>
-                      <div><strong>Order Date:</strong> {new Date(order.orderDate).toLocaleDateString()}</div>
-                      {order.deliveryDate && (
-                        <div><strong>Delivery Date:</strong> {new Date(order.deliveryDate).toLocaleDateString()}</div>
-                      )}
-                    </CardDescription>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-2xl font-bold mb-2">
-                      ${Number(order.totalAmount).toFixed(2)}
-                    </div>
-                    <div className="flex gap-2 flex-wrap justify-end items-center">
-                      <Select
-                        value={order.status}
-                        onValueChange={(newStatus) => 
-                          updateStatusMutation.mutate({ orderId: order.id, status: newStatus })
-                        }
-                        disabled={updateStatusMutation.isPending}
-                      >
-                        <SelectTrigger className="w-[150px]" data-testid={`select-wholesale-order-status-${order.id}`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="pending" data-testid="status-pending">Pending</SelectItem>
-                          <SelectItem value="packaged" data-testid="status-packaged">Packaged</SelectItem>
-                          <SelectItem value="delivered" data-testid="status-delivered">Delivered</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => window.open(`/wholesale/invoice/${order.id}`, '_blank')}
-                        data-testid={`button-invoice-${order.id}`}
-                        title="View Invoice"
-                      >
-                        <FileText className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => {
-                          setSelectedOrderId(order.id);
-                          setDeliveryDate(order.deliveryDate ? new Date(order.deliveryDate) : undefined);
-                        }}
-                        data-testid={`button-view-${order.id}`}
-                        title="View Details"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </Button>
-                    </div>
-                    {order.fulfilledAt && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Fulfilled: {new Date(order.fulfilledAt).toLocaleString()}
-                      </p>
+        
+        <div className="border rounded-md">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[50px]"></TableHead>
+                <TableHead>Customer</TableHead>
+                <TableHead>Order Date</TableHead>
+                <TableHead>Order Items</TableHead>
+                <TableHead>Scheduled Delivery</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Total</TableHead>
+                <TableHead className="w-[100px]">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredOrders.map((order) => {
+                const customer = customers?.find(c => c.id === order.customerId);
+                const isExpanded = expandedRows.has(order.id);
+                
+                return (
+                  <Fragment key={order.id}>
+                    <TableRow data-testid={`row-wholesale-order-${order.id}`}>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => toggleRowExpansion(order.id)}
+                          data-testid={`button-expand-${order.id}`}
+                          className="h-6 w-6"
+                        >
+                          {isExpanded ? (
+                            <ChevronDown className="w-4 h-4" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4" />
+                          )}
+                        </Button>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium" data-testid={`text-customer-${order.id}`}>
+                          {customer?.businessName || 'Unknown Customer'}
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          Invoice: {order.invoiceNumber}
+                        </div>
+                      </TableCell>
+                      <TableCell data-testid={`text-order-date-${order.id}`}>
+                        {new Date(order.orderDate).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setSelectedOrderId(order.id)}
+                          data-testid={`button-view-items-${order.id}`}
+                        >
+                          <Eye className="w-4 h-4 mr-2" />
+                          View Items
+                        </Button>
+                      </TableCell>
+                      <TableCell>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="justify-start text-left font-normal"
+                              data-testid={`button-delivery-date-${order.id}`}
+                            >
+                              <CalendarIcon className="mr-2 h-4 w-4" />
+                              {order.deliveryDate ? (
+                                format(new Date(order.deliveryDate), "MMM dd, yyyy")
+                              ) : (
+                                <span className="text-muted-foreground">Set date</span>
+                              )}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={order.deliveryDate ? new Date(order.deliveryDate) : undefined}
+                              onSelect={(date) => {
+                                updateDeliveryDateMutation.mutate({ 
+                                  orderId: order.id, 
+                                  date: date || null 
+                                });
+                              }}
+                              disabled={updateDeliveryDateMutation.isPending}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={order.status}
+                          onValueChange={(newStatus) => 
+                            updateStatusMutation.mutate({ orderId: order.id, status: newStatus })
+                          }
+                          disabled={updateStatusMutation.isPending}
+                        >
+                          <SelectTrigger 
+                            className="w-[140px]" 
+                            data-testid={`select-wholesale-order-status-${order.id}`}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="pending" data-testid="status-pending">
+                              Pending
+                            </SelectItem>
+                            <SelectItem value="packaged" data-testid="status-packaged">
+                              Packaged
+                            </SelectItem>
+                            <SelectItem value="delivered" data-testid="status-delivered">
+                              Delivered
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell className="text-right font-semibold" data-testid={`text-total-${order.id}`}>
+                        ${Number(order.totalAmount).toFixed(2)}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => window.open(`/wholesale/invoice/${order.id}`, '_blank')}
+                          data-testid={`button-invoice-${order.id}`}
+                          title="View Invoice"
+                        >
+                          <FileText className="w-4 h-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    
+                    {isExpanded && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="bg-muted/50">
+                          <div className="py-4 px-6 space-y-3">
+                            <h4 className="font-semibold text-sm">Customer Details</h4>
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div>
+                                <span className="text-muted-foreground">Contact:</span>{" "}
+                                <span className="font-medium">{customer?.contactName}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground">Email:</span>{" "}
+                                <span className="font-medium">{customer?.email}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground">Phone:</span>{" "}
+                                <span className="font-medium">{customer?.phone}</span>
+                              </div>
+                              <div className="col-span-2">
+                                <span className="text-muted-foreground">Address:</span>{" "}
+                                <span className="font-medium">{customer?.address}</span>
+                              </div>
+                            </div>
+                            {order.notes && (
+                              <div className="pt-3 border-t">
+                                <span className="text-muted-foreground text-sm">Notes:</span>{" "}
+                                <span className="text-sm italic">{order.notes}</span>
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
                     )}
-                  </div>
-                </div>
-                {order.notes && (
-                  <div className="mt-3 pt-3 border-t">
-                    <p className="text-sm text-muted-foreground italic">{order.notes}</p>
-                  </div>
-                )}
-              </CardHeader>
-            </Card>
-          );
-        })}
+                  </Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
       </div>
     );
   };
@@ -296,148 +405,91 @@ export default function WholesaleOrders() {
             </TabsList>
 
             <TabsContent value="pending">
-              {renderOrdersList('pending')}
+              {renderOrdersTable('pending')}
             </TabsContent>
+
             <TabsContent value="packaged">
-              {renderOrdersList('packaged')}
+              {renderOrdersTable('packaged')}
             </TabsContent>
+
             <TabsContent value="delivered">
-              {renderOrdersList('delivered')}
+              {renderOrdersTable('delivered')}
             </TabsContent>
           </Tabs>
         )}
+      </div>
 
-        <Dialog open={!!selectedOrderId} onOpenChange={(open) => !open && setSelectedOrderId(null)}>
-          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+      <Dialog open={!!selectedOrderId} onOpenChange={(open) => !open && setSelectedOrderId(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle style={{ fontFamily: 'var(--font-heading)' }}>Order Details</DialogTitle>
+            <DialogTitle>Order Details</DialogTitle>
             <DialogDescription>
-              Invoice #{selectedOrder?.invoiceNumber} • {selectedOrder && new Date(selectedOrder.orderDate).toLocaleDateString()}
+              Invoice: {selectedOrder?.invoiceNumber}
             </DialogDescription>
           </DialogHeader>
           
-          {selectedOrder && (
+          {selectedOrder && selectedCustomer && (
             <div className="space-y-6">
-              <div className="grid md:grid-cols-2 gap-4">
-                <Card>
-                  <CardHeader className="space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Customer</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="font-semibold">{selectedCustomer?.businessName}</p>
-                    <p className="text-sm text-muted-foreground">{selectedCustomer?.contactName}</p>
-                    <p className="text-sm text-muted-foreground">{selectedCustomer?.email}</p>
-                    <p className="text-sm text-muted-foreground">{selectedCustomer?.phone}</p>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Delivery Date</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {selectedOrder.deliveryDate && (
-                      <p className="text-sm text-muted-foreground">
-                        {format(new Date(selectedOrder.deliveryDate), 'PPP')}
-                      </p>
-                    )}
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className="w-full justify-start text-left font-normal"
-                          data-testid="button-delivery-date"
-                        >
-                          <CalendarIcon className="mr-2 h-4 w-4" />
-                          {deliveryDate ? format(deliveryDate, "PPP") : "Set delivery date"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0">
-                        <Calendar
-                          mode="single"
-                          selected={deliveryDate}
-                          onSelect={(date) => {
-                            setDeliveryDate(date);
-                            if (date) {
-                              updateDeliveryDateMutation.mutate(date);
-                            }
-                          }}
-                          initialFocus
-                        />
-                      </PopoverContent>
-                    </Popover>
-                    {selectedOrder.deliveryDate && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => {
-                          setDeliveryDate(undefined);
-                          updateDeliveryDateMutation.mutate(null);
-                        }}
-                        data-testid="button-clear-delivery-date"
-                      >
-                        Clear Date
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
+              <div>
+                <h3 className="font-semibold mb-2">Customer Information</h3>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div><strong>Business:</strong> {selectedCustomer.businessName}</div>
+                  <div><strong>Contact:</strong> {selectedCustomer.contactName}</div>
+                  <div><strong>Email:</strong> {selectedCustomer.email}</div>
+                  <div><strong>Phone:</strong> {selectedCustomer.phone}</div>
+                  <div className="col-span-2"><strong>Address:</strong> {selectedCustomer.address}</div>
+                </div>
               </div>
 
-              {selectedOrder.notes && (
-                <Card>
-                  <CardHeader className="space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Notes</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm">{selectedOrder.notes}</p>
-                  </CardContent>
-                </Card>
-              )}
+              <div>
+                <h3 className="font-semibold mb-2">Order Information</h3>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div><strong>Order Date:</strong> {new Date(selectedOrder.orderDate).toLocaleDateString()}</div>
+                  <div><strong>Status:</strong> {getStatusLabel(selectedOrder.status)}</div>
+                  {selectedOrder.deliveryDate && (
+                    <div><strong>Delivery Date:</strong> {new Date(selectedOrder.deliveryDate).toLocaleDateString()}</div>
+                  )}
+                  <div><strong>Total:</strong> ${Number(selectedOrder.totalAmount).toFixed(2)}</div>
+                </div>
+                {selectedOrder.notes && (
+                  <div className="mt-2">
+                    <strong>Notes:</strong> <span className="italic">{selectedOrder.notes}</span>
+                  </div>
+                )}
+              </div>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm font-medium">Order Items</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
+              <div>
+                <h3 className="font-semibold mb-2">Order Items</h3>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Product</TableHead>
+                      <TableHead className="text-right">Quantity</TableHead>
+                      <TableHead className="text-right">Unit Price</TableHead>
+                      <TableHead className="text-right">Subtotal</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {orderItems.map((item) => {
                       const product = products.find(p => p.id === item.productId);
+                      const subtotal = Number(item.unitPrice) * item.quantity;
+                      
                       return (
-                        <div 
-                          key={item.id} 
-                          className="flex flex-wrap items-center justify-between gap-4 p-3 rounded-lg border"
-                          data-testid={`item-${item.id}`}
-                        >
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium truncate">{product?.name || 'Unknown Product'}</p>
-                            <p className="text-sm text-muted-foreground">
-                              ${item.unitPrice} × {item.quantity}
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-bold">
-                              ${(Number(item.unitPrice) * item.quantity).toFixed(2)}
-                            </p>
-                          </div>
-                        </div>
+                        <TableRow key={item.id}>
+                          <TableCell>{product?.name || 'Unknown Product'}</TableCell>
+                          <TableCell className="text-right">{item.quantity}</TableCell>
+                          <TableCell className="text-right">${Number(item.unitPrice).toFixed(2)}</TableCell>
+                          <TableCell className="text-right">${subtotal.toFixed(2)}</TableCell>
+                        </TableRow>
                       );
                     })}
-                    
-                    <div className="flex items-center justify-between pt-3 border-t">
-                      <span className="font-semibold">Total</span>
-                      <span className="text-2xl font-bold" data-testid="text-detail-total">
-                        ${Number(selectedOrder.totalAmount).toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           )}
-          </DialogContent>
-        </Dialog>
-      </div>
+        </DialogContent>
+      </Dialog>
     </StaffLayout>
   );
 }
