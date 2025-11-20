@@ -220,7 +220,7 @@ export default function ShopV2() {
                           </p>
                           {product.subscriptionDiscount != null && Number(product.subscriptionDiscount) > 0 && (
                             <Badge variant="default" className="text-xs" data-testid={`badge-discount-${product.id}`}>
-                              Save {Number(product.subscriptionDiscount).toFixed(0)}%
+                              Subscribe & Save {Number(product.subscriptionDiscount).toFixed(0)}%
                             </Badge>
                           )}
                         </div>
