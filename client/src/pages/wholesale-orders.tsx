@@ -1,6 +1,6 @@
 import { useState, Fragment } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { WholesaleOrder, WholesaleCustomer, WholesaleOrderItem, Product } from "@shared/schema";
+import { WholesaleOrder, WholesaleCustomer, WholesaleOrderItem, WholesaleUnitType, Flavor } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -54,8 +54,12 @@ export default function WholesaleOrders() {
     queryKey: ["/api/wholesale/customers"],
   });
 
-  const { data: products = [] } = useQuery<Product[]>({
-    queryKey: ["/api/products"],
+  const { data: unitTypes = [] } = useQuery<WholesaleUnitType[]>({
+    queryKey: ["/api/wholesale-unit-types"],
+  });
+
+  const { data: flavors = [] } = useQuery<Flavor[]>({
+    queryKey: ["/api/flavors"],
   });
 
   const { data: orderItems = [] } = useQuery<WholesaleOrderItem[]>({
@@ -471,12 +475,14 @@ export default function WholesaleOrders() {
                   </TableHeader>
                   <TableBody>
                     {orderItems.map((item) => {
-                      const product = products.find(p => p.id === item.productId);
                       const subtotal = Number(item.unitPrice) * item.quantity;
+                      const unitType = unitTypes.find(ut => ut.id === item.unitTypeId);
+                      const flavor = flavors.find(f => f.id === item.flavorId);
+                      const itemName = `${flavor?.name || 'Unknown Flavor'} - ${unitType?.name || 'Unknown Unit Type'}`;
                       
                       return (
                         <TableRow key={item.id}>
-                          <TableCell>{product?.name || 'Unknown Product'}</TableCell>
+                          <TableCell>{itemName}</TableCell>
                           <TableCell className="text-right">{item.quantity}</TableCell>
                           <TableCell className="text-right">${Number(item.unitPrice).toFixed(2)}</TableCell>
                           <TableCell className="text-right">${subtotal.toFixed(2)}</TableCell>
