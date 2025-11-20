@@ -891,14 +891,14 @@ export class PostgresStorage implements IStorage {
     const unitTypesWithFlavors = await Promise.all(
       unitTypes.map(async (unitType) => {
         const flavorLinks = await db
-          .select({ flavor: flavors })
+          .select()
           .from(wholesaleUnitTypeFlavors)
-          .leftJoin(flavors, eq(wholesaleUnitTypeFlavors.flavorId, flavors.id))
+          .innerJoin(flavors, eq(wholesaleUnitTypeFlavors.flavorId, flavors.id))
           .where(eq(wholesaleUnitTypeFlavors.unitTypeId, unitType.id));
 
         return {
           ...unitType,
-          flavors: flavorLinks.map(link => link.flavor!).filter(Boolean),
+          flavors: flavorLinks.map(link => link.flavors),
         };
       })
     );
