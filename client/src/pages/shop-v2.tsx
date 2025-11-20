@@ -4,6 +4,8 @@ import type { RetailProduct, Flavor } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ShoppingCart, Plus, Check } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -18,6 +20,7 @@ type RetailProductWithFlavors = RetailProduct & {
 
 export default function ShopV2() {
   const [addedToCart, setAddedToCart] = useState<Set<string>>(new Set());
+  const [selectedFlavors, setSelectedFlavors] = useState<Record<string, string>>({});
   const { toast } = useToast();
 
   const { data: products, isLoading } = useQuery<RetailProductWithFlavors[]>({
@@ -25,13 +28,15 @@ export default function ShopV2() {
   });
 
   const addToCartMutation = useMutation({
-    mutationFn: async ({ retailProductId, isSubscription, subscriptionFrequency }: { 
-      retailProductId: string; 
+    mutationFn: async ({ retailProductId, selectedFlavorId, isSubscription, subscriptionFrequency }: { 
+      retailProductId: string;
+      selectedFlavorId?: string;
       isSubscription: boolean; 
       subscriptionFrequency?: string;
     }) => {
       await apiRequest("POST", "/api/retail-cart", {
         retailProductId,
+        selectedFlavorId,
         quantity: 1,
         isSubscription,
         subscriptionFrequency,
@@ -70,16 +75,18 @@ export default function ShopV2() {
     return acc;
   }, {} as Record<string, RetailProductWithFlavors[]>) || {};
 
-  const oneTimePurchase = (retailProductId: string) => {
+  const oneTimePurchase = (retailProductId: string, selectedFlavorId?: string) => {
     addToCartMutation.mutate({
       retailProductId,
+      selectedFlavorId,
       isSubscription: false,
     });
   };
 
-  const subscriptionPurchase = (retailProductId: string, frequency: string) => {
+  const subscriptionPurchase = (retailProductId: string, frequency: string, selectedFlavorId?: string) => {
     addToCartMutation.mutate({
       retailProductId,
+      selectedFlavorId,
       isSubscription: true,
       subscriptionFrequency: frequency,
     });
@@ -224,6 +231,28 @@ export default function ShopV2() {
                         </div>
                       </CardContent>
                       <CardFooter className="p-4 pt-0 flex-col gap-2">
+                        {/* Flavor selector for multi-flavor products */}
+                        {isMultiFlavor && product.flavors.length > 0 && (
+                          <div className="w-full mb-2">
+                            <Label className="text-xs text-muted-foreground mb-1">Select Flavor</Label>
+                            <Select
+                              value={selectedFlavors[product.id] || ''}
+                              onValueChange={(value) => setSelectedFlavors(prev => ({ ...prev, [product.id]: value }))}
+                            >
+                              <SelectTrigger data-testid={`select-flavor-${product.id}`} className="w-full">
+                                <SelectValue placeholder="Choose a flavor" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {product.flavors.filter(f => f.isActive).map((flavor) => (
+                                  <SelectItem key={flavor.id} value={flavor.id}>
+                                    {flavor.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+                        
                         <Tabs defaultValue="one-time" className="w-full">
                           <TabsList className="grid w-full grid-cols-2">
                             <TabsTrigger value="one-time" data-testid={`tab-one-time-${product.id}`}>
@@ -235,8 +264,23 @@ export default function ShopV2() {
                           </TabsList>
                           <TabsContent value="one-time" className="mt-2">
                             <Button
-                              onClick={() => oneTimePurchase(product.id)}
-                              disabled={addToCartMutation.isPending || addedToCart.has(product.id)}
+                              onClick={() => {
+                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
+                                if (isMultiFlavor && !flavorId) {
+                                  toast({ 
+                                    title: "Please select a flavor", 
+                                    description: "Choose which flavor you'd like from the dropdown above",
+                                    variant: "destructive" 
+                                  });
+                                  return;
+                                }
+                                oneTimePurchase(product.id, flavorId);
+                              }}
+                              disabled={
+                                addToCartMutation.isPending || 
+                                addedToCart.has(product.id) ||
+                                (isMultiFlavor && !selectedFlavors[product.id])
+                              }
                               className="w-full"
                               data-testid={`button-add-one-time-${product.id}`}
                             >
@@ -266,8 +310,22 @@ export default function ShopV2() {
                               </div>
                             )}
                             <Button
-                              onClick={() => subscriptionPurchase(product.id, 'weekly')}
-                              disabled={addToCartMutation.isPending}
+                              onClick={() => {
+                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
+                                if (isMultiFlavor && !flavorId) {
+                                  toast({ 
+                                    title: "Please select a flavor", 
+                                    description: "Choose which flavor you'd like from the dropdown above",
+                                    variant: "destructive" 
+                                  });
+                                  return;
+                                }
+                                subscriptionPurchase(product.id, 'weekly', flavorId);
+                              }}
+                              disabled={
+                                addToCartMutation.isPending ||
+                                (isMultiFlavor && !selectedFlavors[product.id])
+                              }
                               variant="outline"
                               className="w-full"
                               data-testid={`button-subscribe-weekly-${product.id}`}
@@ -276,8 +334,22 @@ export default function ShopV2() {
                               Weekly
                             </Button>
                             <Button
-                              onClick={() => subscriptionPurchase(product.id, 'bi-weekly')}
-                              disabled={addToCartMutation.isPending}
+                              onClick={() => {
+                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
+                                if (isMultiFlavor && !flavorId) {
+                                  toast({ 
+                                    title: "Please select a flavor", 
+                                    description: "Choose which flavor you'd like from the dropdown above",
+                                    variant: "destructive" 
+                                  });
+                                  return;
+                                }
+                                subscriptionPurchase(product.id, 'bi-weekly', flavorId);
+                              }}
+                              disabled={
+                                addToCartMutation.isPending ||
+                                (isMultiFlavor && !selectedFlavors[product.id])
+                              }
                               variant="outline"
                               className="w-full"
                               data-testid={`button-subscribe-biweekly-${product.id}`}
@@ -286,8 +358,22 @@ export default function ShopV2() {
                               Every 2 Weeks
                             </Button>
                             <Button
-                              onClick={() => subscriptionPurchase(product.id, 'every-4-weeks')}
-                              disabled={addToCartMutation.isPending}
+                              onClick={() => {
+                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
+                                if (isMultiFlavor && !flavorId) {
+                                  toast({ 
+                                    title: "Please select a flavor", 
+                                    description: "Choose which flavor you'd like from the dropdown above",
+                                    variant: "destructive" 
+                                  });
+                                  return;
+                                }
+                                subscriptionPurchase(product.id, 'every-4-weeks', flavorId);
+                              }}
+                              disabled={
+                                addToCartMutation.isPending ||
+                                (isMultiFlavor && !selectedFlavors[product.id])
+                              }
                               variant="outline"
                               className="w-full"
                               data-testid={`button-subscribe-monthly-${product.id}`}

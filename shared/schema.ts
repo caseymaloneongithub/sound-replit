@@ -181,6 +181,7 @@ export const retailCartItems = pgTable("retail_cart_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   sessionId: text("session_id").notNull(),
   retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id),
+  selectedFlavorId: varchar("selected_flavor_id").references(() => flavors.id), // For multi-flavor products, tracks which flavor customer selected
   quantity: integer("quantity").notNull().default(1),
   isSubscription: boolean("is_subscription").notNull().default(false),
   subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
@@ -191,6 +192,7 @@ export const retailOrderItemsV2 = pgTable("retail_order_items_v2", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orderId: varchar("order_id").notNull().references(() => retailOrders.id),
   retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id),
+  selectedFlavorId: varchar("selected_flavor_id").references(() => flavors.id), // For multi-flavor products, tracks which flavor customer selected
   quantity: integer("quantity").notNull(),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
 });
@@ -226,6 +228,7 @@ export const retailSubscriptionItems = pgTable("retail_subscription_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   subscriptionId: varchar("subscription_id").notNull().references(() => retailSubscriptions.id, { onDelete: 'cascade' }),
   retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id),
+  selectedFlavorId: varchar("selected_flavor_id").references(() => flavors.id), // For multi-flavor products, tracks which flavor customer selected
   quantity: integer("quantity").notNull().default(1),
 });
 

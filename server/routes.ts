@@ -4103,11 +4103,22 @@ If you have any questions, please don't hesitate to reach out!`,
   app.post("/api/retail-cart", async (req, res) => {
     try {
       const sessionId = req.sessionID || "guest";
-      const { retailProductId, quantity, isSubscription, subscriptionFrequency } = req.body;
+      const { retailProductId, selectedFlavorId, quantity, isSubscription, subscriptionFrequency } = req.body;
+      
+      // Validate that multi-flavor products have a selected flavor
+      const product = await storage.getRetailProduct(retailProductId);
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+      
+      if (product.productType === 'multi-flavor' && !selectedFlavorId) {
+        return res.status(400).json({ message: "Please select a flavor for this variety pack" });
+      }
       
       const cartItem = await storage.addRetailProductToCart({
         sessionId,
         retailProductId,
+        selectedFlavorId: selectedFlavorId || null,
         quantity: quantity || 1,
         isSubscription: isSubscription || false,
         subscriptionFrequency: isSubscription ? subscriptionFrequency : null,
