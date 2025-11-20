@@ -1,6 +1,7 @@
 import { 
   type Flavor, type InsertFlavor,
   type RetailProduct, type InsertRetailProduct,
+  type InsertRetailProductFlavor,
   type WholesaleUnitType, type InsertWholesaleUnitType,
   type WholesaleUnitTypeFlavor, type InsertWholesaleUnitTypeFlavor,
   type WholesaleCustomerPricing, type InsertWholesaleCustomerPricing,
@@ -26,6 +27,7 @@ import {
   type LeadTouchPoint, type InsertLeadTouchPoint,
   flavors,
   retailProducts,
+  retailProductFlavors,
   wholesaleUnitTypes,
   wholesaleUnitTypeFlavors,
   wholesaleCustomerPricing,
@@ -124,11 +126,12 @@ export interface IStorage {
   deleteFlavor(id: string): Promise<void>;
   
   // NEW SCHEMA - Retail Product management
-  getRetailProducts(includeInactive?: boolean): Promise<(RetailProduct & { flavor: Flavor })[]>;
-  getRetailProduct(id: string): Promise<(RetailProduct & { flavor: Flavor }) | undefined>;
+  getRetailProducts(includeInactive?: boolean): Promise<(RetailProduct & { flavor: Flavor | null, flavors: Flavor[] })[]>;
+  getRetailProduct(id: string): Promise<(RetailProduct & { flavor: Flavor | null, flavors: Flavor[] }) | undefined>;
   createRetailProduct(product: InsertRetailProduct): Promise<RetailProduct>;
   updateRetailProduct(id: string, updates: Partial<InsertRetailProduct>): Promise<RetailProduct | undefined>;
   deleteRetailProduct(id: string): Promise<void>;
+  setRetailProductFlavors(productId: string, flavorIds: string[]): Promise<void>;
   
   // NEW SCHEMA - Wholesale Unit Type management
   getWholesaleUnitTypes(includeInactive?: boolean): Promise<WholesaleUnitType[]>;
@@ -157,7 +160,7 @@ export interface IStorage {
   removeFromCart(id: string): Promise<void>;
   clearCart(sessionId: string): Promise<void>;
   
-  getRetailCart(sessionId: string, client?: any): Promise<Array<RetailCartItem & { retailProduct: RetailProduct & { flavor: Flavor } }>>;
+  getRetailCart(sessionId: string, client?: any): Promise<Array<RetailCartItem & { retailProduct: RetailProduct & { flavor: Flavor | null, flavors: Flavor[] } }>>;
   addRetailProductToCart(item: InsertRetailCartItem): Promise<RetailCartItem>;
   updateRetailCartItemQuantity(id: string, quantity: number): Promise<RetailCartItem | undefined>;
   removeRetailCartItem(id: string): Promise<void>;
@@ -741,83 +744,88 @@ export class PostgresStorage implements IStorage {
     await db.delete(flavors).where(eq(flavors.id, id));
   }
 
+  // Helper function to attach multi-flavor data to retail products
+  private async attachRetailProductFlavors<T extends RetailProduct>(
+    products: T[]
+  ): Promise<(T & { flavor: Flavor | null; flavors: Flavor[] })[]> {
+    if (products.length === 0) {
+      return [];
+    }
+
+    // Get all multi-flavor product IDs
+    const multiFlavorProductIds = products
+      .filter(p => p.productType === 'multi-flavor')
+      .map(p => p.id);
+
+    // Fetch multi-flavor associations if any exist
+    let multiFlavorMap = new Map<string, Flavor[]>();
+    if (multiFlavorProductIds.length > 0) {
+      const multiFlavorResults = await db
+        .select({
+          retailProductId: retailProductFlavors.retailProductId,
+          flavor: flavors,
+        })
+        .from(retailProductFlavors)
+        .innerJoin(flavors, eq(retailProductFlavors.flavorId, flavors.id))
+        .where(inArray(retailProductFlavors.retailProductId, multiFlavorProductIds));
+
+      // Build map of productId -> flavors[]
+      for (const row of multiFlavorResults) {
+        if (!multiFlavorMap.has(row.retailProductId)) {
+          multiFlavorMap.set(row.retailProductId, []);
+        }
+        multiFlavorMap.get(row.retailProductId)!.push(row.flavor);
+      }
+    }
+
+    // Merge results: single-flavor products get flavor + empty flavors[], multi-flavor get null + flavors[]
+    return products.map(product => {
+      const flavors = multiFlavorMap.get(product.id) || [];
+      return {
+        ...product,
+        flavor: product.productType === 'multi-flavor' ? null : (product as any).flavor,
+        flavors,
+      };
+    });
+  }
+
   // NEW SCHEMA - Retail Product management implementation
-  async getRetailProducts(includeInactive = false): Promise<(RetailProduct & { flavor: Flavor })[]> {
+  async getRetailProducts(includeInactive = false): Promise<(RetailProduct & { flavor: Flavor | null; flavors: Flavor[] })[]> {
     const query = db
-      .select({
-        id: retailProducts.id,
-        flavorId: retailProducts.flavorId,
-        unitType: retailProducts.unitType,
-        unitDescription: retailProducts.unitDescription,
-        price: retailProducts.price,
-        subscriptionDiscount: retailProducts.subscriptionDiscount,
-        isActive: retailProducts.isActive,
-        displayOrder: retailProducts.displayOrder,
-        flavor: flavors,
-      })
+      .select()
       .from(retailProducts)
       .leftJoin(flavors, eq(retailProducts.flavorId, flavors.id))
       .orderBy(retailProducts.unitType, retailProducts.displayOrder);
 
-    if (!includeInactive) {
-      const results = await query.where(eq(retailProducts.isActive, true));
-      return results.map(r => ({
-        id: r.id,
-        flavorId: r.flavorId,
-        unitType: r.unitType,
-        unitDescription: r.unitDescription,
-        price: r.price,
-        subscriptionDiscount: r.subscriptionDiscount,
-        isActive: r.isActive,
-        displayOrder: r.displayOrder,
-        flavor: r.flavor!,
-      }));
-    }
+    const results = includeInactive 
+      ? await query
+      : await query.where(eq(retailProducts.isActive, true));
 
-    const results = await query;
-    return results.map(r => ({
-      id: r.id,
-      flavorId: r.flavorId,
-      unitType: r.unitType,
-      unitDescription: r.unitDescription,
-      price: r.price,
-      subscriptionDiscount: r.subscriptionDiscount,
-      isActive: r.isActive,
-      displayOrder: r.displayOrder,
-      flavor: r.flavor!,
+    // Map results to include both product and flavor data
+    const productsWithFlavor = results.map(r => ({
+      ...r.retail_products,
+      flavor: r.flavors,
     }));
+
+    return this.attachRetailProductFlavors(productsWithFlavor);
   }
 
-  async getRetailProduct(id: string): Promise<(RetailProduct & { flavor: Flavor }) | undefined> {
+  async getRetailProduct(id: string): Promise<(RetailProduct & { flavor: Flavor | null; flavors: Flavor[] }) | undefined> {
     const result = await db
-      .select({
-        id: retailProducts.id,
-        flavorId: retailProducts.flavorId,
-        unitType: retailProducts.unitType,
-        unitDescription: retailProducts.unitDescription,
-        price: retailProducts.price,
-        subscriptionDiscount: retailProducts.subscriptionDiscount,
-        isActive: retailProducts.isActive,
-        displayOrder: retailProducts.displayOrder,
-        flavor: flavors,
-      })
+      .select()
       .from(retailProducts)
       .leftJoin(flavors, eq(retailProducts.flavorId, flavors.id))
       .where(eq(retailProducts.id, id));
 
-    if (!result[0] || !result[0].flavor) return undefined;
-    
-    return {
-      id: result[0].id,
-      flavorId: result[0].flavorId,
-      unitType: result[0].unitType,
-      unitDescription: result[0].unitDescription,
-      price: result[0].price,
-      subscriptionDiscount: result[0].subscriptionDiscount,
-      isActive: result[0].isActive,
-      displayOrder: result[0].displayOrder,
-      flavor: result[0].flavor,
+    if (!result[0]) return undefined;
+
+    const productWithFlavor = {
+      ...result[0].retail_products,
+      flavor: result[0].flavors,
     };
+
+    const enriched = await this.attachRetailProductFlavors([productWithFlavor]);
+    return enriched[0];
   }
 
   async createRetailProduct(insertRetailProduct: InsertRetailProduct): Promise<RetailProduct> {
@@ -855,6 +863,21 @@ export class PostgresStorage implements IStorage {
 
     // If no references exist, safe to delete
     await db.delete(retailProducts).where(eq(retailProducts.id, id));
+  }
+
+  async setRetailProductFlavors(productId: string, flavorIds: string[]): Promise<void> {
+    // Delete existing flavor associations
+    await db.delete(retailProductFlavors).where(eq(retailProductFlavors.retailProductId, productId));
+
+    // Add new flavor associations
+    if (flavorIds.length > 0) {
+      await db.insert(retailProductFlavors).values(
+        flavorIds.map(flavorId => ({
+          retailProductId: productId,
+          flavorId,
+        }))
+      );
+    }
   }
 
   // NEW SCHEMA - Wholesale Unit Type management implementation
@@ -1060,39 +1083,44 @@ export class PostgresStorage implements IStorage {
     await db.delete(cartItems).where(eq(cartItems.sessionId, sessionId));
   }
 
-  async getRetailCart(sessionId: string, client?: any): Promise<Array<RetailCartItem & { retailProduct: RetailProduct & { flavor: Flavor } }>> {
+  async getRetailCart(sessionId: string, client?: any): Promise<Array<RetailCartItem & { retailProduct: RetailProduct & { flavor: Flavor | null; flavors: Flavor[] } }>> {
     if (client) {
-      // Transaction-aware with row locking
+      // Transaction-aware with row locking - use raw SQL for cart items and products, then hydrate multi-flavor
       const result = await client.query(
         `SELECT 
           rc.*,
-          rp.id as rp_id, rp.flavor_id, rp.unit_type, rp.price, rp.subscription_discount, rp.is_active as rp_is_active,
+          rp.id as rp_id, rp.product_type, rp.product_name, rp.flavor_id, rp.unit_type, rp.unit_description,
+          rp.price, rp.subscription_discount, rp.product_image_url, rp.is_active as rp_is_active, rp.display_order,
           f.id as f_id, f.name as f_name, f.description as f_description, f.flavor_profile, f.ingredients, 
-          f.primary_image_url, f.secondary_image_url, f.is_active as f_is_active
+          f.primary_image_url, f.secondary_image_url, f.is_active as f_is_active, f.display_order as f_display_order
         FROM retail_cart_items rc
         INNER JOIN retail_products rp ON rc.retail_product_id = rp.id
-        INNER JOIN flavors f ON rp.flavor_id = f.id
+        LEFT JOIN flavors f ON rp.flavor_id = f.id
         WHERE rc.session_id = $1
         FOR UPDATE OF rc`,
         [sessionId]
       );
       
-      return result.rows.map((row: any) => ({
+      const baseCartItems = result.rows.map((row: any) => ({
         id: row.id,
         sessionId: row.session_id,
         retailProductId: row.retail_product_id,
         quantity: row.quantity,
         isSubscription: row.is_subscription,
         subscriptionFrequency: row.subscription_frequency,
-        createdAt: row.created_at,
         retailProduct: {
           id: row.rp_id,
+          productType: row.product_type || 'single-flavor',
+          productName: row.product_name,
           flavorId: row.flavor_id,
           unitType: row.unit_type,
+          unitDescription: row.unit_description,
           price: row.price,
           subscriptionDiscount: row.subscription_discount,
+          productImageUrl: row.product_image_url,
           isActive: row.rp_is_active,
-          flavor: {
+          displayOrder: row.display_order,
+          flavor: row.f_id ? {
             id: row.f_id,
             name: row.f_name,
             description: row.f_description,
@@ -1101,8 +1129,18 @@ export class PostgresStorage implements IStorage {
             primaryImageUrl: row.primary_image_url,
             secondaryImageUrl: row.secondary_image_url,
             isActive: row.f_is_active,
-          }
+            displayOrder: row.f_display_order,
+          } : null
         }
+      }));
+
+      // Hydrate multi-flavor products
+      const products = baseCartItems.map((item: any) => item.retailProduct);
+      const enrichedProducts = await this.attachRetailProductFlavors(products);
+      
+      return baseCartItems.map((item: any, index: number) => ({
+        ...item,
+        retailProduct: enrichedProducts[index]
       }));
     }
     
@@ -1110,15 +1148,24 @@ export class PostgresStorage implements IStorage {
       .select()
       .from(retailCartItems)
       .innerJoin(retailProducts, eq(retailCartItems.retailProductId, retailProducts.id))
-      .innerJoin(flavors, eq(retailProducts.flavorId, flavors.id))
+      .leftJoin(flavors, eq(retailProducts.flavorId, flavors.id))
       .where(eq(retailCartItems.sessionId, sessionId));
 
-    return items.map(item => ({
+    const cartItemsWithProducts = items.map(item => ({
       ...item.retail_cart_items,
       retailProduct: {
         ...item.retail_products,
         flavor: item.flavors
       }
+    }));
+
+    // Hydrate multi-flavor products
+    const products = cartItemsWithProducts.map(item => item.retailProduct);
+    const enrichedProducts = await this.attachRetailProductFlavors(products);
+
+    return cartItemsWithProducts.map((item, index) => ({
+      ...item,
+      retailProduct: enrichedProducts[index]
     }));
   }
 
