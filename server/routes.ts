@@ -1154,6 +1154,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.sendStatus(404);
       }
       
+      // Files in product-images directory don't need ACL checking (admin-uploaded)
+      if (filename.startsWith('product-images/')) {
+        await objectStorageService.downloadObject(file, res, 86400);
+        return;
+      }
+      
       // Check if file is marked as public in ACL policy
       const aclPolicy = await getObjectAclPolicy(file);
       if (!aclPolicy || aclPolicy.visibility !== 'public') {
