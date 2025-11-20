@@ -11,13 +11,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
 import logo from "@assets/text-stacked-black_1762299663824.png";
 
-type RetailProductWithFlavor = RetailProduct & { flavor: Flavor };
+type RetailProductWithFlavors = RetailProduct & {
+  flavor: Flavor | null;
+  flavors: Flavor[];
+};
 
 export default function ShopV2() {
   const [addedToCart, setAddedToCart] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
-  const { data: products, isLoading } = useQuery<RetailProductWithFlavor[]>({
+  const { data: products, isLoading } = useQuery<RetailProductWithFlavors[]>({
     queryKey: ["/api/retail-products"],
   });
 
@@ -65,7 +68,7 @@ export default function ShopV2() {
     }
     acc[product.unitType].push(product);
     return acc;
-  }, {} as Record<string, RetailProductWithFlavor[]>) || {};
+  }, {} as Record<string, RetailProductWithFlavors[]>) || {};
 
   const oneTimePurchase = (retailProductId: string) => {
     addToCartMutation.mutate({
@@ -137,16 +140,32 @@ export default function ShopV2() {
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {unitProducts
-                  .filter(p => p.isActive && p.flavor.isActive)
+                  .filter(p => {
+                    if (!p.isActive) return false;
+                    // For single-flavor products, check if the flavor is active
+                    if (p.productType === 'single-flavor' && p.flavor) {
+                      return p.flavor.isActive;
+                    }
+                    // For multi-flavor products, check if all flavors are active
+                    if (p.productType === 'multi-flavor') {
+                      return p.flavors.every(f => f.isActive);
+                    }
+                    return true;
+                  })
                   .sort((a, b) => a.displayOrder - b.displayOrder)
-                  .map((product) => (
+                  .map((product) => {
+                    const isMultiFlavor = product.productType === 'multi-flavor';
+                    const imageUrl = isMultiFlavor ? product.productImageUrl : product.flavor?.primaryImageUrl;
+                    const displayName = isMultiFlavor ? product.productName : product.flavor?.name;
+                    
+                    return (
                     <Card key={product.id} data-testid={`card-product-${product.id}`} className="overflow-hidden">
                       <CardHeader className="p-0">
                         <div className="aspect-square bg-muted overflow-hidden">
-                          {product.flavor.primaryImageUrl ? (
+                          {imageUrl ? (
                             <img 
-                              src={product.flavor.primaryImageUrl} 
-                              alt={product.flavor.name}
+                              src={imageUrl} 
+                              alt={displayName || 'Product'}
                               className="w-full h-full object-cover"
                               data-testid={`image-${product.id}`}
                             />
@@ -158,15 +177,38 @@ export default function ShopV2() {
                         </div>
                       </CardHeader>
                       <CardContent className="p-4">
-                        <h3 className="text-xl font-semibold mb-2" data-testid={`text-flavor-${product.id}`}>
-                          {product.flavor.name}
-                        </h3>
-                        <Badge variant="secondary" className="mb-2" data-testid={`badge-profile-${product.id}`}>
-                          {product.flavor.flavorProfile}
-                        </Badge>
-                        <p className="text-sm text-muted-foreground mb-3" data-testid={`text-description-${product.id}`}>
-                          {product.flavor.description}
-                        </p>
+                        <div className="flex items-center gap-2 flex-wrap mb-2">
+                          <h3 className="text-xl font-semibold" data-testid={`text-flavor-${product.id}`}>
+                            {displayName}
+                          </h3>
+                          {isMultiFlavor && (
+                            <Badge variant="outline" className="text-xs">
+                              Variety
+                            </Badge>
+                          )}
+                        </div>
+                        {!isMultiFlavor && product.flavor && (
+                          <Badge variant="secondary" className="mb-2" data-testid={`badge-profile-${product.id}`}>
+                            {product.flavor.flavorProfile}
+                          </Badge>
+                        )}
+                        {!isMultiFlavor && product.flavor && (
+                          <p className="text-sm text-muted-foreground mb-3" data-testid={`text-description-${product.id}`}>
+                            {product.flavor.description}
+                          </p>
+                        )}
+                        {isMultiFlavor && product.flavors.length > 0 && (
+                          <div className="mb-3">
+                            <p className="text-xs text-muted-foreground mb-1">Includes:</p>
+                            <div className="flex flex-wrap gap-1">
+                              {product.flavors.map((flavor) => (
+                                <Badge key={flavor.id} variant="secondary" className="text-xs">
+                                  {flavor.name}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         <p className="text-sm text-muted-foreground mb-3" data-testid={`text-unit-${product.id}`}>
                           {product.unitDescription}
                         </p>
@@ -257,7 +299,8 @@ export default function ShopV2() {
                         </Tabs>
                       </CardFooter>
                     </Card>
-                  ))}
+                    );
+                  })}
             </div>
           </div>
         ))}

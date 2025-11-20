@@ -46,22 +46,28 @@ export default function AdminRetailProducts() {
 
   const createRetailProductMutation = useMutation({
     mutationFn: async (data: any) => {
+      // Safely serialize price and discount with proper defaults
+      const price = typeof data.price === 'number' && !isNaN(data.price) ? data.price : 0;
+      const subscriptionDiscount = typeof data.subscriptionDiscount === 'number' && !isNaN(data.subscriptionDiscount) 
+        ? data.subscriptionDiscount 
+        : 10;
+      
       const payload = {
         productType: data.productType,
         productName: data.productType === 'multi-flavor' ? data.productName : null,
         flavorId: data.productType === 'single-flavor' ? data.flavorId : null,
         unitType: data.unitType,
         unitDescription: data.unitDescription,
-        price: data.price.toString(),
-        subscriptionDiscount: data.subscriptionDiscount.toString(),
+        price: price.toFixed(2),
+        subscriptionDiscount: subscriptionDiscount.toFixed(2),
         productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
         isActive: data.isActive,
         displayOrder: data.displayOrder,
       };
       const product = await apiRequest('POST', '/api/retail-products', payload);
       
-      // If multi-flavor, set the flavor associations
-      if (data.productType === 'multi-flavor' && data.selectedFlavorIds.length > 0) {
+      // If multi-flavor, set the flavor associations (including empty array)
+      if (data.productType === 'multi-flavor' && Array.isArray(data.selectedFlavorIds)) {
         await apiRequest('POST', `/api/retail-products/${product.id}/flavors`, {
           flavorIds: data.selectedFlavorIds
         });
@@ -94,12 +100,34 @@ export default function AdminRetailProducts() {
 
   const updateRetailProductMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      // Safely serialize price and discount with proper defaults
+      const price = typeof data.price === 'number' && !isNaN(data.price) ? data.price : 0;
+      const subscriptionDiscount = typeof data.subscriptionDiscount === 'number' && !isNaN(data.subscriptionDiscount) 
+        ? data.subscriptionDiscount 
+        : 10;
+      
       const payload = {
-        ...data,
-        price: data.price.toFixed(2), // Serialize to string for decimal schema
-        subscriptionDiscount: data.subscriptionDiscount.toFixed(2), // Serialize to string for decimal schema
+        productType: data.productType,
+        productName: data.productType === 'multi-flavor' ? data.productName : null,
+        flavorId: data.productType === 'single-flavor' ? data.flavorId : null,
+        unitType: data.unitType,
+        unitDescription: data.unitDescription,
+        price: price.toFixed(2),
+        subscriptionDiscount: subscriptionDiscount.toFixed(2),
+        productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
+        isActive: data.isActive,
+        displayOrder: data.displayOrder,
       };
-      return apiRequest('PATCH', `/api/retail-products/${id}`, payload);
+      const product = await apiRequest('PATCH', `/api/retail-products/${id}`, payload);
+      
+      // If multi-flavor, always update the flavor associations (including empty array)
+      if (data.productType === 'multi-flavor' && Array.isArray(data.selectedFlavorIds)) {
+        await apiRequest('POST', `/api/retail-products/${id}/flavors`, {
+          flavorIds: data.selectedFlavorIds
+        });
+      }
+      
+      return product;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/retail-products'] });
@@ -437,11 +465,15 @@ export default function AdminRetailProducts() {
                           onClick={() => {
                             setEditingRetailProduct(product.id);
                             setRetailProductForm({
-                              flavorId: product.flavorId,
+                              productType: product.productType || 'single-flavor',
+                              productName: product.productName || '',
+                              flavorId: product.flavorId || '',
+                              selectedFlavorIds: product.flavors.map(f => f.id),
                               unitType: product.unitType,
                               unitDescription: product.unitDescription,
                               price: Number(product.price),
                               subscriptionDiscount: product.subscriptionDiscount != null ? Number(product.subscriptionDiscount) : 10,
+                              productImageUrl: product.productImageUrl || '',
                               isActive: product.isActive,
                               displayOrder: product.displayOrder
                             });
@@ -457,24 +489,92 @@ export default function AdminRetailProducts() {
                           <DialogDescription>Update product details</DialogDescription>
                         </DialogHeader>
                         <div className="space-y-4 py-4">
+                          {/* Product Type Display (read-only for edit) */}
                           <div>
-                            <Label>Flavor</Label>
-                            <Select
-                              value={retailProductForm.flavorId}
-                              onValueChange={(value) => setRetailProductForm({ ...retailProductForm, flavorId: value })}
-                            >
-                              <SelectTrigger data-testid="select-edit-retail-flavor">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {flavors.map((flavor) => (
-                                  <SelectItem key={flavor.id} value={flavor.id}>
-                                    {flavor.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <Label>Product Type</Label>
+                            <div className="text-sm text-muted-foreground mt-1">
+                              {retailProductForm.productType === 'single-flavor' ? 'Single Flavor' : 'Variety Pack (Multiple Flavors)'}
+                            </div>
                           </div>
+
+                          {/* Product Name (multi-flavor only) */}
+                          {retailProductForm.productType === 'multi-flavor' && (
+                            <div>
+                              <Label htmlFor="edit-product-name">Product Name</Label>
+                              <Input
+                                id="edit-product-name"
+                                value={retailProductForm.productName}
+                                onChange={(e) => setRetailProductForm({ ...retailProductForm, productName: e.target.value })}
+                                placeholder="e.g., Variety Pack, Mixed Case"
+                                data-testid="input-edit-product-name"
+                              />
+                            </div>
+                          )}
+
+                          {/* Single Flavor Selector */}
+                          {retailProductForm.productType === 'single-flavor' && (
+                            <div>
+                              <Label>Flavor</Label>
+                              <Select
+                                value={retailProductForm.flavorId}
+                                onValueChange={(value) => setRetailProductForm({ ...retailProductForm, flavorId: value })}
+                              >
+                                <SelectTrigger data-testid="select-edit-retail-flavor">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {flavors.map((flavor) => (
+                                    <SelectItem key={flavor.id} value={flavor.id}>
+                                      {flavor.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+
+                          {/* Multi-Flavor Checkbox List */}
+                          {retailProductForm.productType === 'multi-flavor' && (
+                            <div>
+                              <Label>Select Flavors (Choose Multiple)</Label>
+                              <div className="border rounded-md p-4 space-y-2 max-h-48 overflow-y-auto">
+                                {flavors.map((flavor) => (
+                                  <label key={flavor.id} className="flex items-center gap-2 cursor-pointer hover-elevate p-2 rounded">
+                                    <input
+                                      type="checkbox"
+                                      checked={retailProductForm.selectedFlavorIds.includes(flavor.id)}
+                                      onChange={(e) => {
+                                        const newSelection = e.target.checked
+                                          ? [...retailProductForm.selectedFlavorIds, flavor.id]
+                                          : retailProductForm.selectedFlavorIds.filter(id => id !== flavor.id);
+                                        setRetailProductForm({ ...retailProductForm, selectedFlavorIds: newSelection });
+                                      }}
+                                      className="rounded"
+                                      data-testid={`checkbox-edit-flavor-${flavor.id}`}
+                                    />
+                                    <span className="text-sm">{flavor.name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Selected: {retailProductForm.selectedFlavorIds.length} flavor(s)
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Product Image URL (multi-flavor only) */}
+                          {retailProductForm.productType === 'multi-flavor' && (
+                            <div>
+                              <Label htmlFor="edit-product-image">Product Image URL</Label>
+                              <Input
+                                id="edit-product-image"
+                                value={retailProductForm.productImageUrl}
+                                onChange={(e) => setRetailProductForm({ ...retailProductForm, productImageUrl: e.target.value })}
+                                placeholder="https://..."
+                                data-testid="input-edit-product-image-url"
+                              />
+                            </div>
+                          )}
                           <div>
                             <Label>Unit Type</Label>
                             <Input
