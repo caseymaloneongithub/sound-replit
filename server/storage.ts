@@ -795,7 +795,7 @@ export class PostgresStorage implements IStorage {
       .select()
       .from(retailProducts)
       .leftJoin(flavors, eq(retailProducts.flavorId, flavors.id))
-      .orderBy(retailProducts.unitType, retailProducts.displayOrder);
+      .orderBy(retailProducts.displayOrder, retailProducts.unitType);
 
     const results = includeInactive 
       ? await query
