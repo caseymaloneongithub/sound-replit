@@ -169,11 +169,11 @@ export default function AdminWholesaleUnits() {
           </p>
         </div>
 
-        <Card className="border-orange-600/30 mb-6">
+        <Card className="mb-6">
           <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Box className="w-5 h-5 text-orange-600" />
+                <Box className="w-5 h-5" />
                 Wholesale Packaging Types
               </CardTitle>
               <CardDescription>Define wholesale unit types with default pricing and which flavors are available for each unit</CardDescription>
