@@ -17,11 +17,15 @@ export default function AdminRetailProducts() {
   const { toast } = useToast();
   const [editingRetailProduct, setEditingRetailProduct] = useState<string | null>(null);
   const [retailProductForm, setRetailProductForm] = useState({
+    productType: 'single-flavor' as 'single-flavor' | 'multi-flavor',
+    productName: '',
     flavorId: '',
+    selectedFlavorIds: [] as string[],
     unitType: '',
     unitDescription: '',
     price: 0,
     subscriptionDiscount: 10,
+    productImageUrl: '',
     isActive: true,
     displayOrder: 0
   });
@@ -37,16 +41,44 @@ export default function AdminRetailProducts() {
   const createRetailProductMutation = useMutation({
     mutationFn: async (data: any) => {
       const payload = {
-        ...data,
-        price: data.price.toFixed(2), // Serialize to string for decimal schema
-        subscriptionDiscount: data.subscriptionDiscount.toFixed(2), // Serialize to string for decimal schema
+        productType: data.productType,
+        productName: data.productType === 'multi-flavor' ? data.productName : null,
+        flavorId: data.productType === 'single-flavor' ? data.flavorId : null,
+        unitType: data.unitType,
+        unitDescription: data.unitDescription,
+        price: data.price.toString(),
+        subscriptionDiscount: data.subscriptionDiscount.toString(),
+        productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
+        isActive: data.isActive,
+        displayOrder: data.displayOrder,
       };
-      return apiRequest('POST', '/api/retail-products', payload);
+      const product = await apiRequest('POST', '/api/retail-products', payload);
+      
+      // If multi-flavor, set the flavor associations
+      if (data.productType === 'multi-flavor' && data.selectedFlavorIds.length > 0) {
+        await apiRequest('POST', `/api/retail-products/${product.id}/flavors`, {
+          flavorIds: data.selectedFlavorIds
+        });
+      }
+      
+      return product;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/retail-products'] });
       setEditingRetailProduct(null);
-      setRetailProductForm({ flavorId: '', unitType: '', unitDescription: '', price: 0, subscriptionDiscount: 10, isActive: true, displayOrder: 0 });
+      setRetailProductForm({
+        productType: 'single-flavor',
+        productName: '',
+        flavorId: '',
+        selectedFlavorIds: [],
+        unitType: '',
+        unitDescription: '',
+        price: 0,
+        subscriptionDiscount: 10,
+        productImageUrl: '',
+        isActive: true,
+        displayOrder: 0
+      });
       toast({ title: "Retail product created", description: "Retail product has been created successfully" });
     },
     onError: (error: any) => {
@@ -122,27 +154,116 @@ export default function AdminRetailProducts() {
               <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Create New Retail Product</DialogTitle>
-                  <DialogDescription>Add a flavor + unit combination</DialogDescription>
+                  <DialogDescription>
+                    Create a single-flavor product or a variety pack with multiple flavors
+                  </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
+                  {/* Product Type Selector */}
                   <div>
-                    <Label htmlFor="retail-flavor">Flavor</Label>
+                    <Label htmlFor="retail-product-type">Product Type</Label>
                     <Select
-                      value={retailProductForm.flavorId}
-                      onValueChange={(value) => setRetailProductForm({ ...retailProductForm, flavorId: value })}
+                      value={retailProductForm.productType}
+                      onValueChange={(value: 'single-flavor' | 'multi-flavor') => 
+                        setRetailProductForm({ ...retailProductForm, productType: value })
+                      }
                     >
-                      <SelectTrigger data-testid="select-retail-flavor">
-                        <SelectValue placeholder="Select a flavor" />
+                      <SelectTrigger data-testid="select-product-type">
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {flavors.map((flavor) => (
-                          <SelectItem key={flavor.id} value={flavor.id}>
-                            {flavor.name}
-                          </SelectItem>
-                        ))}
+                        <SelectItem value="single-flavor">Single Flavor</SelectItem>
+                        <SelectItem value="multi-flavor">Variety Pack (Multiple Flavors)</SelectItem>
                       </SelectContent>
                     </Select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {retailProductForm.productType === 'single-flavor'
+                        ? 'Standard product with one flavor'
+                        : 'Variety pack with multiple flavor options'}
+                    </p>
                   </div>
+
+                  {/* Product Name (multi-flavor only) */}
+                  {retailProductForm.productType === 'multi-flavor' && (
+                    <div>
+                      <Label htmlFor="retail-product-name">Product Name</Label>
+                      <Input
+                        id="retail-product-name"
+                        value={retailProductForm.productName}
+                        onChange={(e) => setRetailProductForm({ ...retailProductForm, productName: e.target.value })}
+                        placeholder="e.g., Variety Pack, Mixed Case"
+                        data-testid="input-product-name"
+                      />
+                    </div>
+                  )}
+
+                  {/* Single Flavor Selector */}
+                  {retailProductForm.productType === 'single-flavor' && (
+                    <div>
+                      <Label htmlFor="retail-flavor">Flavor</Label>
+                      <Select
+                        value={retailProductForm.flavorId}
+                        onValueChange={(value) => setRetailProductForm({ ...retailProductForm, flavorId: value })}
+                      >
+                        <SelectTrigger data-testid="select-retail-flavor">
+                          <SelectValue placeholder="Select a flavor" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {flavors.map((flavor) => (
+                            <SelectItem key={flavor.id} value={flavor.id}>
+                              {flavor.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {/* Multi-Flavor Checkbox List */}
+                  {retailProductForm.productType === 'multi-flavor' && (
+                    <div>
+                      <Label>Select Flavors (Choose Multiple)</Label>
+                      <div className="border rounded-md p-4 space-y-2 max-h-48 overflow-y-auto">
+                        {flavors.map((flavor) => (
+                          <label key={flavor.id} className="flex items-center gap-2 cursor-pointer hover-elevate p-2 rounded">
+                            <input
+                              type="checkbox"
+                              checked={retailProductForm.selectedFlavorIds.includes(flavor.id)}
+                              onChange={(e) => {
+                                const newSelection = e.target.checked
+                                  ? [...retailProductForm.selectedFlavorIds, flavor.id]
+                                  : retailProductForm.selectedFlavorIds.filter(id => id !== flavor.id);
+                                setRetailProductForm({ ...retailProductForm, selectedFlavorIds: newSelection });
+                              }}
+                              className="rounded"
+                              data-testid={`checkbox-flavor-${flavor.id}`}
+                            />
+                            <span className="text-sm">{flavor.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Selected: {retailProductForm.selectedFlavorIds.length} flavor(s)
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Product Image URL (multi-flavor only) */}
+                  {retailProductForm.productType === 'multi-flavor' && (
+                    <div>
+                      <Label htmlFor="retail-product-image">Product Image URL</Label>
+                      <Input
+                        id="retail-product-image"
+                        value={retailProductForm.productImageUrl}
+                        onChange={(e) => setRetailProductForm({ ...retailProductForm, productImageUrl: e.target.value })}
+                        placeholder="https://..."
+                        data-testid="input-product-image-url"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Upload the product image to object storage and paste the URL here
+                      </p>
+                    </div>
+                  )}
                   <div>
                     <Label htmlFor="retail-unit-type">Unit Type</Label>
                     <Input
