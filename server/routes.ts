@@ -938,6 +938,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/retail-products/:id/flavors", isAdmin, async (req, res) => {
+    try {
+      const { flavorIds } = req.body;
+      if (!Array.isArray(flavorIds)) {
+        return res.status(400).json({ message: "flavorIds must be an array" });
+      }
+      await storage.setRetailProductFlavors(req.params.id, flavorIds);
+      res.json({ message: "Product flavors updated successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error setting product flavors: " + error.message });
+    }
+  });
+
   // NEW SCHEMA - Wholesale Unit Type management routes
   app.get("/api/wholesale-unit-types", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
     try {
