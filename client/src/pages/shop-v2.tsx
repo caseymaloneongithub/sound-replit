@@ -188,11 +188,6 @@ export default function ShopV2() {
                           <h3 className="text-xl font-semibold" data-testid={`text-flavor-${product.id}`}>
                             {displayName}
                           </h3>
-                          {isMultiFlavor && (
-                            <Badge variant="outline" className="text-xs">
-                              Variety
-                            </Badge>
-                          )}
                         </div>
                         {!isMultiFlavor && product.flavor && (
                           <Badge variant="secondary" className="mb-2" data-testid={`badge-profile-${product.id}`}>
@@ -206,7 +201,7 @@ export default function ShopV2() {
                         )}
                         {isMultiFlavor && product.flavors.length > 0 && (
                           <div className="mb-3">
-                            <p className="text-xs text-muted-foreground mb-1">Includes:</p>
+                            <p className="text-xs text-muted-foreground mb-1">Flavor Options:</p>
                             <div className="flex flex-wrap gap-1">
                               {product.flavors.map((flavor) => (
                                 <Badge key={flavor.id} variant="secondary" className="text-xs">

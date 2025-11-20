@@ -318,7 +318,7 @@ export default function AdminRetailProducts() {
                 <DialogHeader>
                   <DialogTitle>Create New Retail Product</DialogTitle>
                   <DialogDescription>
-                    Create a single-flavor product or a variety pack with multiple flavors
+                    Create a single-flavor product or a multi-flavor product where customers choose their flavor
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
@@ -336,13 +336,13 @@ export default function AdminRetailProducts() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="single-flavor">Single Flavor</SelectItem>
-                        <SelectItem value="multi-flavor">Variety Pack (Multiple Flavors)</SelectItem>
+                        <SelectItem value="multi-flavor">Multiple Flavors (Customer Chooses)</SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground mt-1">
                       {retailProductForm.productType === 'single-flavor'
                         ? 'Standard product with one flavor'
-                        : 'Variety pack with multiple flavor options'}
+                        : 'Product where customer selects one flavor at checkout'}
                     </p>
                   </div>
 
@@ -354,7 +354,7 @@ export default function AdminRetailProducts() {
                         id="retail-product-name"
                         value={retailProductForm.productName}
                         onChange={(e) => setRetailProductForm({ ...retailProductForm, productName: e.target.value })}
-                        placeholder="e.g., Variety Pack, Mixed Case"
+                        placeholder="e.g., 12-Pack, Case, Mixed Case"
                         data-testid="input-product-name"
                       />
                     </div>
@@ -529,11 +529,6 @@ export default function AdminRetailProducts() {
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap mb-1">
                           <CardTitle>{displayName}</CardTitle>
-                          {isMultiFlavor && (
-                            <Badge variant="outline" className="text-xs">
-                              Variety Pack
-                            </Badge>
-                          )}
                         </div>
                         <CardDescription>{product.unitType}</CardDescription>
                       </div>
@@ -546,7 +541,7 @@ export default function AdminRetailProducts() {
                     <div className="space-y-2 text-sm">
                       {isMultiFlavor && product.flavors.length > 0 && (
                         <div className="mb-3">
-                          <span className="text-muted-foreground text-xs">Includes:</span>
+                          <span className="text-muted-foreground text-xs">Flavor Options:</span>
                           <div className="flex flex-wrap gap-1 mt-1">
                             {product.flavors.map((flavor) => (
                               <Badge key={flavor.id} variant="secondary" className="text-xs">
@@ -616,7 +611,7 @@ export default function AdminRetailProducts() {
                           <div>
                             <Label>Product Type</Label>
                             <div className="text-sm text-muted-foreground mt-1">
-                              {retailProductForm.productType === 'single-flavor' ? 'Single Flavor' : 'Variety Pack (Multiple Flavors)'}
+                              {retailProductForm.productType === 'single-flavor' ? 'Single Flavor' : 'Multiple Flavors (Customer Chooses)'}
                             </div>
                           </div>
 
@@ -628,7 +623,7 @@ export default function AdminRetailProducts() {
                                 id="edit-product-name"
                                 value={retailProductForm.productName}
                                 onChange={(e) => setRetailProductForm({ ...retailProductForm, productName: e.target.value })}
-                                placeholder="e.g., Variety Pack, Mixed Case"
+                                placeholder="e.g., 12-Pack, Case, Mixed Case"
                                 data-testid="input-edit-product-name"
                               />
                             </div>
