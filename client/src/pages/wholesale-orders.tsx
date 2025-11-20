@@ -192,7 +192,7 @@ export default function WholesaleOrders() {
 
     return (
       <div className="space-y-4">
-        {/* Consolidated Items Summary */}
+        {/* Consolidated Items Summary - Grid Layout */}
         {consolidatedList.length > 0 && (
           <Card>
             <CardContent className="pt-6">
@@ -202,27 +202,64 @@ export default function WholesaleOrders() {
                   {consolidatedList.length} {consolidatedList.length === 1 ? 'item type' : 'item types'}
                 </Badge>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {consolidatedList.map((item) => {
-                  const unitType = unitTypes.find(ut => ut.id === item.unitTypeId);
-                  const flavor = flavors.find(f => f.id === item.flavorId);
-                  return (
-                    <div
-                      key={`${item.unitTypeId}-${item.flavorId}`}
-                      className="flex items-center justify-between p-3 border rounded-md"
-                      data-testid={`item-summary-${item.unitTypeId}-${item.flavorId}`}
-                    >
-                      <div>
-                        <div className="font-medium">{flavor?.name || 'Unknown Flavor'}</div>
-                        <div className="text-sm text-muted-foreground">{unitType?.name || 'Unknown Unit'}</div>
-                      </div>
-                      <Badge variant="outline" className="ml-2">
-                        Qty: {item.quantity}
-                      </Badge>
-                    </div>
-                  );
-                })}
-              </div>
+              
+              {/* Build grid: flavors across top, units on side */}
+              {(() => {
+                // Show ALL flavors in columns
+                const gridFlavors = flavors;
+                
+                // Get unique unit types from consolidated items only
+                const uniqueUnitTypeIds = Array.from(new Set(consolidatedList.map(item => item.unitTypeId)));
+                const gridUnitTypes = uniqueUnitTypeIds.map(id => unitTypes.find(ut => ut.id === id)).filter(Boolean);
+                
+                // Create a lookup map for quantities
+                const quantityMap = new Map<string, number>();
+                consolidatedList.forEach(item => {
+                  const key = `${item.unitTypeId}-${item.flavorId}`;
+                  quantityMap.set(key, item.quantity);
+                });
+                
+                return (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="font-semibold">Unit Type</TableHead>
+                          {gridFlavors.map(flavor => (
+                            <TableHead key={flavor!.id} className="text-center font-semibold">
+                              {flavor!.name}
+                            </TableHead>
+                          ))}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {gridUnitTypes.map(unitType => (
+                          <TableRow key={unitType!.id}>
+                            <TableCell className="font-medium">{unitType!.name}</TableCell>
+                            {gridFlavors.map(flavor => {
+                              const key = `${unitType!.id}-${flavor!.id}`;
+                              const quantity = quantityMap.get(key);
+                              return (
+                                <TableCell 
+                                  key={flavor!.id} 
+                                  className="text-center"
+                                  data-testid={`grid-cell-${unitType!.id}-${flavor!.id}`}
+                                >
+                                  {quantity ? (
+                                    <Badge variant="default">{quantity}</Badge>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </TableCell>
+                              );
+                            })}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                );
+              })()}
             </CardContent>
           </Card>
         )}
