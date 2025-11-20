@@ -92,6 +92,14 @@ interface PaymentFailureEmailParams {
   errorMessage: string;
 }
 
+interface SendFileEmailParams {
+  to: string;
+  subject: string;
+  message: string;
+  attachmentPath: string;
+  attachmentFilename: string;
+}
+
 export async function sendPaymentFailureEmail(params: PaymentFailureEmailParams): Promise<void> {
   const transporter = createTransporter();
   
@@ -674,6 +682,50 @@ This notification was sent to all staff members.
     console.log(`[EMAIL] ✅ Sent contact form notification to ${params.staffEmails.length} staff member(s)`);
   } catch (error) {
     console.error('[EMAIL] Failed to send contact form notification:', error);
+    throw error;
+  }
+}
+
+export async function sendFileEmail(params: SendFileEmailParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send file email to:', params.to);
+    console.log('[EMAIL] Subject:', params.subject);
+    console.log('[EMAIL] Attachment:', params.attachmentFilename);
+    return;
+  }
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.to,
+    subject: params.subject,
+    text: params.message,
+    html: `
+<div style="max-width: 600px; margin: 0 auto; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 16px; line-height: 1.6; color: ${BRAND_COLORS.darkGrey};">
+  ${getEmailHeader(params.subject)}
+  
+  <div style="padding: 32px 24px; background-color: ${BRAND_COLORS.white};">
+    <div style="white-space: pre-wrap; color: ${BRAND_COLORS.darkGrey};">${params.message}</div>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: [
+      ...getLogoAttachment(),
+      {
+        filename: params.attachmentFilename,
+        path: params.attachmentPath,
+      }
+    ],
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent file email to ${params.to}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send file email:', error);
     throw error;
   }
 }

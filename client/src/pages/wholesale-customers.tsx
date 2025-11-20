@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Mail, Phone, MapPin, Plus, Loader2, CreditCard, Users, Edit, X } from "lucide-react";
+import { Mail, Phone, MapPin, Plus, Loader2, CreditCard, Users, Edit, X, FileDown, Upload } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,6 +23,10 @@ export default function WholesaleCustomers() {
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<WholesaleCustomer | null>(null);
   const [newEmail, setNewEmail] = useState("");
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [templateEmail, setTemplateEmail] = useState("casey@soundkombucha.com");
   const { toast } = useToast();
 
   const { data: customers, isLoading } = useQuery<WholesaleCustomer[]>({
@@ -110,6 +114,51 @@ export default function WholesaleCustomers() {
     },
   });
 
+  const sendTemplateMutation = useMutation({
+    mutationFn: async (email: string) => {
+      return await apiRequest("POST", "/api/wholesale/customers/send-template", { email });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Template Sent",
+        description: "The CSV template has been sent to your email",
+      });
+      setTemplateDialogOpen(false);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send template",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const importCsvMutation = useMutation({
+    mutationFn: async (csvData: any[]) => {
+      return await apiRequest("POST", "/api/wholesale/customers/import", { csvData });
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
+      toast({
+        title: "Import Complete",
+        description: `Successfully imported ${data.imported} customer(s). ${data.failed} failed.`,
+      });
+      if (data.errors.length > 0) {
+        console.error("Import errors:", data.errors);
+      }
+      setImportDialogOpen(false);
+      setCsvFile(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Import Failed",
+        description: error.message || "Failed to import customers",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleAddEmail = () => {
     if (!selectedCustomer || !newEmail) return;
     
@@ -151,6 +200,35 @@ export default function WholesaleCustomers() {
     createCustomerMutation.mutate(data);
   };
 
+  const handleCsvImport = async () => {
+    if (!csvFile) return;
+
+    const text = await csvFile.text();
+    const lines = text.split('\n').filter(line => line.trim());
+    
+    if (lines.length < 2) {
+      toast({
+        title: "Invalid CSV",
+        description: "CSV file must have a header row and at least one data row",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+    const csvData = lines.slice(1).map(line => {
+      // Simple CSV parsing (handles quoted values)
+      const values = line.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || [];
+      const row: any = {};
+      headers.forEach((header, index) => {
+        row[header] = values[index] ? values[index].replace(/^"|"$/g, '').trim() : '';
+      });
+      return row;
+    });
+
+    importCsvMutation.mutate(csvData);
+  };
+
   return (
     <StaffLayout>
       <div className="max-w-7xl mx-auto px-6 py-12">
@@ -163,7 +241,125 @@ export default function WholesaleCustomers() {
               Manage wholesale customer accounts
             </p>
           </div>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <div className="flex gap-2">
+            <Dialog open={templateDialogOpen} onOpenChange={setTemplateDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" data-testid="button-email-template">
+                  <FileDown className="w-4 h-4 mr-2" />
+                  Email Template
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Email CSV Template</DialogTitle>
+                  <DialogDescription>
+                    Send the wholesale customer import template to your email
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="template-email">Email Address</Label>
+                    <Input
+                      id="template-email"
+                      type="email"
+                      value={templateEmail}
+                      onChange={(e) => setTemplateEmail(e.target.value)}
+                      placeholder="your@email.com"
+                      data-testid="input-template-email"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setTemplateDialogOpen(false)}
+                    data-testid="button-cancel-template"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => sendTemplateMutation.mutate(templateEmail)}
+                    disabled={sendTemplateMutation.isPending || !templateEmail}
+                    data-testid="button-send-template"
+                  >
+                    {sendTemplateMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Sending...
+                      </>
+                    ) : (
+                      <>
+                        <Mail className="w-4 h-4 mr-2" />
+                        Send Template
+                      </>
+                    )}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" data-testid="button-import-csv">
+                  <Upload className="w-4 h-4 mr-2" />
+                  Import CSV
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Import Wholesale Customers</DialogTitle>
+                  <DialogDescription>
+                    Upload a CSV file to bulk import wholesale customers
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="csv-file">CSV File</Label>
+                    <Input
+                      id="csv-file"
+                      type="file"
+                      accept=".csv"
+                      onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+                      data-testid="input-csv-file"
+                    />
+                    <p className="text-sm text-muted-foreground mt-2">
+                      CSV must include columns: businessName, contactName, email, additionalEmails, phone, address, allowOnlinePayment
+                    </p>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setImportDialogOpen(false);
+                      setCsvFile(null);
+                    }}
+                    data-testid="button-cancel-import"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleCsvImport}
+                    disabled={importCsvMutation.isPending || !csvFile}
+                    data-testid="button-confirm-import"
+                  >
+                    {importCsvMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Importing...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4 mr-2" />
+                        Import Customers
+                      </>
+                    )}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button data-testid="button-add-customer">
                   <Plus className="w-4 h-4 mr-2" />
@@ -276,6 +472,7 @@ export default function WholesaleCustomers() {
                 </Form>
               </DialogContent>
             </Dialog>
+          </div>
         </div>
 
         <Card>

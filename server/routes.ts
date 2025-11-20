@@ -3507,6 +3507,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Send wholesale customer CSV template via email
+  app.post("/api/wholesale/customers/send-template", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ message: "Email address required" });
+      }
+
+      const { sendFileEmail } = await import('./email.js');
+      await sendFileEmail({
+        to: email,
+        subject: 'Wholesale Customer Import Template - Puget Sound Kombucha Co.',
+        message: `Hello,
+
+Here's the CSV template for importing wholesale customers into your system.
+
+The template includes the following columns:
+• businessName - The name of the wholesale business
+• contactName - Primary contact person's full name  
+• email - Primary contact email (used for login)
+• additionalEmails - Optional additional authorized emails separated by pipes (|)
+• phone - Business phone number
+• address - Full business address
+• allowOnlinePayment - Set to "true" to enable online payment, "false" for invoice-only
+
+Instructions:
+1. Fill in your customer data following the example rows provided
+2. Multiple email addresses can be listed in additionalEmails separated by | (pipe) characters
+3. All listed email addresses can be used to log in via email verification code
+4. Save the file and use the CSV import feature in your admin dashboard
+
+If you have any questions, please don't hesitate to reach out!`,
+        attachmentPath: 'wholesale_customers_import_template.csv',
+        attachmentFilename: 'wholesale_customers_import_template.csv',
+      });
+
+      res.json({ message: "Template sent successfully" });
+    } catch (error: any) {
+      console.error('[API] Failed to send template email:', error);
+      res.status(500).json({ message: "Failed to send template: " + error.message });
+    }
+  });
+
+  // Import wholesale customers from CSV
+  app.post("/api/wholesale/customers/import", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { csvData } = req.body;
+      if (!csvData || !Array.isArray(csvData)) {
+        return res.status(400).json({ message: "Invalid CSV data format" });
+      }
+
+      const results = await storage.importWholesaleCustomers(csvData);
+      res.json(results);
+    } catch (error: any) {
+      console.error('[API] CSV import error:', error);
+      res.status(500).json({ message: "Import failed: " + error.message });
+    }
+  });
+
   // Retail customer routes (staff and admin access)
   app.get("/api/retail/customers", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {

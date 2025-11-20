@@ -195,6 +195,7 @@ export interface IStorage {
   getWholesaleCustomerByUserId(userId: string): Promise<WholesaleCustomer | undefined>;
   createWholesaleCustomer(customer: InsertWholesaleCustomer): Promise<WholesaleCustomer>;
   updateWholesaleCustomer(id: string, updates: Partial<InsertWholesaleCustomer>): Promise<WholesaleCustomer | undefined>;
+  importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[] }>;
   
   getWholesaleOrders(): Promise<WholesaleOrder[]>;
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
@@ -1432,6 +1433,55 @@ export class PostgresStorage implements IStorage {
       .where(eq(wholesaleCustomers.id, id))
       .returning();
     return result[0];
+  }
+
+  async importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[] }> {
+    const results = {
+      imported: 0,
+      failed: 0,
+      errors: [] as string[],
+    };
+
+    for (const row of csvData) {
+      try {
+        // Parse additional emails
+        const emails = [row.email];
+        if (row.additionalEmails && row.additionalEmails.trim()) {
+          const additionalEmailsList = row.additionalEmails
+            .split('|')
+            .map((e: string) => e.trim())
+            .filter((e: string) => e.length > 0);
+          emails.push(...additionalEmailsList);
+        }
+
+        // Check if customer already exists by primary email
+        const existing = await this.getWholesaleCustomerByEmail(row.email);
+        if (existing) {
+          results.errors.push(`Customer with email ${row.email} already exists (${row.businessName})`);
+          results.failed++;
+          continue;
+        }
+
+        // Create customer
+        const customerData: InsertWholesaleCustomer = {
+          businessName: row.businessName,
+          contactName: row.contactName,
+          email: row.email,
+          emails: emails,
+          phone: row.phone,
+          address: row.address,
+          allowOnlinePayment: row.allowOnlinePayment === 'true' || row.allowOnlinePayment === true,
+        };
+
+        await this.createWholesaleCustomer(customerData);
+        results.imported++;
+      } catch (error: any) {
+        results.errors.push(`Row ${results.imported + results.failed + 1}: ${error.message}`);
+        results.failed++;
+      }
+    }
+
+    return results;
   }
 
   async getWholesaleOrders(): Promise<WholesaleOrder[]> {
