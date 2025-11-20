@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, ShoppingBag } from "lucide-react";
+import { Loader2, ShoppingBag, Upload, X } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import type { Flavor, RetailProduct } from "@shared/schema";
 
@@ -18,6 +18,139 @@ type RetailProductWithFlavors = RetailProduct & {
   flavor: Flavor | null;
   flavors: Flavor[];
 };
+
+// Image Upload Component
+function ImageUploadField({ 
+  value, 
+  onChange 
+}: { 
+  value: string; 
+  onChange: (url: string) => void;
+}) {
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast({
+        title: "Invalid file type",
+        description: "Please select an image file",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      setUploading(true);
+
+      // Get a signed upload URL from the backend
+      const { uploadUrl } = await apiRequest('POST', '/api/object-storage/upload-url', {
+        filename: `product-${Date.now()}-${file.name}`,
+        directory: 'product-images'
+      });
+
+      // Upload the file to object storage
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: {
+          'Content-Type': file.type,
+        },
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error('Failed to upload file');
+      }
+
+      // Extract the public URL from the upload URL
+      const url = new URL(uploadUrl);
+      const publicUrl = `${url.origin}${url.pathname}`;
+
+      // Make the file publicly readable
+      await apiRequest('POST', '/api/object-storage/make-public', {
+        fileUrl: publicUrl
+      });
+
+      onChange(publicUrl);
+      toast({
+        title: "Image uploaded",
+        description: "Product image has been uploaded successfully"
+      });
+    } catch (error: any) {
+      toast({
+        title: "Upload failed",
+        description: error.message || "Failed to upload image",
+        variant: "destructive"
+      });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="https://... or upload below"
+          data-testid="input-product-image-url"
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileSelect}
+          className="hidden"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          data-testid="button-upload-image"
+        >
+          {uploading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Upload className="w-4 h-4" />
+          )}
+        </Button>
+        {value && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => onChange('')}
+            data-testid="button-clear-image"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        )}
+      </div>
+      {value && (
+        <div className="w-full h-32 rounded-md overflow-hidden bg-muted border">
+          <img 
+            src={value} 
+            alt="Product preview" 
+            className="w-full h-full object-contain"
+          />
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Upload an image or paste a URL
+      </p>
+    </div>
+  );
+}
 
 export default function AdminRetailProducts() {
   const { toast } = useToast();
@@ -282,20 +415,14 @@ export default function AdminRetailProducts() {
                     </div>
                   )}
 
-                  {/* Product Image URL (multi-flavor only) */}
+                  {/* Product Image Upload (multi-flavor only) */}
                   {retailProductForm.productType === 'multi-flavor' && (
                     <div>
-                      <Label htmlFor="retail-product-image">Product Image URL</Label>
-                      <Input
-                        id="retail-product-image"
+                      <Label htmlFor="retail-product-image">Product Image</Label>
+                      <ImageUploadField
                         value={retailProductForm.productImageUrl}
-                        onChange={(e) => setRetailProductForm({ ...retailProductForm, productImageUrl: e.target.value })}
-                        placeholder="https://..."
-                        data-testid="input-product-image-url"
+                        onChange={(url) => setRetailProductForm({ ...retailProductForm, productImageUrl: url })}
                       />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Upload the product image to object storage and paste the URL here
-                      </p>
                     </div>
                   )}
                   <div>
@@ -465,7 +592,7 @@ export default function AdminRetailProducts() {
                           onClick={() => {
                             setEditingRetailProduct(product.id);
                             setRetailProductForm({
-                              productType: product.productType || 'single-flavor',
+                              productType: (product.productType as 'single-flavor' | 'multi-flavor') || 'single-flavor',
                               productName: product.productName || '',
                               flavorId: product.flavorId || '',
                               selectedFlavorIds: product.flavors.map(f => f.id),
@@ -562,16 +689,13 @@ export default function AdminRetailProducts() {
                             </div>
                           )}
 
-                          {/* Product Image URL (multi-flavor only) */}
+                          {/* Product Image Upload (multi-flavor only) */}
                           {retailProductForm.productType === 'multi-flavor' && (
                             <div>
-                              <Label htmlFor="edit-product-image">Product Image URL</Label>
-                              <Input
-                                id="edit-product-image"
+                              <Label htmlFor="edit-product-image">Product Image</Label>
+                              <ImageUploadField
                                 value={retailProductForm.productImageUrl}
-                                onChange={(e) => setRetailProductForm({ ...retailProductForm, productImageUrl: e.target.value })}
-                                placeholder="https://..."
-                                data-testid="input-edit-product-image-url"
+                                onChange={(url) => setRetailProductForm({ ...retailProductForm, productImageUrl: url })}
                               />
                             </div>
                           )}
