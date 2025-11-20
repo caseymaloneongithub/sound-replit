@@ -122,16 +122,29 @@ export const flavors = pgTable("flavors", {
 });
 
 // Retail Products - Each flavor+unit combination sold to retail customers
+// Now supports both single-flavor and multi-flavor products (e.g., variety packs)
 export const retailProducts = pgTable("retail_products", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  flavorId: varchar("flavor_id").notNull().references(() => flavors.id),
+  productType: text("product_type").notNull().default('single-flavor'), // 'single-flavor' | 'multi-flavor'
+  productName: text("product_name"), // For multi-flavor products, e.g., "Variety Pack"
+  flavorId: varchar("flavor_id").references(() => flavors.id), // Nullable for multi-flavor products
   unitType: text("unit_type").notNull(), // 'case', '1/6-barrel', '1/2-barrel'
   unitDescription: text("unit_description").notNull(), // e.g., "12 bottles", "5.16 gallons"
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   subscriptionDiscount: decimal("subscription_discount", { precision: 5, scale: 2 }).notNull().default('10.00'), // Percentage discount for subscriptions (e.g., 10.00 = 10%)
+  productImageUrl: text("product_image_url"), // For multi-flavor products (uploaded via object storage)
   isActive: boolean("is_active").notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
 });
+
+// Retail Product Flavors - Junction table for multi-flavor products
+export const retailProductFlavors = pgTable("retail_product_flavors", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id, { onDelete: 'cascade' }),
+  flavorId: varchar("flavor_id").notNull().references(() => flavors.id, { onDelete: 'cascade' }),
+}, (table) => ({
+  uniqueProductFlavor: unique().on(table.retailProductId, table.flavorId),
+}));
 
 // Wholesale Unit Types - Defines wholesale unit types with default pricing
 export const wholesaleUnitTypes = pgTable("wholesale_unit_types", {
@@ -404,6 +417,7 @@ export const insertWholesalePricingSchema = createInsertSchema(wholesalePricing)
 // Insert schemas - NEW SCHEMA (for migration)
 export const insertFlavorSchema = createInsertSchema(flavors).omit({ id: true });
 export const insertRetailProductSchema = createInsertSchema(retailProducts).omit({ id: true });
+export const insertRetailProductFlavorSchema = createInsertSchema(retailProductFlavors).omit({ id: true });
 export const insertWholesaleUnitTypeSchema = createInsertSchema(wholesaleUnitTypes).omit({ id: true });
 export const insertWholesaleUnitTypeFlavorSchema = createInsertSchema(wholesaleUnitTypeFlavors).omit({ id: true });
 export const insertWholesaleCustomerPricingSchema = createInsertSchema(wholesaleCustomerPricing).omit({ id: true });
@@ -447,6 +461,7 @@ export type InsertWholesalePricing = z.infer<typeof insertWholesalePricingSchema
 // Insert types - NEW SCHEMA
 export type InsertFlavor = z.infer<typeof insertFlavorSchema>;
 export type InsertRetailProduct = z.infer<typeof insertRetailProductSchema>;
+export type InsertRetailProductFlavor = z.infer<typeof insertRetailProductFlavorSchema>;
 export type InsertWholesaleUnitType = z.infer<typeof insertWholesaleUnitTypeSchema>;
 export type InsertWholesaleUnitTypeFlavor = z.infer<typeof insertWholesaleUnitTypeFlavorSchema>;
 export type InsertWholesaleCustomerPricing = z.infer<typeof insertWholesaleCustomerPricingSchema>;
