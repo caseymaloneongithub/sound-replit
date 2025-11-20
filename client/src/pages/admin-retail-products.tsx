@@ -70,11 +70,7 @@ function ImageUploadField({
       const url = new URL(uploadUrl);
       const publicUrl = `${url.origin}${url.pathname}`;
 
-      // Make the file publicly readable
-      await apiRequest('POST', '/api/object-storage/make-public', {
-        fileUrl: publicUrl
-      });
-
+      // No need to make file public - it's already uploaded to the public directory
       onChange(publicUrl);
       toast({
         title: "Image uploaded",
