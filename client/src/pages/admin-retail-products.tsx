@@ -66,12 +66,21 @@ function ImageUploadField({
         throw new Error('Failed to upload file');
       }
 
-      // Extract the public URL from the upload URL
+      // Extract the GCS URL to set ACL policy
       const url = new URL(uploadUrl);
-      const publicUrl = `${url.origin}${url.pathname}`;
+      const gcsUrl = `${url.origin}${url.pathname}`;
 
-      // No need to make file public - it's already uploaded to the public directory
-      onChange(publicUrl);
+      // Set ACL policy to make file publicly readable
+      await apiRequest('POST', '/api/object-storage/make-public', {
+        fileUrl: gcsUrl
+      });
+
+      // Use our local /public/ endpoint to serve the image
+      // The file is uploaded to product-images directory, so we reference it like /public/product-images/filename
+      const filename = `product-${Date.now()}-${file.name}`;
+      const publicPath = `/public/product-images/${filename}`;
+
+      onChange(publicPath);
       toast({
         title: "Image uploaded",
         description: "Product image has been uploaded successfully"
