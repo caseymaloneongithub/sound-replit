@@ -253,16 +253,18 @@ export default function ShopV2() {
                           </div>
                         )}
                         
-                        <Tabs defaultValue="one-time" className="w-full">
-                          <TabsList className="grid w-full grid-cols-2">
-                            <TabsTrigger value="one-time" data-testid={`tab-one-time-${product.id}`}>
-                              One-time
-                            </TabsTrigger>
-                            <TabsTrigger value="subscribe" data-testid={`tab-subscribe-${product.id}`}>
-                              Subscribe
-                            </TabsTrigger>
-                          </TabsList>
-                          <TabsContent value="one-time" className="mt-2">
+                        {/* Show tabs only if subscription discount > 0 */}
+                        {product.subscriptionDiscount != null && Number(product.subscriptionDiscount) > 0 ? (
+                          <Tabs defaultValue="one-time" className="w-full">
+                            <TabsList className="grid w-full grid-cols-2">
+                              <TabsTrigger value="one-time" data-testid={`tab-one-time-${product.id}`}>
+                                One-time
+                              </TabsTrigger>
+                              <TabsTrigger value="subscribe" data-testid={`tab-subscribe-${product.id}`}>
+                                Subscribe
+                              </TabsTrigger>
+                            </TabsList>
+                            <TabsContent value="one-time" className="mt-2">
                             <Button
                               onClick={() => {
                                 const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
@@ -383,6 +385,42 @@ export default function ShopV2() {
                             </Button>
                           </TabsContent>
                         </Tabs>
+                        ) : (
+                          /* No subscription option - show only one-time purchase button */
+                          <Button
+                            onClick={() => {
+                              const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
+                              if (isMultiFlavor && !flavorId) {
+                                toast({ 
+                                  title: "Please select a flavor", 
+                                  description: "Choose which flavor you'd like from the dropdown above",
+                                  variant: "destructive" 
+                                });
+                                return;
+                              }
+                              oneTimePurchase(product.id, flavorId);
+                            }}
+                            disabled={
+                              addToCartMutation.isPending || 
+                              addedToCart.has(product.id) ||
+                              (isMultiFlavor && !selectedFlavors[product.id])
+                            }
+                            className="w-full"
+                            data-testid={`button-add-one-time-${product.id}`}
+                          >
+                            {addedToCart.has(product.id) ? (
+                              <>
+                                <Check className="w-4 h-4 mr-2" />
+                                Added
+                              </>
+                            ) : (
+                              <>
+                                <ShoppingCart className="w-4 h-4 mr-2" />
+                                Add to Cart
+                              </>
+                            )}
+                          </Button>
+                        )}
                       </CardFooter>
                     </Card>
                     );
