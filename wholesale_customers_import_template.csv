@@ -1,0 +1,5 @@
+businessName,contactName,email,additionalEmails,phone,address,allowOnlinePayment
+"Rainy Day Cafe","Sarah Johnson","sarah@rainydaycafe.com","manager@rainydaycafe.com|orders@rainydaycafe.com","206-555-0101","123 Pike St, Seattle, WA 98101","false"
+"Green Leaf Market","Michael Chen","michael@greenleafmarket.com","purchasing@greenleafmarket.com","425-555-0202","456 Broadway Ave, Bellevue, WA 98004","true"
+"The Daily Grind","Emma Rodriguez","emma@thedailygrind.com","","253-555-0303","789 Pacific Ave, Tacoma, WA 98402","false"
+"Sunrise Grocery","David Kim","david@sunrisegrocery.com","orders@sunrisegrocery.com|accounting@sunrisegrocery.com","360-555-0404","321 Main Street, Olympia, WA 98501","true"
