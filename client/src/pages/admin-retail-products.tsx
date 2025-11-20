@@ -13,6 +13,12 @@ import { Loader2, ShoppingBag } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import type { Flavor, RetailProduct } from "@shared/schema";
 
+// Extended type for retail products with flavor data
+type RetailProductWithFlavors = RetailProduct & {
+  flavor: Flavor | null;
+  flavors: Flavor[];
+};
+
 export default function AdminRetailProducts() {
   const { toast } = useToast();
   const [editingRetailProduct, setEditingRetailProduct] = useState<string | null>(null);
@@ -34,7 +40,7 @@ export default function AdminRetailProducts() {
     queryKey: ['/api/flavors'],
   });
 
-  const { data: retailProducts = [], isLoading: retailProductsLoading } = useQuery<Array<RetailProduct & { flavor: Flavor }>>({
+  const { data: retailProducts = [], isLoading: retailProductsLoading } = useQuery<RetailProductWithFlavors[]>({
     queryKey: ['/api/retail-products'],
   });
 
@@ -350,23 +356,34 @@ export default function AdminRetailProducts() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {retailProducts.map((product) => {
+              const isMultiFlavor = product.productType === 'multi-flavor';
+              const imageUrl = isMultiFlavor ? product.productImageUrl : product.flavor?.primaryImageUrl;
+              const displayName = isMultiFlavor ? product.productName : product.flavor?.name;
+              
               return (
                 <Card key={product.id} data-testid={`card-retail-product-${product.id}`} className="overflow-hidden">
-                  {/* Flavor Image */}
-                  {product.flavor.primaryImageUrl && (
+                  {/* Product Image */}
+                  {imageUrl && (
                     <div className="w-full h-48 overflow-hidden bg-muted">
                       <img 
-                        src={product.flavor.primaryImageUrl} 
-                        alt={product.flavor.name}
+                        src={imageUrl} 
+                        alt={displayName || 'Product'}
                         className="w-full h-full object-cover"
                       />
                     </div>
                   )}
                   
                   <CardHeader>
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
                       <div className="flex-1">
-                        <CardTitle>{product.flavor.name}</CardTitle>
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <CardTitle>{displayName}</CardTitle>
+                          {isMultiFlavor && (
+                            <Badge variant="outline" className="text-xs">
+                              Variety Pack
+                            </Badge>
+                          )}
+                        </div>
                         <CardDescription>{product.unitType}</CardDescription>
                       </div>
                       <Badge variant={product.isActive ? "default" : "secondary"}>
@@ -376,15 +393,27 @@ export default function AdminRetailProducts() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
+                      {isMultiFlavor && product.flavors.length > 0 && (
+                        <div className="mb-3">
+                          <span className="text-muted-foreground text-xs">Includes:</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {product.flavors.map((flavor) => (
+                              <Badge key={flavor.id} variant="secondary" className="text-xs">
+                                {flavor.name}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex justify-between gap-2">
                         <span className="text-muted-foreground">Unit:</span>
                         <span className="font-semibold">{product.unitDescription}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="flex justify-between gap-2">
                         <span className="text-muted-foreground">Price:</span>
                         <span className="font-semibold text-lg">${Number(product.price).toFixed(2)}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="flex justify-between gap-2">
                         <span className="text-muted-foreground">Subscribe & Save:</span>
                         <span className="font-semibold text-lg">
                           {product.subscriptionDiscount !== null && product.subscriptionDiscount !== undefined 
@@ -392,9 +421,11 @@ export default function AdminRetailProducts() {
                             : '10% off'}
                         </span>
                       </div>
-                      <div className="mt-4 pt-4 border-t">
-                        <p className="text-xs text-muted-foreground">{product.flavor.description}</p>
-                      </div>
+                      {!isMultiFlavor && product.flavor && (
+                        <div className="mt-4 pt-4 border-t">
+                          <p className="text-xs text-muted-foreground">{product.flavor.description}</p>
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                   <CardFooter className="flex gap-2 flex-wrap">
