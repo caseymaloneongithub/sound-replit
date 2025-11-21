@@ -159,6 +159,7 @@ export default function AdminRetailProducts() {
     unitType: '',
     unitDescription: '',
     price: 0,
+    deposit: 0,
     subscriptionDiscount: 10,
     productImageUrl: '',
     isActive: true,
@@ -177,6 +178,7 @@ export default function AdminRetailProducts() {
     mutationFn: async (data: any) => {
       // Safely serialize price and discount with proper defaults
       const price = typeof data.price === 'number' && !isNaN(data.price) ? data.price : 0;
+      const deposit = typeof data.deposit === 'number' && !isNaN(data.deposit) ? data.deposit : 0;
       const subscriptionDiscount = typeof data.subscriptionDiscount === 'number' && !isNaN(data.subscriptionDiscount) 
         ? data.subscriptionDiscount 
         : 10;
@@ -188,6 +190,7 @@ export default function AdminRetailProducts() {
         unitType: data.unitType,
         unitDescription: data.unitDescription,
         price: price.toFixed(2),
+        deposit: deposit.toFixed(2),
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
         productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
         isActive: data.isActive,
@@ -215,6 +218,7 @@ export default function AdminRetailProducts() {
         unitType: '',
         unitDescription: '',
         price: 0,
+        deposit: 0,
         subscriptionDiscount: 10,
         productImageUrl: '',
         isActive: true,
@@ -231,6 +235,7 @@ export default function AdminRetailProducts() {
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
       // Safely serialize price and discount with proper defaults
       const price = typeof data.price === 'number' && !isNaN(data.price) ? data.price : 0;
+      const deposit = typeof data.deposit === 'number' && !isNaN(data.deposit) ? data.deposit : 0;
       const subscriptionDiscount = typeof data.subscriptionDiscount === 'number' && !isNaN(data.subscriptionDiscount) 
         ? data.subscriptionDiscount 
         : 10;
@@ -242,6 +247,7 @@ export default function AdminRetailProducts() {
         unitType: data.unitType,
         unitDescription: data.unitDescription,
         price: price.toFixed(2),
+        deposit: deposit.toFixed(2),
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
         productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
         isActive: data.isActive,
@@ -453,6 +459,21 @@ export default function AdminRetailProducts() {
                     />
                   </div>
                   <div>
+                    <Label htmlFor="retail-deposit">Deposit (Optional)</Label>
+                    <Input
+                      id="retail-deposit"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={retailProductForm.deposit || 0}
+                      onChange={(e) => setRetailProductForm({ ...retailProductForm, deposit: parseFloat(e.target.value) || 0 })}
+                      data-testid="input-retail-deposit"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Refundable deposit (e.g., $75 for keg)
+                    </p>
+                  </div>
+                  <div>
                     <Label htmlFor="retail-subscription-discount">Subscription Discount (%)</Label>
                     <Input
                       id="retail-subscription-discount"
@@ -590,6 +611,7 @@ export default function AdminRetailProducts() {
                               unitType: product.unitType,
                               unitDescription: product.unitDescription,
                               price: Number(product.price),
+                              deposit: product.deposit != null ? Number(product.deposit) : 0,
                               subscriptionDiscount: product.subscriptionDiscount != null ? Number(product.subscriptionDiscount) : 10,
                               productImageUrl: product.productImageUrl || '',
                               isActive: product.isActive,
@@ -715,6 +737,20 @@ export default function AdminRetailProducts() {
                               onChange={(e) => setRetailProductForm({ ...retailProductForm, price: parseFloat(e.target.value) || 0 })}
                               data-testid="input-edit-retail-price"
                             />
+                          </div>
+                          <div>
+                            <Label>Deposit (Optional)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={retailProductForm.deposit || 0}
+                              onChange={(e) => setRetailProductForm({ ...retailProductForm, deposit: parseFloat(e.target.value) || 0 })}
+                              data-testid="input-edit-retail-deposit"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Refundable deposit (e.g., $75 for keg)
+                            </p>
                           </div>
                           <div>
                             <Label>Subscription Discount (%)</Label>
