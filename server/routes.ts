@@ -1622,6 +1622,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return sum + (priceCents * item.quantity);
         }, 0);
 
+      // Calculate total deposits (one-time purchases only, not subject to tax)
+      const depositTotal = retailItems
+        .filter(item => !item.isSubscription && item.retailProduct.deposit)
+        .reduce((sum, item) => {
+          const depositAmount = Math.round(parseFloat(item.retailProduct.deposit.toString()) * 100);
+          return sum + (depositAmount * item.quantity);
+        }, 0);
+
       const taxableSubtotal = legacyTaxable + retailTaxable;
       
       if (taxableSubtotal > 0) {
@@ -1664,6 +1672,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         metadata.taxRate = TAX_RATE.toString();
         metadata.taxAmount = (taxAmount / 100).toFixed(2);
         metadata.taxableSubtotal = (taxableSubtotal / 100).toFixed(2);
+        
+        // Store deposit total if any (deposits are not taxed)
+        if (depositTotal > 0) {
+          metadata.depositTotal = (depositTotal / 100).toFixed(2);
+        }
       }
 
       const session = await stripe.checkout.sessions.create({

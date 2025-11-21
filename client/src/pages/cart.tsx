@@ -23,7 +23,6 @@ export default function Cart() {
         subtotal += basePrice * cartItem.item.quantity;
       } else {
         const basePrice = parseFloat(cartItem.item.retailProduct.price);
-        const deposit = cartItem.item.retailProduct.deposit ? parseFloat(cartItem.item.retailProduct.deposit) : 0;
         const discountPercentage = cartItem.item.isSubscription 
           ? parseFloat(cartItem.item.retailProduct.subscriptionDiscount) 
           : 0;
@@ -31,7 +30,14 @@ export default function Cart() {
           ? basePrice * (1 - discountPercentage / 100)
           : basePrice;
         subtotal += finalPrice * cartItem.item.quantity;
-        depositTotal += deposit * cartItem.item.quantity;
+        
+        // Only add deposits for one-time purchases (not subscriptions) with positive deposit amounts
+        if (!cartItem.item.isSubscription && cartItem.item.retailProduct.deposit) {
+          const deposit = parseFloat(cartItem.item.retailProduct.deposit);
+          if (isFinite(deposit) && deposit > 0) {
+            depositTotal += deposit * cartItem.item.quantity;
+          }
+        }
       }
     });
 
