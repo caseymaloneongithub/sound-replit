@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import Stripe from 'stripe';
 import { db } from './db';
-import { subscriptions, subscriptionItems, products, retailOrders, retailOrderItems, inventoryAdjustments } from '../shared/schema';
+import { subscriptions, subscriptionItems, products, retailOrders, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, retailSubscriptions, retailSubscriptionItems, retailProducts, flavors } from '../shared/schema';
 import { eq, and, lte, sql } from 'drizzle-orm';
 import { sendPaymentFailureEmail, sendStaffPaymentFailureNotification } from './email';
 import { normalizeToAllowedPickupDay } from '../shared/pickup-policy';
@@ -276,6 +276,140 @@ export async function finalizeSubscriptionCharge(paymentIntentId: string): Promi
   }
 }
 
+/**
+ * Finalize retail subscription charge by creating order (NEW retail subscription format)
+ */
+export async function finalizeRetailSubscriptionCharge(paymentIntentId: string): Promise<boolean> {
+  try {
+    if (!stripe) {
+      console.error('[BILLING] Stripe not configured');
+      return false;
+    }
+
+    // Check if order already exists (idempotency)
+    const existing = await db
+      .select()
+      .from(retailOrders)
+      .where(eq(retailOrders.stripePaymentIntentId, paymentIntentId))
+      .limit(1);
+
+    if (existing.length > 0) {
+      console.log(`[BILLING] Order already exists for PaymentIntent ${paymentIntentId}, skipping`);
+      return true;
+    }
+
+    // Get payment intent from Stripe
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId, {
+      expand: ['latest_charge']
+    });
+    
+    if (paymentIntent.status !== 'succeeded') {
+      console.warn(`[BILLING] PaymentIntent ${paymentIntentId} status is ${paymentIntent.status}, cannot finalize`);
+      return false;
+    }
+
+    const retailSubscriptionId = paymentIntent.metadata.retailSubscriptionId;
+    if (!retailSubscriptionId) {
+      console.error(`[BILLING] No retailSubscriptionId in PaymentIntent ${paymentIntentId} metadata`);
+      return false;
+    }
+
+    // Get retail subscription
+    const [sub] = await db
+      .select()
+      .from(retailSubscriptions)
+      .where(eq(retailSubscriptions.id, retailSubscriptionId));
+
+    if (!sub) {
+      console.error(`[BILLING] Retail subscription ${retailSubscriptionId} not found`);
+      return false;
+    }
+
+    // Get subscription items with product and flavor info
+    const items = await db
+      .select({
+        id: retailSubscriptionItems.id,
+        subscriptionId: retailSubscriptionItems.subscriptionId,
+        retailProductId: retailSubscriptionItems.retailProductId,
+        selectedFlavorId: retailSubscriptionItems.selectedFlavorId,
+        quantity: retailSubscriptionItems.quantity,
+        retailProduct: retailProducts,
+      })
+      .from(retailSubscriptionItems)
+      .leftJoin(retailProducts, eq(retailSubscriptionItems.retailProductId, retailProducts.id))
+      .where(eq(retailSubscriptionItems.subscriptionId, sub.id));
+
+    // Extract payment amounts from metadata
+    const subtotal = parseFloat(paymentIntent.metadata.subtotal || '0');
+    const taxAmount = parseFloat(paymentIntent.metadata.taxAmount || '0');
+    const totalAmount = parseFloat(paymentIntent.metadata.totalAmount || '0');
+
+    // Create order
+    const orderCount = await db.select({ count: sql<number>`count(*)` }).from(retailOrders);
+    const orderNumber = `RO-${String((orderCount[0].count as number) + 1).padStart(6, '0')}`;
+
+    const [newOrder] = await db.insert(retailOrders).values({
+      orderNumber,
+      customerName: sub.customerName,
+      customerEmail: sub.customerEmail,
+      customerPhone: sub.customerPhone,
+      status: 'pending',
+      subtotal: subtotal.toFixed(2),
+      taxAmount: taxAmount.toFixed(2),
+      totalAmount: totalAmount.toFixed(2),
+      stripePaymentIntentId: paymentIntentId,
+      isSubscriptionOrder: true,
+      userId: sub.userId,
+    }).returning();
+
+    // Create order items
+    for (const item of items) {
+      if (!item.retailProduct) continue;
+      
+      const basePrice = parseFloat(item.retailProduct.price);
+      const discount = item.retailProduct.subscriptionDiscount ? Number(item.retailProduct.subscriptionDiscount) : 0;
+      const unitPrice = basePrice * (1 - discount / 100);
+
+      await db.insert(retailOrderItemsV2).values({
+        orderId: newOrder.id,
+        retailProductId: item.retailProductId,
+        selectedFlavorId: item.selectedFlavorId,
+        quantity: item.quantity,
+        unitPrice: unitPrice.toFixed(2),
+      });
+    }
+
+    // Update subscription - calculate next charge date
+    const daysUntilNext = 
+      sub.subscriptionFrequency === 'weekly' ? 7 :
+      sub.subscriptionFrequency === 'bi-weekly' ? 14 :
+      28;
+
+    const nextDate = new Date();
+    nextDate.setDate(nextDate.getDate() + daysUntilNext);
+    const normalizedNextDate = normalizeToAllowedPickupDay(nextDate);
+    
+    await db
+      .update(retailSubscriptions)
+      .set({
+        nextChargeAt: normalizedNextDate,
+        nextDeliveryDate: normalizedNextDate,
+        billingStatus: 'active',
+        retryCount: 0,
+        lastPaymentIntentId: paymentIntentId,
+        lastRefundedAt: null,
+        processingLock: false,
+      })
+      .where(eq(retailSubscriptions.id, sub.id));
+
+    console.log(`[BILLING] ✅ Finalized retail subscription charge ${sub.id} - Order ${orderNumber} created`);
+    return true;
+  } catch (error: any) {
+    console.error(`[BILLING] Error in finalizeRetailSubscriptionCharge:`, error.message);
+    return false;
+  }
+}
+
 async function processSubscriptionBilling(subscription: any, items: any[]) {
   if (!stripe) {
     console.error('[BILLING] Stripe not configured');
@@ -417,6 +551,111 @@ async function processSubscriptionBilling(subscription: any, items: any[]) {
   }
 }
 
+/**
+ * Process retail subscription billing (NEW retail subscription format)
+ */
+async function processRetailSubscriptionBilling(subscription: any, items: any[]) {
+  if (!stripe) {
+    console.error('[BILLING] Stripe not configured');
+    return false;
+  }
+
+  // Calculate amounts from retail products
+  const TAX_RATE = 0.1035;
+  let subtotal = 0;
+  
+  for (const item of items) {
+    if (!item.retailProduct) continue;
+    const basePrice = parseFloat(item.retailProduct.price);
+    const discount = item.retailProduct.subscriptionDiscount ? Number(item.retailProduct.subscriptionDiscount) : 0;
+    const unitPrice = basePrice * (1 - discount / 100);
+    subtotal += unitPrice * item.quantity;
+  }
+
+  const taxAmount = subtotal * TAX_RATE;
+  const totalAmount = subtotal + taxAmount;
+  
+  const amountInCents = Math.round(totalAmount * 100);
+
+  try {
+    // Create PaymentIntent
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amountInCents,
+      currency: 'usd',
+      customer: subscription.stripeCustomerId,
+      payment_method: subscription.stripePaymentMethodId,
+      off_session: true,
+      confirm: true,
+      metadata: {
+        retailSubscriptionId: subscription.id,
+        type: 'retail_subscription_renewal',
+        subtotal: subtotal.toFixed(2),
+        taxAmount: taxAmount.toFixed(2),
+        totalAmount: totalAmount.toFixed(2),
+      },
+    });
+
+    // Handle payment states
+    if (paymentIntent.status === 'succeeded') {
+      return await finalizeRetailSubscriptionCharge(paymentIntent.id);
+    } else if (paymentIntent.status === 'requires_action') {
+      await db
+        .update(retailSubscriptions)
+        .set({
+          billingStatus: 'awaiting_auth',
+          lastPaymentIntentId: paymentIntent.id,
+          processingLock: false,
+        })
+        .where(eq(retailSubscriptions.id, subscription.id));
+
+      console.warn(`[BILLING] ⚠️ Customer authentication required for retail subscription ${subscription.id}`);
+      return false;
+    } else if (paymentIntent.status === 'processing') {
+      await db
+        .update(retailSubscriptions)
+        .set({
+          billingStatus: 'awaiting_confirmation',
+          lastPaymentIntentId: paymentIntent.id,
+          processingLock: false,
+        })
+        .where(eq(retailSubscriptions.id, subscription.id));
+
+      return false;
+    } else {
+      await db
+        .update(retailSubscriptions)
+        .set({
+          lastPaymentIntentId: paymentIntent.id,
+          processingLock: false,
+        })
+        .where(eq(retailSubscriptions.id, subscription.id));
+      
+      return false;
+    }
+  } catch (error: any) {
+    console.error(`[BILLING] Failed to charge retail subscription ${subscription.id}:`, error.message);
+
+    // Update retry count
+    const newRetryCount = subscription.retryCount + 1;
+    await db
+      .update(retailSubscriptions)
+      .set({
+        retryCount: newRetryCount,
+        billingStatus: newRetryCount >= MAX_RETRY_ATTEMPTS ? 'retrying' : 'active',
+        lastPaymentIntentId: error.payment_intent?.id || null,
+        processingLock: false,
+        status: newRetryCount >= MAX_RETRY_ATTEMPTS ? 'paused' : subscription.status,
+      })
+      .where(eq(retailSubscriptions.id, subscription.id));
+
+    if (newRetryCount >= MAX_RETRY_ATTEMPTS) {
+      console.error(`[BILLING] Retail subscription ${subscription.id} paused after ${MAX_RETRY_ATTEMPTS} failed attempts`);
+    }
+
+    return false;
+  }
+}
+
 export async function runDailyBilling() {
   console.log('[BILLING] Starting daily billing process...');
 
@@ -501,6 +740,82 @@ export async function runDailyBilling() {
           .update(subscriptions)
           .set({ processingLock: false })
           .where(eq(subscriptions.id, subscription.id));
+      }
+    }
+
+    console.log('[BILLING] Legacy subscriptions completed');
+
+    // Process retail subscriptions (NEW format)
+    const dueRetailSubscriptions = await db
+      .select()
+      .from(retailSubscriptions)
+      .where(
+        and(
+          eq(retailSubscriptions.billingType, 'local_managed'),
+          eq(retailSubscriptions.status, 'active'),
+          eq(retailSubscriptions.billingStatus, 'active'),
+          lte(retailSubscriptions.nextChargeAt, now),
+          eq(retailSubscriptions.processingLock, false)
+        )
+      );
+
+    console.log(`[BILLING] Found ${dueRetailSubscriptions.length} retail subscriptions due for billing`);
+
+    // Process each retail subscription
+    for (const subscription of dueRetailSubscriptions) {
+      try {
+        // Atomically acquire lock
+        const lockResult = await db
+          .update(retailSubscriptions)
+          .set({ processingLock: true })
+          .where(
+            and(
+              eq(retailSubscriptions.id, subscription.id),
+              eq(retailSubscriptions.processingLock, false),
+              eq(retailSubscriptions.status, 'active'),
+              eq(retailSubscriptions.billingStatus, 'active'),
+              lte(retailSubscriptions.nextChargeAt, now)
+            )
+          )
+          .returning({ id: retailSubscriptions.id });
+
+        if (lockResult.length === 0) {
+          console.log(`[BILLING] Retail subscription ${subscription.id} already being processed, skipping`);
+          continue;
+        }
+
+        // Get subscription items with retail products
+        const items = await db
+          .select({
+            id: retailSubscriptionItems.id,
+            subscriptionId: retailSubscriptionItems.subscriptionId,
+            retailProductId: retailSubscriptionItems.retailProductId,
+            selectedFlavorId: retailSubscriptionItems.selectedFlavorId,
+            quantity: retailSubscriptionItems.quantity,
+            retailProduct: retailProducts,
+          })
+          .from(retailSubscriptionItems)
+          .leftJoin(retailProducts, eq(retailSubscriptionItems.retailProductId, retailProducts.id))
+          .where(eq(retailSubscriptionItems.subscriptionId, subscription.id));
+
+        if (items.length === 0) {
+          console.warn(`[BILLING] Retail subscription ${subscription.id} has no items, skipping`);
+          await db
+            .update(retailSubscriptions)
+            .set({ processingLock: false })
+            .where(eq(retailSubscriptions.id, subscription.id));
+          continue;
+        }
+
+        // Process the billing
+        await processRetailSubscriptionBilling(subscription, items);
+      } catch (error) {
+        console.error(`[BILLING] Error processing retail subscription ${subscription.id}:`, error);
+        // Release lock on error
+        await db
+          .update(retailSubscriptions)
+          .set({ processingLock: false })
+          .where(eq(retailSubscriptions.id, subscription.id));
       }
     }
 

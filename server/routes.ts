@@ -1994,6 +1994,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const createdSubscriptions: any[] = [];
         
         for (const item of subscriptionItems) {
+          // First charge happens immediately (creates first order)
+          const now = new Date();
+          
           const [subscription] = await db
             .insert(retailSubscriptions)
             .values({
@@ -2002,12 +2005,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
               customerEmail: validated.customerEmail,
               customerPhone: validated.customerPhone,
               subscriptionFrequency: item.subscriptionFrequency || 'weekly',
-              nextDeliveryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+              nextChargeAt: now, // Charge immediately for first order
+              nextDeliveryDate: now, // First delivery ready today
               status: 'active',
               billingType: 'local_managed',
               billingStatus: 'active',
               stripeCustomerId: stripeCustomer.id,
               stripePaymentMethodId: validated.paymentMethodId,
+              processingLock: false,
+              retryCount: 0,
             })
             .returning();
 
@@ -2873,7 +2879,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         case 'payment_intent.succeeded': {
           const paymentIntent = event.data.object as Stripe.PaymentIntent;
           
-          // Handle subscription renewal payments (locally-managed subscriptions)
+          // Handle legacy subscription renewal payments (locally-managed subscriptions)
           if (paymentIntent.metadata?.type === 'subscription_renewal') {
             console.log(`[WEBHOOK] Processing successful subscription renewal payment ${paymentIntent.id}`);
             
@@ -2884,6 +2890,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.log(`[WEBHOOK] ✅ Successfully finalized subscription charge for PaymentIntent ${paymentIntent.id}`);
             } else {
               console.error(`[WEBHOOK] ❌ Failed to finalize subscription charge for PaymentIntent ${paymentIntent.id}`);
+            }
+            break;
+          }
+          
+          // Handle retail subscription renewal payments (NEW format)
+          if (paymentIntent.metadata?.type === 'retail_subscription_renewal') {
+            console.log(`[WEBHOOK] Processing successful retail subscription renewal payment ${paymentIntent.id}`);
+            
+            const { finalizeRetailSubscriptionCharge } = await import('./billing-cron');
+            const success = await finalizeRetailSubscriptionCharge(paymentIntent.id);
+            
+            if (success) {
+              console.log(`[WEBHOOK] ✅ Successfully finalized retail subscription charge for PaymentIntent ${paymentIntent.id}`);
+            } else {
+              console.error(`[WEBHOOK] ❌ Failed to finalize retail subscription charge for PaymentIntent ${paymentIntent.id}`);
             }
             break;
           }
