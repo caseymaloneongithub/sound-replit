@@ -641,7 +641,8 @@ export default function CartCheckout() {
     );
   }
 
-  if (!clientSecret || !paymentInfo) {
+  // For one-time purchases, wait for clientSecret. For subscriptions, clientSecret is not needed.
+  if (!paymentInfo || (!hasSubscriptions && !clientSecret)) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
