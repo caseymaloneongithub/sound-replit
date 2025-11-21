@@ -1551,13 +1551,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .filter(item => !item.isSubscription && item.retailProduct.deposit && parseFloat(item.retailProduct.deposit.toString()) > 0)
         .map(item => {
           const depositAmount = Math.round(parseFloat(item.retailProduct.deposit.toString()) * 100);
-          const flavor = item.retailProduct.flavor;
+          const retailProduct = item.retailProduct;
+          
+          // For multi-flavor products, use selected flavor name; for single-flavor, use product's flavor
+          let productName = retailProduct.unitDescription;
+          if (retailProduct.productType === 'multi-flavor' && item.selectedFlavorName) {
+            productName = `${item.selectedFlavorName} ${retailProduct.unitDescription}`;
+          } else if (retailProduct.productType === 'single-flavor' && retailProduct.flavor) {
+            productName = `${retailProduct.flavor.name} ${retailProduct.unitDescription}`;
+          }
           
           return {
             price_data: {
               currency: 'usd',
               product_data: {
-                name: `Deposit: ${flavor.name} ${item.retailProduct.unitDescription}`,
+                name: `Deposit: ${productName}`,
                 description: 'Refundable deposit',
               },
               unit_amount: depositAmount,
