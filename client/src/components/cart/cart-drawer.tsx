@@ -67,24 +67,13 @@ export function CartDrawer() {
         throw new Error("Please checkout one-time purchases and subscriptions separately. Remove either type from your cart to continue.");
       }
 
-      // For subscription-only carts, use Stripe Checkout Session
-      if (hasSubscription) {
-        const response = await apiRequest("POST", "/api/create-cart-checkout", {});
-        return { type: 'subscription', url: response.url };
-      }
-
-      // For one-time purchases, navigate to embedded checkout
-      return { type: 'one-time' };
+      // Navigate to embedded checkout for both one-time and subscription purchases
+      return { type: hasSubscription ? 'subscription' : 'one-time' };
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       setOpen(false);
-      if (data.type === 'subscription' && data.url) {
-        // Redirect to Stripe Checkout for subscriptions
-        window.location.href = data.url;
-      } else {
-        // Navigate to embedded checkout for one-time purchases
-        setLocation('/cart-checkout');
-      }
+      // Navigate to embedded checkout
+      setLocation('/cart-checkout');
     },
     onError: (error: any) => {
       toast({

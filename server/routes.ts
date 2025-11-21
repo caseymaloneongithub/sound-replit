@@ -1861,6 +1861,199 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Create subscription with embedded payment method collection
+  const createSubscriptionSchema = z.object({
+    customerName: z.string().min(2),
+    customerEmail: z.string().email(),
+    customerPhone: z.string().min(10),
+    paymentMethodId: z.string(), // Stripe payment method ID from frontend
+    password: z.string().min(6).optional(), // For new account creation
+  });
+
+  app.post("/api/checkout/create-subscription", async (req: any, res) => {
+    try {
+      if (!stripe) {
+        return res.status(503).json({ message: "Payment processing is not configured" });
+      }
+
+      const validated = createSubscriptionSchema.parse(req.body);
+      const sessionId = req.sessionID || "guest";
+      const userId = req.user?.id;
+
+      // Get cart items
+      const legacyItems = await storage.getCartItems(sessionId);
+      const retailItems = await storage.getRetailCart(sessionId);
+      
+      if (legacyItems.length === 0 && retailItems.length === 0) {
+        return res.status(400).json({ message: "Cart is empty" });
+      }
+
+      // Verify cart contains only subscriptions
+      const hasLegacySubscription = legacyItems.some(item => item.isSubscription);
+      const hasRetailSubscription = retailItems.some(item => item.isSubscription);
+      const hasOneTime = legacyItems.some(item => !item.isSubscription) || retailItems.some(item => !item.isSubscription);
+
+      if (hasOneTime) {
+        return res.status(400).json({ 
+          message: "This checkout is for subscriptions only" 
+        });
+      }
+
+      if (!hasLegacySubscription && !hasRetailSubscription) {
+        return res.status(400).json({ 
+          message: "Cart must contain subscription items" 
+        });
+      }
+
+      // Get or create user
+      let user = req.user;
+      
+      if (!user) {
+        // Create account if password provided
+        if (!validated.password) {
+          return res.status(400).json({ message: "Please create an account or log in to subscribe" });
+        }
+
+        const { hashPassword } = await import('./auth');
+        
+        // Check if user exists
+        const existingUser = await storage.getUserByEmail(validated.customerEmail);
+        if (existingUser) {
+          return res.status(400).json({ message: "An account with this email already exists. Please log in." });
+        }
+
+        // Create user
+        const nameParts = validated.customerName.trim().split(' ');
+        const firstName = nameParts[0];
+        const lastName = nameParts.slice(1).join(' ') || firstName;
+        const username = validated.customerEmail.split('@')[0];
+
+        let finalUsername = username;
+        let counter = 1;
+        while (await storage.getUserByUsername(finalUsername)) {
+          finalUsername = `${username}${counter}`;
+          counter++;
+        }
+
+        const result = await db.insert(users).values({
+          username: finalUsername,
+          email: validated.customerEmail,
+          phoneNumber: validated.customerPhone,
+          firstName,
+          lastName,
+          password: await hashPassword(validated.password),
+          role: 'user',
+          isAdmin: false,
+        }).returning();
+
+        user = result[0];
+
+        // Log the user in
+        await new Promise((resolve, reject) => {
+          req.login(user, (err: any) => {
+            if (err) return reject(err);
+            resolve(undefined);
+          });
+        });
+      }
+
+      // Create or get Stripe customer and create subscriptions atomically
+      try {
+        // Create or get Stripe customer
+        let stripeCustomer;
+        const existingUser = await storage.getUser(user.id);
+        
+        if (existingUser?.stripeCustomerId) {
+          stripeCustomer = await stripe.customers.retrieve(existingUser.stripeCustomerId);
+        } else {
+          stripeCustomer = await stripe.customers.create({
+            email: validated.customerEmail,
+            name: validated.customerName,
+            phone: validated.customerPhone,
+            metadata: { userId: user.id },
+          });
+
+          // Update user with Stripe customer ID
+          await storage.updateUserStripeId(user.id, stripeCustomer.id);
+        }
+
+        // Attach payment method to customer
+        await stripe.paymentMethods.attach(validated.paymentMethodId, {
+          customer: stripeCustomer.id,
+        });
+
+        // Set as default payment method
+        await stripe.customers.update(stripeCustomer.id, {
+          invoice_settings: {
+            default_payment_method: validated.paymentMethodId,
+          },
+        });
+
+        // Create subscription records in a transaction
+        const subscriptionItems = retailItems.filter(i => i.isSubscription);
+        const createdSubscriptions = await db.transaction(async (tx) => {
+          const subs: any[] = [];
+          
+          for (const item of subscriptionItems) {
+            const [subscription] = await tx
+              .insert(retailSubscriptions)
+              .values({
+                userId: user.id,
+                customerName: validated.customerName,
+                customerEmail: validated.customerEmail,
+                customerPhone: validated.customerPhone,
+                subscriptionFrequency: item.subscriptionFrequency || 'weekly',
+                nextDeliveryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+                status: 'active',
+                billingType: 'local_managed',
+                billingStatus: 'active',
+                stripeCustomerId: stripeCustomer.id,
+                stripePaymentMethodId: validated.paymentMethodId,
+              })
+              .returning();
+
+            // Add subscription items
+            await tx.insert(retailSubscriptionItems).values({
+              subscriptionId: subscription.id,
+              retailProductId: item.retailProductId,
+              selectedFlavorId: item.selectedFlavorId,
+              quantity: item.quantity,
+            });
+
+            // Clear this subscription item from cart
+            await tx.delete(retailCartItems).where(eq(retailCartItems.id, item.id));
+
+            subs.push(subscription);
+          }
+
+          return subs;
+        });
+
+        res.json({ 
+          success: true,
+          subscriptions: createdSubscriptions,
+        });
+      } catch (transactionError: any) {
+        console.error("Subscription creation failed:", transactionError);
+        
+        // If transaction failed after payment method was attached, detach it
+        try {
+          await stripe.paymentMethods.detach(validated.paymentMethodId);
+        } catch (detachError) {
+          console.error("Failed to detach payment method after error:", detachError);
+        }
+        
+        throw transactionError;
+      }
+    } catch (error: any) {
+      console.error("Error creating subscription:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid input: " + error.message });
+      }
+      res.status(500).json({ message: "Error creating subscription: " + error.message });
+    }
+  });
+
   // Create Stripe Payment Intent for embedded cart checkout (supports both old and new cart)
   app.post("/api/create-cart-payment-intent", async (req: any, res) => {
     try {

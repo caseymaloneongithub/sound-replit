@@ -78,7 +78,7 @@ interface PaymentIntentResponse {
   total: number;
 }
 
-function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
+function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentIntentResponse; isSubscription: boolean }) {
   const stripe = useStripe();
   const elements = useElements();
   const { toast } = useToast();
@@ -143,10 +143,16 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
 
   const handleCustomerInfo = async (data: CustomerForm) => {
     try {
-      // Extract payment intent ID from client secret
+      // For subscriptions, we don't need to store customer info upfront
+      if (isSubscription) {
+        setCustomerInfo(data);
+        setStep('payment');
+        return;
+      }
+
+      // For one-time purchases, store customer info with payment intent
       const paymentIntentId = paymentInfo.clientSecret.split('_secret_')[0];
       
-      // Store customer info on the server
       await apiRequest("POST", "/api/checkout/customer-info", {
         customerName: data.customerName,
         customerEmail: data.customerEmail,
@@ -181,6 +187,52 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
         throw new Error('Card element not found');
       }
 
+      // Handle subscription checkout
+      if (isSubscription) {
+        // Create payment method
+        const { error: pmError, paymentMethod } = await stripe.createPaymentMethod({
+          type: 'card',
+          card: cardElement,
+          billing_details: {
+            name: customerInfo.customerName,
+            email: customerInfo.customerEmail,
+            phone: customerInfo.customerPhone,
+          },
+        });
+
+        if (pmError) {
+          toast({
+            title: "Payment Method Error",
+            description: pmError.message,
+            variant: "destructive",
+          });
+          setIsProcessing(false);
+          return;
+        }
+
+        // Create subscription via API
+        const result = await apiRequest("POST", "/api/checkout/create-subscription", {
+          customerName: customerInfo.customerName,
+          customerEmail: customerInfo.customerEmail,
+          customerPhone: customerInfo.customerPhone,
+          paymentMethodId: paymentMethod.id,
+          ...(customerInfo.password && !isLoggedIn && { password: customerInfo.password }), // Only send password for non-logged-in users
+        });
+
+        // Clear cart and redirect to success page
+        await queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"] });
+        
+        toast({
+          title: "Subscription Created!",
+          description: "Your subscription is now active. You'll be charged according to your schedule.",
+        });
+        
+        setLocation('/subscriptions');
+        return;
+      }
+
+      // Handle one-time purchase checkout
       const { error, paymentIntent } = await stripe.confirmCardPayment(
         paymentInfo.clientSecret,
         {
@@ -450,6 +502,37 @@ export default function CartCheckout() {
       return;
     }
 
+    // For subscriptions, we don't need a payment intent upfront
+    // We'll create the payment method when the form is submitted
+    if (hasSubscriptions) {
+      // Calculate totals from cart for display purposes
+      const subtotal = unifiedCart.reduce((sum, item) => {
+        if (item.type === 'retail_v2') {
+          let price = parseFloat(item.item.retailProduct.price);
+          if (item.item.isSubscription && item.item.retailProduct.subscriptionDiscount) {
+            const discount = parseFloat(item.item.retailProduct.subscriptionDiscount.toString());
+            price = price * (1 - discount / 100);
+          }
+          return sum + (price * item.item.quantity);
+        }
+        return sum;
+      }, 0);
+      
+      const TAX_RATE = 0.1035;
+      const taxAmount = subtotal * TAX_RATE;
+      const total = subtotal + taxAmount;
+      
+      setPaymentInfo({
+        clientSecret: '', // Not needed for subscriptions
+        subtotal,
+        taxAmount,
+        depositAmount: 0, // No deposits for subscriptions
+        total,
+      });
+      return;
+    }
+
+    // For one-time purchases, create payment intent
     apiRequest("POST", "/api/create-cart-payment-intent", {})
       .then((data) => {
         if (!data.clientSecret) {
@@ -472,7 +555,7 @@ export default function CartCheckout() {
         });
         setLocation('/shop');
       });
-  }, [totalCount, isLoading, setLocation, toast]);
+  }, [totalCount, isLoading, setLocation, toast, hasSubscriptions, unifiedCart]);
 
   if (isLoading || isAuthLoading) {
     return (
@@ -719,7 +802,7 @@ export default function CartCheckout() {
               <Elements 
                 stripe={stripePromise} 
                 options={{ 
-                  clientSecret,
+                  ...(clientSecret && { clientSecret }), // Only include clientSecret for one-time purchases
                   loader: 'never',
                   appearance: {
                     variables: {
@@ -728,7 +811,7 @@ export default function CartCheckout() {
                   }
                 }}
               >
-                <CheckoutForm paymentInfo={paymentInfo} />
+                <CheckoutForm paymentInfo={paymentInfo} isSubscription={hasSubscriptions} />
               </Elements>
             </CardContent>
           </Card>
