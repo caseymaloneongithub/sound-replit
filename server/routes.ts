@@ -1989,14 +1989,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         });
 
-        // Create subscription records (note: neon-http driver doesn't support transactions)
+        // Create subscription records and bill immediately for first order
         const subscriptionItems = retailItems.filter(i => i.isSubscription);
         const createdSubscriptions: any[] = [];
         
         for (const item of subscriptionItems) {
-          // First charge happens immediately (creates first order)
-          const now = new Date();
-          
+          // Get product details for pricing
+          const [retailProduct] = await db
+            .select()
+            .from(retailProducts)
+            .where(eq(retailProducts.id, item.retailProductId));
+
+          if (!retailProduct) {
+            throw new Error(`Retail product ${item.retailProductId} not found`);
+          }
+
+          // Calculate amounts for first order
+          const TAX_RATE = 0.1035;
+          const basePrice = parseFloat(retailProduct.price);
+          const discount = retailProduct.subscriptionDiscount ? Number(retailProduct.subscriptionDiscount) : 0;
+          const unitPrice = basePrice * (1 - discount / 100);
+          const subtotal = unitPrice * item.quantity;
+          const taxAmount = subtotal * TAX_RATE;
+          const totalAmount = subtotal + taxAmount;
+          const amountInCents = Math.round(totalAmount * 100);
+
+          // Calculate next charge date (for 2nd order)
+          const daysUntilNext = 
+            (item.subscriptionFrequency || 'weekly') === 'weekly' ? 7 :
+            (item.subscriptionFrequency || 'weekly') === 'bi-weekly' ? 14 :
+            28;
+          const nextChargeDate = new Date();
+          nextChargeDate.setDate(nextChargeDate.getDate() + daysUntilNext);
+          const normalizedNextDate = normalizeToAllowedPickupDay(nextChargeDate);
+
+          // Create the subscription with future next charge date
           const [subscription] = await db
             .insert(retailSubscriptions)
             .values({
@@ -2005,8 +2032,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               customerEmail: validated.customerEmail,
               customerPhone: validated.customerPhone,
               subscriptionFrequency: item.subscriptionFrequency || 'weekly',
-              nextChargeAt: now, // Charge immediately for first order
-              nextDeliveryDate: now, // First delivery ready today
+              nextChargeAt: normalizedNextDate, // Next charge is in the future
+              nextDeliveryDate: normalizedNextDate,
               status: 'active',
               billingType: 'local_managed',
               billingStatus: 'active',
@@ -2024,6 +2051,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
             selectedFlavorId: item.selectedFlavorId,
             quantity: item.quantity,
           });
+
+          // Charge immediately for first order
+          const paymentIntent = await stripe.paymentIntents.create({
+            amount: amountInCents,
+            currency: 'usd',
+            customer: stripeCustomer.id,
+            payment_method: validated.paymentMethodId,
+            off_session: true,
+            confirm: true,
+            metadata: {
+              retailSubscriptionId: subscription.id,
+              type: 'retail_subscription_first_order',
+              subtotal: subtotal.toFixed(2),
+              taxAmount: taxAmount.toFixed(2),
+              totalAmount: totalAmount.toFixed(2),
+            },
+          });
+
+          // Create first order immediately
+          if (paymentIntent.status === 'succeeded') {
+            const orderCount = await db.select({ count: sql<number>`count(*)` }).from(retailOrders);
+            const orderNumber = `RO-${String((orderCount[0].count as number) + 1).padStart(6, '0')}`;
+
+            const [newOrder] = await db.insert(retailOrders).values({
+              orderNumber,
+              customerName: validated.customerName,
+              customerEmail: validated.customerEmail,
+              customerPhone: validated.customerPhone,
+              status: 'pending',
+              subtotal: subtotal.toFixed(2),
+              taxAmount: taxAmount.toFixed(2),
+              totalAmount: totalAmount.toFixed(2),
+              stripePaymentIntentId: paymentIntent.id,
+              isSubscriptionOrder: true,
+              userId: user.id,
+            }).returning();
+
+            // Create order item
+            await db.insert(retailOrderItemsV2).values({
+              orderId: newOrder.id,
+              retailProductId: item.retailProductId,
+              selectedFlavorId: item.selectedFlavorId,
+              quantity: item.quantity,
+              unitPrice: unitPrice.toFixed(2),
+            });
+
+            console.log(`[SUBSCRIPTION] ✅ Created first order ${orderNumber} for subscription ${subscription.id}`);
+          } else {
+            console.error(`[SUBSCRIPTION] ⚠️ Payment status ${paymentIntent.status} for first order`);
+          }
 
           // Clear this subscription item from cart
           await db.delete(retailCartItems).where(eq(retailCartItems.id, item.id));
@@ -5319,6 +5396,19 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error("Error fetching recent touch points:", error);
       res.status(500).json({ message: "Error fetching recent touch points: " + error.message });
+    }
+  });
+
+  // Admin endpoint to manually trigger billing (for testing)
+  app.post("/api/admin/trigger-billing", isAdmin, async (req, res) => {
+    try {
+      console.log('[ADMIN] Manually triggering billing process...');
+      const { runDailyBilling } = await import('./billing-cron');
+      await runDailyBilling();
+      res.json({ success: true, message: 'Billing process triggered successfully' });
+    } catch (error: any) {
+      console.error('[ADMIN] Error triggering billing:', error);
+      res.status(500).json({ message: 'Error triggering billing: ' + error.message });
     }
   });
 
