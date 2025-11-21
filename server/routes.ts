@@ -1553,10 +1553,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const depositAmount = Math.round(parseFloat(item.retailProduct.deposit.toString()) * 100);
           const retailProduct = item.retailProduct;
           
-          // For multi-flavor products, use selected flavor name; for single-flavor, use product's flavor
+          // For multi-flavor products, find selected flavor name from flavors array
           let productName = retailProduct.unitDescription;
-          if (retailProduct.productType === 'multi-flavor' && item.selectedFlavorName) {
-            productName = `${item.selectedFlavorName} ${retailProduct.unitDescription}`;
+          if (retailProduct.productType === 'multi-flavor' && item.selectedFlavorId) {
+            const selectedFlavor = retailProduct.flavors.find(f => f.id === item.selectedFlavorId);
+            if (selectedFlavor) {
+              productName = `${selectedFlavor.name} ${retailProduct.unitDescription}`;
+            }
           } else if (retailProduct.productType === 'single-flavor' && retailProduct.flavor) {
             productName = `${retailProduct.flavor.name} ${retailProduct.unitDescription}`;
           }
