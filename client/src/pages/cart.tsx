@@ -15,6 +15,7 @@ export default function Cart() {
 
   const calculateTotals = () => {
     let subtotal = 0;
+    let depositTotal = 0;
 
     items.forEach(cartItem => {
       if (cartItem.type === 'legacy') {
@@ -22,6 +23,7 @@ export default function Cart() {
         subtotal += basePrice * cartItem.item.quantity;
       } else {
         const basePrice = parseFloat(cartItem.item.retailProduct.price);
+        const deposit = cartItem.item.retailProduct.deposit ? parseFloat(cartItem.item.retailProduct.deposit) : 0;
         const discountPercentage = cartItem.item.isSubscription 
           ? parseFloat(cartItem.item.retailProduct.subscriptionDiscount) 
           : 0;
@@ -29,21 +31,23 @@ export default function Cart() {
           ? basePrice * (1 - discountPercentage / 100)
           : basePrice;
         subtotal += finalPrice * cartItem.item.quantity;
+        depositTotal += deposit * cartItem.item.quantity;
       }
     });
 
     const TAX_RATE = 0.1035;
     const taxAmount = subtotal * TAX_RATE;
-    const total = subtotal + taxAmount;
+    const total = subtotal + depositTotal + taxAmount;
 
     return {
       subtotal: subtotal.toFixed(2),
+      depositTotal: depositTotal.toFixed(2),
       taxAmount: taxAmount.toFixed(2),
       total: total.toFixed(2),
     };
   };
 
-  const { subtotal, taxAmount, total } = calculateTotals();
+  const { subtotal, depositTotal, taxAmount, total } = calculateTotals();
 
   const handleUpdateQuantity = async (itemId: string, newQuantity: number, isRetail: boolean) => {
     if (newQuantity < 1) return;
@@ -293,6 +297,12 @@ export default function Cart() {
                 <span className="text-muted-foreground">Subtotal</span>
                 <span data-testid="cart-subtotal">${subtotal}</span>
               </div>
+              {parseFloat(depositTotal) > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Deposit</span>
+                  <span data-testid="cart-deposit">${depositTotal}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Tax (10.35%)</span>
                 <span data-testid="cart-tax">${taxAmount}</span>
