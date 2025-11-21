@@ -73,6 +73,7 @@ interface CartItemWithProduct {
 interface PaymentIntentResponse {
   clientSecret: string;
   subtotal: number;
+  discountAmount?: number;
   taxAmount: number;
   depositAmount: number;
   total: number;
@@ -506,11 +507,19 @@ export default function CartCheckout() {
     // We'll create the payment method when the form is submitted
     if (hasSubscriptions) {
       // Calculate totals from cart for display purposes
+      let originalSubtotal = 0;
+      let discountAmount = 0;
+      
       const subtotal = unifiedCart.reduce((sum, item) => {
         if (item.type === 'retail_v2') {
-          let price = parseFloat(item.item.retailProduct.price);
+          const originalPrice = parseFloat(item.item.retailProduct.price);
+          originalSubtotal += originalPrice * item.item.quantity;
+          
+          let price = originalPrice;
           if (item.item.isSubscription && item.item.retailProduct.subscriptionDiscount) {
             const discount = parseFloat(item.item.retailProduct.subscriptionDiscount.toString());
+            const itemDiscount = (originalPrice * item.item.quantity * discount) / 100;
+            discountAmount += itemDiscount;
             price = price * (1 - discount / 100);
           }
           return sum + (price * item.item.quantity);
@@ -524,7 +533,8 @@ export default function CartCheckout() {
       
       setPaymentInfo({
         clientSecret: '', // Not needed for subscriptions
-        subtotal,
+        subtotal: originalSubtotal, // Show original price
+        discountAmount, // Show discount separately
         taxAmount,
         depositAmount: 0, // No deposits for subscriptions
         total,
@@ -771,8 +781,14 @@ export default function CartCheckout() {
               <div className="border-t pt-4 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Subtotal</span>
-                  <span data-testid="text-summary-subtotal">${subtotal.toFixed(2)}</span>
+                  <span data-testid="text-summary-subtotal">${paymentInfo.subtotal.toFixed(2)}</span>
                 </div>
+                {paymentInfo.discountAmount && paymentInfo.discountAmount > 0 && (
+                  <div className="flex justify-between text-sm text-green-600 dark:text-green-500">
+                    <span>Subscription Discount</span>
+                    <span data-testid="text-summary-discount">-${paymentInfo.discountAmount.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Sales Tax (10.35%)</span>
                   <span data-testid="text-summary-tax">${paymentInfo.taxAmount.toFixed(2)}</span>
