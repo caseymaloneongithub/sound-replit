@@ -17,13 +17,26 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
   const isSubscription = unifiedItem.item.isSubscription;
   const subscriptionFrequency = unifiedItem.item.subscriptionFrequency ?? undefined;
   
-  const productName = unifiedItem.type === 'legacy' 
-    ? unifiedItem.item.product.name
-    : unifiedItem.item.retailProduct.flavor.name;
+  // For retail_v2 items, handle multi-flavor products
+  let productName: string;
+  let productImageUrl: string;
+  
+  if (unifiedItem.type === 'legacy') {
+    productName = unifiedItem.item.product.name;
+    productImageUrl = unifiedItem.item.product.imageUrl;
+  } else {
+    const item = unifiedItem.item;
+    // Find the display flavor for multi-flavor products
+    const displayFlavor = item.retailProduct.productType === 'multi-flavor' && item.selectedFlavorId
+      ? item.retailProduct.flavors.find(f => f.id === item.selectedFlavorId)
+      : item.retailProduct.flavor;
     
-  const productImageUrl = (unifiedItem.type === 'legacy'
-    ? unifiedItem.item.product.imageUrl
-    : unifiedItem.item.retailProduct.flavor.primaryImageUrl) ?? '';
+    productName = displayFlavor
+      ? `${displayFlavor.name} ${item.retailProduct.unitDescription}`
+      : item.retailProduct.unitDescription;
+    
+    productImageUrl = displayFlavor?.primaryImageUrl ?? '';
+  }
     
   const basePrice = unifiedItem.type === 'legacy'
     ? unifiedItem.item.product.retailPrice

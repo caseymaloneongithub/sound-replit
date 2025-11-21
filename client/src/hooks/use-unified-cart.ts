@@ -18,7 +18,7 @@ interface LegacyCartItem {
 
 // New retail cart item type
 type RetailCartItemWithProduct = RetailCartItem & {
-  retailProduct: RetailProduct & { flavor: Flavor };
+  retailProduct: RetailProduct & { flavor: Flavor | null; flavors: Flavor[] };
 };
 
 // Unified cart item with discriminator
