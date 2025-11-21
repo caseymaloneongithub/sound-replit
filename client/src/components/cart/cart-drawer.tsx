@@ -234,7 +234,7 @@ export function CartDrawer() {
               
               {depositTotal > 0 && (
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Deposit</span>
+                  <span className="text-muted-foreground">Refundable Keg Deposit</span>
                   <span data-testid="text-cart-deposit">${depositTotal.toFixed(2)}</span>
                 </div>
               )}

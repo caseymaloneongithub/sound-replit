@@ -675,7 +675,7 @@ export default function CartCheckout() {
                 </div>
                 {paymentInfo.depositAmount > 0 && (
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Refundable Deposit</span>
+                    <span className="text-muted-foreground">Refundable Keg Deposit</span>
                     <span data-testid="text-summary-deposit">${paymentInfo.depositAmount.toFixed(2)}</span>
                   </div>
                 )}

@@ -314,7 +314,7 @@ export default function Cart() {
               </div>
               {parseFloat(depositTotal) > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Deposit</span>
+                  <span className="text-muted-foreground">Refundable Keg Deposit</span>
                   <span data-testid="cart-deposit">${depositTotal}</span>
                 </div>
               )}
