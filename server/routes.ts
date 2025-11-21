@@ -1903,6 +1903,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Calculate total amount in cents using actual product prices
       let subtotalCents = 0;
+      let depositAmountCents = 0; // Deposits are charged but NOT taxed
       
       // Add legacy cart items
       for (const item of legacyItems) {
@@ -1940,12 +1941,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         const priceInCents = Math.round(priceInDollars * 100);
         subtotalCents += priceInCents * item.quantity;
+        
+        // Add deposits (only for ONE-TIME purchases, not subscriptions, and not taxed)
+        if (!item.isSubscription && item.retailProduct.deposit) {
+          const depositInDollars = parseFloat(item.retailProduct.deposit.toString());
+          if (isFinite(depositInDollars) && depositInDollars > 0) {
+            const depositInCents = Math.round(depositInDollars * 100);
+            depositAmountCents += depositInCents * item.quantity;
+          }
+        }
       }
 
       // Calculate sales tax (WA State 6.5% + Seattle City 3.85% = 10.35%)
+      // Tax is applied to subtotal ONLY, not to deposits
       const TAX_RATE = 0.1035;
       const taxAmountCents = Math.round(subtotalCents * TAX_RATE);
-      const totalAmountCents = subtotalCents + taxAmountCents;
+      const totalAmountCents = subtotalCents + taxAmountCents + depositAmountCents;
 
       // Create payment intent
       const paymentIntent = await stripe.paymentIntents.create({
@@ -1964,6 +1975,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           subtotal: (subtotalCents / 100).toFixed(2),
           taxRate: TAX_RATE.toString(),
           taxAmount: (taxAmountCents / 100).toFixed(2),
+          depositAmount: (depositAmountCents / 100).toFixed(2),
           hasLegacyItems: legacyItems.length > 0 ? 'true' : 'false',
           hasRetailV2Items: retailItems.length > 0 ? 'true' : 'false',
         },
@@ -1973,6 +1985,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         clientSecret: paymentIntent.client_secret,
         subtotal: subtotalCents / 100,
         taxAmount: taxAmountCents / 100,
+        depositAmount: depositAmountCents / 100,
         total: totalAmountCents / 100,
       });
     } catch (error: any) {
@@ -2731,8 +2744,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   throw new Error('Cart is empty - cannot verify or fulfill payment');
                 }
                 
-                // 🔒 SECURITY: Recompute subtotal from locked cart items (don't trust client metadata)
+                // 🔒 SECURITY: Recompute subtotal and deposit from locked cart items (don't trust client metadata)
                 let recomputedSubtotalCents = 0;
+                let recomputedDepositCents = 0; // Deposits are charged but NOT taxed
                 
                 // Add legacy cart items
                 for (const item of cartItems) {
@@ -2761,6 +2775,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   }
                   const priceInCents = Math.round(parseFloat(item.retailProduct.price) * 100);
                   recomputedSubtotalCents += priceInCents * item.quantity;
+                  
+                  // Add deposits (only for ONE-TIME purchases, not subscriptions, and not taxed)
+                  if (!item.isSubscription && item.retailProduct.deposit) {
+                    const depositInDollars = parseFloat(item.retailProduct.deposit.toString());
+                    if (isFinite(depositInDollars) && depositInDollars > 0) {
+                      const depositInCents = Math.round(depositInDollars * 100);
+                      recomputedDepositCents += depositInCents * item.quantity;
+                    }
+                  }
                 }
                 
                 // 🔒 SECURITY: Use stored tax metadata from checkout session (not hardcoded rate)
@@ -2769,20 +2792,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const storedTaxRateBps = checkoutSession.tax_rate_bps || 1035;
                 const isTaxExempt = checkoutSession.is_tax_exempt || false;
                 
-                // Calculate expected tax from stored rate for verification
+                // Calculate expected tax from stored rate for verification (tax on subtotal ONLY, not deposits)
                 let recomputedTaxCents = 0;
                 if (!isTaxExempt && storedTaxRateBps > 0) {
                   const taxRate = storedTaxRateBps / 10000; // Convert basis points to decimal
                   recomputedTaxCents = Math.round(recomputedSubtotalCents * taxRate);
                 }
                 
-                const recomputedTotalCents = recomputedSubtotalCents + recomputedTaxCents;
+                const recomputedTotalCents = recomputedSubtotalCents + recomputedTaxCents + recomputedDepositCents;
                 
-                // 🔒 SECURITY: Verify Stripe amount matches recomputed total
+                // 🔒 SECURITY: Verify Stripe amount matches recomputed total (subtotal + tax + deposit)
                 if (Math.abs(paymentIntent.amount - recomputedTotalCents) > 1) {
                   console.error(`[WEBHOOK] Payment amount verification FAILED!`);
                   console.error(`[WEBHOOK] Stripe charged: ${paymentIntent.amount} cents`);
-                  console.error(`[WEBHOOK] Recomputed total: ${recomputedTotalCents} cents (subtotal: ${recomputedSubtotalCents}, tax: ${recomputedTaxCents})`);
+                  console.error(`[WEBHOOK] Recomputed total: ${recomputedTotalCents} cents (subtotal: ${recomputedSubtotalCents}, tax: ${recomputedTaxCents}, deposit: ${recomputedDepositCents})`);
                   console.error(`[WEBHOOK] Stored tax from checkout: ${storedTaxAmountCents} cents at ${storedTaxRateBps} bps, exempt: ${isTaxExempt}`);
                   console.error(`[WEBHOOK] This may indicate a tampering attempt or pricing mismatch`);
                   throw new Error('Payment amount verification failed - amount mismatch');
@@ -2799,8 +2822,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const orderResult = await client.query(
                   `INSERT INTO retail_orders (
                     order_number, user_id, customer_name, customer_email, customer_phone,
-                    status, subtotal, tax_amount, total_amount, stripe_payment_intent_id, is_subscription_order
-                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+                    status, subtotal, tax_amount, deposit_amount, total_amount, stripe_payment_intent_id, is_subscription_order
+                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
                   [
                     orderNumber,
                     checkoutSession.user_id,
@@ -2810,6 +2833,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     'pending',
                     (recomputedSubtotalCents / 100).toFixed(2),
                     (recomputedTaxCents / 100).toFixed(2),
+                    (recomputedDepositCents / 100).toFixed(2),
                     (recomputedTotalCents / 100).toFixed(2),
                     paymentIntent.id,
                     isSubscriptionOrder
@@ -4528,6 +4552,74 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       // Unexpected error
       console.error("Unexpected error in cancel-with-refund:", error);
+      res.status(500).json({ message: error.message || "Unexpected error occurred" });
+    }
+  });
+
+  // Refund deposit for retail order
+  app.post("/api/retail/orders/:id/refund-deposit", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      if (!stripe) {
+        return res.status(500).json({ message: "Stripe is not configured" });
+      }
+
+      const order = await storage.getRetailOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      if (!order.stripePaymentIntentId) {
+        return res.status(400).json({ message: "No payment found for this order" });
+      }
+
+      const depositAmount = parseFloat(order.depositAmount?.toString() || '0');
+      if (depositAmount <= 0) {
+        return res.status(400).json({ message: "No deposit to refund for this order" });
+      }
+
+      if (order.depositRefundedAt) {
+        return res.status(400).json({ message: "Deposit has already been refunded" });
+      }
+
+      // Process deposit refund via Stripe
+      try {
+        const depositAmountCents = Math.round(depositAmount * 100);
+        const refund = await stripe.refunds.create({
+          payment_intent: order.stripePaymentIntentId,
+          amount: depositAmountCents, // Partial refund for deposit only
+        });
+
+        console.log('[REFUND DEPOSIT] Deposit refund created:', refund.id, 'for order:', order.orderNumber, 'amount:', depositAmount);
+
+        // Update order to mark deposit as refunded
+        await db
+          .update(retailOrders)
+          .set({
+            depositRefundedAt: new Date(),
+            depositRefundedByUserId: req.user!.id,
+          })
+          .where(eq(retailOrders.id, req.params.id));
+
+        res.json({ 
+          success: true, 
+          refundId: refund.id,
+          amount: depositAmount,
+          message: `Deposit of $${depositAmount.toFixed(2)} refunded successfully` 
+        });
+      } catch (refundError: any) {
+        console.error('[REFUND DEPOSIT] Stripe refund failed for order:', order.orderNumber, refundError);
+        
+        return res.status(500).json({ 
+          message: "Stripe refund failed. Please manually issue refund in Stripe Dashboard.",
+          orderNumber: order.orderNumber,
+          orderId: order.id,
+          depositAmount: depositAmount,
+          paymentIntentId: order.stripePaymentIntentId,
+          stripeError: refundError.message,
+        });
+      }
+    } catch (error: any) {
+      console.error("Unexpected error in refund-deposit:", error);
       res.status(500).json({ message: error.message || "Unexpected error occurred" });
     }
   });

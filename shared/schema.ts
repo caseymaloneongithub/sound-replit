@@ -326,11 +326,14 @@ export const retailOrders = pgTable("retail_orders", {
   status: text("status").notNull().default('pending'), // 'pending', 'ready_for_pickup', 'fulfilled', 'cancelled'
   subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull(),
   taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).notNull().default('0'),
+  depositAmount: decimal("deposit_amount", { precision: 10, scale: 2 }).notNull().default('0'), // Refundable deposit (not subject to tax)
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
   stripePaymentIntentId: text("stripe_payment_intent_id").unique(),
   stripeCheckoutSessionId: text("stripe_checkout_session_id"),
   stripeInvoiceId: text("stripe_invoice_id").unique(),
   isSubscriptionOrder: boolean("is_subscription_order").notNull().default(false),
+  depositRefundedAt: timestamp("deposit_refunded_at"), // When deposit was refunded
+  depositRefundedByUserId: varchar("deposit_refunded_by_user_id").references(() => users.id), // Staff who processed refund
   fulfilledAt: timestamp("fulfilled_at"),
   fulfilledByUserId: varchar("fulfilled_by_user_id").references(() => users.id),
   notes: text("notes"),

@@ -54,6 +54,7 @@ interface PaymentIntentResponse {
   clientSecret: string;
   subtotal: number;
   taxAmount: number;
+  depositAmount: number;
   total: number;
 }
 
@@ -439,6 +440,7 @@ export default function CartCheckout() {
           clientSecret: data.clientSecret,
           subtotal: data.subtotal,
           taxAmount: data.taxAmount,
+          depositAmount: data.depositAmount || 0,
           total: data.total,
         });
       })
@@ -671,6 +673,12 @@ export default function CartCheckout() {
                   <span className="text-muted-foreground">Sales Tax (10.35%)</span>
                   <span data-testid="text-summary-tax">${paymentInfo.taxAmount.toFixed(2)}</span>
                 </div>
+                {paymentInfo.depositAmount > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Refundable Deposit</span>
+                    <span data-testid="text-summary-deposit">${paymentInfo.depositAmount.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-lg font-bold pt-2 border-t">
                   <span>Total</span>
                   <span data-testid="text-summary-total">${paymentInfo.total.toFixed(2)}</span>

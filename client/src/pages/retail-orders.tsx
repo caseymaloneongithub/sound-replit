@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { ShoppingCart, Loader2, Package, XCircle, ArrowUpDown } from "lucide-react";
+import { ShoppingCart, Loader2, Package, XCircle, ArrowUpDown, DollarSign } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { RetailOrder } from "@shared/schema";
@@ -107,6 +107,39 @@ export default function RetailOrders() {
     },
   });
 
+  const refundDepositMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      return await apiRequest('POST', `/api/retail/orders/${orderId}/refund-deposit`);
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/retail/orders'] });
+      toast({
+        title: "Deposit refunded",
+        description: `Deposit of $${data.amount?.toFixed(2) || '0.00'} has been refunded successfully`,
+      });
+    },
+    onError: async (error: any) => {
+      let errorMessage = "Failed to refund deposit";
+      
+      if (error instanceof Response) {
+        try {
+          const errorData = await error.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch {
+          // If parsing fails, use default message
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    },
+  });
+
   const toggleSort = (status: string) => {
     setSortOrders(prev => ({
       ...prev,
@@ -176,6 +209,15 @@ export default function RetailOrders() {
                     Subtotal: ${Number(order.subtotal).toFixed(2)}
                     <br />
                     Tax: ${Number(order.taxAmount).toFixed(2)}
+                    {Number(order.depositAmount || 0) > 0 && (
+                      <>
+                        <br />
+                        Deposit: ${Number(order.depositAmount).toFixed(2)}
+                        {order.depositRefundedAt && (
+                          <span className="text-green-600 dark:text-green-400"> (Refunded)</span>
+                        )}
+                      </>
+                    )}
                   </div>
                   <div className="flex gap-2 flex-wrap justify-end">
                     <Select
@@ -195,6 +237,39 @@ export default function RetailOrders() {
                         <SelectItem value="cancelled" data-testid="status-cancelled">Cancelled</SelectItem>
                       </SelectContent>
                     </Select>
+                    {Number(order.depositAmount || 0) > 0 && !order.depositRefundedAt && order.stripePaymentIntentId && (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            disabled={refundDepositMutation.isPending}
+                            data-testid={`button-refund-deposit-${order.id}`}
+                          >
+                            <DollarSign className="w-4 h-4 mr-2" />
+                            Refund Deposit
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Refund Deposit?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This will refund the deposit of ${Number(order.depositAmount).toFixed(2)} to the customer's payment method for order #{order.orderNumber}. 
+                              This action cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel data-testid="button-cancel-deposit-refund-dialog">Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => refundDepositMutation.mutate(order.id)}
+                              data-testid="button-confirm-deposit-refund"
+                            >
+                              Confirm Refund
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
                     {order.status !== 'cancelled' && order.status !== 'fulfilled' && order.stripePaymentIntentId && (
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
