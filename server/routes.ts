@@ -1546,7 +1546,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
-      const lineItems = [...legacyLineItems, ...retailLineItems];
+      // Create deposit line items for retail products with deposits (one-time purchases only)
+      const depositLineItems = retailItems
+        .filter(item => !item.isSubscription && item.retailProduct.deposit && parseFloat(item.retailProduct.deposit.toString()) > 0)
+        .map(item => {
+          const depositAmount = Math.round(parseFloat(item.retailProduct.deposit.toString()) * 100);
+          const flavor = item.retailProduct.flavor;
+          
+          return {
+            price_data: {
+              currency: 'usd',
+              product_data: {
+                name: `Deposit: ${flavor.name} ${item.retailProduct.unitDescription}`,
+                description: 'Refundable deposit',
+              },
+              unit_amount: depositAmount,
+            },
+            quantity: item.quantity,
+          };
+        });
+
+      const lineItems = [...legacyLineItems, ...retailLineItems, ...depositLineItems];
 
       // For subscriptions, include product info in metadata
       const metadata: Record<string, string> = {
