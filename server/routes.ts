@@ -2788,8 +2788,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   throw new Error('Payment amount verification failed - amount mismatch');
                 }
                 
-                // Generate order number
-                const orderNumber = await storage.generateNextOrderNumber();
+                // Generate order number with row-level locking to prevent race conditions
+                const orderNumber = await storage.generateNextOrderNumber(client);
                 
                 // Determine if this is a subscription order
                 const isSubscriptionOrder = cartItems.some(item => item.isSubscription) || 

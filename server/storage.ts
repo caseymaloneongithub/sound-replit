@@ -2244,22 +2244,47 @@ export class PostgresStorage implements IStorage {
     }
   }
 
-  async generateNextOrderNumber(): Promise<string> {
+  async generateNextOrderNumber(client?: any): Promise<string> {
     const currentYear = new Date().getFullYear();
-    const result = await db
-      .select()
-      .from(retailOrders)
-      .where(sql`EXTRACT(YEAR FROM ${retailOrders.orderDate}) = ${currentYear}`)
-      .orderBy(desc(retailOrders.orderNumber));
     
-    if (result.length === 0) {
-      return `RO-${currentYear}-0001`;
+    if (client) {
+      // 🔒 Use PostgreSQL advisory lock to prevent concurrent number generation
+      // Lock ID: hash of "retail_order_number" string for uniqueness
+      const lockId = 123456789; // Arbitrary but consistent number for order generation
+      await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+      
+      const result = await client.query(
+        `SELECT order_number FROM retail_orders 
+         WHERE EXTRACT(YEAR FROM order_date) = $1 
+         ORDER BY order_number DESC 
+         LIMIT 1`,
+        [currentYear]
+      );
+      
+      if (result.rows.length === 0) {
+        return `RO-${currentYear}-0001`;
+      }
+      
+      const lastOrder = result.rows[0].order_number;
+      const match = lastOrder.match(/RO-\d{4}-(\d{4})/);
+      const nextNumber = match ? parseInt(match[1]) + 1 : 1;
+      return `RO-${currentYear}-${String(nextNumber).padStart(4, '0')}`;
+    } else {
+      const result = await db
+        .select()
+        .from(retailOrders)
+        .where(sql`EXTRACT(YEAR FROM ${retailOrders.orderDate}) = ${currentYear}`)
+        .orderBy(desc(retailOrders.orderNumber));
+      
+      if (result.length === 0) {
+        return `RO-${currentYear}-0001`;
+      }
+      
+      const lastOrder = result[0].orderNumber;
+      const match = lastOrder.match(/RO-\d{4}-(\d{4})/);
+      const nextNumber = match ? parseInt(match[1]) + 1 : 1;
+      return `RO-${currentYear}-${String(nextNumber).padStart(4, '0')}`;
     }
-    
-    const lastOrder = result[0].orderNumber;
-    const match = lastOrder.match(/RO-\d{4}-(\d{4})/);
-    const nextNumber = match ? parseInt(match[1]) + 1 : 1;
-    return `RO-${currentYear}-${String(nextNumber).padStart(4, '0')}`;
   }
 
   async updateWholesaleOrderFulfillment(id: string, userId: string): Promise<WholesaleOrder | undefined> {
