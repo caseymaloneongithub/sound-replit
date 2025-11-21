@@ -1087,7 +1087,7 @@ export class PostgresStorage implements IStorage {
         `SELECT 
           rc.*,
           rp.id as rp_id, rp.product_type, rp.product_name, rp.flavor_id, rp.unit_type, rp.unit_description,
-          rp.price, rp.subscription_discount, rp.product_image_url, rp.is_active as rp_is_active, rp.display_order,
+          rp.price, rp.subscription_discount, rp.deposit, rp.product_image_url, rp.is_active as rp_is_active, rp.display_order,
           f.id as f_id, f.name as f_name, f.description as f_description, f.flavor_profile, f.ingredients, 
           f.primary_image_url, f.secondary_image_url, f.is_active as f_is_active, f.display_order as f_display_order
         FROM retail_cart_items rc
@@ -1114,6 +1114,7 @@ export class PostgresStorage implements IStorage {
           unitDescription: row.unit_description,
           price: row.price,
           subscriptionDiscount: row.subscription_discount,
+          deposit: row.deposit,
           productImageUrl: row.product_image_url,
           isActive: row.rp_is_active,
           displayOrder: row.display_order,
