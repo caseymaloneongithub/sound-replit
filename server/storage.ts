@@ -2253,10 +2253,10 @@ export class PostgresStorage implements IStorage {
       
       const result = await client.query(
         `SELECT order_number FROM retail_orders 
-         WHERE EXTRACT(YEAR FROM order_date) = $1 
+         WHERE order_number LIKE $1
          ORDER BY order_number DESC 
          LIMIT 1`,
-        [currentYear]
+        [`RO-${currentYear}-%`]
       );
       
       if (result.rows.length === 0) {
@@ -2271,7 +2271,7 @@ export class PostgresStorage implements IStorage {
       const result = await db
         .select()
         .from(retailOrders)
-        .where(sql`EXTRACT(YEAR FROM ${retailOrders.orderDate}) = ${currentYear}`)
+        .where(sql`${retailOrders.orderNumber} LIKE ${`RO-${currentYear}-%`}`)
         .orderBy(desc(retailOrders.orderNumber));
       
       if (result.length === 0) {
