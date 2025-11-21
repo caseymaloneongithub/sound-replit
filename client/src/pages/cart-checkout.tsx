@@ -25,13 +25,33 @@ const customerSchema = z.object({
   customerName: z.string().min(2, "Name must be at least 2 characters"),
   customerEmail: z.string().email("Invalid email address"),
   customerPhone: z.string().min(10, "Phone number must be at least 10 digits"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  confirmPassword: z.string().min(1, "Please confirm your password"),
-}).refine((data) => {
-  return data.password === data.confirmPassword;
-}, {
-  message: "Passwords must match",
-  path: ["confirmPassword"],
+  password: z.string().optional(),
+  confirmPassword: z.string().optional(),
+}).superRefine((data, ctx) => {
+  // If password is provided, validate it
+  if (data.password || data.confirmPassword) {
+    if (!data.password || data.password.length < 6) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Password must be at least 6 characters",
+        path: ["password"],
+      });
+    }
+    if (!data.confirmPassword) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Please confirm your password",
+        path: ["confirmPassword"],
+      });
+    }
+    if (data.password && data.confirmPassword && data.password !== data.confirmPassword) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Passwords must match",
+        path: ["confirmPassword"],
+      });
+    }
+  }
 });
 
 type CustomerForm = z.infer<typeof customerSchema>;
