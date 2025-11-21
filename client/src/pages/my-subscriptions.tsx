@@ -330,44 +330,54 @@ export default function MySubscriptions() {
                       </div>
                       <div className="space-y-2">
                         {subscription.items && subscription.items.length > 0 ? (
-                          subscription.items.map((item) => (
-                            <div 
-                              key={item.id} 
-                              className="flex items-center justify-between p-3 rounded-md bg-muted/50"
-                              data-testid={`item-${item.id}`}
-                            >
-                              <div className="flex items-center gap-3 flex-1">
-                                {item.product?.imageUrl && (
-                                  <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0">
-                                    <img 
-                                      src={item.product.imageUrl} 
-                                      alt={item.product.name}
-                                      className="w-full h-full object-cover"
-                                    />
-                                  </div>
-                                )}
-                                <div className="flex-1">
-                                  <div className="font-medium text-sm" data-testid={`text-product-name-${item.id}`}>
-                                    {item.product?.name || 'Product'}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    Quantity: {item.quantity} case{item.quantity > 1 ? 's' : ''}
+                          subscription.items.map((item: any) => {
+                            // Handle both old format (product) and new format (retailProduct + flavor)
+                            const productInfo = item.product || item.retailProduct;
+                            const flavorInfo = item.flavor;
+                            const displayName = flavorInfo 
+                              ? `${productInfo?.name || 'Product'} - ${flavorInfo.name}`
+                              : productInfo?.name || 'Product';
+                            const imageUrl = flavorInfo?.imageUrl || productInfo?.imageUrl;
+                            
+                            return (
+                              <div 
+                                key={item.id} 
+                                className="flex items-center justify-between p-3 rounded-md bg-muted/50"
+                                data-testid={`item-${item.id}`}
+                              >
+                                <div className="flex items-center gap-3 flex-1">
+                                  {imageUrl && (
+                                    <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0">
+                                      <img 
+                                        src={imageUrl} 
+                                        alt={displayName}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    </div>
+                                  )}
+                                  <div className="flex-1">
+                                    <div className="font-medium text-sm" data-testid={`text-product-name-${item.id}`}>
+                                      {displayName}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      Quantity: {item.quantity} case{item.quantity > 1 ? 's' : ''}
+                                    </div>
                                   </div>
                                 </div>
+                                {subscription.items.length > 1 && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleRemoveItem(subscription.id, item.id)}
+                                    disabled={removeItemMutation.isPending}
+                                    data-testid={`button-remove-item-${item.id}`}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                )}
                               </div>
-                              {subscription.items.length > 1 && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleRemoveItem(subscription.id, item.id)}
-                                  disabled={removeItemMutation.isPending}
-                                  data-testid={`button-remove-item-${item.id}`}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              )}
-                            </div>
-                          ))
+                            );
+                          })
                         ) : (
                           <div className="text-sm text-muted-foreground text-center py-4">
                             No products in this subscription

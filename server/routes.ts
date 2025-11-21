@@ -3286,10 +3286,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.user.id;
       console.log('[DEBUG] Fetching subscriptions for user:', userId);
-      const subscriptions = await storage.getUserSubscriptions(userId);
-      console.log('[DEBUG] Found subscriptions:', subscriptions.length);
       
-      // Fetch items for each subscription
+      // Fetch old subscriptions
+      const subscriptions = await storage.getUserSubscriptions(userId);
+      console.log('[DEBUG] Found old subscriptions:', subscriptions.length);
+      
+      // Fetch NEW retail subscriptions
+      const retailSubs = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.userId, userId));
+      console.log('[DEBUG] Found retail subscriptions:', retailSubs.length);
+      
+      // Fetch items for each old subscription
       const subscriptionsWithItems = await Promise.all(
         subscriptions.map(async (sub) => {
           const items = await storage.getSubscriptionItems(sub.id);
@@ -3306,7 +3315,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
       
-      res.json(subscriptionsWithItems);
+      // Fetch items for each retail subscription
+      const retailSubscriptionsWithItems = await Promise.all(
+        retailSubs.map(async (sub) => {
+          const items = await db
+            .select()
+            .from(retailSubscriptionItems)
+            .where(eq(retailSubscriptionItems.subscriptionId, sub.id));
+          
+          // Enrich items with retail product and flavor data
+          const itemsWithProducts = await Promise.all(
+            items.map(async (item) => {
+              const [retailProduct] = await db
+                .select()
+                .from(retailProducts)
+                .where(eq(retailProducts.id, item.retailProductId));
+              
+              const [flavor] = item.selectedFlavorId 
+                ? await db.select().from(flavors).where(eq(flavors.id, item.selectedFlavorId))
+                : [null];
+              
+              return { ...item, retailProduct, flavor };
+            })
+          );
+          
+          return { ...sub, items: itemsWithProducts };
+        })
+      );
+      
+      // Combine both old and new subscriptions
+      const allSubscriptions = [...subscriptionsWithItems, ...retailSubscriptionsWithItems];
+      
+      res.json(allSubscriptions);
     } catch (error: any) {
       console.error('[ERROR] Failed to fetch user subscriptions:', error);
       res.status(500).json({ message: "Error fetching user subscriptions: " + error.message });
