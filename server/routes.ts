@@ -53,7 +53,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Unauthorized - please log in" });
       }
       
-      if (!effectiveUser.isAdmin) {
+      if (!['admin', 'super_admin'].includes(effectiveUser.role)) {
         return res.status(403).json({ message: "Forbidden: Admin access required" });
       }
       

@@ -1,7 +1,7 @@
 import { useLocation } from "wouter";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ShoppingCart, ArrowRight, Trash2 } from "lucide-react";
+import { ShoppingCart, ArrowRight, Trash2, Plus, Minus } from "lucide-react";
 import { useUnifiedCart } from "@/hooks/use-unified-cart";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -44,6 +44,26 @@ export default function Cart() {
   };
 
   const { subtotal, taxAmount, total } = calculateTotals();
+
+  const handleUpdateQuantity = async (itemId: string, newQuantity: number, isRetail: boolean) => {
+    if (newQuantity < 1) return;
+    
+    try {
+      if (isRetail) {
+        await apiRequest("PATCH", `/api/retail-cart/${itemId}`, { quantity: newQuantity });
+        await queryClient.invalidateQueries({ queryKey: ['/api/retail-cart'] });
+      } else {
+        await apiRequest("PATCH", `/api/cart/${itemId}`, { quantity: newQuantity });
+        await queryClient.invalidateQueries({ queryKey: ['/api/cart'] });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update quantity",
+        variant: "destructive",
+      });
+    }
+  };
 
   const handleRemoveItem = async (itemId: string, isRetail: boolean) => {
     try {
@@ -132,12 +152,35 @@ export default function Cart() {
                           alt={item.product.name}
                           className="w-20 h-20 object-cover rounded"
                         />
-                        <div>
+                        <div className="flex-1">
                           <h3 className="font-semibold">{item.product.name} - Case of 12</h3>
                           {item.isSubscription && (
                             <p className="text-sm text-muted-foreground">{frequencyLabel} Subscription</p>
                           )}
-                          <p className="text-sm text-muted-foreground">Quantity: {item.quantity}</p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => handleUpdateQuantity(item.id, item.quantity - 1, false)}
+                              disabled={item.quantity <= 1}
+                              data-testid={`button-decrease-quantity-${item.id}`}
+                            >
+                              <Minus className="h-3 w-3" />
+                            </Button>
+                            <span className="text-sm font-medium w-8 text-center" data-testid={`quantity-${item.id}`}>
+                              {item.quantity}
+                            </span>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => handleUpdateQuantity(item.id, item.quantity + 1, false)}
+                              data-testid={`button-increase-quantity-${item.id}`}
+                            >
+                              <Plus className="h-3 w-3" />
+                            </Button>
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
@@ -184,7 +227,7 @@ export default function Cart() {
                             className="w-20 h-20 object-cover rounded"
                           />
                         )}
-                        <div>
+                        <div className="flex-1">
                           <h3 className="font-semibold">
                             {item.retailProduct.flavor.name} {item.retailProduct.unitDescription}
                           </h3>
@@ -194,7 +237,30 @@ export default function Cart() {
                               {discountPercentage > 0 && ` (${discountPercentage}% off)`}
                             </p>
                           )}
-                          <p className="text-sm text-muted-foreground">Quantity: {item.quantity}</p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => handleUpdateQuantity(item.id, item.quantity - 1, true)}
+                              disabled={item.quantity <= 1}
+                              data-testid={`button-decrease-quantity-${item.id}`}
+                            >
+                              <Minus className="h-3 w-3" />
+                            </Button>
+                            <span className="text-sm font-medium w-8 text-center" data-testid={`quantity-${item.id}`}>
+                              {item.quantity}
+                            </span>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => handleUpdateQuantity(item.id, item.quantity + 1, true)}
+                              data-testid={`button-increase-quantity-${item.id}`}
+                            >
+                              <Plus className="h-3 w-3" />
+                            </Button>
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
