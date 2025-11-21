@@ -1989,45 +1989,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         });
 
-        // Create subscription records in a transaction
+        // Create subscription records (note: neon-http driver doesn't support transactions)
         const subscriptionItems = retailItems.filter(i => i.isSubscription);
-        const createdSubscriptions = await db.transaction(async (tx) => {
-          const subs: any[] = [];
-          
-          for (const item of subscriptionItems) {
-            const [subscription] = await tx
-              .insert(retailSubscriptions)
-              .values({
-                userId: user.id,
-                customerName: validated.customerName,
-                customerEmail: validated.customerEmail,
-                customerPhone: validated.customerPhone,
-                subscriptionFrequency: item.subscriptionFrequency || 'weekly',
-                nextDeliveryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-                status: 'active',
-                billingType: 'local_managed',
-                billingStatus: 'active',
-                stripeCustomerId: stripeCustomer.id,
-                stripePaymentMethodId: validated.paymentMethodId,
-              })
-              .returning();
+        const createdSubscriptions: any[] = [];
+        
+        for (const item of subscriptionItems) {
+          const [subscription] = await db
+            .insert(retailSubscriptions)
+            .values({
+              userId: user.id,
+              customerName: validated.customerName,
+              customerEmail: validated.customerEmail,
+              customerPhone: validated.customerPhone,
+              subscriptionFrequency: item.subscriptionFrequency || 'weekly',
+              nextDeliveryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+              status: 'active',
+              billingType: 'local_managed',
+              billingStatus: 'active',
+              stripeCustomerId: stripeCustomer.id,
+              stripePaymentMethodId: validated.paymentMethodId,
+            })
+            .returning();
 
-            // Add subscription items
-            await tx.insert(retailSubscriptionItems).values({
-              subscriptionId: subscription.id,
-              retailProductId: item.retailProductId,
-              selectedFlavorId: item.selectedFlavorId,
-              quantity: item.quantity,
-            });
+          // Add subscription items
+          await db.insert(retailSubscriptionItems).values({
+            subscriptionId: subscription.id,
+            retailProductId: item.retailProductId,
+            selectedFlavorId: item.selectedFlavorId,
+            quantity: item.quantity,
+          });
 
-            // Clear this subscription item from cart
-            await tx.delete(retailCartItems).where(eq(retailCartItems.id, item.id));
+          // Clear this subscription item from cart
+          await db.delete(retailCartItems).where(eq(retailCartItems.id, item.id));
 
-            subs.push(subscription);
-          }
-
-          return subs;
-        });
+          createdSubscriptions.push(subscription);
+        }
 
         res.json({ 
           success: true,

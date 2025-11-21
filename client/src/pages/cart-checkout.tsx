@@ -506,6 +506,9 @@ export default function CartCheckout() {
     // For subscriptions, we don't need a payment intent upfront
     // We'll create the payment method when the form is submitted
     if (hasSubscriptions) {
+      // Only calculate if we don't have payment info yet
+      if (paymentInfo) return;
+      
       // Calculate totals from cart for display purposes
       let originalSubtotal = 0;
       let discountAmount = 0;
@@ -542,7 +545,9 @@ export default function CartCheckout() {
       return;
     }
 
-    // For one-time purchases, create payment intent
+    // For one-time purchases, create payment intent (only if we don't have one already)
+    if (paymentInfo) return;
+    
     apiRequest("POST", "/api/create-cart-payment-intent", {})
       .then((data) => {
         if (!data.clientSecret) {
@@ -565,7 +570,7 @@ export default function CartCheckout() {
         });
         setLocation('/shop');
       });
-  }, [totalCount, isLoading, setLocation, toast, hasSubscriptions, unifiedCart]);
+  }, [totalCount, isLoading, setLocation, toast, hasSubscriptions, unifiedCart, paymentInfo]);
 
   if (isLoading || isAuthLoading) {
     return (
