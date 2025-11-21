@@ -224,6 +224,11 @@ export default function ShopV2() {
                             </Badge>
                           )}
                         </div>
+                        {product.deposit && Number(product.deposit) > 0 && (
+                          <p className="text-sm text-muted-foreground mt-1" data-testid={`text-deposit-${product.id}`}>
+                            + ${parseFloat(product.deposit).toFixed(2)} refundable deposit
+                          </p>
+                        )}
                       </CardContent>
                       <CardFooter className="p-4 pt-0 flex-col gap-2">
                         {/* Flavor selector for multi-flavor products */}
