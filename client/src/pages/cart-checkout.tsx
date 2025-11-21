@@ -25,17 +25,13 @@ const customerSchema = z.object({
   customerName: z.string().min(2, "Name must be at least 2 characters"),
   customerEmail: z.string().email("Invalid email address"),
   customerPhone: z.string().min(10, "Phone number must be at least 10 digits"),
-  password: z.string().optional(),
-  confirmPassword: z.string().optional(),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  confirmPassword: z.string().min(1, "Please confirm your password"),
 }).refine((data) => {
-  // Only validate password match if passwords are provided
-  if (data.password || data.confirmPassword) {
-    return data.password && data.password.length >= 6 && data.password === data.confirmPassword;
-  }
-  return true;
+  return data.password === data.confirmPassword;
 }, {
-  message: "Password must be at least 6 characters and passwords must match",
-  path: ["password"],
+  message: "Passwords must match",
+  path: ["confirmPassword"],
 });
 
 type CustomerForm = z.infer<typeof customerSchema>;
@@ -186,8 +182,8 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
           variant: "destructive",
         });
       } else if (paymentIntent?.status === 'succeeded') {
-        // Create account for the customer only if not logged in
-        if (!isLoggedIn && customerInfo.password) {
+        // Create account for the customer (required for all non-logged-in users)
+        if (!isLoggedIn) {
           try {
             await apiRequest("POST", "/api/checkout/create-account", {
               customerName: customerInfo.customerName,
@@ -298,10 +294,10 @@ function CheckoutForm({ paymentInfo }: { paymentInfo: PaymentIntentResponse }) {
             <div className="border-t pt-4 mt-4">
               <div className="flex items-center gap-2 mb-4">
                 <UserPlus className="w-4 h-4" />
-                <h3 className="font-medium">Create Your Account</h3>
+                <h3 className="font-medium">Create Your Account (Required)</h3>
               </div>
               <p className="text-sm text-muted-foreground mb-4">
-                Set a password to create your account and track your orders.
+                An account is required to complete your purchase and track your orders.
               </p>
               
               <div className="space-y-4">
