@@ -139,6 +139,14 @@ export function CartDrawer() {
     return sum + (pricePerCase * item.item.quantity);
   }, 0);
   
+  // Calculate deposit total (only for one-time purchases of retail_v2 items with deposits)
+  const depositTotal = unifiedItems
+    .filter(item => item.type === 'retail_v2' && !item.item.isSubscription)
+    .reduce((sum, item) => {
+      const deposit = parseFloat(item.item.retailProduct.deposit?.toString() || '0');
+      return sum + (deposit * item.item.quantity);
+    }, 0);
+  
   // Calculate taxable subtotal (only non-subscription items), using discounted prices
   const taxableSubtotal = unifiedItems
     .filter(item => !item.item.isSubscription)
@@ -151,7 +159,7 @@ export function CartDrawer() {
   // Tax only applies to one-time purchases, not subscriptions
   const TAX_RATE = 0.1035;
   const taxAmount = taxableSubtotal * TAX_RATE;
-  const cartTotal = subtotal + taxAmount;
+  const cartTotal = subtotal + depositTotal + taxAmount;
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -223,6 +231,13 @@ export function CartDrawer() {
                 <span className="text-muted-foreground">Subtotal</span>
                 <span data-testid="text-cart-subtotal">${subtotal.toFixed(2)}</span>
               </div>
+              
+              {depositTotal > 0 && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Deposit</span>
+                  <span data-testid="text-cart-deposit">${depositTotal.toFixed(2)}</span>
+                </div>
+              )}
               
               {taxAmount > 0 && (
                 <div className="flex items-center justify-between text-sm">

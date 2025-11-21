@@ -20,6 +20,7 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
   // For retail_v2 items, handle multi-flavor products
   let productName: string;
   let productImageUrl: string;
+  let unitDescription: string = 'case';
   
   if (unifiedItem.type === 'legacy') {
     productName = unifiedItem.item.product.name;
@@ -36,6 +37,7 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
       : item.retailProduct.unitDescription;
     
     productImageUrl = displayFlavor?.primaryImageUrl ?? '';
+    unitDescription = item.retailProduct.unitDescription || 'case';
   }
     
   const basePrice = unifiedItem.type === 'legacy'
@@ -64,16 +66,11 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
         <h4 className="font-semibold truncate" data-testid={`text-item-name-${itemId}`}>
           {productName}
         </h4>
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-sm font-medium" data-testid={`text-item-quantity-${itemId}`}>
-            {formatCaseQuantity(quantity)}
-          </p>
-        </div>
         <div className="flex items-center gap-2 flex-wrap mt-1">
           {isSubscription && subscriptionDiscountPercentage > 0 ? (
             <div className="flex items-center gap-2">
               <p className="text-sm font-medium text-primary" data-testid={`text-item-price-${itemId}`}>
-                ${pricePerCase.toFixed(2)} per case
+                ${pricePerCase.toFixed(2)}
               </p>
               <p className="text-xs text-muted-foreground line-through">
                 ${parseFloat(basePrice).toFixed(2)}
@@ -81,7 +78,7 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
             </div>
           ) : (
             <p className="text-sm text-muted-foreground" data-testid={`text-item-price-${itemId}`}>
-              ${pricePerCase.toFixed(2)} per case
+              ${pricePerCase.toFixed(2)}
             </p>
           )}
           {isSubscription && (
