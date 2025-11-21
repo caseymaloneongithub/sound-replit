@@ -47,6 +47,10 @@ export default function MySubscriptions() {
     queryKey: ["/api/products"],
   });
 
+  const { data: retailProducts } = useQuery<any[]>({
+    queryKey: ["/api/retail-products"],
+  });
+
   const updateSubscriptionMutation = useMutation({
     mutationFn: async ({ subscriptionId, updates }: { subscriptionId: string; updates: any }) => {
       return await apiRequest("PATCH", `/api/my-subscriptions/${subscriptionId}`, updates);
@@ -143,6 +147,26 @@ export default function MySubscriptions() {
       toast({
         title: "Error",
         description: error.message || "Failed to open billing portal",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateFlavorMutation = useMutation({
+    mutationFn: async ({ subscriptionId, itemId, selectedFlavorId }: { subscriptionId: string; itemId: string; selectedFlavorId: string }) => {
+      return await apiRequest("PATCH", `/api/retail-subscriptions/${subscriptionId}/items/${itemId}/flavor`, { selectedFlavorId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/my-subscriptions"] });
+      toast({
+        title: "Flavor updated",
+        description: "Your flavor selection has been updated",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update flavor",
         variant: "destructive",
       });
     },
@@ -335,45 +359,83 @@ export default function MySubscriptions() {
                             const productInfo = item.product || item.retailProduct;
                             const flavorInfo = item.flavor;
                             const displayName = flavorInfo 
-                              ? `${productInfo?.name || 'Product'} - ${flavorInfo.name}`
+                              ? `${productInfo?.name || 'Product'}`
                               : productInfo?.name || 'Product';
                             const imageUrl = flavorInfo?.imageUrl || productInfo?.imageUrl;
+                            
+                            // Find the retail product to get available flavors
+                            const retailProduct = retailProducts?.find(rp => rp.id === item.retailProductId);
+                            const isMultiFlavor = retailProduct?.productType === 'multi-flavor';
+                            const availableFlavors = retailProduct?.flavors || [];
                             
                             return (
                               <div 
                                 key={item.id} 
-                                className="flex items-center justify-between p-3 rounded-md bg-muted/50"
+                                className="flex flex-col p-3 rounded-md bg-muted/50 gap-2"
                                 data-testid={`item-${item.id}`}
                               >
-                                <div className="flex items-center gap-3 flex-1">
-                                  {imageUrl && (
-                                    <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0">
-                                      <img 
-                                        src={imageUrl} 
-                                        alt={displayName}
-                                        className="w-full h-full object-cover"
-                                      />
-                                    </div>
-                                  )}
-                                  <div className="flex-1">
-                                    <div className="font-medium text-sm" data-testid={`text-product-name-${item.id}`}>
-                                      {displayName}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground">
-                                      Quantity: {item.quantity} case{item.quantity > 1 ? 's' : ''}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3 flex-1">
+                                    {imageUrl && (
+                                      <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0">
+                                        <img 
+                                          src={imageUrl} 
+                                          alt={displayName}
+                                          className="w-full h-full object-cover"
+                                        />
+                                      </div>
+                                    )}
+                                    <div className="flex-1">
+                                      <div className="font-medium text-sm" data-testid={`text-product-name-${item.id}`}>
+                                        {displayName}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">
+                                        Quantity: {item.quantity} case{item.quantity > 1 ? 's' : ''}
+                                      </div>
                                     </div>
                                   </div>
+                                  {subscription.items.length > 1 && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleRemoveItem(subscription.id, item.id)}
+                                      disabled={removeItemMutation.isPending}
+                                      data-testid={`button-remove-item-${item.id}`}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                  )}
                                 </div>
-                                {subscription.items.length > 1 && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => handleRemoveItem(subscription.id, item.id)}
-                                    disabled={removeItemMutation.isPending}
-                                    data-testid={`button-remove-item-${item.id}`}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </Button>
+                                
+                                {/* Flavor selector for retail subscriptions with flavors */}
+                                {item.selectedFlavorId !== undefined && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">Flavor:</span>
+                                    {isMultiFlavor && availableFlavors.length > 0 ? (
+                                      <Select
+                                        value={item.selectedFlavorId || ''}
+                                        onValueChange={(value) => updateFlavorMutation.mutate({
+                                          subscriptionId: subscription.id,
+                                          itemId: item.id,
+                                          selectedFlavorId: value
+                                        })}
+                                        disabled={updateFlavorMutation.isPending}
+                                      >
+                                        <SelectTrigger className="h-8 text-xs flex-1" data-testid={`select-flavor-${item.id}`}>
+                                          <SelectValue placeholder="Select flavor" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {availableFlavors.map((flavor: any) => (
+                                            <SelectItem key={flavor.id} value={flavor.id}>
+                                              {flavor.name}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    ) : (
+                                      <span className="text-xs font-medium">{flavorInfo?.name || 'No flavor selected'}</span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             );

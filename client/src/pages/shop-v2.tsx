@@ -267,7 +267,7 @@ export default function ShopV2() {
                             <TabsContent value="one-time" className="mt-2">
                             <Button
                               onClick={() => {
-                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
+                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
                                 if (isMultiFlavor && !flavorId) {
                                   toast({ 
                                     title: "Please select a flavor", 
@@ -313,7 +313,7 @@ export default function ShopV2() {
                             )}
                             <Button
                               onClick={() => {
-                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
+                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
                                 if (isMultiFlavor && !flavorId) {
                                   toast({ 
                                     title: "Please select a flavor", 
@@ -337,7 +337,7 @@ export default function ShopV2() {
                             </Button>
                             <Button
                               onClick={() => {
-                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
+                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
                                 if (isMultiFlavor && !flavorId) {
                                   toast({ 
                                     title: "Please select a flavor", 
@@ -361,7 +361,7 @@ export default function ShopV2() {
                             </Button>
                             <Button
                               onClick={() => {
-                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
+                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
                                 if (isMultiFlavor && !flavorId) {
                                   toast({ 
                                     title: "Please select a flavor", 
@@ -389,7 +389,7 @@ export default function ShopV2() {
                           /* No subscription option - show only one-time purchase button */
                           <Button
                             onClick={() => {
-                              const flavorId = isMultiFlavor ? selectedFlavors[product.id] : undefined;
+                              const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
                               if (isMultiFlavor && !flavorId) {
                                 toast({ 
                                   title: "Please select a flavor", 

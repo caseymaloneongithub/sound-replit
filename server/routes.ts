@@ -3751,6 +3751,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update retail subscription item flavor
+  app.patch("/api/retail-subscriptions/:id/items/:itemId/flavor", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      const itemId = req.params.itemId;
+      
+      const flavorSchema = z.object({
+        selectedFlavorId: z.string().uuid(),
+      });
+      
+      const validated = flavorSchema.parse(req.body);
+      
+      // Verify subscription belongs to user
+      const [subscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, subscriptionId));
+      
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      // Update the flavor
+      const [updated] = await db
+        .update(retailSubscriptionItems)
+        .set({ selectedFlavorId: validated.selectedFlavorId })
+        .where(eq(retailSubscriptionItems.id, itemId))
+        .returning();
+      
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating subscription item flavor:", error);
+      res.status(400).json({ message: "Error updating flavor: " + error.message });
+    }
+  });
+
   // Create Stripe billing portal session for payment method updates
   app.post("/api/create-billing-portal", isAuthenticated, async (req: any, res) => {
     try {
