@@ -143,22 +143,17 @@ export function CartDrawer() {
   const depositTotal = unifiedItems
     .filter(item => item.type === 'retail_v2' && !item.item.isSubscription)
     .reduce((sum, item) => {
-      const deposit = parseFloat(item.item.retailProduct.deposit?.toString() || '0');
-      return sum + (deposit * item.item.quantity);
-    }, 0);
-  
-  // Calculate taxable subtotal (only non-subscription items), using discounted prices
-  const taxableSubtotal = unifiedItems
-    .filter(item => !item.item.isSubscription)
-    .reduce((sum, item) => {
-      const pricePerCase = getPricePerCase(item);
-      return sum + (pricePerCase * item.item.quantity);
+      if (item.type === 'retail_v2') {
+        const deposit = parseFloat(item.item.retailProduct.deposit?.toString() || '0');
+        return sum + (deposit * item.item.quantity);
+      }
+      return sum;
     }, 0);
   
   // Calculate sales tax (WA State 6.5% + Seattle 3.85% = 10.35%)
-  // Tax only applies to one-time purchases, not subscriptions
+  // Tax applies to all retail orders (both one-time and subscriptions)
   const TAX_RATE = 0.1035;
-  const taxAmount = taxableSubtotal * TAX_RATE;
+  const taxAmount = subtotal * TAX_RATE;
   const cartTotal = subtotal + depositTotal + taxAmount;
 
   return (
@@ -243,12 +238,6 @@ export function CartDrawer() {
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">Sales Tax (10.35%)</span>
                   <span data-testid="text-cart-tax">${taxAmount.toFixed(2)}</span>
-                </div>
-              )}
-              
-              {taxableSubtotal === 0 && unifiedItems.length > 0 && (
-                <div className="text-xs text-muted-foreground">
-                  * Subscriptions are not subject to sales tax
                 </div>
               )}
               
