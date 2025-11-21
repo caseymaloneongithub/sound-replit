@@ -221,11 +221,20 @@ export default function Cart() {
                   const frequencyLabel = item.subscriptionFrequency === 'weekly' ? 'Weekly' :
                     item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' : 'Every 4 Weeks';
 
-                  const imageUrl = item.retailProduct.flavor.primaryImageUrl?.startsWith('http')
-                    ? item.retailProduct.flavor.primaryImageUrl
-                    : item.retailProduct.flavor.primaryImageUrl
-                      ? `/public/${item.retailProduct.flavor.primaryImageUrl}`
+                  // For multi-flavor products, find the selected flavor from the flavors array
+                  const displayFlavor = item.retailProduct.productType === 'multi-flavor' && item.selectedFlavorId
+                    ? item.retailProduct.flavors.find(f => f.id === item.selectedFlavorId)
+                    : item.retailProduct.flavor;
+
+                  const imageUrl = displayFlavor?.primaryImageUrl?.startsWith('http')
+                    ? displayFlavor.primaryImageUrl
+                    : displayFlavor?.primaryImageUrl
+                      ? `/public/${displayFlavor.primaryImageUrl}`
                       : undefined;
+                  
+                  const productName = displayFlavor
+                    ? `${displayFlavor.name} ${item.retailProduct.unitDescription}`
+                    : item.retailProduct.unitDescription;
 
                   return (
                     <div key={item.id} className="flex items-center justify-between py-4 border-b last:border-0" data-testid={`cart-item-${item.id}`}>
@@ -233,13 +242,13 @@ export default function Cart() {
                         {imageUrl && (
                           <img 
                             src={imageUrl} 
-                            alt={item.retailProduct.flavor.name}
+                            alt={productName}
                             className="w-20 h-20 object-cover rounded"
                           />
                         )}
                         <div className="flex-1">
                           <h3 className="font-semibold">
-                            {item.retailProduct.flavor.name} {item.retailProduct.unitDescription}
+                            {productName}
                           </h3>
                           {item.isSubscription && (
                             <p className="text-sm text-muted-foreground">

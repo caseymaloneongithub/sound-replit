@@ -626,13 +626,22 @@ export default function CartCheckout() {
                   const validPrice = Number.isFinite(price) && price >= 0 ? price : 0;
                   const itemTotal = validPrice * item.quantity;
                   
+                  // For multi-flavor products, find the selected flavor from the flavors array
+                  const displayFlavor = item.retailProduct.productType === 'multi-flavor' && item.selectedFlavorId
+                    ? item.retailProduct.flavors.find(f => f.id === item.selectedFlavorId)
+                    : item.retailProduct.flavor;
+                  
+                  const productName = displayFlavor
+                    ? `${displayFlavor.name} ${item.retailProduct.unitDescription}`
+                    : item.retailProduct.unitDescription;
+                  
                   return (
                     <div key={item.id} className="flex gap-4" data-testid={`summary-item-${item.id}`}>
                       <div className="w-16 h-16 overflow-hidden rounded">
-                        {item.retailProduct.flavor.primaryImageUrl ? (
+                        {displayFlavor?.primaryImageUrl ? (
                           <img
-                            src={item.retailProduct.flavor.primaryImageUrl}
-                            alt={item.retailProduct.flavor.name}
+                            src={displayFlavor.primaryImageUrl}
+                            alt={productName}
                             className="w-full h-full object-cover"
                           />
                         ) : (
@@ -642,12 +651,9 @@ export default function CartCheckout() {
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-medium truncate">{item.retailProduct.flavor.name}</h4>
+                        <h4 className="font-medium truncate">{productName}</h4>
                         <p className="text-sm text-muted-foreground">
                           {item.quantity} × ${validPrice.toFixed(2)}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {item.retailProduct.unitDescription}
                         </p>
                       </div>
                       <div className="text-right">
