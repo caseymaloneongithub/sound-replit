@@ -46,6 +46,7 @@ export default function MyAccount() {
   });
   const [selectedNewProduct, setSelectedNewProduct] = useState<string>("");
   const [selectedNewQuantity, setSelectedNewQuantity] = useState<number>(1);
+  const [selectedNewFlavor, setSelectedNewFlavor] = useState<string>("");
 
   const { data: subscriptions, isLoading: subscriptionsLoading } = useQuery<SubscriptionWithItems[]>({
     queryKey: ["/api/my-subscriptions"],
@@ -92,6 +93,39 @@ export default function MyAccount() {
       setAddProductDialog({ open: false, subscriptionId: null });
       setSelectedNewProduct("");
       setSelectedNewQuantity(1);
+      toast({
+        title: "Product added",
+        description: "Product added to your subscription",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add product",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const addRetailItemMutation = useMutation({
+    mutationFn: async ({ subscriptionId, retailProductId, selectedFlavorId, quantity }: { 
+      subscriptionId: string; 
+      retailProductId: string; 
+      selectedFlavorId?: string | null;
+      quantity: number;
+    }) => {
+      return await apiRequest("POST", `/api/retail-subscriptions/${subscriptionId}/items`, { 
+        retailProductId, 
+        selectedFlavorId: selectedFlavorId || null,
+        quantity 
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/my-subscriptions"] });
+      setAddProductDialog({ open: false, subscriptionId: null });
+      setSelectedNewProduct("");
+      setSelectedNewQuantity(1);
+      setSelectedNewFlavor("");
       toast({
         title: "Product added",
         description: "Product added to your subscription",
@@ -308,9 +342,21 @@ export default function MyAccount() {
       return;
     }
 
-    addItemMutation.mutate({
+    // Check if selected product is multi-flavor and requires flavor selection
+    const selectedProduct = retailProducts?.find(p => p.id === selectedNewProduct);
+    if (selectedProduct?.productType === 'multi-flavor' && !selectedNewFlavor) {
+      toast({
+        title: "Error",
+        description: "Please select a flavor",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    addRetailItemMutation.mutate({
       subscriptionId: addProductDialog.subscriptionId,
-      productId: selectedNewProduct,
+      retailProductId: selectedNewProduct,
+      selectedFlavorId: selectedNewFlavor || null,
       quantity: selectedNewQuantity,
     });
   };
@@ -846,6 +892,7 @@ export default function MyAccount() {
           setAddProductDialog({ open: false, subscriptionId: null });
           setSelectedNewProduct("");
           setSelectedNewQuantity(1);
+          setSelectedNewFlavor("");
         }
       }}>
         <DialogContent data-testid="dialog-add-product">
@@ -858,19 +905,45 @@ export default function MyAccount() {
           <div className="space-y-4 py-4">
             <div>
               <label className="text-sm font-medium mb-2 block">Product</label>
-              <Select value={selectedNewProduct} onValueChange={setSelectedNewProduct}>
+              <Select 
+                value={selectedNewProduct} 
+                onValueChange={(value) => {
+                  setSelectedNewProduct(value);
+                  setSelectedNewFlavor(""); // Reset flavor when product changes
+                }}
+              >
                 <SelectTrigger data-testid="select-new-product">
                   <SelectValue placeholder="Select a product" />
                 </SelectTrigger>
                 <SelectContent>
-                  {products?.map((product) => (
+                  {retailProducts?.map((product) => (
                     <SelectItem key={product.id} value={product.id} data-testid={`option-new-product-${product.id}`}>
-                      {product.name}
+                      {product.productName || product.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+            
+            {/* Show flavor selector for multi-flavor products */}
+            {selectedNewProduct && retailProducts?.find(p => p.id === selectedNewProduct)?.productType === 'multi-flavor' && (
+              <div>
+                <label className="text-sm font-medium mb-2 block">Flavor</label>
+                <Select value={selectedNewFlavor} onValueChange={setSelectedNewFlavor}>
+                  <SelectTrigger data-testid="select-new-flavor">
+                    <SelectValue placeholder="Select a flavor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.map((flavor: any) => (
+                      <SelectItem key={flavor.id} value={flavor.id} data-testid={`option-new-flavor-${flavor.id}`}>
+                        {flavor.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            
             <div>
               <label className="text-sm font-medium mb-2 block">Quantity (cases)</label>
               <Select 
@@ -897,6 +970,7 @@ export default function MyAccount() {
                 setAddProductDialog({ open: false, subscriptionId: null });
                 setSelectedNewProduct("");
                 setSelectedNewQuantity(1);
+                setSelectedNewFlavor("");
               }}
               data-testid="button-cancel-add"
             >
@@ -904,7 +978,7 @@ export default function MyAccount() {
             </Button>
             <Button 
               onClick={handleAddProduct}
-              disabled={!selectedNewProduct || addItemMutation.isPending}
+              disabled={!selectedNewProduct || addRetailItemMutation.isPending}
               data-testid="button-confirm-add"
             >
               Add Product

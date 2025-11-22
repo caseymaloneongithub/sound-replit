@@ -3933,6 +3933,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Add product to retail subscription
+  app.post("/api/retail-subscriptions/:id/items", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      
+      const itemSchema = z.object({
+        retailProductId: z.string().uuid(),
+        selectedFlavorId: z.string().uuid().optional().nullable(),
+        quantity: z.number().int().min(1).max(5).default(1),
+      });
+      
+      const validated = itemSchema.parse(req.body);
+      
+      // Verify subscription belongs to user
+      const [subscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, subscriptionId));
+      
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      // Verify retail product exists
+      const [retailProduct] = await db
+        .select()
+        .from(retailProducts)
+        .where(eq(retailProducts.id, validated.retailProductId));
+      
+      if (!retailProduct) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+      
+      // For multi-flavor products, require selectedFlavorId
+      if (retailProduct.productType === 'multi-flavor' && !validated.selectedFlavorId) {
+        return res.status(400).json({ message: "Flavor selection required for multi-flavor products" });
+      }
+      
+      // Create the subscription item
+      const [newItem] = await db
+        .insert(retailSubscriptionItems)
+        .values({
+          subscriptionId,
+          retailProductId: validated.retailProductId,
+          selectedFlavorId: validated.selectedFlavorId,
+          quantity: validated.quantity,
+        })
+        .returning();
+      
+      res.json(newItem);
+    } catch (error: any) {
+      console.error("Error adding product to retail subscription:", error);
+      res.status(400).json({ message: "Error adding product: " + error.message });
+    }
+  });
+
   // Create Stripe billing portal session for payment method updates
   app.post("/api/create-billing-portal", isAuthenticated, async (req: any, res) => {
     try {
