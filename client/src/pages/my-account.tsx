@@ -183,6 +183,26 @@ export default function MyAccount() {
     },
   });
 
+  const updateQuantityMutation = useMutation({
+    mutationFn: async ({ subscriptionId, itemId, quantity }: { subscriptionId: string; itemId: string; quantity: number }) => {
+      return await apiRequest("PATCH", `/api/retail-subscriptions/${subscriptionId}/items/${itemId}/quantity`, { quantity });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/my-subscriptions"] });
+      toast({
+        title: "Quantity updated",
+        description: "Your subscription quantity has been updated",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update quantity",
+        variant: "destructive",
+      });
+    },
+  });
+
   const reorderMutation = useMutation({
     mutationFn: async (orderId: string) => {
       return await apiRequest("POST", `/api/orders/${orderId}/reorder`);
@@ -451,14 +471,14 @@ export default function MyAccount() {
                                 subscription.items.map((item: any) => {
                                   const productInfo = item.product || item.retailProduct;
                                   const flavorInfo = item.flavor;
-                                  const displayName = flavorInfo 
-                                    ? `${productInfo?.name || 'Product'}`
-                                    : productInfo?.name || 'Product';
-                                  const imageUrl = flavorInfo?.imageUrl || productInfo?.imageUrl;
-                                  
                                   const retailProduct = retailProducts?.find(rp => rp.id === item.retailProductId);
                                   const isMultiFlavor = retailProduct?.productType === 'multi-flavor';
                                   const availableFlavors = retailProduct?.flavors || [];
+                                  
+                                  // For single-flavor products, get flavor from retail product
+                                  const displayFlavor = flavorInfo || (retailProduct?.flavor);
+                                  const displayName = productInfo?.productName || productInfo?.name || 'Product';
+                                  const imageUrl = displayFlavor?.imageUrl || productInfo?.imageUrl;
                                   
                                   return (
                                     <div 
@@ -481,9 +501,11 @@ export default function MyAccount() {
                                             <div className="font-medium text-sm" data-testid={`text-product-name-${item.id}`}>
                                               {displayName}
                                             </div>
-                                            <div className="text-xs text-muted-foreground">
-                                              Quantity: {item.quantity} case{item.quantity > 1 ? 's' : ''}
-                                            </div>
+                                            {displayFlavor && (
+                                              <div className="text-xs text-muted-foreground" data-testid={`text-flavor-${item.id}`}>
+                                                {displayFlavor.name}
+                                              </div>
+                                            )}
                                           </div>
                                         </div>
                                         {subscription.items.length > 1 && (
@@ -499,10 +521,36 @@ export default function MyAccount() {
                                         )}
                                       </div>
                                       
-                                      {item.selectedFlavorId !== undefined && (
+                                      <div className="flex flex-col gap-2">
+                                        {/* Quantity selector */}
                                         <div className="flex items-center gap-2">
-                                          <span className="text-xs text-muted-foreground">Flavor:</span>
-                                          {isMultiFlavor && availableFlavors.length > 0 ? (
+                                          <span className="text-xs text-muted-foreground">Quantity:</span>
+                                          <Select
+                                            value={item.quantity?.toString() || '1'}
+                                            onValueChange={(value) => updateQuantityMutation.mutate({
+                                              subscriptionId: subscription.id,
+                                              itemId: item.id,
+                                              quantity: parseInt(value)
+                                            })}
+                                            disabled={updateQuantityMutation.isPending}
+                                          >
+                                            <SelectTrigger className="h-8 text-xs w-32" data-testid={`select-quantity-${item.id}`}>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {[1, 2, 3, 4, 5].map((qty) => (
+                                                <SelectItem key={qty} value={qty.toString()}>
+                                                  {qty} case{qty > 1 ? 's' : ''}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+
+                                        {/* Flavor selector for multi-flavor products */}
+                                        {item.selectedFlavorId !== undefined && isMultiFlavor && availableFlavors.length > 0 && (
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-xs text-muted-foreground">Flavor:</span>
                                             <Select
                                               value={item.selectedFlavorId || ''}
                                               onValueChange={(value) => updateFlavorMutation.mutate({
@@ -523,11 +571,9 @@ export default function MyAccount() {
                                                 ))}
                                               </SelectContent>
                                             </Select>
-                                          ) : (
-                                            <span className="text-xs font-medium">{flavorInfo?.name || 'No flavor selected'}</span>
-                                          )}
-                                        </div>
-                                      )}
+                                          </div>
+                                        )}
+                                      </div>
                                     </div>
                                   );
                                 })
@@ -767,8 +813,10 @@ export default function MyAccount() {
 
                       {order.isSubscriptionOrder && (
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Package className="h-4 w-4" />
-                          <span>Subscription Order</span>
+                          <Badge variant="outline" data-testid={`badge-subscription-order-${order.id}`}>
+                            <Package className="h-3 w-3 mr-1" />
+                            Subscription Order
+                          </Badge>
                         </div>
                       )}
                     </CardContent>

@@ -3886,6 +3886,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update retail subscription item quantity
+  app.patch("/api/retail-subscriptions/:id/items/:itemId/quantity", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      const itemId = req.params.itemId;
+      
+      const quantitySchema = z.object({
+        quantity: z.number().int().min(1).max(5),
+      });
+      
+      const validated = quantitySchema.parse(req.body);
+      
+      // Verify subscription belongs to user
+      const [subscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, subscriptionId));
+      
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      // Verify item belongs to this subscription
+      const [item] = await db
+        .select()
+        .from(retailSubscriptionItems)
+        .where(eq(retailSubscriptionItems.id, itemId));
+      
+      if (!item || item.subscriptionId !== subscriptionId) {
+        return res.status(404).json({ message: "Subscription item not found" });
+      }
+      
+      // Update the quantity
+      const [updated] = await db
+        .update(retailSubscriptionItems)
+        .set({ quantity: validated.quantity })
+        .where(eq(retailSubscriptionItems.id, itemId))
+        .returning();
+      
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating subscription item quantity:", error);
+      res.status(400).json({ message: "Error updating quantity: " + error.message });
+    }
+  });
+
   // Create Stripe billing portal session for payment method updates
   app.post("/api/create-billing-portal", isAuthenticated, async (req: any, res) => {
     try {
