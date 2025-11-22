@@ -17,6 +17,7 @@ import WholesaleCustomerDashboard from "@/pages/wholesale-customer-dashboard";
 import WholesaleCustomerPlaceOrder from "@/pages/wholesale-customer-place-order";
 import Shop from "@/pages/shop";
 import ShopV2 from "@/pages/shop-v2";
+import MyAccount from "@/pages/my-account";
 import MySubscriptions from "@/pages/my-subscriptions";
 import OrderHistory from "@/pages/order-history";
 import Subscribe from "@/pages/subscribe";
@@ -61,9 +62,10 @@ function Router() {
       <Route path="/shop-legacy" component={Shop} />
       <Route path="/shop-v2" component={() => <Redirect to="/shop" />} />
       <Route path="/contact" component={Contact} />
-      <Route path="/subscriptions" component={() => <Redirect to="/my-subscriptions" />} />
-      <Route path="/my-subscriptions" component={MySubscriptions} />
-      <Route path="/my-orders" component={OrderHistory} />
+      <Route path="/my-account" component={MyAccount} />
+      <Route path="/subscriptions" component={() => <Redirect to="/my-account" />} />
+      <Route path="/my-subscriptions" component={() => <Redirect to="/my-account" />} />
+      <Route path="/my-orders" component={() => <Redirect to="/my-account" />} />
       <Route path="/subscribe/:id" component={Subscribe} />
       <Route path="/product-subscribe/:id" component={ProductSubscribe} />
       <Route path="/cart" component={Cart} />
