@@ -548,7 +548,7 @@ export default function MyAccount() {
                                         </div>
 
                                         {/* Flavor selector for multi-flavor products */}
-                                        {item.selectedFlavorId !== undefined && isMultiFlavor && availableFlavors.length > 0 && (
+                                        {isMultiFlavor && availableFlavors.length > 0 && (
                                           <div className="flex items-center gap-2">
                                             <span className="text-xs text-muted-foreground">Flavor:</span>
                                             <Select
