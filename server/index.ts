@@ -51,15 +51,6 @@ app.use((req, res, next) => {
 (async () => {
   await storage.seedData();
   
-  // Run subscription migration (idempotent - safe to run multiple times)
-  try {
-    console.log('[STARTUP] Running subscription migration...');
-    const result = await storage.migrateSubscriptionsToItems(false);
-    console.log(`[STARTUP] Migration complete: ${result.migrated} migrated, ${result.skipped} skipped`);
-  } catch (error) {
-    console.error('[STARTUP] Migration failed:', error);
-  }
-  
   const server = await registerRoutes(app);
 
   // Start daily billing cron for local subscription management
