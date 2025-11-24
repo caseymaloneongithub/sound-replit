@@ -1,16 +1,17 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { WholesaleUnitType, Flavor, WholesaleCustomerPricing } from "@shared/schema";
+import { WholesaleUnitType, Flavor, WholesaleCustomerPricing, WholesaleLocation } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Minus, Trash2, ShoppingCart, ArrowLeft } from "lucide-react";
+import { Plus, Minus, Trash2, ShoppingCart, ArrowLeft, MapPin } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 interface CartItem {
   unitTypeId: string;
@@ -21,6 +22,7 @@ interface CartItem {
 export default function WholesaleCustomerPlaceOrder() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState("");
+  const [selectedLocationId, setSelectedLocationId] = useState<string>("");
   const [selectedUnitTypeId, setSelectedUnitTypeId] = useState<string>("");
   const [selectedFlavorId, setSelectedFlavorId] = useState<string>("");
   const [quantity, setQuantity] = useState<number>(1);
@@ -35,6 +37,11 @@ export default function WholesaleCustomerPlaceOrder() {
   // Fetch customer-specific pricing for the logged-in wholesale customer
   const { data: customerPricing = [] } = useQuery<WholesaleCustomerPricing[]>({
     queryKey: ["/api/wholesale/customer/unit-pricing"],
+  });
+
+  // Fetch customer's delivery locations
+  const { data: locations = [] } = useQuery<WholesaleLocation[]>({
+    queryKey: ["/api/wholesale-customer/locations"],
   });
 
   // Get available flavors for selected unit type
@@ -55,6 +62,7 @@ export default function WholesaleCustomerPlaceOrder() {
 
       return await apiRequest("POST", "/api/wholesale/customer/orders", {
         notes: notes || undefined,
+        locationId: selectedLocationId || undefined,
         items: cart,
       });
     },
@@ -66,6 +74,7 @@ export default function WholesaleCustomerPlaceOrder() {
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale-customer/orders"] });
       setCart([]);
       setNotes("");
+      setSelectedLocationId("");
       setSelectedUnitTypeId("");
       setSelectedFlavorId("");
       setQuantity(1);
@@ -361,6 +370,67 @@ export default function WholesaleCustomerPlaceOrder() {
 
             {cart.length > 0 && (
               <>
+                {locations.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Delivery Location</CardTitle>
+                      <CardDescription>Select the delivery location for this order (optional)</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        <Label htmlFor="location-select">Location</Label>
+                        <Select
+                          value={selectedLocationId}
+                          onValueChange={setSelectedLocationId}
+                        >
+                          <SelectTrigger id="location-select" data-testid="select-location">
+                            <SelectValue placeholder="Select a location (optional)" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="">No specific location</SelectItem>
+                            {locations.map((location) => (
+                              <SelectItem key={location.id} value={location.id}>
+                                <div className="flex items-center gap-2">
+                                  <MapPin className="h-4 w-4 text-muted-foreground" />
+                                  <div>
+                                    <div className="font-medium">{location.locationName}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {location.city}, {location.state}
+                                    </div>
+                                  </div>
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {selectedLocationId && locations.find(l => l.id === selectedLocationId) && (
+                          <div className="text-sm text-muted-foreground mt-2 p-3 bg-muted rounded-md">
+                            <div className="font-medium">
+                              {locations.find(l => l.id === selectedLocationId)?.locationName}
+                            </div>
+                            <div className="mt-1">
+                              {locations.find(l => l.id === selectedLocationId)?.address}
+                            </div>
+                            <div>
+                              {locations.find(l => l.id === selectedLocationId)?.city},{' '}
+                              {locations.find(l => l.id === selectedLocationId)?.state}{' '}
+                              {locations.find(l => l.id === selectedLocationId)?.zipCode}
+                            </div>
+                            {locations.find(l => l.id === selectedLocationId)?.contactName && (
+                              <div className="mt-1">
+                                Contact: {locations.find(l => l.id === selectedLocationId)?.contactName}
+                                {locations.find(l => l.id === selectedLocationId)?.contactPhone && (
+                                  <> • {locations.find(l => l.id === selectedLocationId)?.contactPhone}</>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
                 <Card>
                   <CardHeader>
                     <CardTitle>Order Notes</CardTitle>
