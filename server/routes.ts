@@ -3469,6 +3469,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 Here's the CSV template for importing wholesale customers into your system.
 
 The template includes the following columns:
+
+Customer Information:
 • businessName - The name of the wholesale business
 • contactName - Primary contact person's full name  
 • email - Primary contact email (used for login)
@@ -3477,11 +3479,21 @@ The template includes the following columns:
 • address - Full business address
 • allowOnlinePayment - Set to "true" to enable online payment, "false" for invoice-only
 
+Delivery Location (Optional):
+• locationName - Name of the delivery location
+• locationAddress - Street address for delivery
+• locationCity - City
+• locationState - State (2-letter code)
+• locationZipCode - ZIP code
+• locationContactName - Contact person at this location (optional)
+• locationContactPhone - Contact phone for this location (optional)
+
 Instructions:
 1. Fill in your customer data following the example rows provided
 2. Multiple email addresses can be listed in additionalEmails separated by | (pipe) characters
 3. All listed email addresses can be used to log in via email verification code
-4. Save the file and use the CSV import feature in your admin dashboard
+4. Location fields are optional - leave blank if the delivery location is the same as business address
+5. Save the file and use the CSV import feature in your admin dashboard
 
 If you have any questions, please don't hesitate to reach out!`,
         attachmentPath: 'wholesale_customers_import_template.csv',
@@ -3508,6 +3520,70 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error('[API] CSV import error:', error);
       res.status(500).json({ message: "Import failed: " + error.message });
+    }
+  });
+
+  // Staff routes for managing wholesale customer locations
+  app.get("/api/wholesale/customers/:customerId/locations", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const locations = await storage.getWholesaleLocations(req.params.customerId);
+      res.json(locations);
+    } catch (error: any) {
+      console.error('[API] Error fetching locations:', error);
+      res.status(500).json({ message: "Error fetching locations: " + error.message });
+    }
+  });
+
+  app.post("/api/wholesale/customers/:customerId/locations", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const location = insertWholesaleLocationSchema.parse({
+        ...req.body,
+        customerId: req.params.customerId,
+      });
+      const created = await storage.createWholesaleLocation(location);
+      res.json(created);
+    } catch (error: any) {
+      res.status(400).json({ message: "Error creating location: " + error.message });
+    }
+  });
+
+  app.patch("/api/wholesale/customers/:customerId/locations/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      // Verify the location belongs to the specified customer
+      const location = await storage.getWholesaleLocation(req.params.id);
+      if (!location) {
+        return res.status(404).json({ message: "Location not found" });
+      }
+      if (location.customerId !== req.params.customerId) {
+        return res.status(403).json({ message: "Location does not belong to this customer" });
+      }
+
+      const updates = insertWholesaleLocationSchema.partial().omit({ customerId: true }).parse(req.body);
+      const updated = await storage.updateWholesaleLocation(req.params.id, updates);
+      if (!updated) {
+        return res.status(404).json({ message: "Location not found" });
+      }
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: "Error updating location: " + error.message });
+    }
+  });
+
+  app.delete("/api/wholesale/customers/:customerId/locations/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      // Verify the location belongs to the specified customer
+      const location = await storage.getWholesaleLocation(req.params.id);
+      if (!location) {
+        return res.status(404).json({ message: "Location not found" });
+      }
+      if (location.customerId !== req.params.customerId) {
+        return res.status(403).json({ message: "Location does not belong to this customer" });
+      }
+
+      await storage.deleteWholesaleLocation(req.params.id);
+      res.json({ message: "Location deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting location: " + error.message });
     }
   });
 

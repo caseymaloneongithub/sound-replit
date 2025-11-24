@@ -1347,7 +1347,29 @@ export class PostgresStorage implements IStorage {
           allowOnlinePayment: row.allowOnlinePayment === 'true' || row.allowOnlinePayment === true,
         };
 
-        await this.createWholesaleCustomer(customerData);
+        const newCustomer = await this.createWholesaleCustomer(customerData);
+
+        // Create location if location data is provided
+        if (row.locationName && row.locationName.trim() && 
+            row.locationAddress && row.locationAddress.trim() &&
+            row.locationCity && row.locationCity.trim() &&
+            row.locationState && row.locationState.trim() &&
+            row.locationZipCode && row.locationZipCode.trim()) {
+          
+          const locationData: InsertWholesaleLocation = {
+            customerId: newCustomer.id,
+            locationName: row.locationName.trim(),
+            address: row.locationAddress.trim(),
+            city: row.locationCity.trim(),
+            state: row.locationState.trim(),
+            zipCode: row.locationZipCode.trim(),
+            contactName: row.locationContactName?.trim() || null,
+            contactPhone: row.locationContactPhone?.trim() || null,
+          };
+
+          await this.createWholesaleLocation(locationData);
+        }
+
         results.imported++;
       } catch (error: any) {
         results.errors.push(`Row ${results.imported + results.failed + 1}: ${error.message}`);
