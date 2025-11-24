@@ -661,7 +661,6 @@ export default function WholesaleCustomers() {
                                 className="w-full"
                                 onClick={() => {
                                   setSelectedCustomer(customer);
-                                  setLocationDialogOpen(true);
                                   setEditingLocation(null);
                                   locationForm.reset({
                                     customerId: customer.id,
@@ -673,6 +672,7 @@ export default function WholesaleCustomers() {
                                     contactName: "",
                                     contactPhone: "",
                                   });
+                                  setLocationDialogOpen(true);
                                 }}
                                 data-testid={`button-manage-locations-${customer.id}`}
                               >
