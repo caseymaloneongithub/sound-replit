@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors } from "@shared/schema";
+import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors } from "@shared/schema";
 import { eq, sql, and } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -3610,6 +3610,123 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error("[Stripe Backfill] Error during backfill:", error);
       res.status(500).json({ message: "Error during backfill: " + error.message });
+    }
+  });
+
+  // Wholesale location routes (staff and admin access)
+  app.get("/api/wholesale/locations/:customerId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const locations = await storage.getWholesaleLocations(req.params.customerId);
+      res.json(locations);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching locations: " + error.message });
+    }
+  });
+
+  app.post("/api/wholesale/locations", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const location = insertWholesaleLocationSchema.parse(req.body);
+      const created = await storage.createWholesaleLocation(location);
+      res.json(created);
+    } catch (error: any) {
+      res.status(400).json({ message: "Error creating location: " + error.message });
+    }
+  });
+
+  app.patch("/api/wholesale/locations/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const updates = insertWholesaleLocationSchema.partial().parse(req.body);
+      const updated = await storage.updateWholesaleLocation(req.params.id, updates);
+      if (!updated) {
+        return res.status(404).json({ message: "Location not found" });
+      }
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: "Error updating location: " + error.message });
+    }
+  });
+
+  app.delete("/api/wholesale/locations/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      await storage.deleteWholesaleLocation(req.params.id);
+      res.json({ message: "Location deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting location: " + error.message });
+    }
+  });
+
+  // Wholesale location routes (wholesale customer access)
+  app.get("/api/wholesale-customer/locations", isAuthenticated, isWholesaleCustomer, async (req: any, res) => {
+    try {
+      const wholesaleCustomer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      if (!wholesaleCustomer) {
+        return res.status(404).json({ message: "Wholesale customer not found" });
+      }
+      const locations = await storage.getWholesaleLocations(wholesaleCustomer.id);
+      res.json(locations);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching locations: " + error.message });
+    }
+  });
+
+  app.post("/api/wholesale-customer/locations", isAuthenticated, isWholesaleCustomer, async (req: any, res) => {
+    try {
+      const wholesaleCustomer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      if (!wholesaleCustomer) {
+        return res.status(404).json({ message: "Wholesale customer not found" });
+      }
+      const location = insertWholesaleLocationSchema.parse({ ...req.body, customerId: wholesaleCustomer.id });
+      const created = await storage.createWholesaleLocation(location);
+      res.json(created);
+    } catch (error: any) {
+      res.status(400).json({ message: "Error creating location: " + error.message });
+    }
+  });
+
+  app.patch("/api/wholesale-customer/locations/:id", isAuthenticated, isWholesaleCustomer, async (req: any, res) => {
+    try {
+      const wholesaleCustomer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      if (!wholesaleCustomer) {
+        return res.status(404).json({ message: "Wholesale customer not found" });
+      }
+      
+      // Verify the location belongs to this customer
+      const location = await storage.getWholesaleLocation(req.params.id);
+      if (!location) {
+        return res.status(404).json({ message: "Location not found" });
+      }
+      if (location.customerId !== wholesaleCustomer.id) {
+        return res.status(403).json({ message: "Forbidden: Location belongs to another customer" });
+      }
+      
+      const updates = insertWholesaleLocationSchema.partial().parse(req.body);
+      const updated = await storage.updateWholesaleLocation(req.params.id, updates);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: "Error updating location: " + error.message });
+    }
+  });
+
+  app.delete("/api/wholesale-customer/locations/:id", isAuthenticated, isWholesaleCustomer, async (req: any, res) => {
+    try {
+      const wholesaleCustomer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      if (!wholesaleCustomer) {
+        return res.status(404).json({ message: "Wholesale customer not found" });
+      }
+      
+      // Verify the location belongs to this customer
+      const location = await storage.getWholesaleLocation(req.params.id);
+      if (!location) {
+        return res.status(404).json({ message: "Location not found" });
+      }
+      if (location.customerId !== wholesaleCustomer.id) {
+        return res.status(403).json({ message: "Forbidden: Location belongs to another customer" });
+      }
+      
+      await storage.deleteWholesaleLocation(req.params.id);
+      res.json({ message: "Location deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting location: " + error.message });
     }
   });
 
