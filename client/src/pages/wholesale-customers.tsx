@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { WholesaleCustomer, insertWholesaleCustomerSchema } from "@shared/schema";
+import { WholesaleCustomer, insertWholesaleCustomerSchema, WholesaleLocation, insertWholesaleLocationSchema } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,10 +17,13 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function WholesaleCustomers() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [locationDialogOpen, setLocationDialogOpen] = useState(false);
+  const [editingLocation, setEditingLocation] = useState<WholesaleLocation | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<WholesaleCustomer | null>(null);
   const [newEmail, setNewEmail] = useState("");
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
@@ -158,6 +161,117 @@ export default function WholesaleCustomers() {
       });
     },
   });
+
+  // Location query and mutations
+  const { data: locations } = useQuery<WholesaleLocation[]>({
+    queryKey: ["/api/wholesale/customers", selectedCustomer?.id, "locations"],
+    enabled: !!selectedCustomer && locationDialogOpen,
+  });
+
+  const locationForm = useForm<z.infer<typeof insertWholesaleLocationSchema>>({
+    resolver: zodResolver(insertWholesaleLocationSchema),
+    defaultValues: {
+      customerId: "",
+      locationName: "",
+      address: "",
+      city: "",
+      state: "",
+      zipCode: "",
+      contactName: "",
+      contactPhone: "",
+    },
+  });
+
+  const createLocationMutation = useMutation({
+    mutationFn: async (data: z.infer<typeof insertWholesaleLocationSchema>) => {
+      if (!selectedCustomer) throw new Error("No customer selected");
+      const response = await apiRequest("POST", `/api/wholesale/customers/${selectedCustomer.id}/locations`, data);
+      return await response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers", selectedCustomer?.id, "locations"] });
+      toast({
+        title: "Location Created",
+        description: "Delivery location has been created successfully",
+      });
+      locationForm.reset();
+      setEditingLocation(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create location",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateLocationMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Partial<z.infer<typeof insertWholesaleLocationSchema>> }) => {
+      if (!selectedCustomer) throw new Error("No customer selected");
+      const response = await apiRequest("PATCH", `/api/wholesale/customers/${selectedCustomer.id}/locations/${id}`, data);
+      return await response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers", selectedCustomer?.id, "locations"] });
+      toast({
+        title: "Location Updated",
+        description: "Delivery location has been updated successfully",
+      });
+      locationForm.reset();
+      setEditingLocation(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update location",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteLocationMutation = useMutation({
+    mutationFn: async (id: string) => {
+      if (!selectedCustomer) throw new Error("No customer selected");
+      await apiRequest("DELETE", `/api/wholesale/customers/${selectedCustomer.id}/locations/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers", selectedCustomer?.id, "locations"] });
+      toast({
+        title: "Location Deleted",
+        description: "Delivery location has been deleted successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete location",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleLocationSubmit = (data: z.infer<typeof insertWholesaleLocationSchema>) => {
+    if (editingLocation) {
+      updateLocationMutation.mutate({ id: editingLocation.id, data });
+    } else {
+      createLocationMutation.mutate({ ...data, customerId: selectedCustomer!.id });
+    }
+  };
+
+  const handleEditLocation = (location: WholesaleLocation) => {
+    setEditingLocation(location);
+    locationForm.reset({
+      customerId: location.customerId,
+      locationName: location.locationName,
+      address: location.address,
+      city: location.city,
+      state: location.state,
+      zipCode: location.zipCode,
+      contactName: location.contactName || "",
+      contactPhone: location.contactPhone || "",
+    });
+  };
 
   const handleAddEmail = () => {
     if (!selectedCustomer || !newEmail) return;
@@ -323,7 +437,7 @@ export default function WholesaleCustomers() {
                       data-testid="input-csv-file"
                     />
                     <p className="text-sm text-muted-foreground mt-2">
-                      CSV must include columns: businessName, contactName, email, additionalEmails, phone, address, allowOnlinePayment
+                      CSV must include columns: businessName, contactName, email, additionalEmails, phone, address, allowOnlinePayment. Optional location columns: locationName, locationAddress, locationCity, locationState, locationZipCode, locationContactName, locationContactPhone
                     </p>
                   </div>
                 </div>
@@ -541,6 +655,30 @@ export default function WholesaleCustomers() {
                                 <Mail className="w-4 h-4 mr-2" />
                                 Manage Authorized Emails
                               </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => {
+                                  setSelectedCustomer(customer);
+                                  setLocationDialogOpen(true);
+                                  setEditingLocation(null);
+                                  locationForm.reset({
+                                    customerId: customer.id,
+                                    locationName: "",
+                                    address: "",
+                                    city: "",
+                                    state: "",
+                                    zipCode: "",
+                                    contactName: "",
+                                    contactPhone: "",
+                                  });
+                                }}
+                                data-testid={`button-manage-locations-${customer.id}`}
+                              >
+                                <MapPin className="w-4 h-4 mr-2" />
+                                Manage Locations
+                              </Button>
                             </div>
                           </CardContent>
                         </Card>
@@ -635,6 +773,232 @@ export default function WholesaleCustomers() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setEmailDialogOpen(false)} data-testid="button-close-email-dialog">
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Location Management Dialog */}
+      <Dialog open={locationDialogOpen} onOpenChange={(open) => {
+        setLocationDialogOpen(open);
+        if (!open) {
+          setEditingLocation(null);
+          locationForm.reset();
+        }
+      }}>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Manage Delivery Locations</DialogTitle>
+            <DialogDescription>
+              {selectedCustomer?.businessName} - Add or manage delivery locations for this customer
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6">
+            {/* Existing Locations */}
+            {locations && locations.length > 0 && (
+              <div>
+                <Label className="text-sm font-medium">Existing Locations</Label>
+                <div className="mt-2 space-y-2">
+                  {locations.map((location) => (
+                    <Card key={location.id} className="p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1">
+                          <div className="font-medium">{location.locationName}</div>
+                          <div className="text-sm text-muted-foreground mt-1">
+                            {location.address}
+                            <br />
+                            {location.city}, {location.state} {location.zipCode}
+                          </div>
+                          {location.contactName && (
+                            <div className="text-sm text-muted-foreground mt-2">
+                              <div className="font-medium">Contact:</div>
+                              <div>{location.contactName}</div>
+                              {location.contactPhone && <div>{location.contactPhone}</div>}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => handleEditLocation(location)}
+                            data-testid={`button-edit-location-${location.id}`}
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => {
+                              if (confirm('Are you sure you want to delete this location?')) {
+                                deleteLocationMutation.mutate(location.id);
+                              }
+                            }}
+                            disabled={deleteLocationMutation.isPending}
+                            data-testid={`button-delete-location-${location.id}`}
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Add/Edit Location Form */}
+            <div>
+              <Label className="text-sm font-medium">
+                {editingLocation ? 'Edit Location' : 'Add New Location'}
+              </Label>
+              <Form {...locationForm}>
+                <form onSubmit={locationForm.handleSubmit(handleLocationSubmit)} className="space-y-4 mt-2">
+                  <FormField
+                    control={locationForm.control}
+                    name="locationName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Location Name</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="Main Warehouse" data-testid="input-location-name" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={locationForm.control}
+                    name="address"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Street Address</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="123 Main St" data-testid="input-location-address" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={locationForm.control}
+                      name="city"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>City</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="Seattle" data-testid="input-location-city" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <FormField
+                        control={locationForm.control}
+                        name="state"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>State</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="WA" maxLength={2} data-testid="input-location-state" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={locationForm.control}
+                        name="zipCode"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>ZIP</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="98101" data-testid="input-location-zip" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </div>
+                  <FormField
+                    control={locationForm.control}
+                    name="contactName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Contact Name (Optional)</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="John Smith" data-testid="input-location-contact-name" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={locationForm.control}
+                    name="contactPhone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Contact Phone (Optional)</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="206-555-0100" data-testid="input-location-contact-phone" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <div className="flex gap-2">
+                    {editingLocation && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setEditingLocation(null);
+                          locationForm.reset({
+                            customerId: selectedCustomer!.id,
+                            locationName: "",
+                            address: "",
+                            city: "",
+                            state: "",
+                            zipCode: "",
+                            contactName: "",
+                            contactPhone: "",
+                          });
+                        }}
+                        data-testid="button-cancel-edit-location"
+                      >
+                        Cancel Edit
+                      </Button>
+                    )}
+                    <Button
+                      type="submit"
+                      disabled={createLocationMutation.isPending || updateLocationMutation.isPending}
+                      data-testid="button-save-location"
+                    >
+                      {(createLocationMutation.isPending || updateLocationMutation.isPending) ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-4 h-4 mr-2" />
+                          {editingLocation ? 'Update Location' : 'Add Location'}
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </form>
+              </Form>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLocationDialogOpen(false)} data-testid="button-close-location-dialog">
               Done
             </Button>
           </DialogFooter>
