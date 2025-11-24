@@ -15,6 +15,7 @@ import {
   type RetailOrder, type InsertRetailOrder,
   type RetailOrderItem, type InsertRetailOrderItem,
   type WholesaleCustomer, type InsertWholesaleCustomer,
+  type WholesaleLocation, type InsertWholesaleLocation,
   type WholesaleOrder, type InsertWholesaleOrder,
   type WholesaleOrderItem, type InsertWholesaleOrderItem,
   type User, type InsertUser,
@@ -39,6 +40,7 @@ import {
   retailOrders,
   retailOrderItems,
   wholesaleCustomers,
+  wholesaleLocations,
   wholesaleOrders,
   wholesaleOrderItems,
   users,
@@ -179,6 +181,12 @@ export interface IStorage {
   createWholesaleCustomer(customer: InsertWholesaleCustomer): Promise<WholesaleCustomer>;
   updateWholesaleCustomer(id: string, updates: Partial<InsertWholesaleCustomer>): Promise<WholesaleCustomer | undefined>;
   importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[] }>;
+  
+  getWholesaleLocations(customerId: string): Promise<WholesaleLocation[]>;
+  getWholesaleLocation(id: string): Promise<WholesaleLocation | undefined>;
+  createWholesaleLocation(location: InsertWholesaleLocation): Promise<WholesaleLocation>;
+  updateWholesaleLocation(id: string, updates: Partial<InsertWholesaleLocation>): Promise<WholesaleLocation | undefined>;
+  deleteWholesaleLocation(id: string): Promise<void>;
   
   getWholesaleOrders(): Promise<WholesaleOrder[]>;
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
@@ -1348,6 +1356,37 @@ export class PostgresStorage implements IStorage {
     }
 
     return results;
+  }
+
+  async getWholesaleLocations(customerId: string): Promise<WholesaleLocation[]> {
+    return await db
+      .select()
+      .from(wholesaleLocations)
+      .where(eq(wholesaleLocations.customerId, customerId))
+      .orderBy(wholesaleLocations.locationName);
+  }
+
+  async getWholesaleLocation(id: string): Promise<WholesaleLocation | undefined> {
+    const result = await db.select().from(wholesaleLocations).where(eq(wholesaleLocations.id, id));
+    return result[0];
+  }
+
+  async createWholesaleLocation(location: InsertWholesaleLocation): Promise<WholesaleLocation> {
+    const result = await db.insert(wholesaleLocations).values(location).returning();
+    return result[0];
+  }
+
+  async updateWholesaleLocation(id: string, updates: Partial<InsertWholesaleLocation>): Promise<WholesaleLocation | undefined> {
+    const result = await db
+      .update(wholesaleLocations)
+      .set(updates)
+      .where(eq(wholesaleLocations.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteWholesaleLocation(id: string): Promise<void> {
+    await db.delete(wholesaleLocations).where(eq(wholesaleLocations.id, id));
   }
 
   async getWholesaleOrders(): Promise<WholesaleOrder[]> {
