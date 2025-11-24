@@ -3541,7 +3541,137 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.id;
       const subscriptionId = req.params.id;
       
-      // Verify subscription belongs to user
+      // Try to find retail subscription first
+      const [retailSubscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, subscriptionId));
+      
+      if (retailSubscription) {
+        // Handle retail subscription update
+        if (retailSubscription.userId !== userId) {
+          return res.status(404).json({ message: "Subscription not found" });
+        }
+        
+        const updateSchema = z.object({
+          weeksToDelay: z.number().int().min(1).max(12).optional(),
+          advanceToNextWeek: z.boolean().optional(),
+          subscriptionFrequency: z.enum(['weekly', 'bi-weekly', 'every-4-weeks']).optional(),
+        });
+        
+        const validated = updateSchema.parse(req.body);
+        
+        // Ensure mutually exclusive schedule changes
+        if (validated.weeksToDelay && validated.advanceToNextWeek) {
+          return res.status(400).json({
+            message: "Cannot delay and advance pickup in the same request."
+          });
+        }
+        
+        // Validate billing state
+        if (retailSubscription.status !== 'active') {
+          return res.status(400).json({ 
+            message: "Cannot modify a cancelled subscription." 
+          });
+        }
+        
+        if (retailSubscription.billingStatus !== 'active') {
+          return res.status(400).json({ 
+            message: "Cannot modify subscription while payment is in progress. Please try again later." 
+          });
+        }
+        
+        if (retailSubscription.processingLock) {
+          return res.status(400).json({ 
+            message: "Subscription is currently being processed. Please try again in a moment." 
+          });
+        }
+        
+        const updates: any = {};
+        
+        // Handle frequency change
+        if (validated.subscriptionFrequency) {
+          updates.subscriptionFrequency = validated.subscriptionFrequency;
+        }
+        
+        // Handle advance to next week
+        if (validated.advanceToNextWeek) {
+          const BREWERY_TIMEZONE = 'America/Los_Angeles';
+          const now = new Date();
+          const nowPacific = toZonedTime(now, BREWERY_TIMEZONE);
+          const dayOfWeek = nowPacific.getDay();
+          
+          if (dayOfWeek >= 5) {
+            return res.status(400).json({
+              message: "Cannot move pickup to next week after Thursday. Please try again next week."
+            });
+          }
+          
+          if (!retailSubscription.nextDeliveryDate) {
+            return res.status(422).json({
+              message: "Cannot move pickup earlier - no scheduled delivery date found."
+            });
+          }
+          
+          const currentDate = new Date(retailSubscription.nextDeliveryDate);
+          
+          if (isNaN(currentDate.getTime())) {
+            return res.status(422).json({
+              message: "Cannot move pickup earlier - invalid delivery date."
+            });
+          }
+          
+          const currentPickupDateStr = formatInTimeZone(currentDate, BREWERY_TIMEZONE, "yyyy-MM-dd");
+          const todayPacific = toZonedTime(now, BREWERY_TIMEZONE);
+          const nextWeekPacific = addDays(todayPacific, 7);
+          const nextWeekPacificStr = formatInTimeZone(nextWeekPacific, BREWERY_TIMEZONE, "yyyy-MM-dd");
+          
+          if (nextWeekPacificStr >= currentPickupDateStr) {
+            return res.status(400).json({
+              message: `Cannot move pickup earlier - your pickup is already scheduled for ${format(currentDate, 'EEEE, MMMM d')}. This feature only works when your pickup is more than 7 days away.`
+            });
+          }
+          
+          const nextWeekUTC = fromZonedTime(`${nextWeekPacificStr}T00:00:00`, BREWERY_TIMEZONE);
+          const nowPlus48Pacific = addHours(nowPacific, 48);
+          const minLeadTimeUTC = fromZonedTime(nowPlus48Pacific, BREWERY_TIMEZONE);
+          
+          if (nextWeekUTC < minLeadTimeUTC) {
+            return res.status(400).json({
+              message: "Cannot move pickup to a date less than 48 hours away."
+            });
+          }
+          
+          const nextWeekDeliveryUTC = normalizeToAllowedPickupDay(nextWeekUTC);
+          updates.nextDeliveryDate = nextWeekDeliveryUTC;
+          updates.nextChargeAt = nextWeekDeliveryUTC;
+        }
+        
+        // Handle delay
+        if (validated.weeksToDelay) {
+          const currentDate = retailSubscription.nextDeliveryDate 
+            ? new Date(retailSubscription.nextDeliveryDate)
+            : new Date();
+          
+          const tentativeNewDate = new Date(currentDate);
+          tentativeNewDate.setDate(tentativeNewDate.getDate() + (validated.weeksToDelay * 7));
+          
+          const newDate = normalizeToAllowedPickupDay(tentativeNewDate);
+          updates.nextDeliveryDate = newDate;
+          updates.nextChargeAt = newDate;
+        }
+        
+        // Update retail subscription
+        const [updated] = await db
+          .update(retailSubscriptions)
+          .set(updates)
+          .where(eq(retailSubscriptions.id, subscriptionId))
+          .returning();
+        
+        return res.json(updated);
+      }
+      
+      // Fall back to legacy subscription
       const subscription = await storage.getSubscription(subscriptionId);
       if (!subscription || subscription.userId !== userId) {
         return res.status(404).json({ message: "Subscription not found" });
@@ -3706,7 +3836,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.id;
       const subscriptionId = req.params.id;
       
-      // Verify subscription belongs to user
+      // Try retail subscription first
+      const [retailSubscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, subscriptionId));
+      
+      if (retailSubscription) {
+        if (retailSubscription.userId !== userId) {
+          return res.status(404).json({ message: "Subscription not found" });
+        }
+        
+        if (retailSubscription.status === 'cancelled') {
+          return res.status(400).json({ message: "Subscription is already cancelled" });
+        }
+        
+        const [cancelled] = await db
+          .update(retailSubscriptions)
+          .set({ status: 'cancelled' })
+          .where(eq(retailSubscriptions.id, subscriptionId))
+          .returning();
+        
+        return res.json(cancelled);
+      }
+      
+      // Fall back to legacy subscription
       const subscription = await storage.getSubscription(subscriptionId);
       if (!subscription || subscription.userId !== userId) {
         return res.status(404).json({ message: "Subscription not found" });
@@ -3731,7 +3885,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.id;
       const subscriptionId = req.params.id;
       
-      // Verify subscription belongs to user
+      // Try retail subscription first
+      const [retailSubscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, subscriptionId));
+      
+      if (retailSubscription) {
+        if (retailSubscription.userId !== userId) {
+          return res.status(404).json({ message: "Subscription not found" });
+        }
+        
+        if (retailSubscription.status === 'cancelled') {
+          return res.status(400).json({ message: "Subscription is already cancelled" });
+        }
+        
+        const [cancelled] = await db
+          .update(retailSubscriptions)
+          .set({ status: 'cancelled' })
+          .where(eq(retailSubscriptions.id, subscriptionId))
+          .returning();
+        
+        return res.json(cancelled);
+      }
+      
+      // Fall back to legacy subscription
       const subscription = await storage.getSubscription(subscriptionId);
       if (!subscription || subscription.userId !== userId) {
         return res.status(404).json({ message: "Subscription not found" });
