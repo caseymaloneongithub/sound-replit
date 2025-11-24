@@ -11,8 +11,6 @@ import {
   type RetailSubscriptionItem, type InsertRetailSubscriptionItem,
   type SubscriptionPlan, type InsertSubscriptionPlan,
   type CartItem, type InsertCartItem,
-  type Subscription, type InsertSubscription,
-  type SubscriptionItem, type InsertSubscriptionItem,
   type RetailCheckoutSession, type InsertRetailCheckoutSession,
   type RetailOrder, type InsertRetailOrder,
   type RetailOrderItem, type InsertRetailOrderItem,
@@ -37,8 +35,6 @@ import {
   retailSubscriptionItems,
   subscriptionPlans,
   cartItems,
-  subscriptions,
-  subscriptionItems,
   retailCheckoutSessions,
   retailOrders,
   retailOrderItems,
@@ -165,22 +161,6 @@ export interface IStorage {
   updateRetailCartItemQuantity(id: string, quantity: number): Promise<RetailCartItem | undefined>;
   removeRetailCartItem(id: string): Promise<void>;
   clearRetailCart(sessionId: string): Promise<void>;
-  
-  getSubscriptions(): Promise<Subscription[]>;
-  getSubscription(id: string): Promise<Subscription | undefined>;
-  getUserSubscriptions(userId: string): Promise<Subscription[]>;
-  getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined>;
-  getSubscriptionBySessionId(sessionId: string): Promise<Subscription | undefined>;
-  getSubscriptionsByPickupDate(pickupDate: Date): Promise<Subscription[]>;
-  createSubscription(subscription: InsertSubscription): Promise<Subscription>;
-  updateSubscription(id: string, updates: Partial<Subscription>): Promise<Subscription | undefined>;
-  updateSubscriptionByStripeId(stripeSubscriptionId: string, updates: Partial<Subscription>): Promise<Subscription | undefined>;
-  cancelSubscription(id: string): Promise<Subscription | undefined>;
-  
-  getSubscriptionItems(subscriptionId: string): Promise<SubscriptionItem[]>;
-  addSubscriptionItem(item: InsertSubscriptionItem): Promise<SubscriptionItem>;
-  removeSubscriptionItem(id: string, subscriptionId: string): Promise<void>;
-  updateSubscriptionItemQuantity(id: string, quantity: number): Promise<SubscriptionItem | undefined>;
   
   // NEW SCHEMA - Retail Subscriptions
   getRetailSubscriptionByStripeId(stripeSubscriptionId: string): Promise<RetailSubscription | undefined>;
@@ -1218,170 +1198,6 @@ export class PostgresStorage implements IStorage {
     await db.delete(retailCartItems).where(eq(retailCartItems.sessionId, sessionId));
   }
 
-  async getSubscriptions(): Promise<Subscription[]> {
-    return await db.select().from(subscriptions);
-  }
-
-  async getSubscription(id: string): Promise<Subscription | undefined> {
-    const result = await db.select().from(subscriptions).where(eq(subscriptions.id, id));
-    return result[0];
-  }
-
-  async getUserSubscriptions(userId: string): Promise<Subscription[]> {
-    return await db.select().from(subscriptions).where(eq(subscriptions.userId, userId));
-  }
-
-  async getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined> {
-    const result = await db.select().from(subscriptions).where(eq(subscriptions.stripeSubscriptionId, stripeSubscriptionId));
-    return result[0];
-  }
-
-  async getSubscriptionBySessionId(sessionId: string): Promise<Subscription | undefined> {
-    const result = await db.select().from(subscriptions).where(eq(subscriptions.stripeCheckoutSessionId, sessionId));
-    return result[0];
-  }
-
-  async getSubscriptionsByPickupDate(pickupDate: Date): Promise<Subscription[]> {
-    const startOfDay = new Date(pickupDate);
-    startOfDay.setUTCHours(0, 0, 0, 0);
-    const endOfDay = new Date(pickupDate);
-    endOfDay.setUTCHours(23, 59, 59, 999);
-    
-    const result = await db
-      .select()
-      .from(subscriptions)
-      .where(
-        and(
-          eq(subscriptions.status, 'active'),
-          sql`${subscriptions.nextDeliveryDate} >= ${startOfDay}`,
-          sql`${subscriptions.nextDeliveryDate} <= ${endOfDay}`
-        )
-      )
-      .orderBy(subscriptions.nextDeliveryDate);
-    return result;
-  }
-
-  async createSubscription(subscription: InsertSubscription): Promise<Subscription> {
-    const result = await db.insert(subscriptions).values(subscription).returning();
-    return result[0];
-  }
-
-  async updateSubscription(id: string, updates: Partial<Subscription>): Promise<Subscription | undefined> {
-    // Whitelist only allowed fields for user updates (defense in depth)
-    const allowedUpdates: Partial<Subscription> = {};
-    if (updates.nextDeliveryDate !== undefined) {
-      allowedUpdates.nextDeliveryDate = updates.nextDeliveryDate;
-    }
-    if (updates.productId !== undefined) {
-      allowedUpdates.productId = updates.productId;
-    }
-    if (updates.subscriptionFrequency !== undefined) {
-      allowedUpdates.subscriptionFrequency = updates.subscriptionFrequency;
-    }
-    if (updates.nextChargeAt !== undefined) {
-      allowedUpdates.nextChargeAt = updates.nextChargeAt;
-    }
-    
-    const result = await db
-      .update(subscriptions)
-      .set(allowedUpdates)
-      .where(eq(subscriptions.id, id))
-      .returning();
-    return result[0];
-  }
-
-  async updateSubscriptionByStripeId(stripeSubscriptionId: string, updates: Partial<Subscription>): Promise<Subscription | undefined> {
-    const result = await db
-      .update(subscriptions)
-      .set(updates)
-      .where(eq(subscriptions.stripeSubscriptionId, stripeSubscriptionId))
-      .returning();
-    return result[0];
-  }
-
-  async cancelSubscription(id: string): Promise<Subscription | undefined> {
-    const result = await db
-      .update(subscriptions)
-      .set({ 
-        status: 'cancelled',
-        cancelledAt: new Date()
-      })
-      .where(eq(subscriptions.id, id))
-      .returning();
-    return result[0];
-  }
-
-  async getSubscriptionItems(subscriptionId: string): Promise<SubscriptionItem[]> {
-    return await db
-      .select()
-      .from(subscriptionItems)
-      .where(eq(subscriptionItems.subscriptionId, subscriptionId));
-  }
-
-  async addSubscriptionItem(item: InsertSubscriptionItem): Promise<SubscriptionItem> {
-    const result = await db
-      .insert(subscriptionItems)
-      .values(item)
-      .returning();
-    return result[0];
-  }
-
-  async removeSubscriptionItem(id: string, subscriptionId: string): Promise<void> {
-    return await pool.connect().then(async (client) => {
-      try {
-        await client.query('BEGIN');
-        
-        // Lock all items for this subscription to prevent concurrent modifications
-        // Count items atomically with row-level locks
-        const countResult = await client.query(`
-          SELECT id, subscription_id
-          FROM subscription_items
-          WHERE subscription_id = $1
-          FOR UPDATE
-        `, [subscriptionId]);
-        
-        const items = countResult.rows;
-        
-        // Verify the item exists and belongs to this subscription
-        const targetItem = items.find(item => item.id === id);
-        if (!targetItem) {
-          throw new Error('Subscription item not found or does not belong to this subscription');
-        }
-        
-        // Check if this would leave zero items
-        if (items.length <= 1) {
-          throw new Error('Cannot remove the last product from a subscription. Cancel the subscription instead.');
-        }
-        
-        // Safe to delete - atomically delete and verify rowCount
-        const deleteResult = await client.query(`
-          DELETE FROM subscription_items
-          WHERE id = $1
-        `, [id]);
-        
-        if (deleteResult.rowCount === 0) {
-          throw new Error('Failed to remove subscription item - item may have been already removed');
-        }
-        
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
-    });
-  }
-
-  async updateSubscriptionItemQuantity(id: string, quantity: number): Promise<SubscriptionItem | undefined> {
-    const result = await db
-      .update(subscriptionItems)
-      .set({ quantity })
-      .where(eq(subscriptionItems.id, id))
-      .returning();
-    return result[0];
-  }
-
   // NEW SCHEMA - Retail Subscriptions
   async getRetailSubscriptionByStripeId(stripeSubscriptionId: string): Promise<RetailSubscription | undefined> {
     const result = await db.select().from(retailSubscriptions).where(eq(retailSubscriptions.stripeSubscriptionId, stripeSubscriptionId));
@@ -1962,11 +1778,11 @@ export class PostgresStorage implements IStorage {
         lastName: users.lastName,
         email: users.email,
         phoneNumber: users.phoneNumber,
-        subscriptionCount: sql<number>`COUNT(${subscriptions.id})::int`,
-        activeSubscriptionCount: sql<number>`SUM(CASE WHEN ${subscriptions.status} = 'active' THEN 1 ELSE 0 END)::int`,
+        subscriptionCount: sql<number>`COUNT(${retailSubscriptions.id})::int`,
+        activeSubscriptionCount: sql<number>`SUM(CASE WHEN ${retailSubscriptions.status} = 'active' THEN 1 ELSE 0 END)::int`,
       })
       .from(users)
-      .leftJoin(subscriptions, eq(subscriptions.userId, users.id))
+      .leftJoin(retailSubscriptions, eq(retailSubscriptions.userId, users.id))
       .where(eq(users.role, 'user'))
       .groupBy(users.id, users.firstName, users.lastName, users.email, users.phoneNumber)
       .orderBy(users.lastName, users.firstName);
@@ -1981,11 +1797,11 @@ export class PostgresStorage implements IStorage {
           lastName: users.lastName,
           email: users.email,
           phoneNumber: users.phoneNumber,
-          subscriptionCount: sql<number>`COUNT(${subscriptions.id})::int`,
-          activeSubscriptionCount: sql<number>`SUM(CASE WHEN ${subscriptions.status} = 'active' THEN 1 ELSE 0 END)::int`,
+          subscriptionCount: sql<number>`COUNT(${retailSubscriptions.id})::int`,
+          activeSubscriptionCount: sql<number>`SUM(CASE WHEN ${retailSubscriptions.status} = 'active' THEN 1 ELSE 0 END)::int`,
         })
         .from(users)
-        .leftJoin(subscriptions, eq(subscriptions.userId, users.id))
+        .leftJoin(retailSubscriptions, eq(retailSubscriptions.userId, users.id))
         .where(
           and(
             eq(users.role, 'user'),
