@@ -3383,38 +3383,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/my-subscriptions", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
-      console.log('[DEBUG] Fetching subscriptions for user:', userId);
       
-      // Fetch old subscriptions
-      const subscriptions = await storage.getUserSubscriptions(userId);
-      console.log('[DEBUG] Found old subscriptions:', subscriptions.length);
-      
-      // Fetch NEW retail subscriptions
+      // Fetch retail subscriptions
       const retailSubs = await db
         .select()
         .from(retailSubscriptions)
         .where(eq(retailSubscriptions.userId, userId));
-      console.log('[DEBUG] Found retail subscriptions:', retailSubs.length);
       
-      // Fetch items for each old subscription
+      // Fetch items for each subscription
       const subscriptionsWithItems = await Promise.all(
-        subscriptions.map(async (sub) => {
-          const items = await storage.getSubscriptionItems(sub.id);
-          
-          // Enrich items with product data
-          const itemsWithProducts = await Promise.all(
-            items.map(async (item) => {
-              const product = await storage.getProduct(item.productId);
-              return { ...item, product };
-            })
-          );
-          
-          return { ...sub, items: itemsWithProducts };
-        })
-      );
-      
-      // Fetch items for each retail subscription
-      const retailSubscriptionsWithItems = await Promise.all(
         retailSubs.map(async (sub) => {
           const items = await db
             .select()
@@ -3441,10 +3418,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
       
-      // Combine both old and new subscriptions
-      const allSubscriptions = [...subscriptionsWithItems, ...retailSubscriptionsWithItems];
-      
-      res.json(allSubscriptions);
+      res.json(subscriptionsWithItems);
     } catch (error: any) {
       console.error('[ERROR] Failed to fetch user subscriptions:', error);
       res.status(500).json({ message: "Error fetching user subscriptions: " + error.message });
@@ -3836,42 +3810,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.id;
       const subscriptionId = req.params.id;
       
-      // Try retail subscription first
-      const [retailSubscription] = await db
+      const [subscription] = await db
         .select()
         .from(retailSubscriptions)
         .where(eq(retailSubscriptions.id, subscriptionId));
       
-      if (retailSubscription) {
-        if (retailSubscription.userId !== userId) {
-          return res.status(404).json({ message: "Subscription not found" });
-        }
-        
-        if (retailSubscription.status === 'cancelled') {
-          return res.status(400).json({ message: "Subscription is already cancelled" });
-        }
-        
-        const [cancelled] = await db
-          .update(retailSubscriptions)
-          .set({ status: 'cancelled' })
-          .where(eq(retailSubscriptions.id, subscriptionId))
-          .returning();
-        
-        return res.json(cancelled);
-      }
-      
-      // Fall back to legacy subscription
-      const subscription = await storage.getSubscription(subscriptionId);
       if (!subscription || subscription.userId !== userId) {
         return res.status(404).json({ message: "Subscription not found" });
       }
       
-      // Check if already cancelled
       if (subscription.status === 'cancelled') {
         return res.status(400).json({ message: "Subscription is already cancelled" });
       }
       
-      const cancelled = await storage.cancelSubscription(subscriptionId);
+      const [cancelled] = await db
+        .update(retailSubscriptions)
+        .set({ status: 'cancelled' })
+        .where(eq(retailSubscriptions.id, subscriptionId))
+        .returning();
+      
       res.json(cancelled);
     } catch (error: any) {
       console.error("Error cancelling subscription:", error);
@@ -3885,42 +3842,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.id;
       const subscriptionId = req.params.id;
       
-      // Try retail subscription first
-      const [retailSubscription] = await db
+      const [subscription] = await db
         .select()
         .from(retailSubscriptions)
         .where(eq(retailSubscriptions.id, subscriptionId));
       
-      if (retailSubscription) {
-        if (retailSubscription.userId !== userId) {
-          return res.status(404).json({ message: "Subscription not found" });
-        }
-        
-        if (retailSubscription.status === 'cancelled') {
-          return res.status(400).json({ message: "Subscription is already cancelled" });
-        }
-        
-        const [cancelled] = await db
-          .update(retailSubscriptions)
-          .set({ status: 'cancelled' })
-          .where(eq(retailSubscriptions.id, subscriptionId))
-          .returning();
-        
-        return res.json(cancelled);
-      }
-      
-      // Fall back to legacy subscription
-      const subscription = await storage.getSubscription(subscriptionId);
       if (!subscription || subscription.userId !== userId) {
         return res.status(404).json({ message: "Subscription not found" });
       }
       
-      // Check if already cancelled
       if (subscription.status === 'cancelled') {
         return res.status(400).json({ message: "Subscription is already cancelled" });
       }
       
-      const cancelled = await storage.cancelSubscription(subscriptionId);
+      const [cancelled] = await db
+        .update(retailSubscriptions)
+        .set({ status: 'cancelled' })
+        .where(eq(retailSubscriptions.id, subscriptionId))
+        .returning();
+      
       res.json(cancelled);
     } catch (error: any) {
       console.error("Error cancelling subscription:", error);
