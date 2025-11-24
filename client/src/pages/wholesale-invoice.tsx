@@ -141,7 +141,7 @@ export default function WholesaleInvoice() {
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-8 mb-8">
+            <div className={`grid ${order.location ? 'grid-cols-3' : 'grid-cols-2'} gap-8 mb-8`}>
               <div>
                 <h2 className="font-semibold text-sm text-muted-foreground mb-2">FROM</h2>
                 <div>
@@ -163,6 +163,28 @@ export default function WholesaleInvoice() {
                   <div className="text-sm text-muted-foreground">{customer.phone}</div>
                 </div>
               </div>
+
+              {order.location && (
+                <div>
+                  <h2 className="font-semibold text-sm text-muted-foreground mb-2">DELIVER TO</h2>
+                  <div data-testid="delivery-location">
+                    <div className="font-semibold">{order.location.locationName}</div>
+                    <div className="text-sm text-muted-foreground">{order.location.address}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {order.location.city}, {order.location.state} {order.location.zipCode}
+                    </div>
+                    {order.location.contactName && (
+                      <div className="text-sm text-muted-foreground mt-2">
+                        <div className="font-medium">Contact:</div>
+                        <div>{order.location.contactName}</div>
+                        {order.location.contactPhone && (
+                          <div>{order.location.contactPhone}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             <Separator className="my-6" />

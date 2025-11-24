@@ -34,6 +34,16 @@ type WholesaleOrder = {
   status: string;
   totalAmount: string;
   notes: string | null;
+  locationId: string | null;
+  location?: {
+    locationName: string;
+    address: string;
+    city: string;
+    state: string;
+    zipCode: string;
+    contactName?: string;
+    contactPhone?: string;
+  };
   items: Array<{
     id: string;
     productId: string;
@@ -411,6 +421,26 @@ export default function WholesaleCustomerDashboard() {
                         <p className="text-sm text-muted-foreground">
                           Delivery: {format(new Date(order.deliveryDate), 'MMM dd, yyyy')}
                         </p>
+                      )}
+                      {order.location && (
+                        <div className="flex items-start gap-2 mt-2 p-2 bg-muted/50 rounded">
+                          <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                          <div className="flex-1 text-sm">
+                            <div className="font-medium text-foreground">{order.location.locationName}</div>
+                            <div className="text-muted-foreground">
+                              {order.location.address}
+                            </div>
+                            <div className="text-muted-foreground">
+                              {order.location.city}, {order.location.state} {order.location.zipCode}
+                            </div>
+                            {order.location.contactName && (
+                              <div className="text-muted-foreground mt-1">
+                                Contact: {order.location.contactName}
+                                {order.location.contactPhone && ` • ${order.location.contactPhone}`}
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       )}
                     </div>
                     <div className="flex items-center gap-4">

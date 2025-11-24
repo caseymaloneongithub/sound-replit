@@ -1459,14 +1459,21 @@ export class PostgresStorage implements IStorage {
 
   async getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string }> }>> {
     const result = await db
-      .select()
+      .select({
+        order: wholesaleOrders,
+        location: wholesaleLocations,
+      })
       .from(wholesaleOrders)
+      .leftJoin(wholesaleLocations, eq(wholesaleOrders.locationId, wholesaleLocations.id))
       .where(eq(wholesaleOrders.customerId, customerId))
       .orderBy(desc(wholesaleOrders.orderDate));
 
     // Get items for each order
     const ordersWithItems = await Promise.all(
-      result.map(async (order) => {
+      result.map(async (row) => {
+        const order = row.order;
+        const location = row.location;
+        
         const items = await db
           .select({
             id: wholesaleOrderItems.id,
@@ -1482,6 +1489,15 @@ export class PostgresStorage implements IStorage {
 
         return {
           ...order,
+          location: location ? {
+            locationName: location.locationName,
+            address: location.address,
+            city: location.city,
+            state: location.state,
+            zipCode: location.zipCode,
+            contactName: location.contactName || undefined,
+            contactPhone: location.contactPhone || undefined,
+          } : undefined,
           items: items.map((item) => ({
             ...item,
             productName: item.productName || 'Unknown Product',
@@ -1494,7 +1510,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async getWholesaleOrderWithDetails(id: string): Promise<{
-    order: WholesaleOrder;
+    order: WholesaleOrder & { location?: { locationName: string; address: string; city: string; state: string; zipCode: string; contactName?: string; contactPhone?: string; } };
     customer: WholesaleCustomer;
     items: Array<WholesaleOrderItem & { product: Product }>;
   } | undefined> {
@@ -1503,6 +1519,12 @@ export class PostgresStorage implements IStorage {
 
     const customer = await this.getWholesaleCustomer(order.customerId);
     if (!customer) return undefined;
+
+    // Get location data if locationId exists
+    let location;
+    if (order.locationId) {
+      location = await this.getWholesaleLocation(order.locationId);
+    }
 
     const orderItems = await this.getWholesaleOrderItems(id);
     const itemsWithProducts = await Promise.all(
@@ -1513,7 +1535,18 @@ export class PostgresStorage implements IStorage {
     );
 
     return {
-      order,
+      order: {
+        ...order,
+        location: location ? {
+          locationName: location.locationName,
+          address: location.address,
+          city: location.city,
+          state: location.state,
+          zipCode: location.zipCode,
+          contactName: location.contactName || undefined,
+          contactPhone: location.contactPhone || undefined,
+        } : undefined,
+      },
       customer,
       items: itemsWithProducts,
     };
