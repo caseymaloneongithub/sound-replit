@@ -299,6 +299,21 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   allowOnlinePayment: boolean("allow_online_payment").notNull().default(false),
 });
 
+export const wholesaleLocations = pgTable("wholesale_locations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id, { onDelete: 'cascade' }),
+  locationName: text("location_name").notNull(), // e.g., "Main Store", "Downtown Location", "Warehouse"
+  address: text("address").notNull(),
+  city: text("city").notNull(),
+  state: text("state").notNull().default('WA'),
+  zipCode: text("zip_code").notNull(),
+  contactName: text("contact_name"),
+  contactPhone: text("contact_phone"),
+  deliveryInstructions: text("delivery_instructions"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const retailCheckoutSessions = pgTable("retail_checkout_sessions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   sessionId: text("session_id").notNull(),
@@ -351,6 +366,7 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   invoiceNumber: text("invoice_number").notNull().unique(),
   customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id),
+  locationId: varchar("location_id").references(() => wholesaleLocations.id), // Delivery location for this order
   orderDate: timestamp("order_date").notNull().defaultNow(),
   deliveryDate: timestamp("delivery_date"),
   status: text("status").notNull().default('pending'), // 'pending', 'packaged', 'delivered'
@@ -443,6 +459,7 @@ export const insertRetailCheckoutSessionSchema = createInsertSchema(retailChecko
 export const insertRetailOrderSchema = createInsertSchema(retailOrders).omit({ id: true, orderDate: true, fulfilledAt: true });
 export const insertRetailOrderItemSchema = createInsertSchema(retailOrderItems).omit({ id: true });
 export const insertWholesaleCustomerSchema = createInsertSchema(wholesaleCustomers).omit({ id: true });
+export const insertWholesaleLocationSchema = createInsertSchema(wholesaleLocations).omit({ id: true, createdAt: true });
 export const insertWholesaleOrderSchema = createInsertSchema(wholesaleOrders).omit({ id: true, orderDate: true, fulfilledAt: true });
 export const insertWholesaleOrderItemSchema = createInsertSchema(wholesaleOrderItems).omit({ id: true });
 export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
@@ -487,6 +504,7 @@ export type InsertRetailCheckoutSession = z.infer<typeof insertRetailCheckoutSes
 export type InsertRetailOrder = z.infer<typeof insertRetailOrderSchema>;
 export type InsertRetailOrderItem = z.infer<typeof insertRetailOrderItemSchema>;
 export type InsertWholesaleCustomer = z.infer<typeof insertWholesaleCustomerSchema>;
+export type InsertWholesaleLocation = z.infer<typeof insertWholesaleLocationSchema>;
 export type InsertWholesaleOrder = z.infer<typeof insertWholesaleOrderSchema>;
 export type InsertWholesaleOrderItem = z.infer<typeof insertWholesaleOrderItemSchema>;
 export type InsertVerificationCode = z.infer<typeof insertVerificationCodeSchema>;
@@ -523,6 +541,7 @@ export type RetailCheckoutSession = typeof retailCheckoutSessions.$inferSelect;
 export type RetailOrder = typeof retailOrders.$inferSelect;
 export type RetailOrderItem = typeof retailOrderItems.$inferSelect;
 export type WholesaleCustomer = typeof wholesaleCustomers.$inferSelect;
+export type WholesaleLocation = typeof wholesaleLocations.$inferSelect;
 export type WholesaleOrder = typeof wholesaleOrders.$inferSelect;
 export type WholesaleOrderItem = typeof wholesaleOrderItems.$inferSelect;
 export type VerificationCode = typeof verificationCodes.$inferSelect;
