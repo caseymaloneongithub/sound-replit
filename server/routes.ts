@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { storage } from "./storage";
-import { insertSubscriptionSchema, insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, subscriptions, Subscription, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors } from "@shared/schema";
+import { insertWholesaleCustomerSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors } from "@shared/schema";
 import { eq, sql, and } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -2372,118 +2372,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             break;
           }
           
-          // Handle subscription setup (new local management flow)
-          if (session.metadata?.type === 'subscription_setup') {
-            // Check for existing subscription with this session ID (idempotency)
-            const existing = await storage.getSubscriptionBySessionId(session.id);
-            if (existing) {
-              console.log(`[WEBHOOK] Subscription already exists for session ${session.id}, skipping`);
-              break;
-            }
-
-            if (!session.setup_intent) {
-              console.error("No setup intent in subscription setup session");
-              break;
-            }
-
-            // Retrieve setup intent to get payment method
-            const setupIntent = await stripe.setupIntents.retrieve(session.setup_intent as string);
-            if (!setupIntent.payment_method) {
-              console.error("No payment method in setup intent");
-              break;
-            }
-
-            // Parse subscription items from metadata
-            const subscriptionItems = JSON.parse(session.metadata.subscriptionItems || '[]');
-            if (subscriptionItems.length === 0) {
-              console.error("No subscription items in metadata");
-              break;
-            }
-
-            const firstItem = subscriptionItems[0];
-            const frequency = firstItem.subscriptionFrequency || 'weekly';
-            const daysUntilNext = 
-              frequency === 'weekly' ? 7 :
-              frequency === 'bi-weekly' ? 14 :
-              28;
-
-            // Calculate next date and normalize to allowed pickup day (Mon-Thu)
-            const tentativeNextDate = new Date();
-            tentativeNextDate.setDate(tentativeNextDate.getDate() + daysUntilNext);
-            const nextDate = normalizeToAllowedPickupDay(tentativeNextDate);
-
-            // Get customer details
-            const customer = session.customer_details;
-            if (!customer?.email) {
-              console.error("No customer email in session");
-              break;
-            }
-
-            // Create or get Stripe customer
-            let stripeCustomerId = session.customer as string;
-            if (!stripeCustomerId && customer.email) {
-              const stripeCustomer = await stripe.customers.create({
-                email: customer.email,
-                name: customer.name || undefined,
-                payment_method: setupIntent.payment_method as string,
-                invoice_settings: {
-                  default_payment_method: setupIntent.payment_method as string,
-                },
-              });
-              stripeCustomerId = stripeCustomer.id;
-            } else if (stripeCustomerId) {
-              // Attach payment method to existing customer
-              await stripe.paymentMethods.attach(setupIntent.payment_method as string, {
-                customer: stripeCustomerId,
-              });
-              await stripe.customers.update(stripeCustomerId, {
-                invoice_settings: {
-                  default_payment_method: setupIntent.payment_method as string,
-                },
-              });
-            }
-
-            // Create locally-managed subscription
-            const subscriptionData: any = {
-              customerName: customer.name || 'Unknown',
-              customerEmail: customer.email,
-              customerPhone: customer.phone || '',
-              stripeCheckoutSessionId: session.id, // For idempotency
-              stripeCustomerId,
-              stripePaymentMethodId: setupIntent.payment_method as string,
-              billingType: 'local_managed',
-              subscriptionFrequency: frequency,
-              status: 'active',
-              nextChargeAt: nextDate,
-              nextDeliveryDate: nextDate,
-              retryCount: 0,
-            };
-
-            if (session.metadata?.userId) {
-              subscriptionData.userId = session.metadata.userId;
-            }
-
-            const newSubscription = await storage.createSubscription(subscriptionData);
-            
-            // Create subscription items
-            for (const item of subscriptionItems) {
-              await storage.addSubscriptionItem({
-                subscriptionId: newSubscription.id,
-                productId: item.productId,
-                quantity: item.quantity,
-              });
-            }
-
-            // Clear cart
-            if (session.metadata.sessionId) {
-              await storage.clearCart(session.metadata.sessionId);
-            }
-
-            console.log(`[WEBHOOK] Created locally-managed subscription ${newSubscription.id} with payment method ${setupIntent.payment_method}`);
-            break;
-          }
-          
-          // Handle retail subscription purchases (Stripe-managed)
+          // Handle retail subscription purchases
           if (session.metadata?.type === 'subscription_purchase' && session.metadata?.retailProductId && session.subscription) {
             // Check for existing retail subscription with this session ID (idempotency)
             const existing = await storage.getRetailSubscriptionBySessionId(session.id);
@@ -2653,14 +2542,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           console.log(`[WEBHOOK] Processing subscription renewal invoice ${invoice.id} for subscription ${subscriptionId}`);
           
-          // Check for legacy subscription first
-          const subscription = await storage.getSubscriptionByStripeId(subscriptionId);
+          // Check for retail subscription
+          const retailSubscription = await storage.getRetailSubscriptionByStripeId(subscriptionId);
           
-          // Check for retail subscription if legacy not found
-          const retailSubscription = !subscription ? await storage.getRetailSubscriptionByStripeId(subscriptionId) : null;
-          
-          if (!subscription && !retailSubscription) {
-            console.error(`[WEBHOOK] No subscription (legacy or retail) found for Stripe ID ${subscriptionId}`);
+          if (!retailSubscription) {
+            console.error(`[WEBHOOK] No retail subscription found for Stripe ID ${subscriptionId}`);
             break;
           }
           
@@ -2774,204 +2660,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             break;
           }
           
-          // Handle legacy subscription (existing code)
-          if (!subscription) {
-            break;
-          }
-          
-          if (subscription.status !== 'active') {
-            console.log(`[WEBHOOK] Subscription ${subscription.id} is not active (status: ${subscription.status}), skipping order creation`);
-            break;
-          }
-          
-          // Get subscription items (products and quantities) - outside transaction
-          const subscriptionItems = await storage.getSubscriptionItems(subscription.id);
-          
-          if (subscriptionItems.length === 0) {
-            console.error(`[WEBHOOK] No items found for subscription ${subscription.id}`);
-            break;
-          }
-          
-          // Use db.transaction for atomic order creation with inventory deduction
-          try {
-            await db.transaction(async (tx) => {
-              // Check for existing order for this invoice (idempotency)
-              const existingOrders = await tx
-                .select({ id: retailOrders.id })
-                .from(retailOrders)
-                .where(eq(retailOrders.stripeInvoiceId, invoice.id))
-                .limit(1);
-              
-              if (existingOrders.length > 0) {
-                console.log(`[WEBHOOK] Order already exists for invoice ${invoice.id} - skipping creation (idempotent)`);
-                return;
-              }
-              
-              // Generate order number
-              const maxOrderResult = await tx
-                .select({ maxNumber: sql<string>`COALESCE(MAX(CAST(SUBSTRING(order_number FROM 4) AS INTEGER)), 0)` })
-                .from(retailOrders)
-                .where(sql`order_number ~ '^ORD[0-9]+$'`);
-              
-              const nextNumber = parseInt(maxOrderResult[0]?.maxNumber || '0') + 1;
-              const orderNumber = `ORD${String(nextNumber).padStart(6, '0')}`;
-              
-              // Get products and calculate total (need to fetch within transaction for consistency)
-              const productIds = subscriptionItems.map(item => item.productId);
-              const productsList = await tx
-                .select()
-                .from(products)
-                .where(sql`${products.id} = ANY(${productIds})`);
-              
-              const productsMap = new Map(productsList.map(p => [p.id, p]));
-              
-              // Also fetch product types for pricing
-              const { productTypes } = await import("@shared/schema");
-              const productTypeIds = Array.from(new Set(productsList.map(p => p.productTypeId)));
-              const productTypesList = await tx
-                .select()
-                .from(productTypes)
-                .where(sql`${productTypes.id} = ANY(${productTypeIds})`);
-              
-              const productTypesMap = new Map(productTypesList.map(pt => [pt.id, pt]));
-              
-              let subtotal = 0;
-              for (const item of subscriptionItems) {
-                const product = productsMap.get(item.productId);
-                if (product) {
-                  const productType = productTypesMap.get(product.productTypeId);
-                  if (productType) {
-                    // Subscription price is retail price * 0.9
-                    const itemPrice = parseFloat(productType.retailPrice) * 0.9 * item.quantity;
-                    subtotal += itemPrice;
-                  }
-                }
-              }
-              
-              // Calculate sales tax (WA State 6.5% + Seattle City 3.85% = 10.35%)
-              const TAX_RATE = 0.1035;
-              const taxAmount = subtotal * TAX_RATE;
-              const totalAmount = subtotal + taxAmount;
-              
-              // Create retail order
-              const [newOrder] = await tx.insert(retailOrders).values({
-                orderNumber,
-                userId: subscription.userId,
-                customerName: subscription.customerName,
-                customerEmail: subscription.customerEmail,
-                customerPhone: subscription.customerPhone || '',
-                status: 'pending',
-                subtotal: subtotal.toFixed(2),
-                taxAmount: taxAmount.toFixed(2),
-                totalAmount: totalAmount.toFixed(2),
-                stripeInvoiceId: invoice.id,
-                isSubscriptionOrder: true,
-              }).returning();
-              
-              // Create order items and deduct inventory
-              for (const item of subscriptionItems) {
-                const product = productsMap.get(item.productId);
-                if (product) {
-                  const productType = productTypesMap.get(product.productTypeId);
-                  if (!productType) {
-                    throw new Error(`Product type ${product.productTypeId} not found`);
-                  }
-                  const itemPrice = parseFloat(productType.retailPrice) * 0.9;
-                  
-                  // Create order item
-                  await tx.insert(retailOrderItems).values({
-                    orderId: newOrder.id,
-                    productId: item.productId,
-                    quantity: item.quantity,
-                    unitPrice: itemPrice.toFixed(2),
-                  });
-                  
-                  // Deduct inventory with pessimistic locking
-                  const [productWithLock] = await tx
-                    .select()
-                    .from(products)
-                    .where(eq(products.id, item.productId))
-                    .for('update');
-                  
-                  if (!productWithLock) {
-                    throw new Error(`Product ${item.productId} not found`);
-                  }
-                  
-                  const currentStock = productWithLock.stockQuantity;
-                  const newStock = currentStock - item.quantity;
-                  
-                  if (newStock < 0) {
-                    console.warn(`[WEBHOOK] Insufficient inventory for product ${item.productId}. Current: ${currentStock}, Needed: ${item.quantity}`);
-                    // Continue anyway - staff will handle this
-                  }
-                  
-                  // Update product stock
-                  await tx
-                    .update(products)
-                    .set({ stockQuantity: newStock })
-                    .where(eq(products.id, item.productId));
-                  
-                  // Record inventory adjustment
-                  await tx.insert(inventoryAdjustments).values({
-                    productId: item.productId,
-                    reason: 'fulfillment',
-                    quantity: -item.quantity,
-                    notes: `Auto-deducted for subscription order ${orderNumber}`,
-                    orderId: newOrder.id,
-                    orderType: 'retail',
-                  });
-                }
-              }
-              
-              // Update subscription's next delivery date with pessimistic lock
-              const daysUntilNext = 
-                subscription.subscriptionFrequency === 'weekly' ? 7 :
-                subscription.subscriptionFrequency === 'bi-weekly' ? 14 :
-                28; // every-4-weeks
-              
-              const nextDate = new Date();
-              nextDate.setDate(nextDate.getDate() + daysUntilNext);
-              
-              // Lock subscription row before updating
-              await tx
-                .select()
-                .from(subscriptions)
-                .where(eq(subscriptions.id, subscription.id))
-                .for('update');
-              
-              await tx
-                .update(subscriptions)
-                .set({ nextDeliveryDate: nextDate })
-                .where(eq(subscriptions.id, subscription.id));
-              
-              console.log(`[WEBHOOK] ✅ Created subscription order ${orderNumber} for invoice ${invoice.id} and deducted inventory`);
-            });
-          } catch (error) {
-            console.error(`[WEBHOOK] Error creating subscription order for invoice ${invoice.id}:`, error);
-            throw error;
-          }
-          
           break;
         }
         case 'payment_intent.succeeded': {
           const paymentIntent = event.data.object as Stripe.PaymentIntent;
           
-          // Handle legacy subscription renewal payments (locally-managed subscriptions)
-          if (paymentIntent.metadata?.type === 'subscription_renewal') {
-            console.log(`[WEBHOOK] Processing successful subscription renewal payment ${paymentIntent.id}`);
-            
-            const { finalizeSubscriptionCharge } = await import('./billing-cron');
-            const success = await finalizeSubscriptionCharge(paymentIntent.id);
-            
-            if (success) {
-              console.log(`[WEBHOOK] ✅ Successfully finalized subscription charge for PaymentIntent ${paymentIntent.id}`);
-            } else {
-              console.error(`[WEBHOOK] ❌ Failed to finalize subscription charge for PaymentIntent ${paymentIntent.id}`);
-            }
-            break;
-          }
-          
-          // Handle retail subscription renewal payments (NEW format)
+          // Handle retail subscription renewal payments
           if (paymentIntent.metadata?.type === 'retail_subscription_renewal') {
             console.log(`[WEBHOOK] Processing successful retail subscription renewal payment ${paymentIntent.id}`);
             
@@ -3236,147 +2930,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           break;
         }
-        case 'payment_intent.processing': {
-          const paymentIntent = event.data.object as Stripe.PaymentIntent;
-          
-          // Only handle subscription renewals
-          if (paymentIntent.metadata?.type === 'subscription_renewal' && paymentIntent.metadata?.subscriptionId) {
-            console.log(`[WEBHOOK] PaymentIntent ${paymentIntent.id} is processing for subscription ${paymentIntent.metadata.subscriptionId}`);
-            
-            // Update subscription status to awaiting_confirmation
-            await db
-              .update(subscriptions)
-              .set({
-                billingStatus: 'awaiting_confirmation',
-                lastPaymentIntentId: paymentIntent.id,
-                processingLock: false,
-              })
-              .where(eq(subscriptions.id, paymentIntent.metadata.subscriptionId));
-          }
-          break;
-        }
-        case 'payment_intent.requires_action': {
-          const paymentIntent = event.data.object as Stripe.PaymentIntent;
-          
-          // Only handle subscription renewals
-          if (paymentIntent.metadata?.type === 'subscription_renewal' && paymentIntent.metadata?.subscriptionId) {
-            console.log(`[WEBHOOK] PaymentIntent ${paymentIntent.id} requires customer action for subscription ${paymentIntent.metadata.subscriptionId}`);
-            
-            // Update subscription status to awaiting_auth
-            await db
-              .update(subscriptions)
-              .set({
-                billingStatus: 'awaiting_auth',
-                lastPaymentIntentId: paymentIntent.id,
-                processingLock: false,
-              })
-              .where(eq(subscriptions.id, paymentIntent.metadata.subscriptionId));
-            
-            // TODO: Send customer email with link to complete authentication
-            console.warn(`[WEBHOOK] ⚠️ Customer authentication required for subscription ${paymentIntent.metadata.subscriptionId}`);
-          }
-          break;
-        }
-        case 'payment_intent.payment_failed': {
-          const paymentIntent = event.data.object as Stripe.PaymentIntent;
-          
-          // Only handle subscription renewals
-          if (paymentIntent.metadata?.type === 'subscription_renewal' && paymentIntent.metadata?.subscriptionId) {
-            console.error(`[WEBHOOK] Payment failed for subscription ${paymentIntent.metadata.subscriptionId}`);
-            
-            const subscription = await storage.getSubscription(paymentIntent.metadata.subscriptionId);
-            if (!subscription) {
-              console.error(`[WEBHOOK] Subscription ${paymentIntent.metadata.subscriptionId} not found`);
-              break;
-            }
-            
-            // Increment retry count and schedule next attempt
-            const newRetryCount = subscription.retryCount + 1;
-            const MAX_RETRY_ATTEMPTS = 3;
-            
-            // Schedule next retry attempt (1 day from now if under max retries)
-            let nextChargeAt: Date | undefined;
-            if (newRetryCount < MAX_RETRY_ATTEMPTS) {
-              nextChargeAt = new Date();
-              nextChargeAt.setDate(nextChargeAt.getDate() + 1); // Retry tomorrow
-            }
-            
-            await db
-              .update(subscriptions)
-              .set({
-                retryCount: newRetryCount,
-                billingStatus: newRetryCount >= MAX_RETRY_ATTEMPTS ? 'retrying' : 'active',
-                nextChargeAt: nextChargeAt || subscription.nextChargeAt,
-                lastPaymentIntentId: paymentIntent.id,
-                processingLock: false,
-                status: newRetryCount >= MAX_RETRY_ATTEMPTS ? 'paused' : subscription.status,
-              })
-              .where(eq(subscriptions.id, subscription.id));
-            
-            if (newRetryCount >= MAX_RETRY_ATTEMPTS) {
-              console.error(`[WEBHOOK] Subscription ${subscription.id} paused after ${MAX_RETRY_ATTEMPTS} failed attempts`);
-            }
-            
-            // Send failure notifications
-            const { sendPaymentFailureEmail, sendStaffPaymentFailureNotification } = await import('./email');
-            const items = await storage.getSubscriptionItems(subscription.id);
-            const itemsList = await Promise.all(items.map(async (item) => {
-              const product = await storage.getProduct(item.productId);
-              return {
-                productName: product?.name || 'Unknown Product',
-                quantity: item.quantity,
-              };
-            }));
-            
-            try {
-              await Promise.all([
-                sendPaymentFailureEmail({
-                  customerEmail: subscription.customerEmail,
-                  customerName: subscription.customerName,
-                  subscriptionItems: itemsList,
-                  amount: paymentIntent.amount / 100,
-                  errorMessage: paymentIntent.last_payment_error?.message || 'Payment failed',
-                }),
-                sendStaffPaymentFailureNotification({
-                  customerEmail: subscription.customerEmail,
-                  customerName: subscription.customerName,
-                  subscriptionItems: itemsList,
-                  amount: paymentIntent.amount / 100,
-                  errorMessage: paymentIntent.last_payment_error?.message || 'Payment failed',
-                }),
-              ]);
-            } catch (emailError) {
-              console.error('[WEBHOOK] Failed to send payment failure emails:', emailError);
-            }
-          }
-          break;
-        }
       }
 
       res.json({ received: true });
     } catch (error: any) {
       console.error("Webhook error:", error);
       res.status(400).send(`Webhook Error: ${error.message}`);
-    }
-  });
-
-  // Create subscription
-  app.post("/api/subscriptions", async (req, res) => {
-    try {
-      const validated = insertSubscriptionSchema.parse(req.body);
-      const subscription = await storage.createSubscription(validated);
-      res.json(subscription);
-    } catch (error: any) {
-      res.status(400).json({ message: "Error creating subscription: " + error.message });
-    }
-  });
-
-  app.get("/api/subscriptions", async (req, res) => {
-    try {
-      const subscriptions = await storage.getSubscriptions();
-      res.json(subscriptions);
-    } catch (error: any) {
-      res.status(500).json({ message: "Error fetching subscriptions: " + error.message });
     }
   });
 
@@ -3687,7 +3246,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Build updates object with server-computed dates
-      const updates: Partial<Subscription> = {};
+      const updates: any = {};
       
       // Handle frequency change
       if (validated.subscriptionFrequency) {
@@ -3868,79 +3427,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get subscription items
-  app.get("/api/my-subscriptions/:id/items", isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.id;
-      const subscriptionId = req.params.id;
-      
-      // Verify subscription belongs to user
-      const subscription = await storage.getSubscription(subscriptionId);
-      if (!subscription || subscription.userId !== userId) {
-        return res.status(404).json({ message: "Subscription not found" });
-      }
-      
-      const items = await storage.getSubscriptionItems(subscriptionId);
-      res.json(items);
-    } catch (error: any) {
-      console.error("Error fetching subscription items:", error);
-      res.status(500).json({ message: "Error fetching subscription items: " + error.message });
-    }
-  });
-
-  // Add product to subscription
-  app.post("/api/my-subscriptions/:id/items", isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.id;
-      const subscriptionId = req.params.id;
-      
-      // Verify subscription belongs to user
-      const subscription = await storage.getSubscription(subscriptionId);
-      if (!subscription || subscription.userId !== userId) {
-        return res.status(404).json({ message: "Subscription not found" });
-      }
-      
-      const itemSchema = z.object({
-        productId: z.string().uuid(),
-        quantity: z.number().int().positive().default(1),
-      });
-      
-      const validated = itemSchema.parse(req.body);
-      const item = await storage.addSubscriptionItem({
-        subscriptionId,
-        ...validated,
-      });
-      
-      res.json(item);
-    } catch (error: any) {
-      console.error("Error adding subscription item:", error);
-      res.status(400).json({ message: "Error adding subscription item: " + error.message });
-    }
-  });
-
-  // Remove product from subscription
-  app.delete("/api/my-subscriptions/:id/items/:itemId", isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.id;
-      const subscriptionId = req.params.id;
-      const itemId = req.params.itemId;
-      
-      // Verify subscription belongs to user
-      const subscription = await storage.getSubscription(subscriptionId);
-      if (!subscription || subscription.userId !== userId) {
-        return res.status(404).json({ message: "Subscription not found" });
-      }
-      
-      // Remove item (atomic validation happens in storage layer)
-      await storage.removeSubscriptionItem(itemId, subscriptionId);
-      res.json({ message: "Item removed successfully" });
-    } catch (error: any) {
-      console.error("Error removing subscription item:", error);
-      res.status(400).json({ message: error.message || "Error removing subscription item" });
-    }
-  });
-
-  // Update subscription item quantity
+  // Retail subscription item management (PATCH /api/my-subscriptions/:id/items/:itemId)
   app.patch("/api/my-subscriptions/:id/items/:itemId", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
@@ -3948,7 +3435,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const itemId = req.params.itemId;
       
       // Verify subscription belongs to user
-      const subscription = await storage.getSubscription(subscriptionId);
+      const [subscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, subscriptionId));
+      
       if (!subscription || subscription.userId !== userId) {
         return res.status(404).json({ message: "Subscription not found" });
       }
@@ -3958,7 +3449,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       const validated = quantitySchema.parse(req.body);
-      const updated = await storage.updateSubscriptionItemQuantity(itemId, validated.quantity);
+      
+      // Update retail subscription item
+      const [updated] = await db
+        .update(retailSubscriptionItems)
+        .set({ quantity: validated.quantity })
+        .where(eq(retailSubscriptionItems.id, itemId))
+        .returning();
       
       res.json(updated);
     } catch (error: any) {
