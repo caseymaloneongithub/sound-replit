@@ -676,7 +676,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Wholesale customer record not found" });
       }
 
-      const { items, notes } = req.body;
+      const { items, notes, locationId } = req.body;
+      
+      // Validate location if provided
+      if (locationId) {
+        const location = await storage.getWholesaleLocation(locationId);
+        if (!location) {
+          return res.status(400).json({ message: "Invalid location ID" });
+        }
+        if (location.customerId !== customer.id) {
+          return res.status(403).json({ message: "Location does not belong to this customer" });
+        }
+      }
       
       if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: "Order must contain at least one item" });
@@ -726,6 +737,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         invoiceNumber,
         totalAmount: totalAmount.toFixed(2),
         notes: notes || undefined,
+        locationId: locationId || undefined,
       };
 
       const createdOrder = await storage.createWholesaleOrder(orderData);

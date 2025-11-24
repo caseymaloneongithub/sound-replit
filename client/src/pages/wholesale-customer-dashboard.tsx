@@ -1,11 +1,30 @@
 import { useAuth } from "@/hooks/use-auth";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Package, FileText, MapPin, Calendar } from "lucide-react";
+import { Package, FileText, MapPin, Calendar, Plus, Edit, Trash2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { format } from "date-fns";
-import type { WholesaleCustomer } from "@shared/schema";
+import type { WholesaleCustomer, WholesaleLocation, InsertWholesaleLocation } from "@shared/schema";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { insertWholesaleLocationSchema } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type WholesaleOrder = {
   id: string;
@@ -24,6 +43,250 @@ type WholesaleOrder = {
   }>;
 };
 
+function LocationDialog({ location, onSuccess }: { location?: WholesaleLocation; onSuccess: () => void }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+
+  const form = useForm<Omit<InsertWholesaleLocation, 'customerId'>>({
+    resolver: zodResolver(insertWholesaleLocationSchema.omit({ customerId: true })),
+    defaultValues: location ? {
+      locationName: location.locationName,
+      address: location.address,
+      city: location.city,
+      state: location.state,
+      zipCode: location.zipCode,
+      contactName: location.contactName || "",
+      contactPhone: location.contactPhone || "",
+    } : {
+      locationName: "",
+      address: "",
+      city: "",
+      state: "",
+      zipCode: "",
+      contactName: "",
+      contactPhone: "",
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: Omit<InsertWholesaleLocation, 'customerId'>) => {
+      return await apiRequest("POST", "/api/wholesale-customer/locations", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale-customer/locations"] });
+      toast({ title: "Location created successfully" });
+      setOpen(false);
+      form.reset();
+      onSuccess();
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error creating location", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (data: Partial<Omit<InsertWholesaleLocation, 'customerId'>>) => {
+      return await apiRequest("PATCH", `/api/wholesale-customer/locations/${location?.id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale-customer/locations"] });
+      toast({ title: "Location updated successfully" });
+      setOpen(false);
+      onSuccess();
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error updating location", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const onSubmit = (data: Omit<InsertWholesaleLocation, 'customerId'>) => {
+    if (location) {
+      updateMutation.mutate(data);
+    } else {
+      createMutation.mutate(data);
+    }
+  };
+
+  const isPending = createMutation.isPending || updateMutation.isPending;
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        {location ? (
+          <Button variant="ghost" size="icon" data-testid={`button-edit-location-${location.id}`}>
+            <Edit className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button data-testid="button-add-location">
+            <Plus className="mr-2 h-4 w-4" />
+            Add Location
+          </Button>
+        )}
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{location ? "Edit Location" : "Add New Location"}</DialogTitle>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="locationName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Location Name</FormLabel>
+                  <FormControl>
+                    <Input {...field} placeholder="Main Office" data-testid="input-location-name" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="address"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Address</FormLabel>
+                  <FormControl>
+                    <Input {...field} placeholder="123 Main St" data-testid="input-address" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <div className="grid grid-cols-3 gap-4">
+              <FormField
+                control={form.control}
+                name="city"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>City</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Seattle" data-testid="input-city" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="state"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>State</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="WA" data-testid="input-state" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="zipCode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Zip Code</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="98101" data-testid="input-zip" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            <FormField
+              control={form.control}
+              name="contactName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Contact Name</FormLabel>
+                  <FormControl>
+                    <Input {...field} value={field.value || ""} placeholder="John Doe" data-testid="input-contact-name" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="contactPhone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Contact Phone</FormLabel>
+                  <FormControl>
+                    <Input {...field} value={field.value || ""} placeholder="(206) 555-1234" data-testid="input-contact-phone" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setOpen(false)} data-testid="button-cancel">
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isPending} data-testid="button-save-location">
+                {isPending ? "Saving..." : location ? "Update Location" : "Add Location"}
+              </Button>
+            </div>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DeleteLocationDialog({ locationId, locationName }: { locationId: string; locationName: string }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("DELETE", `/api/wholesale-customer/locations/${locationId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale-customer/locations"] });
+      toast({ title: "Location deleted successfully" });
+      setOpen(false);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error deleting location", description: error.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <Button 
+        variant="ghost" 
+        size="icon" 
+        onClick={() => setOpen(true)}
+        data-testid={`button-delete-location-${locationId}`}
+      >
+        <Trash2 className="h-4 w-4 text-destructive" />
+      </Button>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete Location</AlertDialogTitle>
+          <AlertDialogDescription>
+            Are you sure you want to delete "{locationName}"? This action cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => deleteMutation.mutate()}
+            disabled={deleteMutation.isPending}
+            data-testid="button-confirm-delete"
+          >
+            {deleteMutation.isPending ? "Deleting..." : "Delete"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export default function WholesaleCustomerDashboard() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -36,7 +299,11 @@ export default function WholesaleCustomerDashboard() {
     queryKey: ["/api/wholesale-customer/orders"],
   });
 
-  const isLoading = customerLoading || ordersLoading;
+  const { data: locations, isLoading: locationsLoading } = useQuery<WholesaleLocation[]>({
+    queryKey: ["/api/wholesale-customer/locations"],
+  });
+
+  const isLoading = customerLoading || ordersLoading || locationsLoading;
 
   if (isLoading) {
     return (
@@ -164,6 +431,54 @@ export default function WholesaleCustomerDashboard() {
                         <FileText className="h-4 w-4 mr-2" />
                         View Invoice
                       </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-1">
+            <CardTitle>Delivery Locations</CardTitle>
+            <LocationDialog onSuccess={() => {}} />
+          </CardHeader>
+          <CardContent>
+            {!locations || locations.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No delivery locations yet</p>
+                <p className="text-sm mt-2">Add a location to streamline your orders</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {locations.map((location) => (
+                  <div
+                    key={location.id}
+                    className="flex items-start justify-between p-4 border rounded-md"
+                    data-testid={`card-location-${location.id}`}
+                  >
+                    <div className="space-y-1 flex-1">
+                      <div className="flex items-center gap-2">
+                        <MapPin className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        <p className="font-medium" data-testid={`text-location-name-${location.id}`}>
+                          {location.locationName}
+                        </p>
+                      </div>
+                      <p className="text-sm text-muted-foreground ml-6" data-testid={`text-address-${location.id}`}>
+                        {location.address}
+                      </p>
+                      <p className="text-sm text-muted-foreground ml-6">
+                        {location.city}, {location.state} {location.zipCode}
+                      </p>
+                      <p className="text-sm text-muted-foreground ml-6">
+                        Contact: {location.contactName} • {location.contactPhone}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <LocationDialog location={location} onSuccess={() => {}} />
+                      <DeleteLocationDialog locationId={location.id} locationName={location.locationName} />
                     </div>
                   </div>
                 ))}
