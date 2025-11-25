@@ -246,8 +246,7 @@ export default function WholesaleCustomers() {
   const createLocationMutation = useMutation({
     mutationFn: async (data: z.infer<typeof insertWholesaleLocationSchema>) => {
       if (!selectedCustomer) throw new Error("No customer selected");
-      const response = await apiRequest("POST", `/api/wholesale/customers/${selectedCustomer.id}/locations`, data);
-      return await response.json();
+      return await apiRequest("POST", `/api/wholesale/customers/${selectedCustomer.id}/locations`, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers", selectedCustomer?.id, "locations"] });
@@ -270,8 +269,7 @@ export default function WholesaleCustomers() {
   const updateLocationMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Partial<z.infer<typeof insertWholesaleLocationSchema>> }) => {
       if (!selectedCustomer) throw new Error("No customer selected");
-      const response = await apiRequest("PATCH", `/api/wholesale/customers/${selectedCustomer.id}/locations/${id}`, data);
-      return await response.json();
+      return await apiRequest("PATCH", `/api/wholesale/customers/${selectedCustomer.id}/locations/${id}`, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers", selectedCustomer?.id, "locations"] });
