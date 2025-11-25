@@ -78,8 +78,10 @@ export default function RetailSubscriptions() {
   const [searchQuery, setSearchQuery] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSubscription, setEditingSubscription] = useState<SubscriptionWithItems | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
   const [selectedSubscriptionForItem, setSelectedSubscriptionForItem] = useState<string | null>(null);
+  const [newSubscriptionItems, setNewSubscriptionItems] = useState<Array<{ retailProductId: string; flavorId: string; quantity: number }>>([]);
 
   const form = useForm<SubscriptionFormData>({
     resolver: zodResolver(subscriptionSchema),
@@ -99,6 +101,34 @@ export default function RetailSubscriptions() {
 
   const { data: retailProducts = [] } = useQuery<RetailProduct[]>({
     queryKey: ['/api/retail-products'],
+  });
+
+  const { data: flavors = [] } = useQuery<Flavor[]>({
+    queryKey: ['/api/flavors'],
+  });
+
+  const createSubscriptionMutation = useMutation({
+    mutationFn: async (data: SubscriptionFormData & { items: Array<{ retailProductId: string; flavorId: string; quantity: number }> }) => {
+      return await apiRequest('POST', '/api/retail/subscriptions', data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/retail/subscriptions'] });
+      toast({
+        title: "Subscription created",
+        description: "The new subscription has been created successfully",
+      });
+      setDialogOpen(false);
+      setIsCreating(false);
+      setNewSubscriptionItems([]);
+      form.reset();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create subscription",
+        variant: "destructive",
+      });
+    },
   });
 
   const updateSubscriptionMutation = useMutation({
@@ -191,6 +221,7 @@ export default function RetailSubscriptions() {
 
   const handleEditSubscription = (subscription: SubscriptionWithItems) => {
     setEditingSubscription(subscription);
+    setIsCreating(false);
     form.reset({
       customerName: subscription.customerName,
       customerEmail: subscription.customerEmail,
@@ -202,8 +233,59 @@ export default function RetailSubscriptions() {
     setDialogOpen(true);
   };
 
+  const handleCreateSubscription = () => {
+    setEditingSubscription(null);
+    setIsCreating(true);
+    setNewSubscriptionItems([]);
+    form.reset({
+      customerName: '',
+      customerEmail: '',
+      customerPhone: '',
+      subscriptionFrequency: 'bi-weekly',
+      status: 'active',
+      nextDeliveryDate: format(new Date(), 'yyyy-MM-dd'),
+    });
+    setDialogOpen(true);
+  };
+
+  const handleAddNewItem = () => {
+    setNewSubscriptionItems([...newSubscriptionItems, { retailProductId: '', flavorId: '', quantity: 1 }]);
+  };
+
+  const handleRemoveNewItem = (index: number) => {
+    setNewSubscriptionItems(newSubscriptionItems.filter((_, i) => i !== index));
+  };
+
+  const handleUpdateNewItem = (index: number, field: 'retailProductId' | 'flavorId' | 'quantity', value: string | number) => {
+    const updated = [...newSubscriptionItems];
+    if (field === 'quantity') {
+      updated[index][field] = value as number;
+    } else {
+      updated[index][field] = value as string;
+      if (field === 'retailProductId') {
+        const selectedProduct = retailProducts.find(p => p.id === value);
+        if (selectedProduct?.productType === 'single-flavor' && selectedProduct.flavorId) {
+          updated[index].flavorId = selectedProduct.flavorId;
+        } else {
+          updated[index].flavorId = '';
+        }
+      }
+    }
+    setNewSubscriptionItems(updated);
+  };
+
   const onSubmit = (data: SubscriptionFormData) => {
-    if (editingSubscription) {
+    if (isCreating) {
+      if (newSubscriptionItems.length === 0 || newSubscriptionItems.some(item => !item.retailProductId || !item.flavorId)) {
+        toast({
+          title: "Missing items",
+          description: "Please add at least one item with a product and flavor selected",
+          variant: "destructive",
+        });
+        return;
+      }
+      createSubscriptionMutation.mutate({ ...data, items: newSubscriptionItems });
+    } else if (editingSubscription) {
       updateSubscriptionMutation.mutate({ id: editingSubscription.id, data });
     }
   };
@@ -249,6 +331,10 @@ export default function RetailSubscriptions() {
                 data-testid="input-search-subscriptions"
               />
             </div>
+            <Button onClick={handleCreateSubscription} data-testid="button-add-subscription">
+              <Plus className="w-4 h-4 mr-2" />
+              Add Subscription
+            </Button>
           </div>
         </div>
 
@@ -469,19 +555,23 @@ export default function RetailSubscriptions() {
           ))}
         </Tabs>
 
-        {/* Edit Subscription Dialog */}
+        {/* Create/Edit Subscription Dialog */}
         <Dialog open={dialogOpen} onOpenChange={(open) => {
           setDialogOpen(open);
           if (!open) {
             setEditingSubscription(null);
+            setIsCreating(false);
+            setNewSubscriptionItems([]);
             form.reset();
           }
         }}>
-          <DialogContent className="sm:max-w-[500px]">
+          <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Edit Subscription</DialogTitle>
+              <DialogTitle>{isCreating ? 'Create Subscription' : 'Edit Subscription'}</DialogTitle>
               <DialogDescription>
-                Update the subscription details for {editingSubscription?.customerName}
+                {isCreating 
+                  ? 'Create a new subscription for a customer' 
+                  : `Update the subscription details for ${editingSubscription?.customerName}`}
               </DialogDescription>
             </DialogHeader>
             <Form {...form}>
@@ -584,6 +674,102 @@ export default function RetailSubscriptions() {
                     </FormItem>
                   )}
                 />
+
+                {/* Items section for new subscriptions */}
+                {isCreating && (
+                  <div className="space-y-4 pt-4 border-t">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-base font-medium">Subscription Items</Label>
+                      <Button type="button" variant="outline" size="sm" onClick={handleAddNewItem} data-testid="button-add-new-item">
+                        <Plus className="w-4 h-4 mr-1" />
+                        Add Item
+                      </Button>
+                    </div>
+                    {newSubscriptionItems.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Add at least one item to create the subscription</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {newSubscriptionItems.map((item, index) => {
+                          const selectedProduct = retailProducts.find(p => p.id === item.retailProductId);
+                          const availableFlavors = selectedProduct?.productType === 'single-flavor' && selectedProduct.flavorId
+                            ? flavors.filter(f => f.id === selectedProduct.flavorId)
+                            : flavors;
+                          return (
+                            <div key={index} className="flex items-start gap-2 p-3 border rounded-md">
+                              <div className="flex-1 space-y-2">
+                                <div>
+                                  <Label className="text-xs">Product</Label>
+                                  <Select
+                                    value={item.retailProductId}
+                                    onValueChange={(value) => handleUpdateNewItem(index, 'retailProductId', value)}
+                                  >
+                                    <SelectTrigger data-testid={`select-new-product-${index}`}>
+                                      <SelectValue placeholder="Select product" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {retailProducts.filter(p => p.isActive).map((product) => (
+                                        <SelectItem key={product.id} value={product.id}>
+                                          {product.unitDescription}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div>
+                                  <Label className="text-xs">Flavor</Label>
+                                  <Select
+                                    value={item.flavorId}
+                                    onValueChange={(value) => handleUpdateNewItem(index, 'flavorId', value)}
+                                    disabled={!item.retailProductId}
+                                  >
+                                    <SelectTrigger data-testid={`select-new-flavor-${index}`}>
+                                      <SelectValue placeholder="Select flavor" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {availableFlavors.map((flavor) => (
+                                        <SelectItem key={flavor.id} value={flavor.id}>
+                                          {flavor.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div>
+                                  <Label className="text-xs">Quantity (cases)</Label>
+                                  <Select
+                                    value={String(item.quantity)}
+                                    onValueChange={(value) => handleUpdateNewItem(index, 'quantity', parseInt(value))}
+                                  >
+                                    <SelectTrigger data-testid={`select-new-quantity-${index}`}>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {[1, 2, 3, 4, 5].map((qty) => (
+                                        <SelectItem key={qty} value={String(qty)}>
+                                          {qty} case{qty > 1 ? 's' : ''}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleRemoveNewItem(index)}
+                                data-testid={`button-remove-new-item-${index}`}
+                              >
+                                <Trash2 className="w-4 h-4 text-muted-foreground" />
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <DialogFooter>
                   <Button
                     type="button"
@@ -591,6 +777,8 @@ export default function RetailSubscriptions() {
                     onClick={() => {
                       setDialogOpen(false);
                       setEditingSubscription(null);
+                      setIsCreating(false);
+                      setNewSubscriptionItems([]);
                       form.reset();
                     }}
                   >
@@ -598,16 +786,16 @@ export default function RetailSubscriptions() {
                   </Button>
                   <Button 
                     type="submit" 
-                    disabled={updateSubscriptionMutation.isPending}
+                    disabled={isCreating ? createSubscriptionMutation.isPending : updateSubscriptionMutation.isPending}
                     data-testid="button-save-subscription"
                   >
-                    {updateSubscriptionMutation.isPending ? (
+                    {(isCreating ? createSubscriptionMutation.isPending : updateSubscriptionMutation.isPending) ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Saving...
+                        {isCreating ? 'Creating...' : 'Saving...'}
                       </>
                     ) : (
-                      "Save Changes"
+                      isCreating ? 'Create Subscription' : 'Save Changes'
                     )}
                   </Button>
                 </DialogFooter>
