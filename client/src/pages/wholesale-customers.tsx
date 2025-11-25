@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 export default function WholesaleCustomers() {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<WholesaleCustomer | null>(null);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [locationDialogOpen, setLocationDialogOpen] = useState(false);
   const [editingLocation, setEditingLocation] = useState<WholesaleLocation | null>(null);
@@ -44,6 +45,7 @@ export default function WholesaleCustomers() {
       email: "",
       phone: "",
       address: "",
+      allowOnlinePayment: false,
     },
   });
 
@@ -59,6 +61,7 @@ export default function WholesaleCustomers() {
       });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
       setDialogOpen(false);
+      setEditingCustomer(null);
       form.reset();
     },
     onError: (error: any) => {
@@ -69,6 +72,64 @@ export default function WholesaleCustomers() {
       });
     },
   });
+
+  const updateCustomerMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Partial<z.infer<typeof insertWholesaleCustomerSchema>> }) => {
+      const response = await apiRequest("PATCH", `/api/wholesale/customers/${id}`, data);
+      return await response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Customer Updated",
+        description: "Wholesale customer has been updated successfully",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
+      setDialogOpen(false);
+      setEditingCustomer(null);
+      form.reset();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update customer",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleCustomerSubmit = (data: z.infer<typeof insertWholesaleCustomerSchema>) => {
+    if (editingCustomer) {
+      updateCustomerMutation.mutate({ id: editingCustomer.id, data });
+    } else {
+      createCustomerMutation.mutate(data);
+    }
+  };
+
+  const handleEditCustomer = (customer: WholesaleCustomer) => {
+    setEditingCustomer(customer);
+    form.reset({
+      businessName: customer.businessName,
+      contactName: customer.contactName,
+      email: customer.email,
+      phone: customer.phone,
+      address: customer.address,
+      allowOnlinePayment: customer.allowOnlinePayment,
+    });
+    setDialogOpen(true);
+  };
+
+  const handleAddNewCustomer = () => {
+    setEditingCustomer(null);
+    form.reset({
+      businessName: "",
+      contactName: "",
+      email: "",
+      phone: "",
+      address: "",
+      allowOnlinePayment: false,
+    });
+    setDialogOpen(true);
+  };
 
   const togglePaymentMutation = useMutation({
     mutationFn: async ({ id, allowOnlinePayment }: { id: string; allowOnlinePayment: boolean }) => {
@@ -311,7 +372,7 @@ export default function WholesaleCustomers() {
   };
 
   const onSubmit = (data: z.infer<typeof insertWholesaleCustomerSchema>) => {
-    createCustomerMutation.mutate(data);
+    handleCustomerSubmit(data);
   };
 
   const handleCsvImport = async () => {
@@ -473,18 +534,23 @@ export default function WholesaleCustomers() {
               </DialogContent>
             </Dialog>
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button data-testid="button-add-customer">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Customer
-                </Button>
-              </DialogTrigger>
+            <Button onClick={handleAddNewCustomer} data-testid="button-add-customer">
+              <Plus className="w-4 h-4 mr-2" />
+              Add Customer
+            </Button>
+
+            <Dialog open={dialogOpen} onOpenChange={(open) => {
+              setDialogOpen(open);
+              if (!open) {
+                setEditingCustomer(null);
+                form.reset();
+              }
+            }}>
               <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
-                  <DialogTitle>Add Wholesale Customer</DialogTitle>
+                  <DialogTitle>{editingCustomer ? "Edit Wholesale Customer" : "Add Wholesale Customer"}</DialogTitle>
                   <DialogDescription>
-                    Create a new wholesale customer account
+                    {editingCustomer ? "Update the wholesale customer account details" : "Create a new wholesale customer account"}
                   </DialogDescription>
                 </DialogHeader>
                 <Form {...form}>
@@ -520,7 +586,7 @@ export default function WholesaleCustomers() {
                       name="email"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Email</FormLabel>
+                          <FormLabel>Primary Email</FormLabel>
                           <FormControl>
                             <Input type="email" {...field} data-testid="input-email" />
                           </FormControl>
@@ -549,7 +615,6 @@ export default function WholesaleCustomers() {
                           <FormLabel>Address</FormLabel>
                           <FormControl>
                             <Textarea 
-                              
                               {...field} 
                               data-testid="input-address"
                             />
@@ -558,27 +623,52 @@ export default function WholesaleCustomers() {
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={form.control}
+                      name="allowOnlinePayment"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                          <div className="space-y-0.5">
+                            <FormLabel>Allow Online Payment</FormLabel>
+                            <p className="text-sm text-muted-foreground">
+                              Enable this customer to pay online via Stripe
+                            </p>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                              data-testid="switch-allow-online-payment"
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
                     <DialogFooter>
                       <Button 
                         type="button" 
                         variant="outline" 
-                        onClick={() => setDialogOpen(false)}
+                        onClick={() => {
+                          setDialogOpen(false);
+                          setEditingCustomer(null);
+                          form.reset();
+                        }}
                         data-testid="button-cancel"
                       >
                         Cancel
                       </Button>
                       <Button 
                         type="submit" 
-                        disabled={createCustomerMutation.isPending}
+                        disabled={createCustomerMutation.isPending || updateCustomerMutation.isPending}
                         data-testid="button-submit"
                       >
-                        {createCustomerMutation.isPending ? (
+                        {(createCustomerMutation.isPending || updateCustomerMutation.isPending) ? (
                           <>
                             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Creating...
+                            {editingCustomer ? "Updating..." : "Creating..."}
                           </>
                         ) : (
-                          "Create Customer"
+                          editingCustomer ? "Update Customer" : "Create Customer"
                         )}
                       </Button>
                     </DialogFooter>
@@ -605,11 +695,21 @@ export default function WholesaleCustomers() {
                     <div className="grid md:grid-cols-2 gap-4">
                       {customers.map((customer) => (
                         <Card key={customer.id} className="hover-elevate" data-testid={`customer-${customer.id}`}>
-                          <CardHeader>
-                            <CardTitle className="text-lg" style={{ fontFamily: 'var(--font-heading)' }}>
-                              {customer.businessName}
-                            </CardTitle>
-                            <CardDescription>{customer.contactName}</CardDescription>
+                          <CardHeader className="flex flex-row items-start justify-between gap-2">
+                            <div>
+                              <CardTitle className="text-lg" style={{ fontFamily: 'var(--font-heading)' }}>
+                                {customer.businessName}
+                              </CardTitle>
+                              <CardDescription>{customer.contactName}</CardDescription>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={() => handleEditCustomer(customer)}
+                              data-testid={`button-edit-customer-${customer.id}`}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
                           </CardHeader>
                           <CardContent className="space-y-3">
                             <div className="flex items-center gap-2 text-sm">
@@ -932,7 +1032,7 @@ export default function WholesaleCustomers() {
                       <FormItem>
                         <FormLabel>Contact Name (Optional)</FormLabel>
                         <FormControl>
-                          <Input {...field} placeholder="John Smith" data-testid="input-location-contact-name" />
+                          <Input {...field} value={field.value || ""} placeholder="John Smith" data-testid="input-location-contact-name" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -945,7 +1045,7 @@ export default function WholesaleCustomers() {
                       <FormItem>
                         <FormLabel>Contact Phone (Optional)</FormLabel>
                         <FormControl>
-                          <Input {...field} placeholder="206-555-0100" data-testid="input-location-contact-phone" />
+                          <Input {...field} value={field.value || ""} placeholder="206-555-0100" data-testid="input-location-contact-phone" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
