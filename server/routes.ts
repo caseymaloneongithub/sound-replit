@@ -4677,6 +4677,407 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
+  // ====== Staff Retail Subscription Management Routes ======
+  
+  // List all retail subscriptions (staff/admin)
+  app.get("/api/retail/subscriptions", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const statusFilter = req.query.status as string | undefined;
+      const searchQuery = req.query.search as string | undefined;
+      
+      let query = db
+        .select()
+        .from(retailSubscriptions)
+        .orderBy(desc(retailSubscriptions.startDate));
+      
+      let subscriptionsList = await query;
+      
+      // Apply status filter if provided
+      if (statusFilter && statusFilter !== 'all') {
+        subscriptionsList = subscriptionsList.filter(s => s.status === statusFilter);
+      }
+      
+      // Apply search filter
+      if (searchQuery) {
+        const search = searchQuery.toLowerCase();
+        subscriptionsList = subscriptionsList.filter(s => 
+          s.customerName.toLowerCase().includes(search) ||
+          s.customerEmail.toLowerCase().includes(search) ||
+          s.customerPhone.includes(search)
+        );
+      }
+      
+      // Fetch items for each subscription
+      const subscriptionsWithItems = await Promise.all(
+        subscriptionsList.map(async (sub) => {
+          const items = await db
+            .select()
+            .from(retailSubscriptionItems)
+            .where(eq(retailSubscriptionItems.subscriptionId, sub.id));
+          
+          // Enrich items with product and flavor data
+          const enrichedItems = await Promise.all(
+            items.map(async (item) => {
+              const [product] = await db
+                .select()
+                .from(retailProducts)
+                .where(eq(retailProducts.id, item.retailProductId));
+              
+              let flavor = null;
+              if (item.selectedFlavorId) {
+                const [f] = await db.select().from(flavors).where(eq(flavors.id, item.selectedFlavorId));
+                flavor = f;
+              } else if (product?.flavorId) {
+                const [f] = await db.select().from(flavors).where(eq(flavors.id, product.flavorId));
+                flavor = f;
+              }
+              
+              return { ...item, retailProduct: product, flavor };
+            })
+          );
+          
+          return { ...sub, items: enrichedItems };
+        })
+      );
+      
+      res.json(subscriptionsWithItems);
+    } catch (error: any) {
+      console.error("Error fetching retail subscriptions:", error);
+      res.status(500).json({ message: "Failed to fetch retail subscriptions" });
+    }
+  });
+
+  // Get single retail subscription with items (staff/admin)
+  app.get("/api/retail/subscriptions/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const [subscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, req.params.id));
+      
+      if (!subscription) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      const items = await db
+        .select()
+        .from(retailSubscriptionItems)
+        .where(eq(retailSubscriptionItems.subscriptionId, subscription.id));
+      
+      const enrichedItems = await Promise.all(
+        items.map(async (item) => {
+          const [product] = await db
+            .select()
+            .from(retailProducts)
+            .where(eq(retailProducts.id, item.retailProductId));
+          
+          let flavor = null;
+          if (item.selectedFlavorId) {
+            const [f] = await db.select().from(flavors).where(eq(flavors.id, item.selectedFlavorId));
+            flavor = f;
+          } else if (product?.flavorId) {
+            const [f] = await db.select().from(flavors).where(eq(flavors.id, product.flavorId));
+            flavor = f;
+          }
+          
+          return { ...item, retailProduct: product, flavor };
+        })
+      );
+      
+      res.json({ ...subscription, items: enrichedItems });
+    } catch (error: any) {
+      console.error("Error fetching subscription:", error);
+      res.status(500).json({ message: "Failed to fetch subscription" });
+    }
+  });
+
+  // Create new retail subscription (staff/admin)
+  app.post("/api/retail/subscriptions", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const createSchema = z.object({
+        customerName: z.string().min(1),
+        customerEmail: z.string().email(),
+        customerPhone: z.string().min(1),
+        subscriptionFrequency: z.enum(['weekly', 'bi-weekly', 'every-4-weeks', 'every-6-weeks', 'every-8-weeks']),
+        status: z.enum(['active', 'paused', 'cancelled']).default('active'),
+        nextDeliveryDate: z.string().optional(),
+        items: z.array(z.object({
+          retailProductId: z.string(),
+          selectedFlavorId: z.string().optional().nullable(),
+          quantity: z.number().int().min(1).max(10),
+        })).min(1),
+      });
+      
+      const validated = createSchema.parse(req.body);
+      
+      // Create subscription
+      const [newSubscription] = await db
+        .insert(retailSubscriptions)
+        .values({
+          customerName: validated.customerName,
+          customerEmail: validated.customerEmail,
+          customerPhone: validated.customerPhone,
+          subscriptionFrequency: validated.subscriptionFrequency,
+          status: validated.status,
+          billingType: 'local_managed',
+          billingStatus: 'active',
+          nextDeliveryDate: validated.nextDeliveryDate ? new Date(validated.nextDeliveryDate) : null,
+        })
+        .returning();
+      
+      // Create subscription items
+      for (const item of validated.items) {
+        await db.insert(retailSubscriptionItems).values({
+          subscriptionId: newSubscription.id,
+          retailProductId: item.retailProductId,
+          selectedFlavorId: item.selectedFlavorId || null,
+          quantity: item.quantity,
+        });
+      }
+      
+      // Fetch the full subscription with items
+      const items = await db
+        .select()
+        .from(retailSubscriptionItems)
+        .where(eq(retailSubscriptionItems.subscriptionId, newSubscription.id));
+      
+      res.status(201).json({ ...newSubscription, items });
+    } catch (error: any) {
+      console.error("Error creating subscription:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create subscription" });
+    }
+  });
+
+  // Update retail subscription (staff/admin)
+  app.patch("/api/retail/subscriptions/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const updateSchema = z.object({
+        customerName: z.string().min(1).optional(),
+        customerEmail: z.string().email().optional(),
+        customerPhone: z.string().min(1).optional(),
+        subscriptionFrequency: z.enum(['weekly', 'bi-weekly', 'every-4-weeks', 'every-6-weeks', 'every-8-weeks']).optional(),
+        status: z.enum(['active', 'paused', 'cancelled']).optional(),
+        billingStatus: z.enum(['active', 'awaiting_auth', 'awaiting_confirmation', 'retrying']).optional(),
+        nextDeliveryDate: z.string().nullable().optional(),
+        nextChargeAt: z.string().nullable().optional(),
+        retryCount: z.number().int().min(0).optional(),
+      });
+      
+      const validated = updateSchema.parse(req.body);
+      
+      // Check subscription exists
+      const [existing] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, req.params.id));
+      
+      if (!existing) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      // Build update object
+      const updates: any = {};
+      if (validated.customerName !== undefined) updates.customerName = validated.customerName;
+      if (validated.customerEmail !== undefined) updates.customerEmail = validated.customerEmail;
+      if (validated.customerPhone !== undefined) updates.customerPhone = validated.customerPhone;
+      if (validated.subscriptionFrequency !== undefined) updates.subscriptionFrequency = validated.subscriptionFrequency;
+      if (validated.status !== undefined) {
+        updates.status = validated.status;
+        if (validated.status === 'cancelled') {
+          updates.cancelledAt = new Date();
+        }
+      }
+      if (validated.billingStatus !== undefined) updates.billingStatus = validated.billingStatus;
+      if (validated.nextDeliveryDate !== undefined) {
+        updates.nextDeliveryDate = validated.nextDeliveryDate ? new Date(validated.nextDeliveryDate) : null;
+      }
+      if (validated.nextChargeAt !== undefined) {
+        updates.nextChargeAt = validated.nextChargeAt ? new Date(validated.nextChargeAt) : null;
+      }
+      if (validated.retryCount !== undefined) updates.retryCount = validated.retryCount;
+      
+      const [updated] = await db
+        .update(retailSubscriptions)
+        .set(updates)
+        .where(eq(retailSubscriptions.id, req.params.id))
+        .returning();
+      
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating subscription:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update subscription" });
+    }
+  });
+
+  // Delete/Cancel retail subscription (staff/admin)
+  app.delete("/api/retail/subscriptions/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const [subscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, req.params.id));
+      
+      if (!subscription) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      // If subscription has Stripe subscription, cancel it
+      if (subscription.stripeSubscriptionId && stripe) {
+        try {
+          await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
+          console.log(`[STAFF] Cancelled Stripe subscription ${subscription.stripeSubscriptionId}`);
+        } catch (stripeError: any) {
+          console.error('[STAFF] Failed to cancel Stripe subscription:', stripeError);
+          // Continue with local deletion even if Stripe fails
+        }
+      }
+      
+      // Delete subscription items first (cascade should handle this, but be explicit)
+      await db
+        .delete(retailSubscriptionItems)
+        .where(eq(retailSubscriptionItems.subscriptionId, req.params.id));
+      
+      // Delete subscription
+      await db
+        .delete(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, req.params.id));
+      
+      res.json({ success: true, message: "Subscription deleted successfully" });
+    } catch (error: any) {
+      console.error("Error deleting subscription:", error);
+      res.status(500).json({ message: "Failed to delete subscription" });
+    }
+  });
+
+  // Add item to subscription (staff/admin)
+  app.post("/api/retail/subscriptions/:id/items", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const itemSchema = z.object({
+        retailProductId: z.string(),
+        selectedFlavorId: z.string().optional().nullable(),
+        quantity: z.number().int().min(1).max(10),
+      });
+      
+      const validated = itemSchema.parse(req.body);
+      
+      // Verify subscription exists
+      const [subscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, req.params.id));
+      
+      if (!subscription) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      const [newItem] = await db
+        .insert(retailSubscriptionItems)
+        .values({
+          subscriptionId: req.params.id,
+          retailProductId: validated.retailProductId,
+          selectedFlavorId: validated.selectedFlavorId || null,
+          quantity: validated.quantity,
+        })
+        .returning();
+      
+      res.status(201).json(newItem);
+    } catch (error: any) {
+      console.error("Error adding subscription item:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to add subscription item" });
+    }
+  });
+
+  // Update subscription item (staff/admin)
+  app.patch("/api/retail/subscriptions/:subscriptionId/items/:itemId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const updateSchema = z.object({
+        retailProductId: z.string().optional(),
+        selectedFlavorId: z.string().nullable().optional(),
+        quantity: z.number().int().min(1).max(10).optional(),
+      });
+      
+      const validated = updateSchema.parse(req.body);
+      
+      // Check item exists
+      const [existing] = await db
+        .select()
+        .from(retailSubscriptionItems)
+        .where(and(
+          eq(retailSubscriptionItems.id, req.params.itemId),
+          eq(retailSubscriptionItems.subscriptionId, req.params.subscriptionId)
+        ));
+      
+      if (!existing) {
+        return res.status(404).json({ message: "Subscription item not found" });
+      }
+      
+      const updates: any = {};
+      if (validated.retailProductId !== undefined) updates.retailProductId = validated.retailProductId;
+      if (validated.selectedFlavorId !== undefined) updates.selectedFlavorId = validated.selectedFlavorId;
+      if (validated.quantity !== undefined) updates.quantity = validated.quantity;
+      
+      const [updated] = await db
+        .update(retailSubscriptionItems)
+        .set(updates)
+        .where(eq(retailSubscriptionItems.id, req.params.itemId))
+        .returning();
+      
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating subscription item:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update subscription item" });
+    }
+  });
+
+  // Delete subscription item (staff/admin)
+  app.delete("/api/retail/subscriptions/:subscriptionId/items/:itemId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      // Check item exists
+      const [existing] = await db
+        .select()
+        .from(retailSubscriptionItems)
+        .where(and(
+          eq(retailSubscriptionItems.id, req.params.itemId),
+          eq(retailSubscriptionItems.subscriptionId, req.params.subscriptionId)
+        ));
+      
+      if (!existing) {
+        return res.status(404).json({ message: "Subscription item not found" });
+      }
+      
+      // Check if this is the last item
+      const items = await db
+        .select()
+        .from(retailSubscriptionItems)
+        .where(eq(retailSubscriptionItems.subscriptionId, req.params.subscriptionId));
+      
+      if (items.length <= 1) {
+        return res.status(400).json({ message: "Cannot delete the last item. Delete the subscription instead." });
+      }
+      
+      await db
+        .delete(retailSubscriptionItems)
+        .where(eq(retailSubscriptionItems.id, req.params.itemId));
+      
+      res.json({ success: true, message: "Item deleted successfully" });
+    } catch (error: any) {
+      console.error("Error deleting subscription item:", error);
+      res.status(500).json({ message: "Failed to delete subscription item" });
+    }
+  });
+
   // Staff portal routes
   // Update wholesale order status
   app.patch("/api/staff/orders/:id/status", isAuthenticated, isStaffOrAdmin, async (req, res) => {

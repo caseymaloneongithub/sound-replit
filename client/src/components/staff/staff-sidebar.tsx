@@ -16,7 +16,8 @@ import {
   Building2,
   Palette,
   ShoppingBag,
-  Box
+  Box,
+  Repeat
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -61,6 +62,7 @@ export function StaffSidebar() {
       title: "Retail",
       items: [
         { title: "Orders", href: "/retail/orders", icon: ShoppingCart },
+        { title: "Subscriptions", href: "/retail/subscriptions", icon: Repeat },
         { title: "Customers", href: "/retail/customers", icon: Users },
         { title: "Pickup Report", href: "/retail/pickup-report", icon: FileText },
       ],
