@@ -20,6 +20,16 @@ import { z } from "zod";
 import { format } from "date-fns";
 import type { RetailSubscription, RetailProduct, Flavor } from "@shared/schema";
 
+type RetailCustomer = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phoneNumber: string;
+  subscriptionCount: number;
+  activeSubscriptionCount: number;
+};
+
 type SubscriptionWithItems = RetailSubscription & {
   items: Array<{
     id: string;
@@ -62,6 +72,7 @@ function getFrequencyLabel(frequency: string): string {
 }
 
 const subscriptionSchema = z.object({
+  userId: z.string().optional(),
   customerName: z.string().min(1, "Customer name is required"),
   customerEmail: z.string().email("Valid email is required"),
   customerPhone: z.string().min(1, "Phone is required"),
@@ -82,10 +93,12 @@ export default function RetailSubscriptions() {
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
   const [selectedSubscriptionForItem, setSelectedSubscriptionForItem] = useState<string | null>(null);
   const [newSubscriptionItems, setNewSubscriptionItems] = useState<Array<{ retailProductId: string; flavorId: string; quantity: number }>>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
 
   const form = useForm<SubscriptionFormData>({
     resolver: zodResolver(subscriptionSchema),
     defaultValues: {
+      userId: '',
       customerName: '',
       customerEmail: '',
       customerPhone: '',
@@ -107,12 +120,17 @@ export default function RetailSubscriptions() {
     queryKey: ['/api/flavors'],
   });
 
+  const { data: retailCustomers = [] } = useQuery<RetailCustomer[]>({
+    queryKey: ['/api/retail/customers'],
+  });
+
   const createSubscriptionMutation = useMutation({
     mutationFn: async (data: SubscriptionFormData & { items: Array<{ retailProductId: string; flavorId: string; quantity: number }> }) => {
       return await apiRequest('POST', '/api/retail/subscriptions', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/retail/subscriptions'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/retail/customers'] });
       toast({
         title: "Subscription created",
         description: "The new subscription has been created successfully",
@@ -120,6 +138,7 @@ export default function RetailSubscriptions() {
       setDialogOpen(false);
       setIsCreating(false);
       setNewSubscriptionItems([]);
+      setSelectedCustomerId('');
       form.reset();
     },
     onError: (error: any) => {
@@ -237,7 +256,9 @@ export default function RetailSubscriptions() {
     setEditingSubscription(null);
     setIsCreating(true);
     setNewSubscriptionItems([]);
+    setSelectedCustomerId('');
     form.reset({
+      userId: '',
       customerName: '',
       customerEmail: '',
       customerPhone: '',
@@ -246,6 +267,17 @@ export default function RetailSubscriptions() {
       nextDeliveryDate: format(new Date(), 'yyyy-MM-dd'),
     });
     setDialogOpen(true);
+  };
+
+  const handleCustomerSelect = (customerId: string) => {
+    setSelectedCustomerId(customerId);
+    const customer = retailCustomers.find(c => c.id === customerId);
+    if (customer) {
+      form.setValue('userId', customer.id);
+      form.setValue('customerName', `${customer.firstName || ''} ${customer.lastName || ''}`.trim() || customer.email);
+      form.setValue('customerEmail', customer.email || '');
+      form.setValue('customerPhone', customer.phoneNumber || '');
+    }
   };
 
   const handleAddNewItem = () => {
@@ -276,6 +308,14 @@ export default function RetailSubscriptions() {
 
   const onSubmit = (data: SubscriptionFormData) => {
     if (isCreating) {
+      if (!selectedCustomerId) {
+        toast({
+          title: "No customer selected",
+          description: "Please select a customer to create a subscription for",
+          variant: "destructive",
+        });
+        return;
+      }
       if (newSubscriptionItems.length === 0 || newSubscriptionItems.some(item => !item.retailProductId || !item.flavorId)) {
         toast({
           title: "Missing items",
@@ -562,6 +602,7 @@ export default function RetailSubscriptions() {
             setEditingSubscription(null);
             setIsCreating(false);
             setNewSubscriptionItems([]);
+            setSelectedCustomerId('');
             form.reset();
           }
         }}>
@@ -576,6 +617,39 @@ export default function RetailSubscriptions() {
             </DialogHeader>
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                {/* Customer Selection for new subscriptions */}
+                {isCreating && (
+                  <div className="space-y-2">
+                    <Label>Select Customer</Label>
+                    <Select
+                      value={selectedCustomerId}
+                      onValueChange={handleCustomerSelect}
+                    >
+                      <SelectTrigger data-testid="select-customer">
+                        <SelectValue placeholder="Select an existing customer..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {retailCustomers.map((customer) => (
+                          <SelectItem key={customer.id} value={customer.id}>
+                            {customer.firstName && customer.lastName 
+                              ? `${customer.firstName} ${customer.lastName}` 
+                              : customer.email} 
+                            {customer.activeSubscriptionCount > 0 && (
+                              <span className="text-muted-foreground ml-2">
+                                ({customer.activeSubscriptionCount} active)
+                              </span>
+                            )}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {retailCustomers.length === 0 && (
+                      <p className="text-sm text-muted-foreground">No retail customers found</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Customer details - read-only when customer selected, editable for edit mode */}
                 <FormField
                   control={form.control}
                   name="customerName"
@@ -583,7 +657,7 @@ export default function RetailSubscriptions() {
                     <FormItem>
                       <FormLabel>Customer Name</FormLabel>
                       <FormControl>
-                        <Input {...field} data-testid="input-customer-name" />
+                        <Input {...field} readOnly={isCreating && !!selectedCustomerId} className={isCreating && selectedCustomerId ? "bg-muted" : ""} data-testid="input-customer-name" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -596,7 +670,7 @@ export default function RetailSubscriptions() {
                     <FormItem>
                       <FormLabel>Email</FormLabel>
                       <FormControl>
-                        <Input type="email" {...field} data-testid="input-customer-email" />
+                        <Input type="email" {...field} readOnly={isCreating && !!selectedCustomerId} className={isCreating && selectedCustomerId ? "bg-muted" : ""} data-testid="input-customer-email" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -609,7 +683,7 @@ export default function RetailSubscriptions() {
                     <FormItem>
                       <FormLabel>Phone</FormLabel>
                       <FormControl>
-                        <Input {...field} data-testid="input-customer-phone" />
+                        <Input {...field} readOnly={isCreating && !!selectedCustomerId} className={isCreating && selectedCustomerId ? "bg-muted" : ""} data-testid="input-customer-phone" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -779,6 +853,7 @@ export default function RetailSubscriptions() {
                       setEditingSubscription(null);
                       setIsCreating(false);
                       setNewSubscriptionItems([]);
+                      setSelectedCustomerId('');
                       form.reset();
                     }}
                   >
