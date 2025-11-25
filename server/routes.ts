@@ -1350,7 +1350,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const intervalCount = 
         frequency === 'weekly' ? 1 :
         frequency === 'bi-weekly' ? 2 :
-        4; // every-4-weeks
+        frequency === 'every-4-weeks' ? 4 :
+        frequency === 'every-6-weeks' ? 6 :
+        8; // every-8-weeks
 
       const baseUrl = process.env.REPLIT_DOMAINS
         ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
@@ -3018,7 +3020,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const updateSchema = z.object({
           weeksToDelay: z.number().int().min(1).max(12).optional(),
           advanceToNextWeek: z.boolean().optional(),
-          subscriptionFrequency: z.enum(['weekly', 'bi-weekly', 'every-4-weeks']).optional(),
+          subscriptionFrequency: z.enum(['weekly', 'bi-weekly', 'every-4-weeks', 'every-6-weeks', 'every-8-weeks']).optional(),
         });
         
         const validated = updateSchema.parse(req.body);

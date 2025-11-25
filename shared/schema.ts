@@ -185,7 +185,7 @@ export const retailCartItems = pgTable("retail_cart_items", {
   selectedFlavorId: varchar("selected_flavor_id").references(() => flavors.id), // For multi-flavor products, tracks which flavor customer selected
   quantity: integer("quantity").notNull().default(1),
   isSubscription: boolean("is_subscription").notNull().default(false),
-  subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
+  subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', 'every-4-weeks', 'every-6-weeks', or 'every-8-weeks'
 });
 
 // NEW SCHEMA - Retail Order Items V2 (references retailProducts)
@@ -205,7 +205,7 @@ export const retailSubscriptions = pgTable("retail_subscriptions", {
   customerName: text("customer_name").notNull(),
   customerEmail: text("customer_email").notNull(),
   customerPhone: text("customer_phone").notNull(),
-  subscriptionFrequency: text("subscription_frequency").notNull(), // 'weekly', 'bi-weekly', or 'every-4-weeks'
+  subscriptionFrequency: text("subscription_frequency").notNull(), // 'weekly', 'bi-weekly', 'every-4-weeks', 'every-6-weeks', or 'every-8-weeks'
   stripeSubscriptionId: text("stripe_subscription_id"),
   stripeCheckoutSessionId: text("stripe_checkout_session_id").unique(),
   stripeCustomerId: text("stripe_customer_id"),
@@ -236,7 +236,7 @@ export const retailSubscriptionItems = pgTable("retail_subscription_items", {
 export const subscriptionPlans = pgTable("subscription_plans", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  frequency: text("frequency").notNull(), // 'weekly', 'bi-weekly', or 'every-4-weeks'
+  frequency: text("frequency").notNull(), // 'weekly', 'bi-weekly', 'every-4-weeks', 'every-6-weeks', or 'every-8-weeks'
   bottleCount: integer("bottle_count").notNull(),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   savings: text("savings"),
@@ -250,7 +250,7 @@ export const cartItems = pgTable("cart_items", {
   productId: varchar("product_id").notNull().references(() => products.id),
   quantity: integer("quantity").notNull().default(1),
   isSubscription: boolean("is_subscription").notNull().default(false),
-  subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
+  subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', 'every-4-weeks', 'every-6-weeks', or 'every-8-weeks'
 });
 
 export const subscriptions = pgTable("subscriptions", {
@@ -261,7 +261,7 @@ export const subscriptions = pgTable("subscriptions", {
   customerPhone: text("customer_phone").notNull(),
   planId: varchar("plan_id").references(() => subscriptionPlans.id),
   productId: varchar("product_id").references(() => products.id),
-  subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', or 'every-4-weeks'
+  subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', 'every-4-weeks', 'every-6-weeks', or 'every-8-weeks'
   stripeSubscriptionId: text("stripe_subscription_id"),
   stripeCheckoutSessionId: text("stripe_checkout_session_id").unique(), // For idempotency
   stripeCustomerId: text("stripe_customer_id"),

@@ -18,12 +18,14 @@ type ProductWithPricing = Product & {
   wholesalePrice: string;
 };
 
-type FrequencyOption = 'weekly' | 'bi-weekly' | 'every-4-weeks';
+type FrequencyOption = 'weekly' | 'bi-weekly' | 'every-4-weeks' | 'every-6-weeks' | 'every-8-weeks';
 
 const frequencyLabels: Record<FrequencyOption, string> = {
   'weekly': 'Every Week',
   'bi-weekly': 'Every 2 Weeks',
   'every-4-weeks': 'Every 4 Weeks',
+  'every-6-weeks': 'Every 6 Weeks',
+  'every-8-weeks': 'Every 8 Weeks',
 };
 
 export default function ProductSubscribe() {

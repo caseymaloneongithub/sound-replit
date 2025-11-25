@@ -44,6 +44,8 @@ export default function RetailPickupReport() {
       case 'weekly': return 'Weekly';
       case 'bi-weekly': return 'Bi-weekly';
       case 'every-4-weeks': return 'Every 4 weeks';
+      case 'every-6-weeks': return 'Every 6 weeks';
+      case 'every-8-weeks': return 'Every 8 weeks';
       default: return 'N/A';
     }
   };

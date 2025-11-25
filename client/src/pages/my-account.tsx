@@ -649,6 +649,8 @@ export default function MyAccount() {
                                     <SelectItem value="weekly" data-testid="option-frequency-weekly">Weekly</SelectItem>
                                     <SelectItem value="bi-weekly" data-testid="option-frequency-bi-weekly">Bi-weekly (every 2 weeks)</SelectItem>
                                     <SelectItem value="every-4-weeks" data-testid="option-frequency-every-4-weeks">Every 4 weeks</SelectItem>
+                                    <SelectItem value="every-6-weeks" data-testid="option-frequency-every-6-weeks">Every 6 weeks</SelectItem>
+                                    <SelectItem value="every-8-weeks" data-testid="option-frequency-every-8-weeks">Every 8 weeks</SelectItem>
                                   </SelectContent>
                                 </Select>
                                 <Button 

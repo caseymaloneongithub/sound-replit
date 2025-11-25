@@ -152,7 +152,9 @@ export default function Cart() {
                   const basePrice = item.isSubscription ? 54.00 : 60.00;
                   const itemTotal = basePrice * item.quantity;
                   const frequencyLabel = item.subscriptionFrequency === 'weekly' ? 'Weekly' :
-                    item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' : 'Every 4 Weeks';
+                    item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
+                    item.subscriptionFrequency === 'every-4-weeks' ? 'Every 4 Weeks' :
+                    item.subscriptionFrequency === 'every-6-weeks' ? 'Every 6 Weeks' : 'Every 8 Weeks';
 
                   return (
                     <div key={item.id} className="flex items-center justify-between py-4 border-b last:border-0" data-testid={`cart-item-${item.id}`}>
@@ -219,7 +221,9 @@ export default function Cart() {
                     : basePrice;
                   const itemTotal = finalPrice * item.quantity;
                   const frequencyLabel = item.subscriptionFrequency === 'weekly' ? 'Weekly' :
-                    item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' : 'Every 4 Weeks';
+                    item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
+                    item.subscriptionFrequency === 'every-4-weeks' ? 'Every 4 Weeks' :
+                    item.subscriptionFrequency === 'every-6-weeks' ? 'Every 6 Weeks' : 'Every 8 Weeks';
 
                   // For multi-flavor products, find the selected flavor from the flavors array
                   const displayFlavor = item.retailProduct.productType === 'multi-flavor' && item.selectedFlavorId

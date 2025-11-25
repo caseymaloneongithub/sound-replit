@@ -86,7 +86,9 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
               <Repeat className="w-3 h-3" />
               {subscriptionFrequency === 'weekly' ? 'Weekly' :
                subscriptionFrequency === 'bi-weekly' ? 'Bi-Weekly' :
-               'Every 4 Weeks'}
+               subscriptionFrequency === 'every-4-weeks' ? 'Every 4 Weeks' :
+               subscriptionFrequency === 'every-6-weeks' ? 'Every 6 Weeks' :
+               'Every 8 Weeks'}
             </Badge>
           )}
         </div>
