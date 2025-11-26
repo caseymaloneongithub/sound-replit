@@ -781,11 +781,17 @@ export default function RetailSubscriptions() {
                                       <SelectValue placeholder="Select product" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      {retailProducts.filter(p => p.isActive).map((product) => (
-                                        <SelectItem key={product.id} value={product.id}>
-                                          {product.unitDescription}
-                                        </SelectItem>
-                                      ))}
+                                      {retailProducts.filter(p => p.isActive).map((product) => {
+                                        const productFlavor = product.productType === 'single-flavor' && product.flavorId
+                                          ? flavors.find(f => f.id === product.flavorId)
+                                          : null;
+                                        return (
+                                          <SelectItem key={product.id} value={product.id}>
+                                            {product.unitDescription}
+                                            {productFlavor && ` - ${productFlavor.name}`}
+                                          </SelectItem>
+                                        );
+                                      })}
                                     </SelectContent>
                                   </Select>
                                 </div>
@@ -911,11 +917,17 @@ export default function RetailSubscriptions() {
                     <SelectValue placeholder="Select a product" />
                   </SelectTrigger>
                   <SelectContent>
-                    {retailProducts.filter(p => p.isActive).map((product) => (
-                      <SelectItem key={product.id} value={product.id}>
-                        {product.unitDescription}
-                      </SelectItem>
-                    ))}
+                    {retailProducts.filter(p => p.isActive).map((product) => {
+                      const productFlavor = product.productType === 'single-flavor' && product.flavorId
+                        ? flavors.find(f => f.id === product.flavorId)
+                        : null;
+                      return (
+                        <SelectItem key={product.id} value={product.id}>
+                          {product.unitDescription}
+                          {productFlavor && ` - ${productFlavor.name}`}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
