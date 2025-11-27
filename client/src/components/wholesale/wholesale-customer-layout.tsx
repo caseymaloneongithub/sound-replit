@@ -37,7 +37,7 @@ export function WholesaleCustomerLayout({ children }: WholesaleCustomerLayoutPro
     },
     {
       label: "Order History",
-      href: "/wholesale-customer",
+      href: "/wholesale-customer/orders",
       icon: FileText,
     },
   ];
@@ -72,11 +72,9 @@ export function WholesaleCustomerLayout({ children }: WholesaleCustomerLayoutPro
               </nav>
             </div>
             <div className="flex items-center gap-4">
-              {user && (
-                <span className="text-sm text-muted-foreground hidden md:inline">
-                  {user.email}
-                </span>
-              )}
+              <span className="text-sm text-muted-foreground hidden md:inline">
+                {user?.email}
+              </span>
               <Button
                 variant="ghost"
                 size="sm"

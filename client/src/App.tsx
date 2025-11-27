@@ -15,8 +15,8 @@ import WholesaleLogin from "@/pages/wholesale-login";
 import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import WholesaleRegister from "@/pages/wholesale-register";
-import WholesaleCustomerDashboard from "@/pages/wholesale-customer-dashboard";
 import WholesaleCustomerPlaceOrder from "@/pages/wholesale-customer-place-order";
+import WholesaleCustomerOrders from "@/pages/wholesale-customer-orders";
 import Shop from "@/pages/shop";
 import ShopV2 from "@/pages/shop-v2";
 import MyAccount from "@/pages/my-account";
@@ -58,8 +58,9 @@ function Router() {
       <Route path="/forgot-password" component={ForgotPassword} />
       <Route path="/reset-password" component={ResetPassword} />
       <Route path="/wholesale/register" component={WholesaleRegister} />
-      <WholesaleCustomerProtectedRoute path="/wholesale-customer" component={WholesaleCustomerDashboard} />
+      <WholesaleCustomerProtectedRoute path="/wholesale-customer" component={() => <Redirect to="/wholesale-customer/place-order" />} />
       <WholesaleCustomerProtectedRoute path="/wholesale-customer/place-order" component={WholesaleCustomerPlaceOrder} />
+      <WholesaleCustomerProtectedRoute path="/wholesale-customer/orders" component={WholesaleCustomerOrders} />
       <Route path="/" component={() => <Redirect to="/shop" />} />
       <Route path="/shop" component={ShopV2} />
       <Route path="/shop-legacy" component={Shop} />
