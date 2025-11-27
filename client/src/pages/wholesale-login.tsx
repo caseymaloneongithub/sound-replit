@@ -107,7 +107,7 @@ export default function WholesaleLogin() {
       
       // Give React Query a moment to update before redirecting
       setTimeout(() => {
-        setLocation("/wholesale-customer");
+        setLocation("/wholesale-customer/place-order");
       }, 100);
     } catch (error: any) {
       toast({

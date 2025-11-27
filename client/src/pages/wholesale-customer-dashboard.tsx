@@ -25,6 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { WholesaleCustomerLayout } from "@/components/wholesale/wholesale-customer-layout";
 
 type WholesaleOrder = {
   id: string;
@@ -317,9 +318,11 @@ export default function WholesaleCustomerDashboard() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-      </div>
+      <WholesaleCustomerLayout>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </WholesaleCustomerLayout>
     );
   }
 
@@ -328,22 +331,15 @@ export default function WholesaleCustomerDashboard() {
   const deliveredOrders = orders?.filter(o => o.status === 'delivered') || [];
 
   return (
-    <div className="min-h-screen bg-background">
+    <WholesaleCustomerLayout>
       <div className="container mx-auto py-8 space-y-8">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h1 className="text-3xl font-bold" data-testid="text-page-title">
-              {customer?.businessName ? `${customer.businessName} - Wholesale Dashboard` : 'Wholesale Dashboard'}
+              {customer?.businessName ? `${customer.businessName} - Order History` : 'Order History'}
             </h1>
-            <p className="text-muted-foreground mt-1">Manage your wholesale orders and view history</p>
+            <p className="text-muted-foreground mt-1">View your orders and manage delivery locations</p>
           </div>
-          <Button 
-            onClick={() => setLocation('/wholesale-customer/place-order')}
-            data-testid="button-place-order"
-          >
-            <Package className="mr-2 h-4 w-4" />
-            Place New Order
-          </Button>
         </div>
 
         <div className="grid gap-6 md:grid-cols-3">
@@ -517,6 +513,6 @@ export default function WholesaleCustomerDashboard() {
           </CardContent>
         </Card>
       </div>
-    </div>
+    </WholesaleCustomerLayout>
   );
 }

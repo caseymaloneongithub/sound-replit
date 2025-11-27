@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Minus, Trash2, ShoppingCart, ArrowLeft, MapPin } from "lucide-react";
+import { Plus, Minus, Trash2, ShoppingCart, MapPin } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { WholesaleCustomerLayout } from "@/components/wholesale/wholesale-customer-layout";
 
 interface CartItem {
   unitTypeId: string;
@@ -167,23 +168,13 @@ export default function WholesaleCustomerPlaceOrder() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <WholesaleCustomerLayout>
       <div className="container mx-auto py-8">
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Place Order</h1>
-            <p className="text-muted-foreground">
-              Select unit types, flavors, and place your wholesale order
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            onClick={() => setLocation('/wholesale-customer')}
-            data-testid="button-back"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
-          </Button>
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-2">Place Order</h1>
+          <p className="text-muted-foreground">
+            Select unit types, flavors, and place your wholesale order
+          </p>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
@@ -473,6 +464,6 @@ export default function WholesaleCustomerPlaceOrder() {
           </div>
         </div>
       </div>
-    </div>
+    </WholesaleCustomerLayout>
   );
 }
