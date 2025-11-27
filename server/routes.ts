@@ -104,14 +104,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   };
 
-  // Wholesale customer middleware - checks if user is a wholesale customer
+  // Wholesale customer middleware - checks if user is a wholesale customer or super admin
   const isWholesaleCustomer = async (req: any, res: any, next: any) => {
     try {
       if (!req.user) {
         return res.status(401).json({ message: "Unauthorized - please log in" });
       }
       
-      if (req.user.role !== 'wholesale_customer') {
+      // Allow wholesale customers and super admins (for testing/viewing purposes)
+      if (req.user.role !== 'wholesale_customer' && req.user.role !== 'super_admin') {
         return res.status(403).json({ message: "Forbidden: Wholesale customer access required" });
       }
       

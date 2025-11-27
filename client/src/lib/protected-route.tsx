@@ -102,7 +102,8 @@ export function WholesaleCustomerProtectedRoute({
     );
   }
 
-  if (user.role !== 'wholesale_customer') {
+  // Allow wholesale customers and super admins (for testing/viewing purposes)
+  if (user.role !== 'wholesale_customer' && user.role !== 'super_admin') {
     return (
       <Route path={path}>
         <div className="flex items-center justify-center min-h-screen">

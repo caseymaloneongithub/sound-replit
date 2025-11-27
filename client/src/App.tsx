@@ -4,8 +4,10 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/use-auth";
+import { ExperienceModeProvider } from "@/hooks/use-experience-mode";
 import { Navbar } from "@/components/layout/navbar";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
+import { ExperienceSwitcher } from "@/components/experience-switcher";
 import { StaffProtectedRoute, WholesaleCustomerProtectedRoute } from "@/lib/protected-route";
 import AuthPage from "@/pages/auth-page";
 import StaffLogin from "@/pages/staff-login";
@@ -118,10 +120,13 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <AuthProvider>
-          <ImpersonationBanner />
-          <Navbar />
-          <Toaster />
-          <Router />
+          <ExperienceModeProvider>
+            <ImpersonationBanner />
+            <Navbar />
+            <Toaster />
+            <Router />
+            <ExperienceSwitcher />
+          </ExperienceModeProvider>
         </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>
