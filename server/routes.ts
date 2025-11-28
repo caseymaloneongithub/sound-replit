@@ -5918,6 +5918,19 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(404).json({ message: "Transaction not found" });
       }
 
+      // Validate that the sum of allocations equals the transaction amount
+      const transactionAmount = Math.abs(parseFloat(transaction.amount));
+      const allocationsSum = allocations.reduce((sum: number, alloc: any) => {
+        return sum + Math.abs(parseFloat(alloc.amount));
+      }, 0);
+
+      // Allow small floating point differences (up to 1 cent)
+      if (Math.abs(transactionAmount - allocationsSum) > 0.01) {
+        return res.status(400).json({ 
+          message: `Allocation amounts must sum to transaction amount. Transaction: $${transactionAmount.toFixed(2)}, Allocations: $${allocationsSum.toFixed(2)}` 
+        });
+      }
+
       // Delete existing allocations
       await storage.deleteTransactionAllocations(id);
 

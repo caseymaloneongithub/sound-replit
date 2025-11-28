@@ -34,6 +34,11 @@ function formatDate(dateValue: Date | string | null): string {
   return format(date, 'MMM d, yyyy h:mm a');
 }
 
+interface PlaidStatusResponse {
+  configured: boolean;
+  environment: string;
+}
+
 export default function AccountingBanks() {
   const { toast } = useToast();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -41,12 +46,18 @@ export default function AccountingBanks() {
   const [plaidReady, setPlaidReady] = useState(false);
   const [linkToken, setLinkToken] = useState<string | null>(null);
 
+  const { data: plaidStatus } = useQuery<PlaidStatusResponse>({
+    queryKey: ['/api/accounting/plaid/status'],
+  });
+
   const { data: plaidItems = [], isLoading: itemsLoading } = useQuery<PlaidItemWithAccounts[]>({
     queryKey: ['/api/accounting/plaid/items'],
+    enabled: plaidStatus?.configured ?? false,
   });
 
   const { data: accounts = [], isLoading: accountsLoading } = useQuery<PlaidAccount[]>({
     queryKey: ['/api/accounting/plaid/accounts'],
+    enabled: plaidStatus?.configured ?? false,
   });
 
   const linkTokenMutation = useMutation({
@@ -248,7 +259,7 @@ export default function AccountingBanks() {
           </div>
           <Button 
             onClick={handleConnectBank}
-            disabled={linkTokenMutation.isPending}
+            disabled={linkTokenMutation.isPending || !plaidStatus?.configured}
             data-testid="button-connect-bank"
           >
             {linkTokenMutation.isPending ? (
@@ -260,23 +271,45 @@ export default function AccountingBanks() {
           </Button>
         </div>
 
-        <Card className="border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/20">
-          <CardContent className="py-4">
-            <div className="flex items-start gap-4">
-              <div className="p-2 bg-blue-100 rounded-lg dark:bg-blue-900">
-                <Landmark className="w-5 h-5 text-blue-600" />
+        {plaidStatus?.configured === false && (
+          <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20">
+            <CardContent className="py-4">
+              <div className="flex items-start gap-4">
+                <div className="p-2 bg-amber-100 rounded-lg dark:bg-amber-900">
+                  <AlertCircle className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="font-medium text-amber-800 dark:text-amber-200">Plaid Not Configured</h3>
+                  <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                    Bank integration requires Plaid API credentials. Please add PLAID_CLIENT_ID and 
+                    PLAID_SECRET environment variables to enable automatic bank transaction imports.
+                    You can still import transactions manually via CSV in the Transactions page.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-medium">Secure Bank Integration</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  We use Plaid to securely connect to your bank. Your credentials are never stored 
-                  on our servers. Transactions are automatically imported and can be categorized for 
-                  accurate financial reporting.
-                </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {plaidStatus?.configured && (
+          <Card className="border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/20">
+            <CardContent className="py-4">
+              <div className="flex items-start gap-4">
+                <div className="p-2 bg-blue-100 rounded-lg dark:bg-blue-900">
+                  <Landmark className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="font-medium">Secure Bank Integration</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    We use Plaid to securely connect to your bank. Your credentials are never stored 
+                    on our servers. Transactions are automatically imported and can be categorized for 
+                    accurate financial reporting.
+                  </p>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
         {isLoading ? (
           <div className="space-y-4">
@@ -292,6 +325,17 @@ export default function AccountingBanks() {
               </Card>
             ))}
           </div>
+        ) : !plaidStatus?.configured ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-amber-500" />
+              <h3 className="text-lg font-medium mb-2">Bank Integration Not Available</h3>
+              <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+                Plaid API credentials need to be configured to enable bank account connections.
+                In the meantime, you can import transactions manually using CSV files.
+              </p>
+            </CardContent>
+          </Card>
         ) : plaidItems.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
@@ -303,7 +347,7 @@ export default function AccountingBanks() {
               </p>
               <Button 
                 onClick={handleConnectBank}
-                disabled={linkTokenMutation.isPending}
+                disabled={linkTokenMutation.isPending || !plaidStatus?.configured}
               >
                 {linkTokenMutation.isPending ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />

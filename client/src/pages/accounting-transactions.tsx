@@ -206,7 +206,20 @@ export default function AccountingTransactions() {
       const allocations = splitAllocations
         .filter(a => a.categoryId && a.amount)
         .map(a => ({ categoryId: a.categoryId, amount: parseFloat(a.amount) }));
+      
       if (allocations.length > 0) {
+        const transactionAmount = Math.abs(parseFloat(selectedTransaction.amount));
+        const allocationsSum = allocations.reduce((sum, a) => sum + Math.abs(a.amount), 0);
+        
+        if (Math.abs(transactionAmount - allocationsSum) > 0.01) {
+          toast({
+            title: "Allocation amounts must equal transaction amount",
+            description: `Transaction: $${transactionAmount.toFixed(2)}, Allocations: $${allocationsSum.toFixed(2)}`,
+            variant: "destructive"
+          });
+          return;
+        }
+        
         splitMutation.mutate({ transactionId: selectedTransaction.id, allocations });
       }
     }
@@ -666,6 +679,35 @@ export default function AccountingTransactions() {
                 <Button variant="outline" size="sm" onClick={addSplitRow}>
                   Add Another Split
                 </Button>
+
+                {/* Show allocation balance helper */}
+                {(() => {
+                  const transactionAmount = Math.abs(parseFloat(selectedTransaction.amount));
+                  const allocatedAmount = splitAllocations.reduce((sum, a) => {
+                    const amount = parseFloat(a.amount) || 0;
+                    return sum + Math.abs(amount);
+                  }, 0);
+                  const remaining = transactionAmount - allocatedAmount;
+                  
+                  return (
+                    <div className={`p-3 rounded-lg text-sm ${Math.abs(remaining) < 0.01 ? 'bg-green-100 dark:bg-green-900/30' : remaining > 0 ? 'bg-amber-100 dark:bg-amber-900/30' : 'bg-red-100 dark:bg-red-900/30'}`}>
+                      <div className="flex justify-between">
+                        <span>Total transaction:</span>
+                        <span className="font-medium">${transactionAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Allocated:</span>
+                        <span className="font-medium">${allocatedAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between border-t mt-1 pt-1">
+                        <span>Remaining:</span>
+                        <span className={`font-bold ${Math.abs(remaining) < 0.01 ? 'text-green-600' : 'text-amber-600'}`}>
+                          ${remaining.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
             <DialogFooter>
