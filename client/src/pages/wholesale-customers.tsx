@@ -903,12 +903,20 @@ export default function WholesaleCustomers() {
                     <Card key={location.id} className="p-4">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1">
-                          <div className="font-medium">{location.locationName}</div>
-                          <div className="text-sm text-muted-foreground mt-1">
-                            {location.address}
-                            <br />
-                            {location.city}, {location.state} {location.zipCode}
-                          </div>
+                          <div className="font-medium">{location.locationName || '(No name)'}</div>
+                          {(location.address || location.city || location.state || location.zipCode) ? (
+                            <div className="text-sm text-muted-foreground mt-1">
+                              {location.address && <div>{location.address}</div>}
+                              {(location.city || location.state || location.zipCode) && (
+                                <div>
+                                  {[location.city, location.state].filter(Boolean).join(', ')}
+                                  {location.zipCode && ` ${location.zipCode}`}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-muted-foreground mt-1 italic">No address</div>
+                          )}
                           {location.contactName && (
                             <div className="text-sm text-muted-foreground mt-2">
                               <div className="font-medium">Contact:</div>
