@@ -718,10 +718,6 @@ export default function WholesaleCustomers() {
                               <Phone className="w-4 h-4 text-muted-foreground" />
                               <span className="text-muted-foreground">{customer.phone}</span>
                             </div>
-                            <div className="flex items-start gap-2 text-sm">
-                              <MapPin className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                              <span className="text-muted-foreground">{customer.address}</span>
-                            </div>
                             <div className="space-y-3 pt-2 border-t">
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
