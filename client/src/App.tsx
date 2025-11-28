@@ -44,6 +44,10 @@ import StaffPortal from "@/pages/staff-portal";
 import AdminFlavors from "@/pages/admin-flavors";
 import AdminRetailProducts from "@/pages/admin-retail-products";
 import AdminWholesaleUnits from "@/pages/admin-wholesale-units";
+import AccountingDashboard from "@/pages/accounting-dashboard";
+import AccountingTransactions from "@/pages/accounting-transactions";
+import AccountingCategories from "@/pages/accounting-categories";
+import AccountingBanks from "@/pages/accounting-banks";
 import Contact from "@/pages/contact";
 import Cart from "@/pages/cart";
 import NotFound from "@/pages/not-found";
@@ -99,6 +103,10 @@ function Router() {
       <StaffProtectedRoute path="/admin/flavors" component={AdminFlavors} />
       <StaffProtectedRoute path="/admin/retail-products" component={AdminRetailProducts} />
       <StaffProtectedRoute path="/admin/wholesale-units" component={AdminWholesaleUnits} />
+      <StaffProtectedRoute path="/admin/accounting" component={AccountingDashboard} />
+      <StaffProtectedRoute path="/admin/accounting/transactions" component={AccountingTransactions} />
+      <StaffProtectedRoute path="/admin/accounting/categories" component={AccountingCategories} />
+      <StaffProtectedRoute path="/admin/accounting/banks" component={AccountingBanks} />
       <StaffProtectedRoute path="/inventory" component={Inventory} />
       <StaffProtectedRoute path="/reports" component={Reports} />
       <Route path="/account" component={Account} />

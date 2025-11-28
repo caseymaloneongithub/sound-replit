@@ -440,8 +440,9 @@ export const plaidItems = pgTable("plaid_items", {
   itemId: text("item_id").notNull().unique(), // Plaid item ID
   institutionId: text("institution_id"),
   institutionName: text("institution_name"),
+  status: text("status").default('good'), // 'good', 'error', 'pending'
   cursor: text("cursor"), // For cursor-based transaction sync
-  lastSyncedAt: timestamp("last_synced_at"),
+  lastSynced: timestamp("last_synced"), // Last successful sync
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -454,7 +455,7 @@ export const plaidAccounts = pgTable("plaid_accounts", {
   name: text("name").notNull(),
   officialName: text("official_name"), // Bank's official name for the account
   mask: text("mask"), // Last 4 digits
-  type: text("type"), // 'depository', 'credit', etc.
+  accountType: text("account_type"), // 'depository', 'credit', etc.
   subtype: text("subtype"), // 'checking', 'savings', etc.
   isActive: boolean("is_active").notNull().default(true),
 });
@@ -466,6 +467,7 @@ export const accountingCategories = pgTable("accounting_categories", {
   type: text("type").notNull(), // 'income', 'expense', 'transfer'
   description: text("description"),
   color: text("color"), // Hex color for UI
+  parentId: varchar("parent_id"), // For hierarchical categories (self-reference)
   displayOrder: integer("display_order").notNull().default(0),
   isDefault: boolean("is_default").notNull().default(false), // System default categories
   createdAt: timestamp("created_at").notNull().defaultNow(),

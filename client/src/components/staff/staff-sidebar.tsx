@@ -17,7 +17,11 @@ import {
   Palette,
   ShoppingBag,
   Box,
-  Repeat
+  Repeat,
+  Receipt,
+  Tags,
+  Landmark,
+  Calculator
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -72,6 +76,15 @@ export function StaffSidebar() {
       items: [
         { title: "Inventory", href: "/inventory", icon: ClipboardList },
         { title: "Revenue", href: "/reports", icon: DollarSign },
+      ],
+    },
+    {
+      title: "Accounting",
+      items: [
+        { title: "Dashboard", href: "/admin/accounting", icon: Calculator, adminOnly: true },
+        { title: "Transactions", href: "/admin/accounting/transactions", icon: Receipt, adminOnly: true },
+        { title: "Categories", href: "/admin/accounting/categories", icon: Tags, adminOnly: true },
+        { title: "Bank Connections", href: "/admin/accounting/banks", icon: Landmark, adminOnly: true },
       ],
     },
     {
