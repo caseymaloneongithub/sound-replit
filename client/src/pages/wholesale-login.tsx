@@ -227,13 +227,7 @@ export default function WholesaleLogin() {
           </CardContent>
         </Card>
 
-        <div className="text-center mt-6 space-y-2">
-          <p className="text-sm text-muted-foreground">
-            Need a wholesale account?{" "}
-            <Link href="/wholesale/register" className="text-primary hover:underline" data-testid="link-to-wholesale-register">
-              Request access
-            </Link>
-          </p>
+        <div className="text-center mt-6">
           <p className="text-sm text-muted-foreground">
             Looking for retail shopping?{" "}
             <Link href="/auth" className="text-primary hover:underline" data-testid="link-to-retail-login">
