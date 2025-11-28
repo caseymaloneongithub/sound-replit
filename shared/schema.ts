@@ -431,6 +431,72 @@ export const leadTouchPoints = pgTable("lead_touch_points", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// ==================== ACCOUNTING MODULE ====================
+
+// Plaid Items - Connected bank accounts via Plaid
+export const plaidItems = pgTable("plaid_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  accessToken: text("access_token").notNull(), // Encrypted Plaid access token
+  itemId: text("item_id").notNull().unique(), // Plaid item ID
+  institutionId: text("institution_id"),
+  institutionName: text("institution_name"),
+  cursor: text("cursor"), // For cursor-based transaction sync
+  lastSyncedAt: timestamp("last_synced_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Plaid Accounts - Individual bank accounts within a Plaid item
+export const plaidAccounts = pgTable("plaid_accounts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  plaidItemId: varchar("plaid_item_id").notNull().references(() => plaidItems.id, { onDelete: 'cascade' }),
+  accountId: text("account_id").notNull().unique(), // Plaid account ID
+  name: text("name").notNull(),
+  mask: text("mask"), // Last 4 digits
+  type: text("type"), // 'depository', 'credit', etc.
+  subtype: text("subtype"), // 'checking', 'savings', etc.
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+// Accounting Categories - For classifying transactions
+export const accountingCategories = pgTable("accounting_categories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  type: text("type").notNull(), // 'income', 'expense', 'transfer'
+  description: text("description"),
+  color: text("color"), // Hex color for UI
+  displayOrder: integer("display_order").notNull().default(0),
+  isDefault: boolean("is_default").notNull().default(false), // System default categories
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Accounting Transactions - Synced from Plaid or imported via CSV
+export const accountingTransactions = pgTable("accounting_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  plaidAccountId: varchar("plaid_account_id").references(() => plaidAccounts.id, { onDelete: 'set null' }),
+  transactionId: text("transaction_id").unique(), // Plaid transaction ID (null for CSV imports)
+  date: timestamp("date").notNull(),
+  name: text("name").notNull(), // Transaction description
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(), // Positive = expense (Plaid convention)
+  category: text("category"), // Plaid's category (for reference)
+  pending: boolean("pending").notNull().default(false),
+  isManualImport: boolean("is_manual_import").notNull().default(false), // True for CSV imports
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  dateIdx: index("accounting_transactions_date_idx").on(table.date),
+  accountIdx: index("accounting_transactions_account_idx").on(table.plaidAccountId),
+}));
+
+// Transaction Allocations - Assigns transactions to accounting categories
+export const transactionAllocations = pgTable("transaction_allocations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  transactionId: varchar("transaction_id").notNull().references(() => accountingTransactions.id, { onDelete: 'cascade' }),
+  categoryId: varchar("category_id").notNull().references(() => accountingCategories.id, { onDelete: 'cascade' }),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(), // Allocated amount (for split transactions)
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Insert schemas - OLD SCHEMA (for backwards compatibility)
 export const insertProductTypeSchema = createInsertSchema(productTypes).omit({ id: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
@@ -467,6 +533,13 @@ export const insertEmailVerificationCodeSchema = createInsertSchema(emailVerific
 export const insertImpersonationLogSchema = createInsertSchema(impersonationLogs).omit({ id: true, startedAt: true });
 export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertLeadTouchPointSchema = createInsertSchema(leadTouchPoints).omit({ id: true, createdAt: true });
+
+// Insert schemas - ACCOUNTING MODULE
+export const insertPlaidItemSchema = createInsertSchema(plaidItems).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertPlaidAccountSchema = createInsertSchema(plaidAccounts).omit({ id: true });
+export const insertAccountingCategorySchema = createInsertSchema(accountingCategories).omit({ id: true, createdAt: true });
+export const insertAccountingTransactionSchema = createInsertSchema(accountingTransactions).omit({ id: true, createdAt: true });
+export const insertTransactionAllocationSchema = createInsertSchema(transactionAllocations).omit({ id: true, createdAt: true });
 
 // Update profile schema - allows customers to update their contact information
 export const updateProfileSchema = z.object({
@@ -514,6 +587,13 @@ export type InsertLead = z.infer<typeof insertLeadSchema>;
 export type InsertLeadTouchPoint = z.infer<typeof insertLeadTouchPointSchema>;
 export type UpdateProfile = z.infer<typeof updateProfileSchema>;
 
+// Insert types - ACCOUNTING MODULE
+export type InsertPlaidItem = z.infer<typeof insertPlaidItemSchema>;
+export type InsertPlaidAccount = z.infer<typeof insertPlaidAccountSchema>;
+export type InsertAccountingCategory = z.infer<typeof insertAccountingCategorySchema>;
+export type InsertAccountingTransaction = z.infer<typeof insertAccountingTransactionSchema>;
+export type InsertTransactionAllocation = z.infer<typeof insertTransactionAllocationSchema>;
+
 // Select types - OLD SCHEMA
 export type ProductType = typeof productTypes.$inferSelect;
 export type Product = typeof products.$inferSelect;
@@ -549,3 +629,10 @@ export type EmailVerificationCode = typeof emailVerificationCodes.$inferSelect;
 export type ImpersonationLog = typeof impersonationLogs.$inferSelect;
 export type Lead = typeof leads.$inferSelect;
 export type LeadTouchPoint = typeof leadTouchPoints.$inferSelect;
+
+// Select types - ACCOUNTING MODULE
+export type PlaidItem = typeof plaidItems.$inferSelect;
+export type PlaidAccount = typeof plaidAccounts.$inferSelect;
+export type AccountingCategory = typeof accountingCategories.$inferSelect;
+export type AccountingTransaction = typeof accountingTransactions.$inferSelect;
+export type TransactionAllocation = typeof transactionAllocations.$inferSelect;

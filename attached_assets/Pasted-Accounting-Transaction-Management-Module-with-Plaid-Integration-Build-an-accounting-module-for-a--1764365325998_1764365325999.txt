@@ -1,0 +1,85 @@
+Accounting & Transaction Management Module with Plaid Integration
+
+Build an accounting module for a business management application with the following features:
+
+1. Plaid Banking Integration
+- Connect bank accounts using Plaid Link (sandbox/development/production environments)
+- Store Plaid items with access tokens (encrypted), item IDs, and institution metadata
+- Sync transactions automatically using cursor-based pagination for efficient updates
+- Support multiple bank account connections per organization
+- Display connected accounts with institution name, last sync time, and account masks
+- Provide manual "Sync Now" button and automatic background syncing
+
+2. Accounting Categories
+- Three category types: Income, Expense, and Transfer
+- Each category has: name, type, description, and color (optional)
+- Default categories on first use: Membership Revenue, Seminar Revenue, Equipment Sales (income); Rent, Utilities, Payroll, Equipment, Marketing, Insurance, Professional Services (expense); Owner Distribution, Bank Transfer (transfer)
+- CRUD operations for category management
+
+3. Transaction Management
+- Display all synced transactions with: date, name/description, amount, account, category, allocation status
+- Filter by: date range, category, allocation status (allocated/unallocated), search text
+- Sort by date (newest first by default)
+- Color-coded amounts: green for income (negative in Plaid convention = money coming in), red for expenses (positive in Plaid convention = money going out)
+- Pagination with configurable page size
+
+4. Transaction Allocation
+- Single transaction allocation to one category
+- Split transaction allocation across multiple categories with custom amounts
+- Bulk allocation: select multiple transactions and assign same category
+- Allocation tracking: store category ID, allocated amount, notes, and timestamp
+- Visual indicators for allocated vs unallocated transactions
+
+5. CSV Import for Historical Data
+- Import transactions from bank CSV exports (for data older than Plaid's 90-180 day limit)
+- Support standard bank CSV format with columns: Date, Description, Amount
+- Create "Manual Import" placeholder bank connection for imported transactions
+- Handle amount sign convention: standard CSVs use negative for expenses, convert to match Plaid convention (positive = expense)
+- Provide checkbox option for CSVs that already use positive for expenses
+- Duplicate detection based on date + description + amount
+
+6. Financial Reporting (Income Statement Format)
+- Summary cards: Total Income, Total Expenses, Net Income
+- Date range filtering for reports
+- Income Statement breakdown:
+  - Income section: list all income categories with totals, include unallocated income
+  - Total Income line
+  - Expense section: list all expense categories with totals, include unallocated expenses  
+  - Total Expenses line
+  - Transfers section (informational, not in P&L calculation)
+  - Net Income = Total Income - Total Expenses
+- Unallocated transactions highlighted in amber with "needs review" badge
+- All currency displayed as whole dollars with comma formatting (e.g., $1,234)
+
+7. Database Schema
+
+plaid_items: id, access_token, item_id, institution_id, institution_name, cursor, created_at, updated_at
+plaid_accounts: id, plaid_item_id, account_id, name, mask, type, subtype
+accounting_transactions: id, plaid_account_id, transaction_id, date, name, amount, category, pending, created_at
+accounting_categories: id, name, type (income/expense/transfer), description, color, created_at
+transaction_allocations: id, transaction_id, category_id, amount, notes, created_at
+
+8. API Endpoints
+- POST /api/plaid/create-link-token - Generate Plaid Link token
+- POST /api/plaid/exchange-token - Exchange public token for access token
+- GET /api/plaid/items - List connected bank accounts
+- POST /api/plaid/sync/:itemId - Sync transactions for a bank connection
+- DELETE /api/plaid/items/:itemId - Disconnect bank account
+- GET /api/accounting/transactions - List transactions with filters
+- POST /api/accounting/transactions/allocate - Allocate single transaction
+- POST /api/accounting/transactions/bulk-allocate - Bulk allocate transactions
+- POST /api/accounting/transactions/split - Split transaction across categories
+- GET /api/accounting/categories - List categories
+- POST /api/accounting/categories - Create category
+- PATCH /api/accounting/categories/:id - Update category
+- DELETE /api/accounting/categories/:id - Delete category
+- GET /api/accounting/summary - Get financial summary with date filtering
+- POST /api/accounting/import-csv - Import historical transactions from CSV
+
+Required Environment Variables
+- PLAID_CLIENT_ID
+- PLAID_SECRET
+- PLAID_ENV (sandbox/development/production)
+
+Tech Stack Compatibility
+Works with: React, TypeScript, Express, PostgreSQL, Drizzle ORM, TanStack Query, shadcn/ui, Tailwind CSS
