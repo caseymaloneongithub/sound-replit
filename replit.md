@@ -38,6 +38,11 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   **Flavor Library**: Central repository of kombucha flavors with images, descriptions, flavor profiles, and ingredients.
 -   **Retail Product Offerings**: Admin interface for creating retail products by linking flavors to unit types (6-pack, 12-pack, case, kegs) with specific prices. Each product includes a configurable subscription discount percentage (default 10%) for subscribe & save functionality. Products can include optional refundable deposits (e.g., $75 for keg deposits) that are charged only on one-time purchases, not subscriptions. Deposits are not subject to sales tax.
 -   **Staff Portal**: A unified management portal for staff and admin users for managing retail and wholesale orders, inventory (production recording, stock overview, adjustments), a CRM system for lead tracking, and admin features (flavor library, retail products, wholesale units, product specs, user management). Super admins can impersonate users.
+-   **Accounting Module (Admin Only)**: Comprehensive financial management system accessible only to admin/super_admin users. Includes:
+    - **Dashboard**: Income statement with revenue, expenses, and net income calculations by date range.
+    - **Transactions**: View, filter, and manage financial transactions with allocation to categories. Supports CSV import for manual transaction entry and split allocations across multiple categories.
+    - **Categories**: Manage accounting categories (income, expense, transfer types) for transaction classification.
+    - **Bank Connections**: Plaid integration for automatic bank transaction imports. Supports multiple bank accounts with incremental transaction sync. Gracefully handles missing Plaid credentials with fallback to manual CSV import.
 
 ## External Dependencies
 
@@ -46,6 +51,7 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   **Stripe**: Payment processing, subscription billing.
 -   **Neon Database**: Primary PostgreSQL data storage.
 -   **Gmail/Nodemailer**: For passwordless email login and password reset emails.
+-   **Plaid** (Optional): Automatic bank transaction import for accounting module. If not configured, manual CSV import is available as fallback.
 
 ### Key NPM Packages
 
@@ -64,3 +70,6 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   `NODE_ENV`
 -   `GMAIL_USER`
 -   `GMAIL_APP_PASSWORD`
+-   `PLAID_CLIENT_ID` (Optional - for bank transaction imports)
+-   `PLAID_SECRET` (Optional - for bank transaction imports)
+-   `PLAID_ENV` (Optional - defaults to 'sandbox')
