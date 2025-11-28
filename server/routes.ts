@@ -1,8 +1,9 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import Stripe from "stripe";
+import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { storage } from "./storage";
-import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors } from "@shared/schema";
+import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema } from "@shared/schema";
 import { eq, sql, and } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -24,6 +25,21 @@ const stripe = process.env.STRIPE_SECRET_KEY
       apiVersion: "2025-10-29.clover",
     })
   : null;
+
+// Plaid client configuration for accounting integration
+const plaidConfiguration = (process.env.PLAID_CLIENT_ID && process.env.PLAID_SECRET)
+  ? new Configuration({
+      basePath: PlaidEnvironments[process.env.PLAID_ENV || 'sandbox'],
+      baseOptions: {
+        headers: {
+          'PLAID-CLIENT-ID': process.env.PLAID_CLIENT_ID,
+          'PLAID-SECRET': process.env.PLAID_SECRET,
+        },
+      },
+    })
+  : null;
+
+const plaidClient = plaidConfiguration ? new PlaidApi(plaidConfiguration) : null;
 
 async function getProductPricing(productId: string): Promise<{ retailPrice: string; wholesalePrice: string } | null> {
   const product = await storage.getProduct(productId);
@@ -5500,6 +5516,515 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error('[ADMIN] Error triggering billing:', error);
       res.status(500).json({ message: 'Error triggering billing: ' + error.message });
+    }
+  });
+
+  // ==================== ACCOUNTING MODULE ROUTES ====================
+
+  // Check if Plaid is configured
+  app.get("/api/accounting/plaid/status", isAuthenticated, isAdmin, async (req, res) => {
+    res.json({
+      configured: !!plaidClient,
+      environment: process.env.PLAID_ENV || 'sandbox',
+    });
+  });
+
+  // Create Plaid Link token
+  app.post("/api/accounting/plaid/link-token", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      if (!plaidClient) {
+        return res.status(503).json({ message: "Plaid is not configured. Please add PLAID_CLIENT_ID and PLAID_SECRET environment variables." });
+      }
+
+      const response = await plaidClient.linkTokenCreate({
+        user: { client_user_id: req.user.id },
+        client_name: 'Puget Sound Kombucha Accounting',
+        products: [Products.Transactions],
+        country_codes: [CountryCode.Us],
+        language: 'en',
+      });
+
+      res.json({ link_token: response.data.link_token });
+    } catch (error: any) {
+      console.error("Error creating Plaid link token:", error);
+      res.status(500).json({ message: "Error creating link token: " + error.message });
+    }
+  });
+
+  // Exchange public token for access token
+  app.post("/api/accounting/plaid/exchange-token", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      if (!plaidClient) {
+        return res.status(503).json({ message: "Plaid is not configured" });
+      }
+
+      const { public_token, institution } = req.body;
+
+      if (!public_token) {
+        return res.status(400).json({ message: "Public token is required" });
+      }
+
+      const exchangeResponse = await plaidClient.itemPublicTokenExchange({
+        public_token,
+      });
+
+      const accessToken = exchangeResponse.data.access_token;
+      const itemId = exchangeResponse.data.item_id;
+
+      // Get account information
+      const accountsResponse = await plaidClient.accountsGet({
+        access_token: accessToken,
+      });
+
+      // Store the Plaid item
+      const plaidItem = await storage.createPlaidItem({
+        itemId,
+        accessToken,
+        institutionId: institution?.institution_id || null,
+        institutionName: institution?.name || 'Unknown',
+      });
+
+      // Store the accounts
+      for (const account of accountsResponse.data.accounts) {
+        await storage.createPlaidAccount({
+          plaidItemId: plaidItem.id,
+          accountId: account.account_id,
+          name: account.name,
+          officialName: account.official_name || null,
+          type: account.type,
+          subtype: account.subtype || null,
+          mask: account.mask || null,
+        });
+      }
+
+      res.json({
+        success: true,
+        plaidItemId: plaidItem.id,
+        accounts: accountsResponse.data.accounts.map(a => ({
+          id: a.account_id,
+          name: a.name,
+          type: a.type,
+          mask: a.mask,
+        })),
+      });
+    } catch (error: any) {
+      console.error("Error exchanging Plaid token:", error);
+      res.status(500).json({ message: "Error connecting bank account: " + error.message });
+    }
+  });
+
+  // Sync transactions from Plaid
+  app.post("/api/accounting/plaid/sync/:itemId", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      if (!plaidClient) {
+        return res.status(503).json({ message: "Plaid is not configured" });
+      }
+
+      const { itemId } = req.params;
+      const plaidItem = await storage.getPlaidItem(itemId);
+
+      if (!plaidItem) {
+        return res.status(404).json({ message: "Plaid item not found" });
+      }
+
+      // Use transactions sync for incremental updates
+      let cursor = plaidItem.cursor || undefined;
+      let added: any[] = [];
+      let modified: any[] = [];
+      let removed: any[] = [];
+      let hasMore = true;
+
+      while (hasMore) {
+        const syncResponse = await plaidClient.transactionsSync({
+          access_token: plaidItem.accessToken,
+          cursor,
+        });
+
+        added = added.concat(syncResponse.data.added);
+        modified = modified.concat(syncResponse.data.modified);
+        removed = removed.concat(syncResponse.data.removed);
+        hasMore = syncResponse.data.has_more;
+        cursor = syncResponse.data.next_cursor;
+      }
+
+      // Get accounts for this item
+      const accounts = await storage.getPlaidAccounts(plaidItem.id);
+      const accountMap = new Map(accounts.map(a => [a.accountId, a.id]));
+
+      // Process added transactions
+      const newTransactions = [];
+      for (const tx of added) {
+        // Check if transaction already exists
+        const existing = await storage.getAccountingTransactionByTransactionId(tx.transaction_id);
+        if (!existing) {
+          const plaidAccountId = accountMap.get(tx.account_id);
+          newTransactions.push({
+            plaidAccountId: plaidAccountId || null,
+            transactionId: tx.transaction_id,
+            date: new Date(tx.date),
+            name: tx.name,
+            merchantName: tx.merchant_name || null,
+            amount: tx.amount.toString(),
+            category: tx.category?.[0] || null,
+            pending: tx.pending,
+          });
+        }
+      }
+
+      if (newTransactions.length > 0) {
+        await storage.createAccountingTransactions(newTransactions);
+      }
+
+      // Update the cursor for next sync
+      if (cursor) {
+        await storage.updatePlaidItemCursor(plaidItem.id, cursor);
+      }
+
+      res.json({
+        success: true,
+        added: newTransactions.length,
+        modified: modified.length,
+        removed: removed.length,
+      });
+    } catch (error: any) {
+      console.error("Error syncing Plaid transactions:", error);
+      res.status(500).json({ message: "Error syncing transactions: " + error.message });
+    }
+  });
+
+  // Get all connected bank accounts
+  app.get("/api/accounting/plaid/items", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const items = await storage.getPlaidItems();
+      const itemsWithAccounts = await Promise.all(
+        items.map(async (item) => {
+          const accounts = await storage.getPlaidAccounts(item.id);
+          return {
+            ...item,
+            accessToken: undefined, // Don't expose access token
+            accounts,
+          };
+        })
+      );
+      res.json(itemsWithAccounts);
+    } catch (error: any) {
+      console.error("Error fetching Plaid items:", error);
+      res.status(500).json({ message: "Error fetching connected accounts: " + error.message });
+    }
+  });
+
+  // Delete a connected bank account
+  app.delete("/api/accounting/plaid/items/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await storage.deletePlaidItem(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error deleting Plaid item:", error);
+      res.status(500).json({ message: "Error disconnecting bank account: " + error.message });
+    }
+  });
+
+  // ==================== ACCOUNTING CATEGORIES ROUTES ====================
+
+  // Get all categories
+  app.get("/api/accounting/categories", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const categories = await storage.getAccountingCategories();
+      res.json(categories);
+    } catch (error: any) {
+      console.error("Error fetching categories:", error);
+      res.status(500).json({ message: "Error fetching categories: " + error.message });
+    }
+  });
+
+  // Create category
+  app.post("/api/accounting/categories", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const validatedData = insertAccountingCategorySchema.parse(req.body);
+      const category = await storage.createAccountingCategory(validatedData);
+      res.status(201).json(category);
+    } catch (error: any) {
+      console.error("Error creating category:", error);
+      res.status(500).json({ message: "Error creating category: " + error.message });
+    }
+  });
+
+  // Update category
+  app.patch("/api/accounting/categories/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const category = await storage.updateAccountingCategory(id, req.body);
+      if (!category) {
+        return res.status(404).json({ message: "Category not found" });
+      }
+      res.json(category);
+    } catch (error: any) {
+      console.error("Error updating category:", error);
+      res.status(500).json({ message: "Error updating category: " + error.message });
+    }
+  });
+
+  // Delete category
+  app.delete("/api/accounting/categories/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await storage.deleteAccountingCategory(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error deleting category:", error);
+      res.status(500).json({ message: "Error deleting category: " + error.message });
+    }
+  });
+
+  // Seed default categories
+  app.post("/api/accounting/categories/seed", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      await storage.seedDefaultCategories();
+      const categories = await storage.getAccountingCategories();
+      res.json(categories);
+    } catch (error: any) {
+      console.error("Error seeding categories:", error);
+      res.status(500).json({ message: "Error seeding categories: " + error.message });
+    }
+  });
+
+  // ==================== ACCOUNTING TRANSACTIONS ROUTES ====================
+
+  // Get transactions with filters
+  app.get("/api/accounting/transactions", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const filters: any = {};
+      
+      if (req.query.startDate) {
+        filters.startDate = new Date(req.query.startDate as string);
+      }
+      if (req.query.endDate) {
+        filters.endDate = new Date(req.query.endDate as string);
+      }
+      if (req.query.categoryId) {
+        filters.categoryId = req.query.categoryId as string;
+      }
+      if (req.query.allocated !== undefined) {
+        filters.allocated = req.query.allocated === 'true';
+      }
+      if (req.query.search) {
+        filters.search = req.query.search as string;
+      }
+      if (req.query.plaidAccountId) {
+        filters.plaidAccountId = req.query.plaidAccountId as string;
+      }
+      if (req.query.limit) {
+        filters.limit = parseInt(req.query.limit as string);
+      }
+      if (req.query.offset) {
+        filters.offset = parseInt(req.query.offset as string);
+      }
+
+      const transactions = await storage.getAccountingTransactions(filters);
+      res.json(transactions);
+    } catch (error: any) {
+      console.error("Error fetching transactions:", error);
+      res.status(500).json({ message: "Error fetching transactions: " + error.message });
+    }
+  });
+
+  // Create manual transaction
+  app.post("/api/accounting/transactions", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const validatedData = insertAccountingTransactionSchema.parse(req.body);
+      const transaction = await storage.createAccountingTransaction(validatedData);
+      res.status(201).json(transaction);
+    } catch (error: any) {
+      console.error("Error creating transaction:", error);
+      res.status(500).json({ message: "Error creating transaction: " + error.message });
+    }
+  });
+
+  // Import transactions from CSV
+  app.post("/api/accounting/transactions/import", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { transactions } = req.body;
+      
+      if (!Array.isArray(transactions)) {
+        return res.status(400).json({ message: "Transactions must be an array" });
+      }
+
+      const validatedTransactions = transactions.map((tx: any) => ({
+        date: new Date(tx.date),
+        name: tx.name || tx.description,
+        merchantName: tx.merchantName || null,
+        amount: tx.amount.toString(),
+        category: tx.category || null,
+        pending: false,
+        source: 'csv',
+      }));
+
+      const created = await storage.createAccountingTransactions(validatedTransactions);
+      res.status(201).json({ imported: created.length, transactions: created });
+    } catch (error: any) {
+      console.error("Error importing transactions:", error);
+      res.status(500).json({ message: "Error importing transactions: " + error.message });
+    }
+  });
+
+  // ==================== TRANSACTION ALLOCATION ROUTES ====================
+
+  // Allocate a transaction to a category
+  app.post("/api/accounting/transactions/:id/allocate", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { categoryId, amount, note } = req.body;
+
+      if (!categoryId) {
+        return res.status(400).json({ message: "Category ID is required" });
+      }
+
+      const transaction = await storage.getAccountingTransaction(id);
+      if (!transaction) {
+        return res.status(404).json({ message: "Transaction not found" });
+      }
+
+      // Delete existing allocations for this transaction
+      await storage.deleteTransactionAllocations(id);
+
+      // Create new allocation
+      const allocation = await storage.createTransactionAllocation({
+        transactionId: id,
+        categoryId,
+        amount: amount || transaction.amount,
+        notes: note || null,
+      });
+
+      res.json(allocation);
+    } catch (error: any) {
+      console.error("Error allocating transaction:", error);
+      res.status(500).json({ message: "Error allocating transaction: " + error.message });
+    }
+  });
+
+  // Split a transaction across multiple categories
+  app.post("/api/accounting/transactions/:id/split", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { allocations } = req.body;
+
+      if (!Array.isArray(allocations) || allocations.length === 0) {
+        return res.status(400).json({ message: "Allocations array is required" });
+      }
+
+      const transaction = await storage.getAccountingTransaction(id);
+      if (!transaction) {
+        return res.status(404).json({ message: "Transaction not found" });
+      }
+
+      // Delete existing allocations
+      await storage.deleteTransactionAllocations(id);
+
+      // Create new allocations
+      const created = [];
+      for (const alloc of allocations) {
+        const allocation = await storage.createTransactionAllocation({
+          transactionId: id,
+          categoryId: alloc.categoryId,
+          amount: alloc.amount,
+          notes: alloc.note || null,
+        });
+        created.push(allocation);
+      }
+
+      res.json(created);
+    } catch (error: any) {
+      console.error("Error splitting transaction:", error);
+      res.status(500).json({ message: "Error splitting transaction: " + error.message });
+    }
+  });
+
+  // Bulk allocate transactions
+  app.post("/api/accounting/transactions/bulk-allocate", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { transactionIds, categoryId } = req.body;
+
+      if (!Array.isArray(transactionIds) || transactionIds.length === 0) {
+        return res.status(400).json({ message: "Transaction IDs array is required" });
+      }
+
+      if (!categoryId) {
+        return res.status(400).json({ message: "Category ID is required" });
+      }
+
+      await storage.bulkAllocateTransactions(transactionIds, categoryId);
+      res.json({ success: true, allocated: transactionIds.length });
+    } catch (error: any) {
+      console.error("Error bulk allocating transactions:", error);
+      res.status(500).json({ message: "Error bulk allocating transactions: " + error.message });
+    }
+  });
+
+  // Clear transaction allocations
+  app.delete("/api/accounting/transactions/:id/allocations", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await storage.deleteTransactionAllocations(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error clearing allocations:", error);
+      res.status(500).json({ message: "Error clearing allocations: " + error.message });
+    }
+  });
+
+  // ==================== FINANCIAL SUMMARY ROUTES ====================
+
+  // Get financial summary
+  app.get("/api/accounting/summary", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+      const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+
+      const summary = await storage.getFinancialSummary(startDate, endDate);
+      res.json(summary);
+    } catch (error: any) {
+      console.error("Error fetching financial summary:", error);
+      res.status(500).json({ message: "Error fetching financial summary: " + error.message });
+    }
+  });
+
+  // Get income statement data
+  app.get("/api/accounting/income-statement", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+      const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+
+      const summary = await storage.getFinancialSummary(startDate, endDate);
+      
+      // Format for income statement display
+      const incomeStatement = {
+        period: {
+          start: startDate || 'All Time',
+          end: endDate || 'Present',
+        },
+        revenue: {
+          items: summary.incomeByCategory,
+          total: summary.totalIncome,
+        },
+        expenses: {
+          items: summary.expensesByCategory,
+          total: summary.totalExpenses,
+        },
+        transfers: {
+          items: summary.transfersByCategory,
+        },
+        netIncome: summary.netIncome,
+        unallocated: {
+          income: summary.unallocatedIncome,
+          expenses: summary.unallocatedExpenses,
+        },
+      };
+
+      res.json(incomeStatement);
+    } catch (error: any) {
+      console.error("Error generating income statement:", error);
+      res.status(500).json({ message: "Error generating income statement: " + error.message });
     }
   });
 

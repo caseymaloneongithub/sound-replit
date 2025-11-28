@@ -452,6 +452,7 @@ export const plaidAccounts = pgTable("plaid_accounts", {
   plaidItemId: varchar("plaid_item_id").notNull().references(() => plaidItems.id, { onDelete: 'cascade' }),
   accountId: text("account_id").notNull().unique(), // Plaid account ID
   name: text("name").notNull(),
+  officialName: text("official_name"), // Bank's official name for the account
   mask: text("mask"), // Last 4 digits
   type: text("type"), // 'depository', 'credit', etc.
   subtype: text("subtype"), // 'checking', 'savings', etc.
@@ -477,6 +478,7 @@ export const accountingTransactions = pgTable("accounting_transactions", {
   transactionId: text("transaction_id").unique(), // Plaid transaction ID (null for CSV imports)
   date: timestamp("date").notNull(),
   name: text("name").notNull(), // Transaction description
+  merchantName: text("merchant_name"), // Merchant name from Plaid
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(), // Positive = expense (Plaid convention)
   category: text("category"), // Plaid's category (for reference)
   pending: boolean("pending").notNull().default(false),
