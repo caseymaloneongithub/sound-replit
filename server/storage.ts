@@ -24,6 +24,11 @@ import {
   type ImpersonationLog, type InsertImpersonationLog,
   type Lead, type InsertLead,
   type LeadTouchPoint, type InsertLeadTouchPoint,
+  type PlaidItem, type InsertPlaidItem,
+  type PlaidAccount, type InsertPlaidAccount,
+  type AccountingCategory, type InsertAccountingCategory,
+  type AccountingTransaction, type InsertAccountingTransaction,
+  type TransactionAllocation, type InsertTransactionAllocation,
   flavors,
   retailProducts,
   retailProductFlavors,
@@ -50,6 +55,11 @@ import {
   passwordResetTokens,
   leads,
   leadTouchPoints,
+  plaidItems,
+  plaidAccounts,
+  accountingCategories,
+  accountingTransactions,
+  transactionAllocations,
   // Compatibility imports (temporary - old names mapping to new tables)
   products,
   productTypes,
@@ -265,6 +275,64 @@ export interface IStorage {
   getLeadTouchPoints(leadId: string): Promise<LeadTouchPoint[]>;
   createLeadTouchPoint(touchPoint: InsertLeadTouchPoint): Promise<LeadTouchPoint>;
   getRecentTouchPoints(limit?: number): Promise<Array<LeadTouchPoint & { leadBusinessName: string; createdByName: string }>>;
+  
+  // ACCOUNTING MODULE - Plaid Items
+  getPlaidItems(): Promise<PlaidItem[]>;
+  getPlaidItem(id: string): Promise<PlaidItem | undefined>;
+  getPlaidItemByItemId(itemId: string): Promise<PlaidItem | undefined>;
+  createPlaidItem(item: InsertPlaidItem): Promise<PlaidItem>;
+  updatePlaidItemCursor(id: string, cursor: string): Promise<void>;
+  deletePlaidItem(id: string): Promise<void>;
+  
+  // ACCOUNTING MODULE - Plaid Accounts
+  getPlaidAccounts(plaidItemId: string): Promise<PlaidAccount[]>;
+  getAllPlaidAccounts(): Promise<PlaidAccount[]>;
+  getPlaidAccount(id: string): Promise<PlaidAccount | undefined>;
+  getPlaidAccountByAccountId(accountId: string): Promise<PlaidAccount | undefined>;
+  createPlaidAccount(account: InsertPlaidAccount): Promise<PlaidAccount>;
+  updatePlaidAccountStatus(id: string, isActive: boolean): Promise<void>;
+  
+  // ACCOUNTING MODULE - Categories
+  getAccountingCategories(): Promise<AccountingCategory[]>;
+  getAccountingCategory(id: string): Promise<AccountingCategory | undefined>;
+  createAccountingCategory(category: InsertAccountingCategory): Promise<AccountingCategory>;
+  updateAccountingCategory(id: string, updates: Partial<InsertAccountingCategory>): Promise<AccountingCategory | undefined>;
+  deleteAccountingCategory(id: string): Promise<void>;
+  seedDefaultCategories(): Promise<void>;
+  
+  // ACCOUNTING MODULE - Transactions
+  getAccountingTransactions(filters?: {
+    startDate?: Date;
+    endDate?: Date;
+    categoryId?: string;
+    allocated?: boolean;
+    search?: string;
+    plaidAccountId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Array<AccountingTransaction & { allocations: TransactionAllocation[] }>>;
+  getAccountingTransaction(id: string): Promise<AccountingTransaction | undefined>;
+  createAccountingTransaction(transaction: InsertAccountingTransaction): Promise<AccountingTransaction>;
+  createAccountingTransactions(transactions: InsertAccountingTransaction[]): Promise<AccountingTransaction[]>;
+  getAccountingTransactionByTransactionId(transactionId: string): Promise<AccountingTransaction | undefined>;
+  
+  // ACCOUNTING MODULE - Allocations
+  getTransactionAllocations(transactionId: string): Promise<TransactionAllocation[]>;
+  createTransactionAllocation(allocation: InsertTransactionAllocation): Promise<TransactionAllocation>;
+  deleteTransactionAllocations(transactionId: string): Promise<void>;
+  bulkAllocateTransactions(transactionIds: string[], categoryId: string): Promise<void>;
+  
+  // ACCOUNTING MODULE - Financial Summary
+  getFinancialSummary(startDate?: Date, endDate?: Date): Promise<{
+    totalIncome: number;
+    totalExpenses: number;
+    netIncome: number;
+    incomeByCategory: Array<{ categoryId: string | null; categoryName: string; amount: number }>;
+    expensesByCategory: Array<{ categoryId: string | null; categoryName: string; amount: number }>;
+    transfersByCategory: Array<{ categoryId: string | null; categoryName: string; amount: number }>;
+    unallocatedIncome: number;
+    unallocatedExpenses: number;
+  }>;
   
   seedData(): Promise<void>;
 }
@@ -1657,6 +1725,331 @@ export class PostgresStorage implements IStorage {
       .where(eq(productTypes.id, id))
       .returning();
     return result[0];
+  }
+
+  // ==================== ACCOUNTING MODULE IMPLEMENTATIONS ====================
+
+  // Plaid Items
+  async getPlaidItems(): Promise<PlaidItem[]> {
+    return await db.select().from(plaidItems).orderBy(desc(plaidItems.createdAt));
+  }
+
+  async getPlaidItem(id: string): Promise<PlaidItem | undefined> {
+    const result = await db.select().from(plaidItems).where(eq(plaidItems.id, id));
+    return result[0];
+  }
+
+  async getPlaidItemByItemId(itemId: string): Promise<PlaidItem | undefined> {
+    const result = await db.select().from(plaidItems).where(eq(plaidItems.itemId, itemId));
+    return result[0];
+  }
+
+  async createPlaidItem(item: InsertPlaidItem): Promise<PlaidItem> {
+    const result = await db.insert(plaidItems).values(item).returning();
+    return result[0];
+  }
+
+  async updatePlaidItemCursor(id: string, cursor: string): Promise<void> {
+    await db.update(plaidItems)
+      .set({ cursor, lastSyncedAt: new Date(), updatedAt: new Date() })
+      .where(eq(plaidItems.id, id));
+  }
+
+  async deletePlaidItem(id: string): Promise<void> {
+    await db.delete(plaidItems).where(eq(plaidItems.id, id));
+  }
+
+  // Plaid Accounts
+  async getPlaidAccounts(plaidItemId: string): Promise<PlaidAccount[]> {
+    return await db.select().from(plaidAccounts).where(eq(plaidAccounts.plaidItemId, plaidItemId));
+  }
+
+  async getAllPlaidAccounts(): Promise<PlaidAccount[]> {
+    return await db.select().from(plaidAccounts);
+  }
+
+  async getPlaidAccount(id: string): Promise<PlaidAccount | undefined> {
+    const result = await db.select().from(plaidAccounts).where(eq(plaidAccounts.id, id));
+    return result[0];
+  }
+
+  async getPlaidAccountByAccountId(accountId: string): Promise<PlaidAccount | undefined> {
+    const result = await db.select().from(plaidAccounts).where(eq(plaidAccounts.accountId, accountId));
+    return result[0];
+  }
+
+  async createPlaidAccount(account: InsertPlaidAccount): Promise<PlaidAccount> {
+    const result = await db.insert(plaidAccounts).values(account).returning();
+    return result[0];
+  }
+
+  async updatePlaidAccountStatus(id: string, isActive: boolean): Promise<void> {
+    await db.update(plaidAccounts).set({ isActive }).where(eq(plaidAccounts.id, id));
+  }
+
+  // Accounting Categories
+  async getAccountingCategories(): Promise<AccountingCategory[]> {
+    return await db.select().from(accountingCategories).orderBy(accountingCategories.displayOrder);
+  }
+
+  async getAccountingCategory(id: string): Promise<AccountingCategory | undefined> {
+    const result = await db.select().from(accountingCategories).where(eq(accountingCategories.id, id));
+    return result[0];
+  }
+
+  async createAccountingCategory(category: InsertAccountingCategory): Promise<AccountingCategory> {
+    const result = await db.insert(accountingCategories).values(category).returning();
+    return result[0];
+  }
+
+  async updateAccountingCategory(id: string, updates: Partial<InsertAccountingCategory>): Promise<AccountingCategory | undefined> {
+    const result = await db.update(accountingCategories)
+      .set(updates)
+      .where(eq(accountingCategories.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteAccountingCategory(id: string): Promise<void> {
+    await db.delete(accountingCategories).where(eq(accountingCategories.id, id));
+  }
+
+  async seedDefaultCategories(): Promise<void> {
+    const existing = await this.getAccountingCategories();
+    if (existing.length > 0) return;
+
+    const defaultCategories: InsertAccountingCategory[] = [
+      // Income categories
+      { name: 'Membership Revenue', type: 'income', description: 'Revenue from membership fees', color: '#22c55e', displayOrder: 1, isDefault: true },
+      { name: 'Seminar Revenue', type: 'income', description: 'Revenue from seminars and events', color: '#16a34a', displayOrder: 2, isDefault: true },
+      { name: 'Equipment Sales', type: 'income', description: 'Revenue from equipment sales', color: '#15803d', displayOrder: 3, isDefault: true },
+      // Expense categories
+      { name: 'Rent', type: 'expense', description: 'Facility rent payments', color: '#ef4444', displayOrder: 10, isDefault: true },
+      { name: 'Utilities', type: 'expense', description: 'Electricity, water, gas', color: '#dc2626', displayOrder: 11, isDefault: true },
+      { name: 'Payroll', type: 'expense', description: 'Employee wages and salaries', color: '#b91c1c', displayOrder: 12, isDefault: true },
+      { name: 'Equipment', type: 'expense', description: 'Equipment purchases and maintenance', color: '#991b1b', displayOrder: 13, isDefault: true },
+      { name: 'Marketing', type: 'expense', description: 'Advertising and promotional expenses', color: '#7f1d1d', displayOrder: 14, isDefault: true },
+      { name: 'Insurance', type: 'expense', description: 'Business insurance premiums', color: '#f97316', displayOrder: 15, isDefault: true },
+      { name: 'Professional Services', type: 'expense', description: 'Legal, accounting, consulting', color: '#ea580c', displayOrder: 16, isDefault: true },
+      // Transfer categories
+      { name: 'Owner Distribution', type: 'transfer', description: 'Owner draws and distributions', color: '#6366f1', displayOrder: 20, isDefault: true },
+      { name: 'Bank Transfer', type: 'transfer', description: 'Transfers between accounts', color: '#4f46e5', displayOrder: 21, isDefault: true },
+    ];
+
+    await db.insert(accountingCategories).values(defaultCategories);
+  }
+
+  // Accounting Transactions
+  async getAccountingTransactions(filters?: {
+    startDate?: Date;
+    endDate?: Date;
+    categoryId?: string;
+    allocated?: boolean;
+    search?: string;
+    plaidAccountId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Array<AccountingTransaction & { allocations: TransactionAllocation[] }>> {
+    const conditions: any[] = [];
+
+    if (filters?.startDate) {
+      conditions.push(sql`${accountingTransactions.date} >= ${filters.startDate}`);
+    }
+    if (filters?.endDate) {
+      conditions.push(sql`${accountingTransactions.date} <= ${filters.endDate}`);
+    }
+    if (filters?.plaidAccountId) {
+      conditions.push(eq(accountingTransactions.plaidAccountId, filters.plaidAccountId));
+    }
+    if (filters?.search) {
+      conditions.push(sql`LOWER(${accountingTransactions.name}) LIKE LOWER(${'%' + filters.search + '%'})`);
+    }
+
+    let query = db.select().from(accountingTransactions);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+    query = query.orderBy(desc(accountingTransactions.date)) as any;
+
+    if (filters?.limit) {
+      query = query.limit(filters.limit) as any;
+    }
+    if (filters?.offset) {
+      query = query.offset(filters.offset) as any;
+    }
+
+    const transactions = await query;
+
+    // Get allocations for each transaction
+    const transactionsWithAllocations = await Promise.all(
+      transactions.map(async (tx: AccountingTransaction) => {
+        const allocations = await this.getTransactionAllocations(tx.id);
+        return { ...tx, allocations };
+      })
+    );
+
+    // Filter by allocation status if specified
+    if (filters?.allocated !== undefined) {
+      return transactionsWithAllocations.filter(tx => 
+        filters.allocated ? tx.allocations.length > 0 : tx.allocations.length === 0
+      );
+    }
+
+    // Filter by category if specified
+    if (filters?.categoryId) {
+      return transactionsWithAllocations.filter(tx =>
+        tx.allocations.some(a => a.categoryId === filters.categoryId)
+      );
+    }
+
+    return transactionsWithAllocations;
+  }
+
+  async getAccountingTransaction(id: string): Promise<AccountingTransaction | undefined> {
+    const result = await db.select().from(accountingTransactions).where(eq(accountingTransactions.id, id));
+    return result[0];
+  }
+
+  async createAccountingTransaction(transaction: InsertAccountingTransaction): Promise<AccountingTransaction> {
+    const result = await db.insert(accountingTransactions).values(transaction).returning();
+    return result[0];
+  }
+
+  async createAccountingTransactions(transactions: InsertAccountingTransaction[]): Promise<AccountingTransaction[]> {
+    if (transactions.length === 0) return [];
+    const result = await db.insert(accountingTransactions).values(transactions).returning();
+    return result;
+  }
+
+  async getAccountingTransactionByTransactionId(transactionId: string): Promise<AccountingTransaction | undefined> {
+    const result = await db.select().from(accountingTransactions)
+      .where(eq(accountingTransactions.transactionId, transactionId));
+    return result[0];
+  }
+
+  // Transaction Allocations
+  async getTransactionAllocations(transactionId: string): Promise<TransactionAllocation[]> {
+    return await db.select().from(transactionAllocations)
+      .where(eq(transactionAllocations.transactionId, transactionId));
+  }
+
+  async createTransactionAllocation(allocation: InsertTransactionAllocation): Promise<TransactionAllocation> {
+    const result = await db.insert(transactionAllocations).values(allocation).returning();
+    return result[0];
+  }
+
+  async deleteTransactionAllocations(transactionId: string): Promise<void> {
+    await db.delete(transactionAllocations).where(eq(transactionAllocations.transactionId, transactionId));
+  }
+
+  async bulkAllocateTransactions(transactionIds: string[], categoryId: string): Promise<void> {
+    // Get all transactions to allocate
+    const transactions = await db.select().from(accountingTransactions)
+      .where(inArray(accountingTransactions.id, transactionIds));
+
+    // Delete existing allocations
+    await db.delete(transactionAllocations)
+      .where(inArray(transactionAllocations.transactionId, transactionIds));
+
+    // Create new allocations
+    const allocations = transactions.map(tx => ({
+      transactionId: tx.id,
+      categoryId,
+      amount: tx.amount,
+    }));
+
+    if (allocations.length > 0) {
+      await db.insert(transactionAllocations).values(allocations);
+    }
+  }
+
+  // Financial Summary
+  async getFinancialSummary(startDate?: Date, endDate?: Date): Promise<{
+    totalIncome: number;
+    totalExpenses: number;
+    netIncome: number;
+    incomeByCategory: Array<{ categoryId: string | null; categoryName: string; amount: number }>;
+    expensesByCategory: Array<{ categoryId: string | null; categoryName: string; amount: number }>;
+    transfersByCategory: Array<{ categoryId: string | null; categoryName: string; amount: number }>;
+    unallocatedIncome: number;
+    unallocatedExpenses: number;
+  }> {
+    const transactions = await this.getAccountingTransactions({ startDate, endDate });
+    const categories = await this.getAccountingCategories();
+
+    const categoryMap = new Map(categories.map(c => [c.id, c]));
+
+    let totalIncome = 0;
+    let totalExpenses = 0;
+    let unallocatedIncome = 0;
+    let unallocatedExpenses = 0;
+
+    const incomeByCategoryMap = new Map<string | null, number>();
+    const expensesByCategoryMap = new Map<string | null, number>();
+    const transfersByCategoryMap = new Map<string | null, number>();
+
+    for (const tx of transactions) {
+      const amount = Number(tx.amount);
+      const isExpense = amount > 0; // Plaid convention: positive = expense
+
+      if (tx.allocations.length === 0) {
+        // Unallocated transaction
+        if (isExpense) {
+          totalExpenses += amount;
+          unallocatedExpenses += amount;
+          expensesByCategoryMap.set(null, (expensesByCategoryMap.get(null) || 0) + amount);
+        } else {
+          totalIncome += Math.abs(amount);
+          unallocatedIncome += Math.abs(amount);
+          incomeByCategoryMap.set(null, (incomeByCategoryMap.get(null) || 0) + Math.abs(amount));
+        }
+      } else {
+        // Allocated transaction
+        for (const allocation of tx.allocations) {
+          const category = categoryMap.get(allocation.categoryId);
+          const allocAmount = Number(allocation.amount);
+
+          if (category?.type === 'income') {
+            totalIncome += Math.abs(allocAmount);
+            incomeByCategoryMap.set(allocation.categoryId, (incomeByCategoryMap.get(allocation.categoryId) || 0) + Math.abs(allocAmount));
+          } else if (category?.type === 'expense') {
+            totalExpenses += Math.abs(allocAmount);
+            expensesByCategoryMap.set(allocation.categoryId, (expensesByCategoryMap.get(allocation.categoryId) || 0) + Math.abs(allocAmount));
+          } else if (category?.type === 'transfer') {
+            transfersByCategoryMap.set(allocation.categoryId, (transfersByCategoryMap.get(allocation.categoryId) || 0) + Math.abs(allocAmount));
+          }
+        }
+      }
+    }
+
+    const incomeByCategory = Array.from(incomeByCategoryMap.entries()).map(([categoryId, amount]) => ({
+      categoryId,
+      categoryName: categoryId ? categoryMap.get(categoryId)?.name || 'Unknown' : 'Unallocated',
+      amount,
+    }));
+
+    const expensesByCategory = Array.from(expensesByCategoryMap.entries()).map(([categoryId, amount]) => ({
+      categoryId,
+      categoryName: categoryId ? categoryMap.get(categoryId)?.name || 'Unknown' : 'Unallocated',
+      amount,
+    }));
+
+    const transfersByCategory = Array.from(transfersByCategoryMap.entries()).map(([categoryId, amount]) => ({
+      categoryId,
+      categoryName: categoryId ? categoryMap.get(categoryId)?.name || 'Unknown' : 'Unknown',
+      amount,
+    }));
+
+    return {
+      totalIncome,
+      totalExpenses,
+      netIncome: totalIncome - totalExpenses,
+      incomeByCategory,
+      expensesByCategory,
+      transfersByCategory,
+      unallocatedIncome,
+      unallocatedExpenses,
+    };
   }
 
   async seedData(): Promise<void> {
