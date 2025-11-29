@@ -120,7 +120,12 @@ export function StaffSidebar() {
               <div className="space-y-1">
                 {visibleItems.map((item) => {
                   const Icon = item.icon;
-                  const isActive = location === item.href || location.startsWith(item.href + "/");
+                  // For exact match routes (like /admin/accounting), only match exactly
+                  // For other routes, also match child paths
+                  const isExactMatchRoute = item.href === "/admin/accounting";
+                  const isActive = isExactMatchRoute 
+                    ? location === item.href 
+                    : (location === item.href || location.startsWith(item.href + "/"));
 
                   return (
                     <Button
