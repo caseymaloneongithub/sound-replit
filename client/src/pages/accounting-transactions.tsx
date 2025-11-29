@@ -26,7 +26,8 @@ import {
   Calendar as CalendarIcon,
   Loader2,
   MoreHorizontal,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Plus
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -68,9 +69,17 @@ export default function AccountingTransactions() {
   const [allocateDialogOpen, setAllocateDialogOpen] = useState(false);
   const [splitDialogOpen, setSplitDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionWithAllocation | null>(null);
   const [allocateCategory, setAllocateCategory] = useState<string>("");
   const [splitAllocations, setSplitAllocations] = useState<{ categoryId: string; amount: string }[]>([]);
+  
+  // Manual transaction form state
+  const [newTxDate, setNewTxDate] = useState<Date | undefined>(new Date());
+  const [newTxDescription, setNewTxDescription] = useState("");
+  const [newTxAmount, setNewTxAmount] = useState("");
+  const [newTxType, setNewTxType] = useState<"income" | "expense">("expense");
+  const [newTxCategory, setNewTxCategory] = useState<string>("");
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -158,6 +167,67 @@ export default function AccountingTransactions() {
       toast({ title: "Import failed", description: error.message, variant: "destructive" });
     }
   });
+
+  const createTransactionMutation = useMutation({
+    mutationFn: async (data: { date: Date; name: string; amount: string; categoryId?: string }) => {
+      const transaction = await apiRequest('POST', '/api/accounting/transactions', {
+        date: data.date.toISOString(),
+        name: data.name,
+        amount: data.amount,
+        isManualImport: true
+      });
+      
+      // If category selected, also allocate immediately
+      if (data.categoryId && transaction.id) {
+        await apiRequest('POST', `/api/accounting/transactions/${transaction.id}/allocate`, {
+          categoryId: data.categoryId
+        });
+      }
+      
+      return transaction;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/accounting/transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/accounting/summary'] });
+      toast({ title: "Transaction added successfully" });
+      setAddDialogOpen(false);
+      resetAddForm();
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to add transaction", description: error.message, variant: "destructive" });
+    }
+  });
+
+  const resetAddForm = () => {
+    setNewTxDate(new Date());
+    setNewTxDescription("");
+    setNewTxAmount("");
+    setNewTxType("expense");
+    setNewTxCategory("");
+  };
+
+  const handleAddTransaction = () => {
+    if (!newTxDate || !newTxDescription || !newTxAmount) {
+      toast({ title: "Please fill in all required fields", variant: "destructive" });
+      return;
+    }
+    
+    const amount = parseFloat(newTxAmount);
+    if (isNaN(amount) || amount <= 0) {
+      toast({ title: "Please enter a valid amount", variant: "destructive" });
+      return;
+    }
+    
+    // Expenses are stored as positive amounts (Plaid convention), income as negative
+    const signedAmount = newTxType === "expense" ? amount.toString() : (-amount).toString();
+    
+    createTransactionMutation.mutate({
+      date: newTxDate,
+      name: newTxDescription,
+      amount: signedAmount,
+      categoryId: newTxCategory || undefined
+    });
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -266,6 +336,10 @@ export default function AccountingTransactions() {
             </p>
           </div>
           <div className="flex gap-2">
+            <Button onClick={() => setAddDialogOpen(true)} data-testid="button-add-transaction">
+              <Plus className="w-4 h-4 mr-2" />
+              Add Transaction
+            </Button>
             <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" data-testid="button-import-csv">
@@ -721,6 +795,115 @@ export default function AccountingTransactions() {
               >
                 {splitMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Split Transaction
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add Transaction Dialog */}
+        <Dialog open={addDialogOpen} onOpenChange={(open) => { setAddDialogOpen(open); if (!open) resetAddForm(); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add Transaction</DialogTitle>
+              <DialogDescription>
+                Manually add a transaction to your records.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Date *</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn("w-full justify-start text-left font-normal", !newTxDate && "text-muted-foreground")}
+                      data-testid="button-new-tx-date"
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {newTxDate ? format(newTxDate, "MMM d, yyyy") : "Select date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar mode="single" selected={newTxDate} onSelect={setNewTxDate} initialFocus />
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Description *</Label>
+                <Input
+                  placeholder="e.g., Office supplies, Payroll, etc."
+                  value={newTxDescription}
+                  onChange={(e) => setNewTxDescription(e.target.value)}
+                  data-testid="input-new-tx-description"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Type *</Label>
+                  <Select value={newTxType} onValueChange={(val) => setNewTxType(val as "income" | "expense")}>
+                    <SelectTrigger data-testid="select-new-tx-type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="expense">Expense</SelectItem>
+                      <SelectItem value="income">Income</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Amount *</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00"
+                      value={newTxAmount}
+                      onChange={(e) => setNewTxAmount(e.target.value)}
+                      className="pl-7"
+                      data-testid="input-new-tx-amount"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Category (optional)</Label>
+                <Select value={newTxCategory} onValueChange={setNewTxCategory}>
+                  <SelectTrigger data-testid="select-new-tx-category">
+                    <SelectValue placeholder="Assign to category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">No category</SelectItem>
+                    {categories.map((cat) => (
+                      <SelectItem key={cat.id} value={cat.id}>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={cat.type === 'income' ? 'default' : 'secondary'} className="text-xs">
+                            {cat.type}
+                          </Badge>
+                          {cat.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleAddTransaction} 
+                disabled={createTransactionMutation.isPending || !newTxDate || !newTxDescription || !newTxAmount}
+                data-testid="button-confirm-add-transaction"
+              >
+                {createTransactionMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Add Transaction
               </Button>
             </DialogFooter>
           </DialogContent>
