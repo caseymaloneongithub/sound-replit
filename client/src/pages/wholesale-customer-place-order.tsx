@@ -45,6 +45,13 @@ export default function WholesaleCustomerPlaceOrder() {
     queryKey: ["/api/wholesale-customer/locations"],
   });
 
+  // Auto-select location if customer has exactly one
+  useEffect(() => {
+    if (locations.length === 1 && !selectedLocationId) {
+      setSelectedLocationId(locations[0].id);
+    }
+  }, [locations, selectedLocationId]);
+
   // Get available flavors for selected unit type
   const availableFlavors = selectedUnitTypeId
     ? unitTypes.find(ut => ut.id === selectedUnitTypeId)?.flavors || []
@@ -361,24 +368,23 @@ export default function WholesaleCustomerPlaceOrder() {
 
             {cart.length > 0 && (
               <>
-                {locations.length > 0 && (
+                {locations.length > 1 && (
                   <Card>
                     <CardHeader>
                       <CardTitle>Delivery Location</CardTitle>
-                      <CardDescription>Select the delivery location for this order (optional)</CardDescription>
+                      <CardDescription>Select the delivery location for this order</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-2">
-                        <Label htmlFor="location-select">Location</Label>
+                        <Label htmlFor="location-select">Location <span className="text-destructive">*</span></Label>
                         <Select
                           value={selectedLocationId}
                           onValueChange={setSelectedLocationId}
                         >
                           <SelectTrigger id="location-select" data-testid="select-location">
-                            <SelectValue placeholder="Select a location (optional)" />
+                            <SelectValue placeholder="Select a location" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="none">No specific location</SelectItem>
                             {locations.map((location) => (
                               <SelectItem key={location.id} value={location.id}>
                                 <div className="flex items-center gap-2">
@@ -394,7 +400,7 @@ export default function WholesaleCustomerPlaceOrder() {
                             ))}
                           </SelectContent>
                         </Select>
-                        {selectedLocationId && selectedLocationId !== "none" && locations.find(l => l.id === selectedLocationId) && (
+                        {selectedLocationId && locations.find(l => l.id === selectedLocationId) && (
                           <div className="text-sm text-muted-foreground mt-2 p-3 bg-muted rounded-md">
                             <div className="font-medium">
                               {locations.find(l => l.id === selectedLocationId)?.locationName}
@@ -416,6 +422,9 @@ export default function WholesaleCustomerPlaceOrder() {
                               </div>
                             )}
                           </div>
+                        )}
+                        {!selectedLocationId && (
+                          <p className="text-sm text-destructive">Please select a delivery location</p>
                         )}
                       </div>
                     </CardContent>
@@ -452,7 +461,7 @@ export default function WholesaleCustomerPlaceOrder() {
                     <Button
                       className="w-full mt-4"
                       onClick={() => createOrderMutation.mutate()}
-                      disabled={createOrderMutation.isPending || cart.length === 0}
+                      disabled={createOrderMutation.isPending || cart.length === 0 || (locations.length > 1 && !selectedLocationId)}
                       data-testid="button-place-order"
                     >
                       {createOrderMutation.isPending ? 'Placing Order...' : 'Place Order'}
