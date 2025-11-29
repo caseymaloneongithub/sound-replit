@@ -63,7 +63,7 @@ export default function WholesaleCustomerPlaceOrder() {
 
       return await apiRequest("POST", "/api/wholesale/customer/orders", {
         notes: notes || undefined,
-        locationId: selectedLocationId || undefined,
+        locationId: selectedLocationId && selectedLocationId !== "none" ? selectedLocationId : undefined,
         items: cart,
       });
     },
@@ -378,7 +378,7 @@ export default function WholesaleCustomerPlaceOrder() {
                             <SelectValue placeholder="Select a location (optional)" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">No specific location</SelectItem>
+                            <SelectItem value="none">No specific location</SelectItem>
                             {locations.map((location) => (
                               <SelectItem key={location.id} value={location.id}>
                                 <div className="flex items-center gap-2">
@@ -394,7 +394,7 @@ export default function WholesaleCustomerPlaceOrder() {
                             ))}
                           </SelectContent>
                         </Select>
-                        {selectedLocationId && locations.find(l => l.id === selectedLocationId) && (
+                        {selectedLocationId && selectedLocationId !== "none" && locations.find(l => l.id === selectedLocationId) && (
                           <div className="text-sm text-muted-foreground mt-2 p-3 bg-muted rounded-md">
                             <div className="font-medium">
                               {locations.find(l => l.id === selectedLocationId)?.locationName}

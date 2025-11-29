@@ -225,7 +225,7 @@ export default function AccountingTransactions() {
       date: newTxDate,
       name: newTxDescription,
       amount: signedAmount,
-      categoryId: newTxCategory || undefined
+      categoryId: newTxCategory && newTxCategory !== "none" ? newTxCategory : undefined
     });
   };
 
@@ -878,7 +878,7 @@ export default function AccountingTransactions() {
                     <SelectValue placeholder="Assign to category" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">No category</SelectItem>
+                    <SelectItem value="none">No category</SelectItem>
                     {categories.map((cat) => (
                       <SelectItem key={cat.id} value={cat.id}>
                         <div className="flex items-center gap-2">
