@@ -59,6 +59,35 @@ export default function AdminWholesaleUnits() {
     enabled: !!editingWholesaleUnitType && editingWholesaleUnitType !== 'new',
   });
 
+  // Hydrate form state when editing a wholesale unit type
+  // This ensures flavors are properly loaded even if dialog opens without onClick
+  useEffect(() => {
+    if (editingWholesaleUnitType && editingWholesaleUnitType !== 'new') {
+      const unitType = wholesaleUnitTypes.find(ut => ut.id === editingWholesaleUnitType);
+      if (unitType) {
+        setWholesaleUnitTypeForm({
+          name: unitType.name,
+          unitType: unitType.unitType,
+          description: unitType.description || '',
+          defaultPrice: Number(unitType.defaultPrice),
+          availableFlavors: unitType.flavors?.map(f => f.id) || [],
+          isActive: unitType.isActive,
+          displayOrder: unitType.displayOrder
+        });
+      }
+    } else if (editingWholesaleUnitType === 'new') {
+      setWholesaleUnitTypeForm({
+        name: '',
+        unitType: '',
+        description: '',
+        defaultPrice: 0,
+        availableFlavors: [],
+        isActive: true,
+        displayOrder: 0
+      });
+    }
+  }, [editingWholesaleUnitType, wholesaleUnitTypes]);
+
   // Update local state when existing pricing loads
   useEffect(() => {
     if (existingCustomerPricing.length > 0) {
