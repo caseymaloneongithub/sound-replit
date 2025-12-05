@@ -54,8 +54,9 @@ export default function WholesaleOrders() {
     queryKey: ["/api/wholesale/customers"],
   });
 
-  const { data: unitTypes = [] } = useQuery<WholesaleUnitType[]>({
+  const { data: unitTypes = [] } = useQuery<(WholesaleUnitType & { flavors?: Flavor[] })[]>({
     queryKey: ["/api/wholesale-unit-types"],
+    queryFn: async () => apiRequest('GET', '/api/wholesale-unit-types?includeFlavors=true'),
   });
 
   const { data: flavors = [] } = useQuery<Flavor[]>({

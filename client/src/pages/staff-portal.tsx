@@ -144,8 +144,9 @@ export default function StaffPortal() {
     queryKey: ['/api/retail-products'],
   });
   
-  const { data: wholesaleUnitTypes = [], isLoading: wholesaleUnitTypesLoading } = useQuery<WholesaleUnitType[]>({
+  const { data: wholesaleUnitTypes = [], isLoading: wholesaleUnitTypesLoading } = useQuery<(WholesaleUnitType & { flavors?: Flavor[] })[]>({
     queryKey: ['/api/wholesale-unit-types'],
+    queryFn: async () => apiRequest('GET', '/api/wholesale-unit-types?includeFlavors=true'),
     enabled: user?.role === 'staff' || user?.role === 'admin' || user?.role === 'super_admin',
   });
 
