@@ -26,7 +26,7 @@ export default function WholesaleCustomerPlaceOrder() {
   const [selectedLocationId, setSelectedLocationId] = useState<string>("");
   const [selectedUnitTypeId, setSelectedUnitTypeId] = useState<string>("");
   const [selectedFlavorId, setSelectedFlavorId] = useState<string>("");
-  const [quantity, setQuantity] = useState<number>(1);
+  const [quantity, setQuantity] = useState<string>("1");
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
@@ -85,7 +85,7 @@ export default function WholesaleCustomerPlaceOrder() {
       setSelectedLocationId("");
       setSelectedUnitTypeId("");
       setSelectedFlavorId("");
-      setQuantity(1);
+      setQuantity("1");
       setLocation("/wholesale-customer");
     },
     onError: (error: any) => {
@@ -110,7 +110,8 @@ export default function WholesaleCustomerPlaceOrder() {
   };
 
   const addToCart = () => {
-    if (!selectedUnitTypeId || !selectedFlavorId || quantity <= 0) {
+    const qty = parseInt(quantity) || 0;
+    if (!selectedUnitTypeId || !selectedFlavorId || qty <= 0) {
       toast({
         title: "Invalid Selection",
         description: "Please select a unit type, flavor, and quantity",
@@ -126,16 +127,16 @@ export default function WholesaleCustomerPlaceOrder() {
     if (existingItem) {
       setCart(cart.map(item => 
         item.unitTypeId === selectedUnitTypeId && item.flavorId === selectedFlavorId
-          ? { ...item, quantity: item.quantity + quantity }
+          ? { ...item, quantity: item.quantity + qty }
           : item
       ));
     } else {
-      setCart([...cart, { unitTypeId: selectedUnitTypeId, flavorId: selectedFlavorId, quantity }]);
+      setCart([...cart, { unitTypeId: selectedUnitTypeId, flavorId: selectedFlavorId, quantity: qty }]);
     }
 
     // Reset selection
     setSelectedFlavorId("");
-    setQuantity(1);
+    setQuantity("1");
   };
 
   const updateQuantity = (unitTypeId: string, flavorId: string, newQuantity: number) => {
@@ -264,7 +265,11 @@ export default function WholesaleCustomerPlaceOrder() {
                             <Input
                               type="number"
                               value={quantity}
-                              onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                              onChange={(e) => setQuantity(e.target.value)}
+                              onBlur={() => {
+                                const num = parseInt(quantity);
+                                if (isNaN(num) || num < 1) setQuantity("1");
+                              }}
                               min="1"
                               data-testid="input-quantity"
                             />
