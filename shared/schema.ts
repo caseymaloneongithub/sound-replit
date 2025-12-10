@@ -312,6 +312,50 @@ export const wholesaleLocations = pgTable("wholesale_locations", {
   deliveryInstructions: text("delivery_instructions"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // Geocoding cache
+  latitude: decimal("latitude", { precision: 10, scale: 7 }),
+  longitude: decimal("longitude", { precision: 10, scale: 7 }),
+  geocodedAt: timestamp("geocoded_at"),
+});
+
+// Custom delivery stops (non-order stops like supply pickups, etc.)
+export const deliveryStops = pgTable("delivery_stops", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(), // e.g., "Supplier Pickup", "Bank Deposit"
+  address: text("address").notNull(),
+  city: text("city").notNull(),
+  state: text("state").notNull().default('WA'),
+  zipCode: text("zip_code").notNull(),
+  notes: text("notes"),
+  latitude: decimal("latitude", { precision: 10, scale: 7 }),
+  longitude: decimal("longitude", { precision: 10, scale: 7 }),
+  geocodedAt: timestamp("geocoded_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
+});
+
+// Delivery routes - stores optimized routes for a given date
+export const deliveryRoutes = pgTable("delivery_routes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  routeDate: timestamp("route_date").notNull(), // The delivery date this route is for
+  totalDistanceMeters: integer("total_distance_meters"),
+  totalDurationSeconds: integer("total_duration_seconds"),
+  optimizedStops: text("optimized_stops").notNull(), // JSON array of ordered stops with details
+  generatedAt: timestamp("generated_at").notNull().defaultNow(),
+  generatedByUserId: varchar("generated_by_user_id").references(() => users.id),
+});
+
+// Route stops for a specific route (links orders and custom stops to a route)
+export const deliveryRouteStops = pgTable("delivery_route_stops", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  routeId: varchar("route_id").notNull().references(() => deliveryRoutes.id, { onDelete: 'cascade' }),
+  stopOrder: integer("stop_order").notNull(), // Order in the route (1-indexed)
+  stopType: text("stop_type").notNull(), // 'order' or 'custom'
+  wholesaleOrderId: varchar("wholesale_order_id").references(() => wholesaleOrders.id),
+  deliveryStopId: varchar("delivery_stop_id").references(() => deliveryStops.id),
+  arrivalEstimate: timestamp("arrival_estimate"),
+  distanceFromPrevious: integer("distance_from_previous"), // meters
+  durationFromPrevious: integer("duration_from_previous"), // seconds
 });
 
 export const retailCheckoutSessions = pgTable("retail_checkout_sessions", {
@@ -529,7 +573,10 @@ export const insertRetailCheckoutSessionSchema = createInsertSchema(retailChecko
 export const insertRetailOrderSchema = createInsertSchema(retailOrders).omit({ id: true, orderDate: true, fulfilledAt: true });
 export const insertRetailOrderItemSchema = createInsertSchema(retailOrderItems).omit({ id: true });
 export const insertWholesaleCustomerSchema = createInsertSchema(wholesaleCustomers).omit({ id: true });
-export const insertWholesaleLocationSchema = createInsertSchema(wholesaleLocations).omit({ id: true, createdAt: true });
+export const insertWholesaleLocationSchema = createInsertSchema(wholesaleLocations).omit({ id: true, createdAt: true, geocodedAt: true });
+export const insertDeliveryStopSchema = createInsertSchema(deliveryStops).omit({ id: true, createdAt: true, geocodedAt: true });
+export const insertDeliveryRouteSchema = createInsertSchema(deliveryRoutes).omit({ id: true, generatedAt: true });
+export const insertDeliveryRouteStopSchema = createInsertSchema(deliveryRouteStops).omit({ id: true });
 export const insertWholesaleOrderSchema = createInsertSchema(wholesaleOrders).omit({ id: true, orderDate: true, fulfilledAt: true });
 export const insertWholesaleOrderItemSchema = createInsertSchema(wholesaleOrderItems).omit({ id: true });
 export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
@@ -582,6 +629,9 @@ export type InsertRetailOrder = z.infer<typeof insertRetailOrderSchema>;
 export type InsertRetailOrderItem = z.infer<typeof insertRetailOrderItemSchema>;
 export type InsertWholesaleCustomer = z.infer<typeof insertWholesaleCustomerSchema>;
 export type InsertWholesaleLocation = z.infer<typeof insertWholesaleLocationSchema>;
+export type InsertDeliveryStop = z.infer<typeof insertDeliveryStopSchema>;
+export type InsertDeliveryRoute = z.infer<typeof insertDeliveryRouteSchema>;
+export type InsertDeliveryRouteStop = z.infer<typeof insertDeliveryRouteStopSchema>;
 export type InsertWholesaleOrder = z.infer<typeof insertWholesaleOrderSchema>;
 export type InsertWholesaleOrderItem = z.infer<typeof insertWholesaleOrderItemSchema>;
 export type InsertVerificationCode = z.infer<typeof insertVerificationCodeSchema>;
@@ -626,6 +676,9 @@ export type RetailOrder = typeof retailOrders.$inferSelect;
 export type RetailOrderItem = typeof retailOrderItems.$inferSelect;
 export type WholesaleCustomer = typeof wholesaleCustomers.$inferSelect;
 export type WholesaleLocation = typeof wholesaleLocations.$inferSelect;
+export type DeliveryStop = typeof deliveryStops.$inferSelect;
+export type DeliveryRoute = typeof deliveryRoutes.$inferSelect;
+export type DeliveryRouteStop = typeof deliveryRouteStops.$inferSelect;
 export type WholesaleOrder = typeof wholesaleOrders.$inferSelect;
 export type WholesaleOrderItem = typeof wholesaleOrderItems.$inferSelect;
 export type VerificationCode = typeof verificationCodes.$inferSelect;
