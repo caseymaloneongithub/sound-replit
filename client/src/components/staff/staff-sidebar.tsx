@@ -70,7 +70,6 @@ export function StaffSidebar() {
         { title: "Orders", href: "/retail/orders", icon: ShoppingCart },
         { title: "Subscriptions", href: "/retail/subscriptions", icon: Repeat },
         { title: "Customers", href: "/retail/customers", icon: Users },
-        { title: "Pickup Report", href: "/retail/pickup-report", icon: FileText },
       ],
     },
     {

@@ -36,7 +36,6 @@ import WholesalePaymentSuccess from "@/pages/wholesale-payment-success";
 import RetailOrders from "@/pages/retail-orders";
 import RetailSubscriptions from "@/pages/retail-subscriptions";
 import RetailCustomers from "@/pages/retail-customers";
-import RetailPickupReport from "@/pages/retail-pickup-report";
 import Inventory from "@/pages/inventory";
 import Reports from "@/pages/reports";
 import Account from "@/pages/account";
@@ -101,7 +100,6 @@ function Router() {
       <StaffProtectedRoute path="/retail/orders" component={RetailOrders} />
       <StaffProtectedRoute path="/retail/subscriptions" component={RetailSubscriptions} />
       <StaffProtectedRoute path="/retail/customers" component={RetailCustomers} />
-      <StaffProtectedRoute path="/retail/pickup-report" component={RetailPickupReport} />
       <StaffProtectedRoute path="/admin/flavors" component={AdminFlavors} />
       <StaffProtectedRoute path="/admin/retail-products" component={AdminRetailProducts} />
       <StaffProtectedRoute path="/admin/wholesale-units" component={AdminWholesaleUnits} />
