@@ -1,6 +1,6 @@
 import { AddressAutofill } from "@mapbox/search-js-react";
 import { Input } from "@/components/ui/input";
-import { FormControl, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { FormControl, FormItem, FormLabel } from "@/components/ui/form";
 import { useCallback } from "react";
 import { MapPin } from "lucide-react";
 
@@ -88,14 +88,15 @@ export function AddressAutofillFields({
   stateError,
   zipError,
 }: AddressAutofillFieldsProps) {
+  
+  // Handle when Mapbox fills the form - sync values back to react-hook-form
   const handleRetrieve = useCallback((res: any) => {
     const feature = res.features?.[0];
     if (!feature) return;
     
     const props = feature.properties || {};
-    const context = feature.context || [];
     
-    // Extract address line 1
+    // Extract and set address
     if (props.address_line1) {
       onAddressChange(props.address_line1);
     } else if (props.full_address) {
@@ -103,39 +104,22 @@ export function AddressAutofillFields({
       if (parts.length > 0) onAddressChange(parts[0].trim());
     }
     
-    // Extract city - try multiple sources
-    const city = props.place || 
-                 props.locality || 
-                 props.address_level2 ||
-                 context.find((c: any) => c.id?.startsWith('place'))?.text ||
-                 context.find((c: any) => c.id?.startsWith('locality'))?.text;
-    if (city) onCityChange(city);
-    
-    // Extract state - prefer short_code, then map full name
-    let stateCode = props.region_code || props.region_code_short || props.address_level1;
-    
-    if (!stateCode) {
-      // Try to get from context
-      const regionContext = context.find((c: any) => c.id?.startsWith('region'));
-      if (regionContext) {
-        // Prefer short_code (e.g., "US-WA" -> "WA")
-        if (regionContext.short_code) {
-          stateCode = regionContext.short_code.replace('US-', '');
-        } else if (regionContext.text) {
-          stateCode = regionContext.text;
-        }
-      }
+    // Extract and set city
+    if (props.address_level2) {
+      onCityChange(props.address_level2);
+    } else if (props.place) {
+      onCityChange(props.place);
     }
     
-    if (stateCode) {
-      onStateChange(normalizeStateCode(stateCode));
+    // Extract and set state
+    if (props.address_level1) {
+      onStateChange(normalizeStateCode(props.address_level1));
     }
     
-    // Extract zip code
-    const zip = props.postcode || 
-                props.postal_code ||
-                context.find((c: any) => c.id?.startsWith('postcode'))?.text;
-    if (zip) onZipCodeChange(zip);
+    // Extract and set zip
+    if (props.postcode) {
+      onZipCodeChange(props.postcode);
+    }
   }, [onAddressChange, onCityChange, onStateChange, onZipCodeChange]);
 
   // Fallback to manual entry when no Mapbox token
@@ -220,7 +204,8 @@ export function AddressAutofillFields({
               proximity: { lng: -122.3321, lat: 47.6062 }
             }}
           >
-            <Input
+            <input
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
               placeholder={addressPlaceholder}
               value={addressValue}
               onChange={(e) => onAddressChange(e.target.value)}
@@ -235,7 +220,8 @@ export function AddressAutofillFields({
         <FormItem>
           <FormLabel>City</FormLabel>
           <FormControl>
-            <Input
+            <input
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
               placeholder={cityPlaceholder}
               value={cityValue}
               onChange={(e) => onCityChange(e.target.value)}
@@ -249,7 +235,8 @@ export function AddressAutofillFields({
           <FormItem>
             <FormLabel>State</FormLabel>
             <FormControl>
-              <Input
+              <input
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
                 placeholder={statePlaceholder}
                 value={stateValue}
                 onChange={(e) => onStateChange(e.target.value)}
@@ -263,7 +250,8 @@ export function AddressAutofillFields({
           <FormItem>
             <FormLabel>ZIP</FormLabel>
             <FormControl>
-              <Input
+              <input
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
                 placeholder={zipPlaceholder}
                 value={zipCodeValue}
                 onChange={(e) => onZipCodeChange(e.target.value)}
