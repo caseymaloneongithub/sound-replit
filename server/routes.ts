@@ -4051,7 +4051,7 @@ If you have any questions, please don't hesitate to reach out!`,
       let updated = order;
 
       if (status) {
-        if (!['pending', 'processing', 'shipped', 'delivered'].includes(status)) {
+        if (!['pending', 'processing', 'packaged', 'shipped', 'delivered'].includes(status)) {
           return res.status(400).json({ message: "Invalid status" });
         }
         updated = await storage.updateWholesaleOrderStatus(req.params.id, status);
@@ -5100,7 +5100,7 @@ If you have any questions, please don't hesitate to reach out!`,
   app.patch("/api/staff/orders/:id/status", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const statusSchema = z.object({
-        status: z.enum(['pending', 'processing', 'shipped', 'delivered', 'fulfilled']),
+        status: z.enum(['pending', 'processing', 'packaged', 'shipped', 'delivered', 'fulfilled']),
       });
       
       const parsed = statusSchema.safeParse(req.body);
