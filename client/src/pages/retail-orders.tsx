@@ -186,8 +186,67 @@ export default function RetailOrders() {
       );
     }
 
+    // Calculate consolidated items for pending orders
+    const consolidatedItems = status === 'pending' ? (() => {
+      const itemMap: Record<string, { productName: string; unitDescription: string; quantity: number }> = {};
+      
+      filteredOrders.forEach(order => {
+        order.items?.forEach(item => {
+          const key = `${item.productName}-${item.unitDescription}`;
+          if (!itemMap[key]) {
+            itemMap[key] = {
+              productName: item.productName,
+              unitDescription: item.unitDescription,
+              quantity: 0,
+            };
+          }
+          itemMap[key].quantity += item.quantity;
+        });
+      });
+      
+      return Object.values(itemMap).sort((a, b) => a.productName.localeCompare(b.productName));
+    })() : [];
+
     return (
       <div className="space-y-4">
+        {/* Items to Prepare Summary - Only for pending orders */}
+        {status === 'pending' && consolidatedItems.length > 0 && (
+          <Card data-testid="card-items-to-prepare">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-lg flex items-center gap-2">
+                  <Package className="w-5 h-5" />
+                  Items to Prepare
+                </h3>
+                <Badge variant="secondary" data-testid="badge-item-count-pending">
+                  {consolidatedItems.length} {consolidatedItems.length === 1 ? 'product' : 'products'}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {consolidatedItems.map((item, index) => (
+                  <div 
+                    key={index}
+                    className="flex justify-between items-center bg-muted/50 rounded-md px-3 py-2"
+                    data-testid={`prepare-item-${index}`}
+                  >
+                    <div className="flex-1">
+                      <span className="font-medium">{item.productName}</span>
+                      {item.unitDescription && (
+                        <span className="text-muted-foreground text-sm ml-1">
+                          ({item.unitDescription})
+                        </span>
+                      )}
+                    </div>
+                    <Badge variant="default" className="ml-2">
+                      {item.quantity}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="flex justify-end">
           <Button
             variant="outline"
