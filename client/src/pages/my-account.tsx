@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Package, Repeat, Plus, Trash2, X, CreditCard, Calendar, ShoppingCart, Mail } from "lucide-react";
-import { format } from "date-fns";
+import { format, startOfWeek } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
@@ -494,7 +494,7 @@ export default function MyAccount() {
                             <div>
                               <div className="text-sm text-muted-foreground mb-1">Next Pickup</div>
                               <div className="font-semibold" data-testid={`text-next-pickup-${subscription.id}`}>
-                                {format(nextDelivery, 'MMMM d, yyyy')}
+                                Week of {format(startOfWeek(nextDelivery, { weekStartsOn: 1 }), 'MMMM d, yyyy')}
                               </div>
                             </div>
                           )}
