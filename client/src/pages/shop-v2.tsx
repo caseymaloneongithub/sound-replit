@@ -136,7 +136,6 @@ export default function ShopV2() {
       <div className="container mx-auto px-4 py-8">
         <div className="mb-8">
           <h2 className="text-3xl font-bold mb-2" data-testid="text-products-title">Shop Our Kombucha</h2>
-          <p className="text-muted-foreground" data-testid="text-products-subtitle">Choose from cases, kegs, and more</p>
           
           {/* Pickup Location Notice */}
           <div className="bg-primary text-primary-foreground py-3 px-4 rounded-md mt-4 inline-flex items-center gap-3">
