@@ -116,19 +116,6 @@ export default function ShopV2() {
         </div>
       </div>
 
-      {/* Pickup Location Notice */}
-      <div className="bg-primary text-primary-foreground py-4">
-        <div className="max-w-4xl mx-auto px-6">
-          <div className="flex items-center justify-center gap-3">
-            <MapPin className="w-6 h-6 flex-shrink-0" />
-            <div className="text-center">
-              <p className="font-semibold text-lg">Pickup Only at Our Ballard Location</p>
-              <p className="text-sm opacity-90">4501 Shilshole Ave NW, Seattle, WA 98107</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div className="bg-muted/50 py-12">
         <div className="max-w-4xl mx-auto px-6 text-center">
           <p className="text-lg md:text-xl mb-4">
@@ -143,6 +130,19 @@ export default function ShopV2() {
             </a>{" "}
             for wholesale pricing.
           </p>
+        </div>
+      </div>
+
+      {/* Pickup Location Notice */}
+      <div className="bg-primary text-primary-foreground py-4">
+        <div className="max-w-4xl mx-auto px-6">
+          <div className="flex items-center justify-center gap-3">
+            <MapPin className="w-6 h-6 flex-shrink-0" />
+            <div className="text-center">
+              <p className="font-semibold text-lg">Pickup Only at Our Ballard Location</p>
+              <p className="text-sm opacity-90">4501 Shilshole Ave NW, Seattle, WA 98107</p>
+            </div>
+          </div>
         </div>
       </div>
 
