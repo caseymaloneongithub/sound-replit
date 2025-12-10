@@ -15,66 +15,6 @@ run = ["npm", "run", "start"]
 localPort = 5000
 externalPort = 80
 
-[[ports]]
-localPort = 33205
-externalPort = 8081
-
-[[ports]]
-localPort = 33975
-externalPort = 8080
-
-[[ports]]
-localPort = 35283
-externalPort = 8099
-
-[[ports]]
-localPort = 36833
-externalPort = 4200
-
-[[ports]]
-localPort = 37213
-externalPort = 9000
-
-[[ports]]
-localPort = 37571
-externalPort = 3000
-
-[[ports]]
-localPort = 37779
-externalPort = 8008
-
-[[ports]]
-localPort = 38599
-externalPort = 3003
-
-[[ports]]
-localPort = 38859
-externalPort = 6000
-
-[[ports]]
-localPort = 39861
-externalPort = 6800
-
-[[ports]]
-localPort = 40935
-externalPort = 8000
-
-[[ports]]
-localPort = 44835
-externalPort = 5000
-
-[[ports]]
-localPort = 45743
-externalPort = 3001
-
-[[ports]]
-localPort = 46133
-externalPort = 5173
-
-[[ports]]
-localPort = 46841
-externalPort = 3002
-
 [env]
 PORT = "5000"
 
@@ -106,3 +46,4 @@ integrations = ["javascript_mem_db:1.0.0", "javascript_stripe:1.0.0", "javascrip
 
 [userenv.shared]
 PLAID_ENV = "development"
+VITE_MAPBOX_ACCESS_TOKEN = "${MAPBOX_ACCESS_TOKEN}"
