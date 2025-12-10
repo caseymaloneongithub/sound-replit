@@ -46,4 +46,3 @@ integrations = ["javascript_mem_db:1.0.0", "javascript_stripe:1.0.0", "javascrip
 
 [userenv.shared]
 PLAID_ENV = "development"
-VITE_MAPBOX_ACCESS_TOKEN = "${MAPBOX_ACCESS_TOKEN}"
