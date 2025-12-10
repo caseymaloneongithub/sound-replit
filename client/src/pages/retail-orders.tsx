@@ -12,6 +12,19 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { RetailOrder } from "@shared/schema";
 
+interface OrderItem {
+  id: string;
+  quantity: number;
+  unitPrice: string;
+  productName: string;
+  flavorName: string | null;
+  unitDescription: string;
+}
+
+interface RetailOrderWithItems extends RetailOrder {
+  items: OrderItem[];
+}
+
 function getStatusColor(status: string): string {
   switch (status) {
     case 'pending': return 'bg-yellow-500';
@@ -42,7 +55,7 @@ export default function RetailOrders() {
     cancelled: 'desc',
   });
 
-  const { data: orders = [], isLoading } = useQuery<RetailOrder[]>({
+  const { data: orders = [], isLoading } = useQuery<RetailOrderWithItems[]>({
     queryKey: ['/api/retail/orders'],
   });
 
@@ -312,6 +325,42 @@ export default function RetailOrders() {
                 </div>
               </div>
             </CardHeader>
+            {order.items && order.items.length > 0 && (
+              <CardContent className="pt-0">
+                <div className="border-t pt-4">
+                  <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                    <Package className="w-4 h-4" />
+                    Order Items
+                  </h4>
+                  <div className="space-y-2">
+                    {order.items.map((item) => (
+                      <div 
+                        key={item.id} 
+                        className="flex justify-between items-center text-sm bg-muted/50 rounded-md px-3 py-2"
+                        data-testid={`order-item-${item.id}`}
+                      >
+                        <div className="flex-1">
+                          <span className="font-medium">{item.productName}</span>
+                          {item.unitDescription && (
+                            <span className="text-muted-foreground ml-2">
+                              ({item.unitDescription})
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <span className="text-muted-foreground">
+                            Qty: {item.quantity}
+                          </span>
+                          <span className="font-medium">
+                            ${(Number(item.unitPrice) * item.quantity).toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            )}
           </Card>
         ))}
       </div>

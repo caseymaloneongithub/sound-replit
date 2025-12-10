@@ -4496,7 +4496,58 @@ If you have any questions, please don't hesitate to reach out!`,
   app.get("/api/retail/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const orders = await storage.getRetailOrders();
-      res.json(orders);
+      
+      // Get all order items with product details
+      const orderIds = orders.map(o => o.id);
+      
+      // Get v2 items (current cart system)
+      const v2Items = orderIds.length > 0 ? await db
+        .select({
+          id: retailOrderItemsV2.id,
+          orderId: retailOrderItemsV2.orderId,
+          retailProductId: retailOrderItemsV2.retailProductId,
+          selectedFlavorId: retailOrderItemsV2.selectedFlavorId,
+          quantity: retailOrderItemsV2.quantity,
+          unitPrice: retailOrderItemsV2.unitPrice,
+          retailProduct: retailProducts,
+          flavor: flavors,
+        })
+        .from(retailOrderItemsV2)
+        .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
+        .leftJoin(flavors, eq(flavors.id, sql`COALESCE(${retailOrderItemsV2.selectedFlavorId}, ${retailProducts.flavorId})`))
+        .where(sql`${retailOrderItemsV2.orderId} = ANY(ARRAY[${sql.join(orderIds.map(id => sql`${id}::text`), sql`, `)}])`) : [];
+      
+      // Group items by orderId
+      const itemsByOrderId: Record<string, Array<{
+        id: string;
+        quantity: number;
+        unitPrice: string;
+        productName: string;
+        flavorName: string | null;
+        unitDescription: string;
+      }>> = {};
+      
+      for (const item of v2Items) {
+        if (!itemsByOrderId[item.orderId]) {
+          itemsByOrderId[item.orderId] = [];
+        }
+        itemsByOrderId[item.orderId].push({
+          id: item.id,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          productName: item.flavor?.name || 'Unknown Product',
+          flavorName: item.flavor?.name || null,
+          unitDescription: item.retailProduct?.unitDescription || '',
+        });
+      }
+      
+      // Attach items to orders
+      const ordersWithItems = orders.map(order => ({
+        ...order,
+        items: itemsByOrderId[order.id] || [],
+      }));
+      
+      res.json(ordersWithItems);
     } catch (error: any) {
       console.error("Error fetching retail orders:", error);
       res.status(500).json({ message: "Failed to fetch retail orders" });
