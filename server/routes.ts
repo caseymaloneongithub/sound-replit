@@ -4096,7 +4096,7 @@ If you have any questions, please don't hesitate to reach out!`,
 
   app.patch("/api/wholesale/orders/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const { status, deliveryDate } = req.body;
+      const { status, deliveryDate, notes, items } = req.body;
       
       const order = await storage.getWholesaleOrder(req.params.id);
       if (!order) {
@@ -4115,6 +4115,74 @@ If you have any questions, please don't hesitate to reach out!`,
       if (deliveryDate !== undefined) {
         const dateValue = deliveryDate ? new Date(deliveryDate) : null;
         updated = await storage.updateWholesaleOrderDeliveryDate(req.params.id, dateValue) || updated;
+      }
+
+      // Handle notes update
+      if (notes !== undefined) {
+        updated = await storage.updateWholesaleOrder(req.params.id, { notes: notes || null }) || updated;
+      }
+
+      // Handle order items update (replace all items)
+      if (items && Array.isArray(items)) {
+        // Get the customer to determine pricing
+        const customer = await storage.getWholesaleCustomer(order.customerId);
+        if (!customer) {
+          return res.status(400).json({ message: "Customer not found" });
+        }
+
+        // Get customer-specific pricing and unit types
+        const customerPricing = await storage.getWholesaleCustomerPricing(order.customerId);
+        const unitTypes = await storage.getWholesaleUnitTypes();
+
+        // Calculate new total and validate items
+        let newTotal = 0;
+        const validatedItems: Array<{ unitTypeId: string; flavorId: string; quantity: number; unitPrice: string }> = [];
+
+        for (const item of items) {
+          if (!item.unitTypeId || !item.flavorId || !item.quantity || item.quantity <= 0) {
+            return res.status(400).json({ message: "Invalid item: each item must have unitTypeId, flavorId, and positive quantity" });
+          }
+
+          // Get price - check for customer-specific pricing first
+          const customPrice = customerPricing.find(p => p.unitTypeId === item.unitTypeId);
+          let unitPrice: number;
+          
+          if (customPrice) {
+            unitPrice = Number(customPrice.customPrice);
+          } else {
+            const unitType = unitTypes.find(ut => ut.id === item.unitTypeId);
+            if (!unitType) {
+              return res.status(400).json({ message: `Invalid unit type: ${item.unitTypeId}` });
+            }
+            unitPrice = Number(unitType.defaultPrice);
+          }
+
+          validatedItems.push({
+            unitTypeId: item.unitTypeId,
+            flavorId: item.flavorId,
+            quantity: item.quantity,
+            unitPrice: unitPrice.toString(),
+          });
+
+          newTotal += unitPrice * item.quantity;
+        }
+
+        // Delete existing items
+        await storage.deleteWholesaleOrderItems(req.params.id);
+
+        // Create new items
+        for (const item of validatedItems) {
+          await storage.createWholesaleOrderItem({
+            orderId: req.params.id,
+            unitTypeId: item.unitTypeId,
+            flavorId: item.flavorId,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+          });
+        }
+
+        // Update order total
+        updated = await storage.updateWholesaleOrder(req.params.id, { totalAmount: newTotal.toString() }) || updated;
       }
 
       res.json(updated);
