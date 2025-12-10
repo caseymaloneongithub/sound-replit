@@ -1,9 +1,11 @@
 import cron from 'node-cron';
 import Stripe from 'stripe';
 import { db } from './db';
-import { retailOrders, retailOrderItemsV2, retailSubscriptions, retailSubscriptionItems, retailProducts } from '../shared/schema';
-import { eq, and, lte, sql } from 'drizzle-orm';
+import { retailOrders, retailOrderItemsV2, retailSubscriptions, retailSubscriptionItems, retailProducts, flavors } from '../shared/schema';
+import { eq, and, lte, sql, gte, lt } from 'drizzle-orm';
 import { normalizeToAllowedPickupDay } from '../shared/pickup-policy';
+import { sendBillingReminderEmail } from './email';
+import { addDays, startOfDay, endOfDay } from 'date-fns';
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-10-29.clover' })
@@ -342,14 +344,156 @@ export async function runDailyBilling() {
   }
 }
 
+/**
+ * Send billing reminder emails to subscribers whose billing is due in 2 days
+ * Uses UTC timestamps consistently via millisecond arithmetic to avoid timezone issues
+ */
+export async function sendBillingReminders() {
+  console.log('[BILLING REMINDERS] Checking for subscriptions due in ~2 days...');
+
+  try {
+    const nowMs = Date.now();
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+    
+    // Use millisecond arithmetic to avoid any timezone drift from date-fns
+    // Subscriptions due between 48 and 72 hours from now (in UTC)
+    const reminderWindowStart = new Date(nowMs + (2 * MS_PER_DAY)); // 48 hours from now
+    const reminderWindowEnd = new Date(nowMs + (3 * MS_PER_DAY));   // 72 hours from now
+
+    // Find active subscriptions that:
+    // - Are locally managed
+    // - Are active status
+    // - Have active billing status  
+    // - Are NOT locked for processing
+    // - Have nextChargeAt within our reminder window
+    const upcomingSubscriptions = await db
+      .select()
+      .from(retailSubscriptions)
+      .where(
+        and(
+          eq(retailSubscriptions.billingType, 'local_managed'),
+          eq(retailSubscriptions.status, 'active'),
+          eq(retailSubscriptions.billingStatus, 'active'),
+          eq(retailSubscriptions.processingLock, false),
+          gte(retailSubscriptions.nextChargeAt, reminderWindowStart),
+          lt(retailSubscriptions.nextChargeAt, reminderWindowEnd)
+        )
+      );
+
+    console.log(`[BILLING REMINDERS] Found ${upcomingSubscriptions.length} subscriptions due in 2 days`);
+
+    if (upcomingSubscriptions.length === 0) {
+      console.log('[BILLING REMINDERS] No reminders to send');
+      return;
+    }
+
+    const TAX_RATE = 0.1035;
+
+    // Basic email validation regex
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    for (const subscription of upcomingSubscriptions) {
+      try {
+        // Validate customer email exists and is valid
+        if (!subscription.customerEmail || typeof subscription.customerEmail !== 'string') {
+          console.warn(`[BILLING REMINDERS] Subscription ${subscription.id} has no customer email, skipping`);
+          continue;
+        }
+        
+        if (!emailRegex.test(subscription.customerEmail)) {
+          console.warn(`[BILLING REMINDERS] Subscription ${subscription.id} has invalid email format: ${subscription.customerEmail}, skipping`);
+          continue;
+        }
+
+        // Get subscription items with product and flavor info
+        const items = await db
+          .select({
+            id: retailSubscriptionItems.id,
+            quantity: retailSubscriptionItems.quantity,
+            selectedFlavorId: retailSubscriptionItems.selectedFlavorId,
+            retailProduct: retailProducts,
+          })
+          .from(retailSubscriptionItems)
+          .leftJoin(retailProducts, eq(retailSubscriptionItems.retailProductId, retailProducts.id))
+          .where(eq(retailSubscriptionItems.subscriptionId, subscription.id));
+
+        if (items.length === 0) {
+          console.warn(`[BILLING REMINDERS] Subscription ${subscription.id} has no items, skipping`);
+          continue;
+        }
+
+        // Calculate estimated total
+        let subtotal = 0;
+        const subscriptionItems: Array<{ productName: string; quantity: number; price: string }> = [];
+
+        for (const item of items) {
+          if (!item.retailProduct) continue;
+          
+          const basePrice = parseFloat(item.retailProduct.price);
+          const discount = item.retailProduct.subscriptionDiscount ? Number(item.retailProduct.subscriptionDiscount) : 0;
+          const unitPrice = basePrice * (1 - discount / 100);
+          const lineTotal = unitPrice * item.quantity;
+          subtotal += lineTotal;
+
+          // Get flavor name if it's a multi-flavor product
+          let productName = item.retailProduct.productName || item.retailProduct.unitType;
+          if (item.selectedFlavorId) {
+            const [flavor] = await db
+              .select()
+              .from(flavors)
+              .where(eq(flavors.id, item.selectedFlavorId));
+            if (flavor) {
+              productName = `${item.retailProduct.productName || item.retailProduct.unitType} - ${flavor.name}`;
+            }
+          }
+
+          subscriptionItems.push({
+            productName,
+            quantity: item.quantity,
+            price: `$${unitPrice.toFixed(2)}`
+          });
+        }
+
+        const taxAmount = subtotal * TAX_RATE;
+        const estimatedTotal = subtotal + taxAmount;
+
+        // Send the reminder email
+        await sendBillingReminderEmail({
+          customerEmail: subscription.customerEmail,
+          customerName: subscription.customerName,
+          billingDate: subscription.nextChargeAt!,
+          subscriptionItems,
+          estimatedTotal
+        });
+
+        console.log(`[BILLING REMINDERS] ✅ Sent reminder to ${subscription.customerEmail}`);
+      } catch (error) {
+        console.error(`[BILLING REMINDERS] Error sending reminder for subscription ${subscription.id}:`, error);
+        // Continue with other subscriptions even if one fails
+      }
+    }
+
+    console.log('[BILLING REMINDERS] Finished sending reminders');
+  } catch (error) {
+    console.error('[BILLING REMINDERS] Fatal error:', error);
+  }
+}
+
 // Schedule daily billing at 4:00 AM Pacific Time
 export function startBillingCron() {
   console.log('[BILLING] Scheduling daily billing cron job for 4:00 AM');
+  console.log('[BILLING] Scheduling billing reminder cron job for 9:00 AM');
   
-  // Run at 4:00 AM every day
+  // Run billing at 4:00 AM every day
   cron.schedule('0 4 * * *', async () => {
     console.log('[BILLING] Cron triggered at 4:00 AM');
     await runDailyBilling();
+  });
+
+  // Run billing reminders at 9:00 AM every day (2 days before billing)
+  cron.schedule('0 9 * * *', async () => {
+    console.log('[BILLING REMINDERS] Cron triggered at 9:00 AM');
+    await sendBillingReminders();
   });
 
   // Also run on startup to catch any missed billings

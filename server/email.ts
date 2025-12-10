@@ -729,3 +729,107 @@ export async function sendFileEmail(params: SendFileEmailParams): Promise<void> 
     throw error;
   }
 }
+
+interface BillingReminderEmailParams {
+  customerEmail: string;
+  customerName: string;
+  billingDate: Date;
+  subscriptionItems: Array<{ productName: string; quantity: number; price: string }>;
+  estimatedTotal: number;
+}
+
+export async function sendBillingReminderEmail(params: BillingReminderEmailParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send billing reminder email to:', params.customerEmail);
+    console.log('[EMAIL] Customer:', params.customerName);
+    console.log('[EMAIL] Billing date:', params.billingDate);
+    return;
+  }
+
+  const formattedDate = params.billingDate.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  const itemsList = params.subscriptionItems
+    .map(item => `- ${item.productName} (${item.quantity} case${item.quantity > 1 ? 's' : ''}) - ${item.price}`)
+    .join('\n');
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.customerEmail,
+    subject: `Upcoming Subscription Billing - ${formattedDate}`,
+    text: `
+Hi ${params.customerName},
+
+This is a friendly reminder that your kombucha subscription will be billed in 2 days on ${formattedDate}.
+
+Subscription Items:
+${itemsList}
+
+Estimated Total: $${params.estimatedTotal.toFixed(2)} (including tax)
+
+If you need to make any changes to your subscription, please visit your account page before your billing date.
+
+Thank you for being a valued subscriber!
+
+Best regards,
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader('Upcoming Subscription Billing')}
+  
+  <div style="padding: 32px 24px;">
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 16px 0;">Hi ${params.customerName},</p>
+    
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 24px 0;">This is a friendly reminder that your kombucha subscription will be billed in <strong>2 days</strong>.</p>
+    
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin: 24px 0; border: 2px solid ${BRAND_COLORS.black};">
+      <p style="margin: 0; font-weight: bold; color: ${BRAND_COLORS.black}; font-size: 18px;">Billing Date: ${formattedDate}</p>
+    </div>
+    
+    <h2 style="font-size: 18px; margin-top: 24px; color: ${BRAND_COLORS.darkGrey}; border-bottom: 2px solid ${BRAND_COLORS.black}; padding-bottom: 8px;">Subscription Items</h2>
+    <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+      ${params.subscriptionItems.map(item => `
+        <tr>
+          <td style="padding: 8px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">
+            ${item.productName}
+          </td>
+          <td style="padding: 8px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: center; color: ${BRAND_COLORS.mediumGrey};">
+            ${item.quantity} case${item.quantity > 1 ? 's' : ''}
+          </td>
+          <td style="padding: 8px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">
+            ${item.price}
+          </td>
+        </tr>
+      `).join('')}
+    </table>
+    
+    <div style="background-color: ${BRAND_COLORS.black}; color: ${BRAND_COLORS.white}; padding: 16px; border-radius: 4px; margin: 24px 0;">
+      <p style="margin: 0; font-size: 16px;">Estimated Total: <strong>$${params.estimatedTotal.toFixed(2)}</strong> <span style="font-size: 12px; opacity: 0.8;">(including tax)</span></p>
+    </div>
+    
+    <p style="color: ${BRAND_COLORS.mediumGrey}; line-height: 1.6; margin: 24px 0 0 0; font-size: 14px;">If you need to make any changes to your subscription, please visit your account page before your billing date.</p>
+    
+    <p style="color: ${BRAND_COLORS.darkGrey}; margin-top: 32px;">Thank you for being a valued subscriber!</p>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent billing reminder to ${params.customerEmail} for billing on ${formattedDate}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send billing reminder email:', error);
+    throw error;
+  }
+}
