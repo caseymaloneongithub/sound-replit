@@ -53,7 +53,7 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   **Neon Database**: Primary PostgreSQL data storage.
 -   **Gmail/Nodemailer**: For passwordless email login and password reset emails.
 -   **Plaid** (Optional): Automatic bank transaction import for accounting module. If not configured, manual CSV import is available as fallback.
--   **Mapbox**: Geocoding and route optimization for wholesale deliveries. Uses Mapbox Geocoding API and Optimization API.
+-   **Mapbox**: Geocoding, route optimization, and address autofill for wholesale deliveries. Uses Mapbox Geocoding API, Optimization API, and Address Autofill API for predictive address search in forms.
 
 ### Key NPM Packages
 
@@ -75,4 +75,5 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   `PLAID_CLIENT_ID` (Optional - for bank transaction imports)
 -   `PLAID_SECRET` (Optional - for bank transaction imports)
 -   `PLAID_ENV` (Optional - defaults to 'sandbox')
--   `MAPBOX_ACCESS_TOKEN` (Required - for delivery route optimization and geocoding)
+-   `MAPBOX_ACCESS_TOKEN` (Required - for delivery route optimization, geocoding, and address autofill)
+-   `VITE_MAPBOX_ACCESS_TOKEN` (Frontend - for address autofill in forms)

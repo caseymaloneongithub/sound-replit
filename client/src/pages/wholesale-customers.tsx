@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AddressAutofillFields } from "@/components/address-autofill";
 
 export default function WholesaleCustomers() {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -971,62 +972,28 @@ export default function WholesaleCustomers() {
                       </FormItem>
                     )}
                   />
-                  <FormField
-                    control={locationForm.control}
-                    name="address"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Street Address</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="123 Main St" data-testid="input-location-address" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
+                  <AddressAutofillFields
+                    addressValue={locationForm.watch("address") || ""}
+                    cityValue={locationForm.watch("city") || ""}
+                    stateValue={locationForm.watch("state") || ""}
+                    zipCodeValue={locationForm.watch("zipCode") || ""}
+                    onAddressChange={(val) => locationForm.setValue("address", val)}
+                    onCityChange={(val) => locationForm.setValue("city", val)}
+                    onStateChange={(val) => locationForm.setValue("state", val)}
+                    onZipCodeChange={(val) => locationForm.setValue("zipCode", val)}
+                    addressPlaceholder="Start typing an address..."
+                    cityPlaceholder="Seattle"
+                    statePlaceholder="WA"
+                    zipPlaceholder="98101"
+                    addressTestId="input-location-address"
+                    cityTestId="input-location-city"
+                    stateTestId="input-location-state"
+                    zipTestId="input-location-zip"
+                    addressError={locationForm.formState.errors.address?.message}
+                    cityError={locationForm.formState.errors.city?.message}
+                    stateError={locationForm.formState.errors.state?.message}
+                    zipError={locationForm.formState.errors.zipCode?.message}
                   />
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={locationForm.control}
-                      name="city"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>City</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="Seattle" data-testid="input-location-city" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      <FormField
-                        control={locationForm.control}
-                        name="state"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>State</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="WA" maxLength={2} data-testid="input-location-state" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={locationForm.control}
-                        name="zipCode"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>ZIP</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="98101" data-testid="input-location-zip" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                  </div>
                   <FormField
                     control={locationForm.control}
                     name="contactName"

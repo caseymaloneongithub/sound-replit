@@ -19,6 +19,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { AddressAutofillFields } from "@/components/address-autofill";
 
 interface DeliveryStop {
   id: string;
@@ -512,72 +513,28 @@ export default function DeliveryRoutes() {
                               </FormItem>
                             )}
                           />
-                          <FormField
-                            control={form.control}
-                            name="address"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Address</FormLabel>
-                                <FormControl>
-                                  <Input
-                                    placeholder="1234 Main St"
-                                    {...field}
-                                    data-testid="input-stop-address"
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
+                          <AddressAutofillFields
+                            addressValue={form.watch("address")}
+                            cityValue={form.watch("city")}
+                            stateValue={form.watch("state")}
+                            zipCodeValue={form.watch("zipCode")}
+                            onAddressChange={(val) => form.setValue("address", val)}
+                            onCityChange={(val) => form.setValue("city", val)}
+                            onStateChange={(val) => form.setValue("state", val)}
+                            onZipCodeChange={(val) => form.setValue("zipCode", val)}
+                            addressPlaceholder="Start typing an address..."
+                            cityPlaceholder="Seattle"
+                            statePlaceholder="WA"
+                            zipPlaceholder="98107"
+                            addressTestId="input-stop-address"
+                            cityTestId="input-stop-city"
+                            stateTestId="input-stop-state"
+                            zipTestId="input-stop-zip"
+                            addressError={form.formState.errors.address?.message}
+                            cityError={form.formState.errors.city?.message}
+                            stateError={form.formState.errors.state?.message}
+                            zipError={form.formState.errors.zipCode?.message}
                           />
-                          <div className="grid grid-cols-3 gap-3">
-                            <FormField
-                              control={form.control}
-                              name="city"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>City</FormLabel>
-                                  <FormControl>
-                                    <Input
-                                      placeholder="Seattle"
-                                      {...field}
-                                      data-testid="input-stop-city"
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <FormField
-                              control={form.control}
-                              name="state"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>State</FormLabel>
-                                  <FormControl>
-                                    <Input {...field} data-testid="input-stop-state" />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <FormField
-                              control={form.control}
-                              name="zipCode"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Zip</FormLabel>
-                                  <FormControl>
-                                    <Input
-                                      placeholder="98107"
-                                      {...field}
-                                      data-testid="input-stop-zip"
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </div>
                           <FormField
                             control={form.control}
                             name="notes"
