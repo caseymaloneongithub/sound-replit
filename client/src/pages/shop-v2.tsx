@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { RetailProduct, Flavor } from "@shared/schema";
+import type { RetailProduct, Flavor, RetailCartItem } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,10 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
 import logo from "@assets/text-stacked-black_1762299663824.png";
+
+type RetailCartItemWithProduct = RetailCartItem & {
+  retailProduct: RetailProduct & { flavor: Flavor | null; flavors: Flavor[] };
+};
 
 function ProductImageCarousel({ 
   primaryImageUrl, 
@@ -104,6 +108,13 @@ export default function ShopV2() {
     queryKey: ["/api/retail-products"],
   });
 
+  const { data: cartItems = [] } = useQuery<RetailCartItemWithProduct[]>({
+    queryKey: ["/api/retail-cart"],
+  });
+
+  const hasSubscriptionItems = cartItems.some(item => item.isSubscription);
+  const hasOneTimeItems = cartItems.some(item => !item.isSubscription);
+
   const addToCartMutation = useMutation({
     mutationFn: async ({ retailProductId, selectedFlavorId, isSubscription, subscriptionFrequency }: { 
       retailProductId: string;
@@ -153,6 +164,14 @@ export default function ShopV2() {
   }, {} as Record<string, RetailProductWithFlavors[]>) || {};
 
   const oneTimePurchase = (retailProductId: string, selectedFlavorId?: string) => {
+    if (hasSubscriptionItems) {
+      toast({
+        title: "Cannot mix order types",
+        description: "One-time and subscription products must be purchased separately. Please complete your subscription order first, or remove subscription items from your cart.",
+        variant: "destructive",
+      });
+      return;
+    }
     addToCartMutation.mutate({
       retailProductId,
       selectedFlavorId,
@@ -161,6 +180,14 @@ export default function ShopV2() {
   };
 
   const subscriptionPurchase = (retailProductId: string, frequency: string, selectedFlavorId?: string) => {
+    if (hasOneTimeItems) {
+      toast({
+        title: "Cannot mix order types",
+        description: "One-time and subscription products must be purchased separately. Please complete your one-time order first, or remove one-time items from your cart.",
+        variant: "destructive",
+      });
+      return;
+    }
     addToCartMutation.mutate({
       retailProductId,
       selectedFlavorId,
