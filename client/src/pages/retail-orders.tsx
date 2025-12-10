@@ -186,8 +186,8 @@ export default function RetailOrders() {
       );
     }
 
-    // Calculate consolidated items for pending orders
-    const consolidatedItems = status === 'pending' ? (() => {
+    // Calculate consolidated items for pending and ready_for_pickup orders
+    const consolidatedItems = (status === 'pending' || status === 'ready_for_pickup') ? (() => {
       const itemMap: Record<string, { productName: string; unitDescription: string; quantity: number }> = {};
       
       filteredOrders.forEach(order => {
@@ -207,18 +207,20 @@ export default function RetailOrders() {
       return Object.values(itemMap).sort((a, b) => a.productName.localeCompare(b.productName));
     })() : [];
 
+    const summaryTitle = status === 'pending' ? 'Items to Prepare' : 'Items Packaged';
+
     return (
       <div className="space-y-4">
-        {/* Items to Prepare Summary - Only for pending orders */}
-        {status === 'pending' && consolidatedItems.length > 0 && (
-          <Card data-testid="card-items-to-prepare">
+        {/* Items Summary - For pending and ready_for_pickup orders */}
+        {(status === 'pending' || status === 'ready_for_pickup') && consolidatedItems.length > 0 && (
+          <Card data-testid={`card-items-summary-${status}`}>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-semibold text-lg flex items-center gap-2">
                   <Package className="w-5 h-5" />
-                  Items to Prepare
+                  {summaryTitle}
                 </h3>
-                <Badge variant="secondary" data-testid="badge-item-count-pending">
+                <Badge variant="secondary" data-testid={`badge-item-count-${status}`}>
                   {consolidatedItems.length} {consolidatedItems.length === 1 ? 'product' : 'products'}
                 </Badge>
               </div>
@@ -227,7 +229,7 @@ export default function RetailOrders() {
                   <div 
                     key={index}
                     className="flex justify-between items-center bg-muted/50 rounded-md px-3 py-2"
-                    data-testid={`prepare-item-${index}`}
+                    data-testid={`summary-item-${status}-${index}`}
                   >
                     <div className="flex-1">
                       <span className="font-medium">{item.productName}</span>
