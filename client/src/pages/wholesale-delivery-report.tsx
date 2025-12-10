@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { WholesaleOrder, WholesaleCustomer, WholesaleOrderItem, Product } from "@shared/schema";
+import { WholesaleOrder, WholesaleCustomer, WholesaleOrderItem, Product, WholesaleUnitType, Flavor } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,6 +49,14 @@ export default function WholesaleDeliveryReport() {
 
   const { data: products = [] } = useQuery<Product[]>({
     queryKey: ["/api/products"],
+  });
+
+  const { data: unitTypes = [] } = useQuery<WholesaleUnitType[]>({
+    queryKey: ["/api/wholesale-unit-types"],
+  });
+
+  const { data: flavors = [] } = useQuery<Flavor[]>({
+    queryKey: ["/api/flavors"],
   });
 
   const { data: allOrderItems = [] } = useQuery<WholesaleOrderItem[]>({
@@ -252,14 +260,35 @@ export default function WholesaleDeliveryReport() {
                                 <p className="text-sm font-medium mb-2">Items:</p>
                                 <div className="space-y-2">
                                   {orderItems.map((item) => {
-                                    const product = products.find(p => p.id === item.productId);
+                                    let productName = 'Unknown Product';
+                                    
+                                    // New system: use unitTypeId and flavorId
+                                    if (item.unitTypeId && item.flavorId) {
+                                      const unitType = unitTypes.find(u => u.id === item.unitTypeId);
+                                      const flavor = flavors.find(f => f.id === item.flavorId);
+                                      if (unitType && flavor) {
+                                        productName = `${flavor.name} (${unitType.name})`;
+                                      } else if (unitType) {
+                                        productName = unitType.name;
+                                      } else if (flavor) {
+                                        productName = flavor.name;
+                                      }
+                                    } 
+                                    // Legacy system: use productId
+                                    else if (item.productId) {
+                                      const product = products.find(p => p.id === item.productId);
+                                      if (product) {
+                                        productName = product.name;
+                                      }
+                                    }
+                                    
                                     return (
                                       <div 
                                         key={item.id}
                                         className="flex items-center justify-between text-sm"
                                       >
                                         <span>
-                                          {product?.name || 'Unknown Product'} × {item.quantity}
+                                          {productName} × {item.quantity}
                                         </span>
                                         <span className="font-medium">
                                           ${(Number(item.unitPrice) * item.quantity).toFixed(2)}
