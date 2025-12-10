@@ -4,7 +4,7 @@ import { db } from './db';
 import { retailOrders, retailOrderItemsV2, retailSubscriptions, retailSubscriptionItems, retailProducts, flavors } from '../shared/schema';
 import { eq, and, lte, sql, gte, lt } from 'drizzle-orm';
 import { normalizeToAllowedPickupDay, getBillingDateForPickup } from '../shared/pickup-policy';
-import { sendBillingReminderEmail } from './email';
+import { sendBillingReminderEmail, sendSubscriptionChargeConfirmationEmail } from './email';
 import { addDays, startOfDay, endOfDay } from 'date-fns';
 
 const stripe = process.env.STRIPE_SECRET_KEY 
@@ -143,6 +143,59 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
       .where(eq(retailSubscriptions.id, sub.id));
 
     console.log(`[BILLING] ✅ Finalized retail subscription charge ${sub.id} - Order ${orderNumber} created`);
+
+    // Send charge confirmation email with pickup instructions
+    try {
+      // Get pickup date from the current subscription (before we updated it)
+      // The order is for the pickup date that was set before this renewal
+      const pickupDate = sub.nextDeliveryDate || new Date();
+      
+      // Build subscription items with product and flavor names for the email
+      const subscriptionItemsForEmail = await Promise.all(items.map(async (item) => {
+        if (!item.retailProduct) {
+          return null;
+        }
+        
+        // Get flavor name if selected
+        let flavorName: string | undefined;
+        if (item.selectedFlavorId) {
+          const [flavor] = await db
+            .select({ name: flavors.name })
+            .from(flavors)
+            .where(eq(flavors.id, item.selectedFlavorId));
+          flavorName = flavor?.name;
+        }
+        
+        const basePrice = parseFloat(item.retailProduct.price);
+        const discount = item.retailProduct.subscriptionDiscount ? Number(item.retailProduct.subscriptionDiscount) : 0;
+        const unitPrice = basePrice * (1 - discount / 100);
+        const itemTotal = unitPrice * item.quantity;
+        
+        return {
+          productName: item.retailProduct.productName || 'Product',
+          quantity: item.quantity,
+          flavorName,
+          price: `$${itemTotal.toFixed(2)}`,
+        };
+      }));
+      
+      const validItems = subscriptionItemsForEmail.filter((item): item is NonNullable<typeof item> => item !== null);
+      
+      if (sub.customerEmail && validItems.length > 0) {
+        await sendSubscriptionChargeConfirmationEmail({
+          customerEmail: sub.customerEmail,
+          customerName: sub.customerName,
+          pickupDate: new Date(pickupDate),
+          subscriptionItems: validItems,
+          totalAmount: totalAmount,
+          orderNumber,
+        });
+      }
+    } catch (emailError) {
+      // Log but don't fail the billing process if email fails
+      console.error(`[BILLING] Failed to send confirmation email for subscription ${sub.id}:`, emailError);
+    }
+
     return true;
   } catch (error: any) {
     console.error(`[BILLING] Error in finalizeRetailSubscriptionCharge:`, error.message);

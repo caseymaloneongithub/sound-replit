@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { format } from 'date-fns';
 
 // Email branding - black, grey, and white color scheme
 const BRAND_COLORS = {
@@ -830,6 +831,135 @@ Puget Sound Kombucha Co.
     console.log(`[EMAIL] ✅ Sent billing reminder to ${params.customerEmail} for billing on ${formattedDate}`);
   } catch (error) {
     console.error('[EMAIL] Failed to send billing reminder email:', error);
+    throw error;
+  }
+}
+
+interface SubscriptionChargeConfirmationParams {
+  customerEmail: string;
+  customerName: string;
+  pickupDate: Date;
+  subscriptionItems: Array<{
+    productName: string;
+    quantity: number;
+    flavorName?: string;
+    price: string;
+  }>;
+  totalAmount: number;
+  orderNumber?: string;
+}
+
+export async function sendSubscriptionChargeConfirmationEmail(params: SubscriptionChargeConfirmationParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send subscription charge confirmation to:', params.customerEmail);
+    console.log('[EMAIL] Pickup date:', params.pickupDate);
+    return;
+  }
+
+  const formattedPickupDate = format(params.pickupDate, 'EEEE, MMMM d, yyyy');
+  
+  const itemsText = params.subscriptionItems
+    .map(item => {
+      const flavorInfo = item.flavorName ? ` - ${item.flavorName}` : '';
+      return `- ${item.productName}${flavorInfo} x ${item.quantity} (${item.price})`;
+    })
+    .join('\n');
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.customerEmail,
+    subject: `Your Subscription Order is Confirmed! Pickup on ${format(params.pickupDate, 'EEEE, MMM d')}`,
+    text: `
+Hi ${params.customerName},
+
+Your subscription has been charged and your order is confirmed!
+
+${params.orderNumber ? `Order Number: ${params.orderNumber}\n` : ''}
+PICKUP DATE: ${formattedPickupDate}
+
+Your Items:
+${itemsText}
+
+Total Charged: $${params.totalAmount.toFixed(2)} (including tax)
+
+PICKUP INSTRUCTIONS
+-------------------
+Address: 4501 Shilshole Ave NW, Seattle, WA 98107
+Hours: Monday-Thursday, 9:00am to 3:00pm
+Location: At the back of the building at the garage door
+Phone: (206) 789-5219
+
+Please call when you arrive and we'll bring your order out!
+
+Thank you for being a valued subscriber!
+
+Best regards,
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader('Your Subscription Order is Confirmed!')}
+  
+  <div style="padding: 32px 24px;">
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 16px 0;">Hi ${params.customerName},</p>
+    
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 24px 0;">Your subscription has been charged and your order is confirmed!</p>
+    
+    ${params.orderNumber ? `
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 12px 16px; border-radius: 4px; margin: 0 0 16px 0; border: 2px solid ${BRAND_COLORS.black};">
+      <p style="margin: 0; font-weight: bold; color: ${BRAND_COLORS.black};">Order Number: ${params.orderNumber}</p>
+    </div>
+    ` : ''}
+    
+    <div style="background-color: ${BRAND_COLORS.black}; color: ${BRAND_COLORS.white}; padding: 20px; border-radius: 4px; margin-bottom: 24px;">
+      <p style="margin: 0 0 4px 0; font-size: 14px; opacity: 0.9;">PICKUP DATE</p>
+      <p style="margin: 0; font-size: 20px; font-weight: bold;">${formattedPickupDate}</p>
+    </div>
+    
+    <h2 style="font-size: 16px; margin: 24px 0 12px 0; color: ${BRAND_COLORS.darkGrey}; border-bottom: 2px solid ${BRAND_COLORS.black}; padding-bottom: 8px;">Your Items</h2>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+      ${params.subscriptionItems.map(item => `
+        <tr>
+          <td style="padding: 8px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">
+            ${item.productName}${item.flavorName ? ` - ${item.flavorName}` : ''} x ${item.quantity}
+          </td>
+          <td style="padding: 8px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">
+            ${item.price}
+          </td>
+        </tr>
+      `).join('')}
+      <tr>
+        <td style="padding: 12px 0; font-weight: bold; color: ${BRAND_COLORS.black};">Total Charged</td>
+        <td style="padding: 12px 0; text-align: right; font-weight: bold; color: ${BRAND_COLORS.black};">$${params.totalAmount.toFixed(2)}</td>
+      </tr>
+    </table>
+    <p style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 24px 0;">* Price includes 10.35% sales tax</p>
+    
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 20px; border-radius: 4px; border: 2px solid ${BRAND_COLORS.black};">
+      <h3 style="margin: 0 0 16px 0; font-size: 16px; color: ${BRAND_COLORS.black};">📍 Pickup Instructions</h3>
+      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Address:</strong> 4501 Shilshole Ave NW, Seattle, WA 98107</p>
+      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Hours:</strong> Monday-Thursday, 9:00am to 3:00pm</p>
+      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Location:</strong> At the back of the building at the garage door</p>
+      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Phone:</strong> (206) 789-5219</p>
+      <p style="margin: 16px 0 0 0; color: ${BRAND_COLORS.black}; font-weight: 600;">📞 Please call when you arrive and we'll bring your order out!</p>
+    </div>
+    
+    <p style="color: ${BRAND_COLORS.darkGrey}; margin-top: 32px;">Thank you for being a valued subscriber!</p>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent subscription charge confirmation to ${params.customerEmail} for pickup on ${formattedPickupDate}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send subscription charge confirmation email:', error);
     throw error;
   }
 }
