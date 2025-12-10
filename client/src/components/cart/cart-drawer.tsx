@@ -230,6 +230,10 @@ export function CartDrawer() {
                 </div>
               )}
               
+              <div className="text-sm text-muted-foreground pt-2">
+                Pickup at our Ballard location
+              </div>
+              
               <div className="flex items-center justify-between text-lg font-bold pt-2 border-t">
                 <span>Total</span>
                 <span data-testid="text-cart-total">${cartTotal.toFixed(2)}</span>
