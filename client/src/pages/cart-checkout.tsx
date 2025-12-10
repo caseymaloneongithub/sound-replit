@@ -804,6 +804,10 @@ export default function CartCheckout() {
                     <span data-testid="text-summary-deposit">${paymentInfo.depositAmount.toFixed(2)}</span>
                   </div>
                 )}
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Pickup at our Ballard facility</span>
+                  <span>Free</span>
+                </div>
                 <div className="flex justify-between text-lg font-bold pt-2 border-t">
                   <span>Total</span>
                   <span data-testid="text-summary-total">${paymentInfo.total.toFixed(2)}</span>
