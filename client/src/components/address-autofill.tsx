@@ -212,7 +212,14 @@ export function AddressAutofillFields({
       <FormItem>
         <FormLabel>Street Address</FormLabel>
         <FormControl>
-          <AddressAutofill accessToken={MAPBOX_TOKEN} onRetrieve={handleRetrieve}>
+          <AddressAutofill 
+            accessToken={MAPBOX_TOKEN} 
+            onRetrieve={handleRetrieve}
+            options={{
+              country: "US",
+              proximity: { lng: -122.3321, lat: 47.6062 }
+            }}
+          >
             <Input
               placeholder={addressPlaceholder}
               value={addressValue}
