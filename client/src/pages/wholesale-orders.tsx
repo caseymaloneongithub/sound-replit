@@ -1,4 +1,4 @@
-import { useState, Fragment } from "react";
+import { useState, Fragment, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { WholesaleOrder, WholesaleCustomer, WholesaleOrderItem, WholesaleUnitType, Flavor } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,12 +6,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ShoppingCart, Eye, CalendarIcon, FileText, ArrowUpDown, Loader2, ChevronRight, ChevronDown } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { ShoppingCart, Eye, CalendarIcon, FileText, ArrowUpDown, Loader2, ChevronRight, ChevronDown, Pencil, Plus, Trash2 } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -35,6 +38,12 @@ function getStatusLabel(status: string): string {
   }
 }
 
+interface EditItem {
+  unitTypeId: string;
+  flavorId: string;
+  quantity: number;
+}
+
 export default function WholesaleOrders() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -44,6 +53,9 @@ export default function WholesaleOrders() {
     packaged: 'desc',
     delivered: 'desc',
   });
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editItems, setEditItems] = useState<EditItem[]>([]);
+  const [editNotes, setEditNotes] = useState('');
   const { toast } = useToast();
 
   const { data: orders = [], isLoading } = useQuery<WholesaleOrder[]>({
@@ -117,6 +129,87 @@ export default function WholesaleOrders() {
       });
     },
   });
+
+  const updateOrderMutation = useMutation({
+    mutationFn: async ({ orderId, items, notes }: { orderId: string; items: EditItem[]; notes: string }) => {
+      return await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, { 
+        items,
+        notes: notes || null
+      });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Order Updated",
+        description: "Order has been updated successfully",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/all-order-items"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders", selectedOrderId, "items"] });
+      setIsEditMode(false);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update order",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const initializeEditMode = () => {
+    if (selectedOrder && orderItems) {
+      setEditItems(orderItems.map(item => ({
+        unitTypeId: item.unitTypeId || '',
+        flavorId: item.flavorId || '',
+        quantity: item.quantity,
+      })));
+      setEditNotes(selectedOrder.notes || '');
+      setIsEditMode(true);
+    }
+  };
+
+  const handleAddItem = () => {
+    setEditItems([...editItems, { unitTypeId: '', flavorId: '', quantity: 1 }]);
+  };
+
+  const handleRemoveItem = (index: number) => {
+    setEditItems(editItems.filter((_, i) => i !== index));
+  };
+
+  const handleItemChange = (index: number, field: keyof EditItem, value: string | number) => {
+    const newItems = [...editItems];
+    if (field === 'quantity') {
+      newItems[index][field] = Number(value);
+    } else {
+      newItems[index][field] = value as string;
+    }
+    setEditItems(newItems);
+  };
+
+  const handleSaveOrder = () => {
+    if (!selectedOrderId) return;
+    const validItems = editItems.filter(item => item.unitTypeId && item.flavorId && item.quantity > 0);
+    if (validItems.length === 0) {
+      toast({
+        title: "Error",
+        description: "Order must have at least one valid item",
+        variant: "destructive",
+      });
+      return;
+    }
+    updateOrderMutation.mutate({
+      orderId: selectedOrderId,
+      items: validItems,
+      notes: editNotes,
+    });
+  };
+
+  const handleCloseDialog = () => {
+    setSelectedOrderId(null);
+    setIsEditMode(false);
+    setEditItems([]);
+    setEditNotes('');
+  };
 
   const toggleSort = (status: string) => {
     setSortOrders(prev => ({
@@ -541,13 +634,28 @@ export default function WholesaleOrders() {
         )}
       </div>
 
-      <Dialog open={!!selectedOrderId} onOpenChange={(open) => !open && setSelectedOrderId(null)}>
+      <Dialog open={!!selectedOrderId} onOpenChange={(open) => !open && handleCloseDialog()}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Order Details</DialogTitle>
-            <DialogDescription>
-              Invoice: {selectedOrder?.invoiceNumber}
-            </DialogDescription>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <DialogTitle>{isEditMode ? 'Edit Order' : 'Order Details'}</DialogTitle>
+                <DialogDescription>
+                  Invoice: {selectedOrder?.invoiceNumber}
+                </DialogDescription>
+              </div>
+              {!isEditMode && selectedOrder?.status !== 'delivered' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={initializeEditMode}
+                  data-testid="button-edit-order"
+                >
+                  <Pencil className="w-4 h-4 mr-2" />
+                  Edit Order
+                </Button>
+              )}
+            </div>
           </DialogHeader>
           
           {selectedOrder && selectedCustomer && (
@@ -573,44 +681,157 @@ export default function WholesaleOrders() {
                   )}
                   <div><strong>Total:</strong> ${Number(selectedOrder.totalAmount).toFixed(2)}</div>
                 </div>
-                {selectedOrder.notes && (
+                {!isEditMode && selectedOrder.notes && (
                   <div className="mt-2">
                     <strong>Notes:</strong> <span className="italic">{selectedOrder.notes}</span>
                   </div>
                 )}
               </div>
 
-              <div>
-                <h3 className="font-semibold mb-2">Order Items</h3>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Quantity</TableHead>
-                      <TableHead className="text-right">Unit Price</TableHead>
-                      <TableHead className="text-right">Subtotal</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {orderItems.map((item) => {
-                      const subtotal = Number(item.unitPrice) * item.quantity;
-                      const unitType = unitTypes.find(ut => ut.id === item.unitTypeId);
-                      const flavor = flavors.find(f => f.id === item.flavorId);
-                      const itemName = `${flavor?.name || 'Unknown Flavor'} - ${unitType?.name || 'Unknown Unit Type'}`;
-                      
-                      return (
-                        <TableRow key={item.id}>
-                          <TableCell>{itemName}</TableCell>
-                          <TableCell className="text-right">{item.quantity}</TableCell>
-                          <TableCell className="text-right">${Number(item.unitPrice).toFixed(2)}</TableCell>
-                          <TableCell className="text-right">${subtotal.toFixed(2)}</TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
+              {isEditMode ? (
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold">Order Items</h3>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAddItem}
+                        data-testid="button-add-item"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add Item
+                      </Button>
+                    </div>
+                    <div className="space-y-3">
+                      {editItems.map((item, index) => (
+                        <div key={index} className="flex items-center gap-2 p-3 border rounded-md">
+                          <div className="flex-1">
+                            <Label className="text-xs text-muted-foreground">Unit Type</Label>
+                            <Select
+                              value={item.unitTypeId}
+                              onValueChange={(value) => handleItemChange(index, 'unitTypeId', value)}
+                            >
+                              <SelectTrigger data-testid={`select-unit-type-${index}`}>
+                                <SelectValue placeholder="Select unit type" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {unitTypes.map((ut) => (
+                                  <SelectItem key={ut.id} value={ut.id}>
+                                    {ut.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex-1">
+                            <Label className="text-xs text-muted-foreground">Flavor</Label>
+                            <Select
+                              value={item.flavorId}
+                              onValueChange={(value) => handleItemChange(index, 'flavorId', value)}
+                            >
+                              <SelectTrigger data-testid={`select-flavor-${index}`}>
+                                <SelectValue placeholder="Select flavor" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {flavors.map((f) => (
+                                  <SelectItem key={f.id} value={f.id}>
+                                    {f.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="w-20">
+                            <Label className="text-xs text-muted-foreground">Qty</Label>
+                            <Input
+                              type="number"
+                              min="1"
+                              value={item.quantity}
+                              onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
+                              data-testid={`input-quantity-${index}`}
+                            />
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleRemoveItem(index)}
+                            disabled={editItems.length <= 1}
+                            data-testid={`button-remove-item-${index}`}
+                            className="mt-5"
+                          >
+                            <Trash2 className="w-4 h-4 text-destructive" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="edit-notes">Notes</Label>
+                    <Textarea
+                      id="edit-notes"
+                      value={editNotes}
+                      onChange={(e) => setEditNotes(e.target.value)}
+                      placeholder="Add any notes about this order..."
+                      className="mt-1"
+                      data-testid="textarea-notes"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <h3 className="font-semibold mb-2">Order Items</h3>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Product</TableHead>
+                        <TableHead className="text-right">Quantity</TableHead>
+                        <TableHead className="text-right">Unit Price</TableHead>
+                        <TableHead className="text-right">Subtotal</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {orderItems.map((item) => {
+                        const subtotal = Number(item.unitPrice) * item.quantity;
+                        const unitType = unitTypes.find(ut => ut.id === item.unitTypeId);
+                        const flavor = flavors.find(f => f.id === item.flavorId);
+                        const itemName = `${flavor?.name || 'Unknown Flavor'} - ${unitType?.name || 'Unknown Unit Type'}`;
+                        
+                        return (
+                          <TableRow key={item.id}>
+                            <TableCell>{itemName}</TableCell>
+                            <TableCell className="text-right">{item.quantity}</TableCell>
+                            <TableCell className="text-right">${Number(item.unitPrice).toFixed(2)}</TableCell>
+                            <TableCell className="text-right">${subtotal.toFixed(2)}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </div>
+          )}
+
+          {isEditMode && (
+            <DialogFooter className="gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setIsEditMode(false)}
+                data-testid="button-cancel-edit"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveOrder}
+                disabled={updateOrderMutation.isPending}
+                data-testid="button-save-order"
+              >
+                {updateOrderMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Save Changes
+              </Button>
+            </DialogFooter>
           )}
         </DialogContent>
       </Dialog>
