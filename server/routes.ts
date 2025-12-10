@@ -16,7 +16,7 @@ import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { getObjectAclPolicy } from "./objectAcl";
 import { createStripeCustomer } from "./stripeCustomer";
-import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY } from "@shared/pickup-policy";
+import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup } from "@shared/pickup-policy";
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
 import { insertDeliveryStopSchema } from "@shared/schema";
 
@@ -2054,7 +2054,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             28;
           const nextChargeDate = new Date();
           nextChargeDate.setDate(nextChargeDate.getDate() + daysUntilNext);
-          const normalizedNextDate = normalizeToAllowedPickupDay(nextChargeDate);
+          const normalizedNextPickupDate = normalizeToAllowedPickupDay(nextChargeDate);
+          // Billing happens on Monday of the pickup week
+          const nextBillingDate = getBillingDateForPickup(normalizedNextPickupDate);
 
           // Create the subscription with future next charge date
           const [subscription] = await db
@@ -2065,8 +2067,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               customerEmail: validated.customerEmail,
               customerPhone: validated.customerPhone,
               subscriptionFrequency: item.subscriptionFrequency || 'weekly',
-              nextChargeAt: normalizedNextDate, // Next charge is in the future
-              nextDeliveryDate: normalizedNextDate,
+              nextChargeAt: nextBillingDate, // Billing on Monday of pickup week
+              nextDeliveryDate: normalizedNextPickupDate,
               status: 'active',
               billingType: 'local_managed',
               billingStatus: 'active',
@@ -3127,7 +3129,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           const nextWeekDeliveryUTC = normalizeToAllowedPickupDay(nextWeekUTC);
           updates.nextDeliveryDate = nextWeekDeliveryUTC;
-          updates.nextChargeAt = nextWeekDeliveryUTC;
+          // Billing happens on Monday of the pickup week
+          updates.nextChargeAt = getBillingDateForPickup(nextWeekDeliveryUTC);
         }
         
         // Handle delay
@@ -3141,7 +3144,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           const newDate = normalizeToAllowedPickupDay(tentativeNewDate);
           updates.nextDeliveryDate = newDate;
-          updates.nextChargeAt = newDate;
+          // Billing happens on Monday of the pickup week
+          updates.nextChargeAt = getBillingDateForPickup(newDate);
         }
         
         // Update retail subscription

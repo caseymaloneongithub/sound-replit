@@ -69,3 +69,43 @@ export function isAllowedPickupDay(date: Date): boolean {
 export function getDayName(date: Date): string {
   return formatInTimeZone(date, PICKUP_POLICY.timezone, 'EEEE');
 }
+
+/**
+ * Calculates the billing date (Monday morning) for a given pickup date.
+ * Billing always happens on the Monday of the pickup week:
+ * - If pickup is Monday, billing is that Monday
+ * - If pickup is Tuesday-Thursday, billing is the Monday of that week
+ * 
+ * @param pickupDate - The scheduled pickup date (should be Monday-Thursday)
+ * @returns A new Date object set to 4 AM Pacific time on the Monday of the pickup week
+ */
+export function getBillingDateForPickup(pickupDate: Date): Date {
+  const pacificDate = toZonedTime(pickupDate, PICKUP_POLICY.timezone);
+  const dayOfWeek = pacificDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
+  
+  // Calculate days to go back to Monday
+  let daysToSubtract: number;
+  switch (dayOfWeek) {
+    case 1: // Monday
+      daysToSubtract = 0;
+      break;
+    case 2: // Tuesday
+      daysToSubtract = 1;
+      break;
+    case 3: // Wednesday
+      daysToSubtract = 2;
+      break;
+    case 4: // Thursday
+      daysToSubtract = 3;
+      break;
+    default:
+      // For Fri/Sat/Sun (shouldn't happen with normalized pickup dates), 
+      // just use the date as-is
+      daysToSubtract = 0;
+  }
+  
+  const mondayDate = addDays(pacificDate, -daysToSubtract);
+  const dateStr = formatInTimeZone(mondayDate, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
+  // Billing runs at 4 AM Pacific time
+  return fromZonedTime(`${dateStr}T04:00:00`, PICKUP_POLICY.timezone);
+}

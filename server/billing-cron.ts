@@ -3,7 +3,7 @@ import Stripe from 'stripe';
 import { db } from './db';
 import { retailOrders, retailOrderItemsV2, retailSubscriptions, retailSubscriptionItems, retailProducts, flavors } from '../shared/schema';
 import { eq, and, lte, sql, gte, lt } from 'drizzle-orm';
-import { normalizeToAllowedPickupDay } from '../shared/pickup-policy';
+import { normalizeToAllowedPickupDay, getBillingDateForPickup } from '../shared/pickup-policy';
 import { sendBillingReminderEmail } from './email';
 import { addDays, startOfDay, endOfDay } from 'date-fns';
 
@@ -125,13 +125,15 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
 
     const nextDate = new Date();
     nextDate.setDate(nextDate.getDate() + daysUntilNext);
-    const normalizedNextDate = normalizeToAllowedPickupDay(nextDate);
+    const normalizedNextPickupDate = normalizeToAllowedPickupDay(nextDate);
+    // Billing happens on Monday of the pickup week
+    const nextBillingDate = getBillingDateForPickup(normalizedNextPickupDate);
     
     await db
       .update(retailSubscriptions)
       .set({
-        nextChargeAt: normalizedNextDate,
-        nextDeliveryDate: normalizedNextDate,
+        nextChargeAt: nextBillingDate,
+        nextDeliveryDate: normalizedNextPickupDate,
         billingStatus: 'active',
         retryCount: 0,
         lastPaymentIntentId: paymentIntentId,
