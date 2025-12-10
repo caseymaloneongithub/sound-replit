@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Mail, Phone, MapPin, Plus, Loader2, CreditCard, Users, Edit, X, FileDown, Upload } from "lucide-react";
+import { Mail, Phone, MapPin, Plus, Loader2, CreditCard, Users, Edit, X, FileDown, Upload, MoreHorizontal } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -19,6 +19,8 @@ import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AddressAutofillFields } from "@/components/address-autofill";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 export default function WholesaleCustomers() {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -685,48 +687,38 @@ export default function WholesaleCustomers() {
                 </CardHeader>
                 <CardContent>
                   {isLoading ? (
-                    <div className="grid md:grid-cols-2 gap-4">
-                      {[1, 2].map((i) => (
-                        <div key={i} className="h-40 bg-muted rounded-lg animate-pulse" />
-                      ))}
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
                     </div>
                   ) : customers && customers.length > 0 ? (
-                    <div className="grid md:grid-cols-2 gap-4">
-                      {customers.map((customer) => (
-                        <Card key={customer.id} className="hover-elevate" data-testid={`customer-${customer.id}`}>
-                          <CardHeader className="flex flex-row items-start justify-between gap-2">
-                            <div>
-                              <CardTitle className="text-lg" style={{ fontFamily: 'var(--font-heading)' }}>
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Business Name</TableHead>
+                            <TableHead>Contact</TableHead>
+                            <TableHead>Email</TableHead>
+                            <TableHead>Phone</TableHead>
+                            <TableHead>Online Payment</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {customers.map((customer) => (
+                            <TableRow key={customer.id} data-testid={`customer-${customer.id}`}>
+                              <TableCell className="font-medium">
                                 {customer.businessName}
-                              </CardTitle>
-                              <CardDescription>{customer.contactName}</CardDescription>
-                            </div>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={() => handleEditCustomer(customer)}
-                              data-testid={`button-edit-customer-${customer.id}`}
-                            >
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                          </CardHeader>
-                          <CardContent className="space-y-3">
-                            <div className="flex items-center gap-2 text-sm">
-                              <Mail className="w-4 h-4 text-muted-foreground" />
-                              <span className="text-muted-foreground">{customer.email}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-sm">
-                              <Phone className="w-4 h-4 text-muted-foreground" />
-                              <span className="text-muted-foreground">{customer.phone}</span>
-                            </div>
-                            <div className="space-y-3 pt-2 border-t">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <CreditCard className="w-4 h-4 text-muted-foreground" />
-                                  <Label htmlFor={`payment-${customer.id}`} className="text-sm cursor-pointer">
-                                    Allow Online Payment
-                                  </Label>
-                                </div>
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {customer.contactName}
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {customer.email}
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {customer.phone}
+                              </TableCell>
+                              <TableCell>
                                 <Switch
                                   id={`payment-${customer.id}`}
                                   checked={customer.allowOnlinePayment}
@@ -736,48 +728,60 @@ export default function WholesaleCustomers() {
                                   disabled={togglePaymentMutation.isPending}
                                   data-testid={`switch-payment-${customer.id}`}
                                 />
-                              </div>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="w-full"
-                                onClick={() => {
-                                  setSelectedCustomer(customer);
-                                  setEmailDialogOpen(true);
-                                }}
-                                data-testid={`button-manage-emails-${customer.id}`}
-                              >
-                                <Mail className="w-4 h-4 mr-2" />
-                                Manage Authorized Emails
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="w-full"
-                                onClick={() => {
-                                  setSelectedCustomer(customer);
-                                  setEditingLocation(null);
-                                  locationForm.reset({
-                                    customerId: customer.id,
-                                    locationName: "",
-                                    address: "",
-                                    city: "",
-                                    state: "",
-                                    zipCode: "",
-                                    contactName: "",
-                                    contactPhone: "",
-                                  });
-                                  setLocationDialogOpen(true);
-                                }}
-                                data-testid={`button-manage-locations-${customer.id}`}
-                              >
-                                <MapPin className="w-4 h-4 mr-2" />
-                                Manage Locations
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon" data-testid={`button-actions-${customer.id}`}>
+                                      <MoreHorizontal className="w-4 h-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                      onClick={() => handleEditCustomer(customer)}
+                                      data-testid={`button-edit-customer-${customer.id}`}
+                                    >
+                                      <Edit className="w-4 h-4 mr-2" />
+                                      Edit Customer
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        setSelectedCustomer(customer);
+                                        setEmailDialogOpen(true);
+                                      }}
+                                      data-testid={`button-manage-emails-${customer.id}`}
+                                    >
+                                      <Mail className="w-4 h-4 mr-2" />
+                                      Manage Emails
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        setSelectedCustomer(customer);
+                                        setEditingLocation(null);
+                                        locationForm.reset({
+                                          customerId: customer.id,
+                                          locationName: "",
+                                          address: "",
+                                          city: "",
+                                          state: "",
+                                          zipCode: "",
+                                          contactName: "",
+                                          contactPhone: "",
+                                        });
+                                        setLocationDialogOpen(true);
+                                      }}
+                                      data-testid={`button-manage-locations-${customer.id}`}
+                                    >
+                                      <MapPin className="w-4 h-4 mr-2" />
+                                      Manage Locations
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
                     </div>
                   ) : (
                     <div className="text-center py-12">

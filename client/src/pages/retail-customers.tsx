@@ -4,7 +4,8 @@ import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Users, Loader2, Mail, Phone, Package, Search } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Users, Loader2, Package, Search } from "lucide-react";
 
 interface RetailCustomer {
   id: string;
@@ -65,66 +66,57 @@ export default function RetailCustomers() {
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {[1, 2, 3, 4, 5, 6].map((i) => (
-                  <div key={i} className="h-40 bg-muted rounded-lg animate-pulse" />
-                ))}
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
               </div>
             ) : customers && customers.length > 0 ? (
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {customers.map((customer) => (
-                  <Card 
-                    key={customer.id} 
-                    className="hover-elevate" 
-                    data-testid={`customer-card-${customer.id}`}
-                  >
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-lg" style={{ fontFamily: 'var(--font-heading)' }}>
-                        {customer.firstName} {customer.lastName}
-                      </CardTitle>
-                      <div className="flex gap-2 flex-wrap">
-                        <Badge 
-                          variant="secondary" 
-                          className="text-xs"
-                          data-testid={`badge-subscriptions-${customer.id}`}
-                        >
-                          <Package className="w-3 h-3 mr-1" />
-                          {customer.subscriptionCount} subscription{customer.subscriptionCount === 1 ? '' : 's'}
-                        </Badge>
-                        {customer.activeSubscriptionCount > 0 && (
-                          <Badge 
-                            variant="default" 
-                            className="text-xs"
-                            data-testid={`badge-active-${customer.id}`}
-                          >
-                            {customer.activeSubscriptionCount} active
-                          </Badge>
-                        )}
-                      </div>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <div className="flex items-center gap-2 text-sm">
-                        <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
-                        <span 
-                          className="text-muted-foreground truncate"
-                          title={customer.email}
-                          data-testid={`email-${customer.id}`}
-                        >
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Phone</TableHead>
+                      <TableHead>Subscriptions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {customers.map((customer) => (
+                      <TableRow key={customer.id} data-testid={`customer-row-${customer.id}`}>
+                        <TableCell className="font-medium">
+                          {customer.firstName} {customer.lastName}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
                           {customer.email}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm">
-                        <Phone className="w-4 h-4 text-muted-foreground shrink-0" />
-                        <span 
-                          className="text-muted-foreground"
-                          data-testid={`phone-${customer.id}`}
-                        >
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
                           {customer.phoneNumber}
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-2 flex-wrap">
+                            <Badge 
+                              variant="secondary" 
+                              className="text-xs"
+                              data-testid={`badge-subscriptions-${customer.id}`}
+                            >
+                              <Package className="w-3 h-3 mr-1" />
+                              {customer.subscriptionCount}
+                            </Badge>
+                            {customer.activeSubscriptionCount > 0 && (
+                              <Badge 
+                                variant="default" 
+                                className="text-xs"
+                                data-testid={`badge-active-${customer.id}`}
+                              >
+                                {customer.activeSubscriptionCount} active
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
             ) : (
               <div className="text-center py-12">
