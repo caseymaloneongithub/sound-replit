@@ -3258,6 +3258,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Delete subscription item (customer)
+  app.delete("/api/my-subscriptions/:id/items/:itemId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const subscriptionId = req.params.id;
+      const itemId = req.params.itemId;
+      
+      // Verify subscription belongs to user
+      const [subscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, subscriptionId));
+      
+      if (!subscription || subscription.userId !== userId) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      // Check if this is the last item
+      const items = await db
+        .select()
+        .from(retailSubscriptionItems)
+        .where(eq(retailSubscriptionItems.subscriptionId, subscriptionId));
+      
+      if (items.length <= 1) {
+        return res.status(400).json({ message: "Cannot delete the last item. Cancel the subscription instead." });
+      }
+      
+      // Verify item exists and belongs to this subscription
+      const [item] = await db
+        .select()
+        .from(retailSubscriptionItems)
+        .where(eq(retailSubscriptionItems.id, itemId));
+      
+      if (!item || item.subscriptionId !== subscriptionId) {
+        return res.status(404).json({ message: "Item not found" });
+      }
+      
+      // Delete the item
+      await db
+        .delete(retailSubscriptionItems)
+        .where(eq(retailSubscriptionItems.id, itemId));
+      
+      res.json({ success: true, message: "Item deleted successfully" });
+    } catch (error: any) {
+      console.error("Error deleting subscription item:", error);
+      res.status(500).json({ message: "Error deleting subscription item: " + error.message });
+    }
+  });
+
   // Update retail subscription item flavor
   app.patch("/api/retail-subscriptions/:id/items/:itemId/flavor", isAuthenticated, async (req: any, res) => {
     try {
