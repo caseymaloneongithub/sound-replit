@@ -17,6 +17,8 @@ import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { getObjectAclPolicy } from "./objectAcl";
 import { createStripeCustomer } from "./stripeCustomer";
 import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY } from "@shared/pickup-policy";
+import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
+import { insertDeliveryStopSchema } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -6138,6 +6140,438 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error("Error generating income statement:", error);
       res.status(500).json({ message: "Error generating income statement: " + error.message });
+    }
+  });
+
+  // ==================== DELIVERY ROUTE OPTIMIZATION ROUTES ====================
+
+  // Get facility location
+  app.get("/api/delivery/facility", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const facility = getFacilityLocation();
+      res.json(facility);
+    } catch (error: any) {
+      console.error("Error fetching facility location:", error);
+      res.status(500).json({ message: "Error fetching facility location: " + error.message });
+    }
+  });
+
+  // Get all custom delivery stops
+  app.get("/api/delivery/stops", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const stops = await storage.getDeliveryStops();
+      res.json(stops);
+    } catch (error: any) {
+      console.error("Error fetching delivery stops:", error);
+      res.status(500).json({ message: "Error fetching delivery stops: " + error.message });
+    }
+  });
+
+  // Create a custom delivery stop
+  app.post("/api/delivery/stops", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const parseResult = insertDeliveryStopSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ 
+          message: "Validation error", 
+          errors: parseResult.error.errors 
+        });
+      }
+      const validatedData = parseResult.data;
+      
+      // Geocode the address
+      const geocodeResult = await geocodeAddress(
+        validatedData.address,
+        validatedData.city,
+        validatedData.state || 'WA',
+        validatedData.zipCode
+      );
+
+      const stopData = {
+        ...validatedData,
+        latitude: geocodeResult?.latitude?.toString() || null,
+        longitude: geocodeResult?.longitude?.toString() || null,
+        geocodedAt: geocodeResult ? new Date() : null,
+        createdByUserId: req.user!.id,
+      };
+
+      const stop = await storage.createDeliveryStop(stopData);
+      res.status(201).json(stop);
+    } catch (error: any) {
+      console.error("Error creating delivery stop:", error);
+      res.status(500).json({ message: "Error creating delivery stop: " + error.message });
+    }
+  });
+
+  // Update a custom delivery stop
+  app.patch("/api/delivery/stops/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existingStop = await storage.getDeliveryStop(id);
+      
+      if (!existingStop) {
+        return res.status(404).json({ message: "Delivery stop not found" });
+      }
+
+      // If address changed, re-geocode
+      let updates = { ...req.body };
+      if (req.body.address || req.body.city || req.body.state || req.body.zipCode) {
+        const geocodeResult = await geocodeAddress(
+          req.body.address || existingStop.address,
+          req.body.city || existingStop.city,
+          req.body.state || existingStop.state,
+          req.body.zipCode || existingStop.zipCode
+        );
+        
+        if (geocodeResult) {
+          updates.latitude = geocodeResult.latitude.toString();
+          updates.longitude = geocodeResult.longitude.toString();
+          updates.geocodedAt = new Date();
+        }
+      }
+
+      const stop = await storage.updateDeliveryStop(id, updates);
+      res.json(stop);
+    } catch (error: any) {
+      console.error("Error updating delivery stop:", error);
+      res.status(500).json({ message: "Error updating delivery stop: " + error.message });
+    }
+  });
+
+  // Delete a custom delivery stop
+  app.delete("/api/delivery/stops/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await storage.deleteDeliveryStop(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error deleting delivery stop:", error);
+      res.status(500).json({ message: "Error deleting delivery stop: " + error.message });
+    }
+  });
+
+  // Geocode a wholesale location
+  app.post("/api/delivery/geocode-location/:locationId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { locationId } = req.params;
+      
+      // Get all wholesale locations to find this one
+      const wholesaleCustomers = await storage.getWholesaleCustomers();
+      let foundLocation = null;
+      
+      for (const customer of wholesaleCustomers) {
+        const locations = await storage.getWholesaleLocations(customer.id);
+        const location = locations.find((l: any) => l.id === locationId);
+        if (location) {
+          foundLocation = location;
+          break;
+        }
+      }
+      
+      if (!foundLocation) {
+        return res.status(404).json({ message: "Location not found" });
+      }
+
+      const geocodeResult = await geocodeAddress(
+        foundLocation.address,
+        foundLocation.city,
+        foundLocation.state,
+        foundLocation.zipCode
+      );
+
+      if (!geocodeResult) {
+        return res.status(400).json({ message: "Failed to geocode address" });
+      }
+
+      await storage.updateWholesaleLocationGeocoding(
+        locationId,
+        geocodeResult.latitude,
+        geocodeResult.longitude
+      );
+
+      res.json({
+        success: true,
+        latitude: geocodeResult.latitude,
+        longitude: geocodeResult.longitude,
+        placeName: geocodeResult.placeName,
+      });
+    } catch (error: any) {
+      console.error("Error geocoding location:", error);
+      res.status(500).json({ message: "Error geocoding location: " + error.message });
+    }
+  });
+
+  // Geocode all un-geocoded wholesale locations
+  app.post("/api/delivery/geocode-all", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const unGeocodedLocations = await storage.getUnGeocodedWholesaleLocations();
+      
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (const location of unGeocodedLocations) {
+        const geocodeResult = await geocodeAddress(
+          location.address,
+          location.city,
+          location.state,
+          location.zipCode
+        );
+
+        if (geocodeResult) {
+          await storage.updateWholesaleLocationGeocoding(
+            location.id,
+            geocodeResult.latitude,
+            geocodeResult.longitude
+          );
+          successCount++;
+        } else {
+          failCount++;
+        }
+
+        // Add a small delay between requests to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      res.json({
+        success: true,
+        geocoded: successCount,
+        failed: failCount,
+        total: unGeocodedLocations.length,
+      });
+    } catch (error: any) {
+      console.error("Error geocoding all locations:", error);
+      res.status(500).json({ message: "Error geocoding locations: " + error.message });
+    }
+  });
+
+  // Get deliveries for a specific date (for route optimization)
+  app.get("/api/delivery/orders/:date", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { date } = req.params;
+      const targetDate = new Date(date);
+      
+      // Get all scheduled wholesale orders for this date
+      const orders = await storage.getWholesaleOrders();
+      const scheduledOrders = orders.filter(order => {
+        if (!order.deliveryDate) return false;
+        const orderDate = new Date(order.deliveryDate);
+        return orderDate.toDateString() === targetDate.toDateString() && 
+               order.status !== 'cancelled';
+      });
+
+      // Enrich orders with customer and location data
+      const enrichedOrders = await Promise.all(
+        scheduledOrders.map(async (order) => {
+          const customer = await storage.getWholesaleCustomer(order.customerId);
+          let location = null;
+          
+          if (order.locationId) {
+            const locations = await storage.getWholesaleLocations(order.customerId);
+            location = locations.find((l: any) => l.id === order.locationId);
+          }
+
+          return {
+            ...order,
+            customer,
+            location,
+          };
+        })
+      );
+
+      res.json(enrichedOrders);
+    } catch (error: any) {
+      console.error("Error fetching delivery orders:", error);
+      res.status(500).json({ message: "Error fetching delivery orders: " + error.message });
+    }
+  });
+
+  // Generate optimized route for a date
+  app.post("/api/delivery/optimize/:date", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { date } = req.params;
+      const { customStopIds = [] } = req.body;
+      const targetDate = new Date(date);
+      
+      // Get all scheduled wholesale orders for this date
+      const orders = await storage.getWholesaleOrders();
+      const scheduledOrders = orders.filter(order => {
+        if (!order.deliveryDate) return false;
+        const orderDate = new Date(order.deliveryDate);
+        return orderDate.toDateString() === targetDate.toDateString() && 
+               order.status !== 'cancelled';
+      });
+
+      // Build list of stops from orders
+      const orderStops: Array<{
+        id: string;
+        latitude: number;
+        longitude: number;
+        name: string;
+        address: string;
+        type: "order" | "custom";
+        orderId?: string;
+        customerId?: string;
+      }> = [];
+
+      for (const order of scheduledOrders) {
+        const customer = await storage.getWholesaleCustomer(order.customerId);
+        let location = null;
+        
+        if (order.locationId) {
+          const locations = await storage.getWholesaleLocations(order.customerId);
+          location = locations.find((l: any) => l.id === order.locationId);
+        }
+
+        // Use location coordinates if available, otherwise try to get customer's default
+        const lat = location?.latitude;
+        const lng = location?.longitude;
+
+        if (lat && lng) {
+          orderStops.push({
+            id: order.id,
+            latitude: parseFloat(lat),
+            longitude: parseFloat(lng),
+            name: customer?.businessName || 'Unknown',
+            address: location ? `${location.address}, ${location.city}` : 'Unknown',
+            type: 'order',
+            orderId: order.id,
+            customerId: order.customerId,
+          });
+        }
+      }
+
+      // Add custom stops
+      const customStops = await storage.getDeliveryStops();
+      const selectedCustomStops = customStops.filter(stop => 
+        customStopIds.includes(stop.id) && stop.latitude && stop.longitude
+      );
+
+      for (const stop of selectedCustomStops) {
+        orderStops.push({
+          id: stop.id,
+          latitude: parseFloat(stop.latitude!),
+          longitude: parseFloat(stop.longitude!),
+          name: stop.name,
+          address: `${stop.address}, ${stop.city}`,
+          type: 'custom',
+        });
+      }
+
+      if (orderStops.length === 0) {
+        return res.json({
+          success: true,
+          message: "No geocoded stops found for this date",
+          route: null,
+          stops: [],
+        });
+      }
+
+      // Call Mapbox optimization API
+      const optimizedRoute = await optimizeDeliveryRoute(orderStops);
+
+      if (!optimizedRoute) {
+        return res.status(500).json({ message: "Failed to optimize route" });
+      }
+
+      // Reorder stops based on optimization
+      const reorderedStops = optimizedRoute.stops.map(optStop => ({
+        ...orderStops[optStop.waypointIndex],
+        stopOrder: optStop.stopIndex,
+        distanceFromPrevious: optStop.distanceFromPrevious,
+        durationFromPrevious: optStop.durationFromPrevious,
+      }));
+
+      // Save the route
+      const savedRoute = await storage.createDeliveryRoute({
+        routeDate: targetDate,
+        totalDistanceMeters: optimizedRoute.totalDistance,
+        totalDurationSeconds: optimizedRoute.totalDuration,
+        optimizedStops: JSON.stringify(reorderedStops),
+        generatedByUserId: req.user!.id,
+      });
+
+      // Save individual route stops
+      for (const stop of reorderedStops) {
+        await storage.createDeliveryRouteStop({
+          routeId: savedRoute.id,
+          stopOrder: stop.stopOrder,
+          stopType: stop.type,
+          wholesaleOrderId: stop.type === 'order' ? stop.id : null,
+          deliveryStopId: stop.type === 'custom' ? stop.id : null,
+          distanceFromPrevious: stop.distanceFromPrevious,
+          durationFromPrevious: stop.durationFromPrevious,
+        });
+      }
+
+      res.json({
+        success: true,
+        route: savedRoute,
+        stops: reorderedStops,
+        totalDuration: optimizedRoute.totalDuration,
+        totalDistance: optimizedRoute.totalDistance,
+        geometry: optimizedRoute.geometry,
+      });
+    } catch (error: any) {
+      console.error("Error optimizing route:", error);
+      res.status(500).json({ message: "Error optimizing route: " + error.message });
+    }
+  });
+
+  // Get saved routes
+  app.get("/api/delivery/routes", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const routes = await storage.getDeliveryRoutes();
+      res.json(routes);
+    } catch (error: any) {
+      console.error("Error fetching routes:", error);
+      res.status(500).json({ message: "Error fetching routes: " + error.message });
+    }
+  });
+
+  // Get a specific route with stops
+  app.get("/api/delivery/routes/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const route = await storage.getDeliveryRoute(id);
+      
+      if (!route) {
+        return res.status(404).json({ message: "Route not found" });
+      }
+
+      const stops = await storage.getDeliveryRouteStops(id);
+      
+      // Get the geometry for the route
+      const optimizedStops = JSON.parse(route.optimizedStops);
+      const facility = getFacilityLocation();
+      
+      const allCoords = [
+        { latitude: facility.latitude, longitude: facility.longitude },
+        ...optimizedStops.map((s: any) => ({ latitude: s.latitude, longitude: s.longitude })),
+        { latitude: facility.latitude, longitude: facility.longitude },
+      ];
+      
+      const directions = await getRouteDirections(allCoords);
+
+      res.json({
+        route,
+        stops,
+        geometry: directions?.geometry,
+      });
+    } catch (error: any) {
+      console.error("Error fetching route:", error);
+      res.status(500).json({ message: "Error fetching route: " + error.message });
+    }
+  });
+
+  // Delete a route
+  app.delete("/api/delivery/routes/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await storage.deleteDeliveryRoute(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error deleting route:", error);
+      res.status(500).json({ message: "Error deleting route: " + error.message });
     }
   });
 

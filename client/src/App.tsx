@@ -48,6 +48,7 @@ import AccountingDashboard from "@/pages/accounting-dashboard";
 import AccountingTransactions from "@/pages/accounting-transactions";
 import AccountingCategories from "@/pages/accounting-categories";
 import AccountingBanks from "@/pages/accounting-banks";
+import DeliveryRoutes from "@/pages/delivery-routes";
 import Contact from "@/pages/contact";
 import Cart from "@/pages/cart";
 import NotFound from "@/pages/not-found";
@@ -92,6 +93,7 @@ function Router() {
       <StaffProtectedRoute path="/staff-portal/wholesale/orders" component={WholesaleOrders} />
       <StaffProtectedRoute path="/staff-portal/wholesale/delivery-report" component={WholesaleDeliveryReport} />
       <StaffProtectedRoute path="/staff-portal/wholesale/customers" component={WholesaleCustomers} />
+      <StaffProtectedRoute path="/staff-portal/wholesale/delivery-routes" component={DeliveryRoutes} />
       
       {/* Invoice pages remain accessible outside main navigation */}
       <StaffProtectedRoute path="/wholesale/invoice/:id/payment-success" component={WholesalePaymentSuccess} />

@@ -21,7 +21,8 @@ import {
   Receipt,
   Tags,
   Landmark,
-  Calculator
+  Calculator,
+  Route
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -60,6 +61,7 @@ export function StaffSidebar() {
         { title: "Orders", href: "/staff-portal/wholesale/orders", icon: FileText },
         { title: "Customers", href: "/staff-portal/wholesale/customers", icon: Users },
         { title: "Delivery Report", href: "/staff-portal/wholesale/delivery-report", icon: TruckIcon },
+        { title: "Route Optimization", href: "/staff-portal/wholesale/delivery-routes", icon: Route },
       ],
     },
     {

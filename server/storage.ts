@@ -16,6 +16,9 @@ import {
   type RetailOrderItem, type InsertRetailOrderItem,
   type WholesaleCustomer, type InsertWholesaleCustomer,
   type WholesaleLocation, type InsertWholesaleLocation,
+  type DeliveryStop, type InsertDeliveryStop,
+  type DeliveryRoute, type InsertDeliveryRoute,
+  type DeliveryRouteStop, type InsertDeliveryRouteStop,
   type WholesaleOrder, type InsertWholesaleOrder,
   type WholesaleOrderItem, type InsertWholesaleOrderItem,
   type User, type InsertUser,
@@ -46,6 +49,9 @@ import {
   retailOrderItems,
   wholesaleCustomers,
   wholesaleLocations,
+  deliveryStops,
+  deliveryRoutes,
+  deliveryRouteStops,
   wholesaleOrders,
   wholesaleOrderItems,
   users,
@@ -333,6 +339,24 @@ export interface IStorage {
     unallocatedIncome: number;
     unallocatedExpenses: number;
   }>;
+  
+  // DELIVERY ROUTE OPTIMIZATION
+  getDeliveryStops(): Promise<DeliveryStop[]>;
+  getDeliveryStop(id: string): Promise<DeliveryStop | undefined>;
+  createDeliveryStop(stop: InsertDeliveryStop): Promise<DeliveryStop>;
+  updateDeliveryStop(id: string, updates: Partial<InsertDeliveryStop>): Promise<DeliveryStop | undefined>;
+  deleteDeliveryStop(id: string): Promise<void>;
+  
+  getDeliveryRoutes(): Promise<DeliveryRoute[]>;
+  getDeliveryRoute(id: string): Promise<DeliveryRoute | undefined>;
+  createDeliveryRoute(route: InsertDeliveryRoute): Promise<DeliveryRoute>;
+  deleteDeliveryRoute(id: string): Promise<void>;
+  
+  getDeliveryRouteStops(routeId: string): Promise<DeliveryRouteStop[]>;
+  createDeliveryRouteStop(stop: InsertDeliveryRouteStop): Promise<DeliveryRouteStop>;
+  
+  updateWholesaleLocationGeocoding(locationId: string, latitude: number, longitude: number): Promise<void>;
+  getUnGeocodedWholesaleLocations(): Promise<WholesaleLocation[]>;
   
   seedData(): Promise<void>;
 }
@@ -2858,6 +2882,90 @@ export class PostgresStorage implements IStorage {
       .orderBy(desc(leadTouchPoints.createdAt))
       .limit(limit);
     
+    return result;
+  }
+
+  // DELIVERY ROUTE OPTIMIZATION - Delivery Stops (custom non-order stops)
+  async getDeliveryStops(): Promise<DeliveryStop[]> {
+    const result = await db.select().from(deliveryStops).orderBy(desc(deliveryStops.createdAt));
+    return result;
+  }
+
+  async getDeliveryStop(id: string): Promise<DeliveryStop | undefined> {
+    const result = await db.select().from(deliveryStops).where(eq(deliveryStops.id, id));
+    return result[0];
+  }
+
+  async createDeliveryStop(stop: InsertDeliveryStop): Promise<DeliveryStop> {
+    const result = await db.insert(deliveryStops).values(stop).returning();
+    return result[0];
+  }
+
+  async updateDeliveryStop(id: string, updates: Partial<InsertDeliveryStop>): Promise<DeliveryStop | undefined> {
+    const result = await db
+      .update(deliveryStops)
+      .set(updates)
+      .where(eq(deliveryStops.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteDeliveryStop(id: string): Promise<void> {
+    await db.delete(deliveryStops).where(eq(deliveryStops.id, id));
+  }
+
+  // DELIVERY ROUTE OPTIMIZATION - Delivery Routes
+  async getDeliveryRoutes(): Promise<DeliveryRoute[]> {
+    const result = await db.select().from(deliveryRoutes).orderBy(desc(deliveryRoutes.generatedAt));
+    return result;
+  }
+
+  async getDeliveryRoute(id: string): Promise<DeliveryRoute | undefined> {
+    const result = await db.select().from(deliveryRoutes).where(eq(deliveryRoutes.id, id));
+    return result[0];
+  }
+
+  async createDeliveryRoute(route: InsertDeliveryRoute): Promise<DeliveryRoute> {
+    const result = await db.insert(deliveryRoutes).values(route).returning();
+    return result[0];
+  }
+
+  async deleteDeliveryRoute(id: string): Promise<void> {
+    await db.delete(deliveryRoutes).where(eq(deliveryRoutes.id, id));
+  }
+
+  // DELIVERY ROUTE OPTIMIZATION - Route Stops
+  async getDeliveryRouteStops(routeId: string): Promise<DeliveryRouteStop[]> {
+    const result = await db
+      .select()
+      .from(deliveryRouteStops)
+      .where(eq(deliveryRouteStops.routeId, routeId))
+      .orderBy(deliveryRouteStops.stopOrder);
+    return result;
+  }
+
+  async createDeliveryRouteStop(stop: InsertDeliveryRouteStop): Promise<DeliveryRouteStop> {
+    const result = await db.insert(deliveryRouteStops).values(stop).returning();
+    return result[0];
+  }
+
+  // DELIVERY ROUTE OPTIMIZATION - Geocoding
+  async updateWholesaleLocationGeocoding(locationId: string, latitude: number, longitude: number): Promise<void> {
+    await db
+      .update(wholesaleLocations)
+      .set({ 
+        latitude: String(latitude), 
+        longitude: String(longitude), 
+        geocodedAt: new Date() 
+      })
+      .where(eq(wholesaleLocations.id, locationId));
+  }
+
+  async getUnGeocodedWholesaleLocations(): Promise<WholesaleLocation[]> {
+    const result = await db
+      .select()
+      .from(wholesaleLocations)
+      .where(sql`${wholesaleLocations.latitude} IS NULL OR ${wholesaleLocations.longitude} IS NULL`);
     return result;
   }
 }
