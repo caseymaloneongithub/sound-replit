@@ -518,10 +518,10 @@ export default function DeliveryRoutes() {
                             cityValue={form.watch("city")}
                             stateValue={form.watch("state")}
                             zipCodeValue={form.watch("zipCode")}
-                            onAddressChange={(val) => form.setValue("address", val)}
-                            onCityChange={(val) => form.setValue("city", val)}
-                            onStateChange={(val) => form.setValue("state", val)}
-                            onZipCodeChange={(val) => form.setValue("zipCode", val)}
+                            onAddressChange={(val) => form.setValue("address", val, { shouldDirty: true, shouldValidate: true })}
+                            onCityChange={(val) => form.setValue("city", val, { shouldDirty: true, shouldValidate: true })}
+                            onStateChange={(val) => form.setValue("state", val, { shouldDirty: true, shouldValidate: true })}
+                            onZipCodeChange={(val) => form.setValue("zipCode", val, { shouldDirty: true, shouldValidate: true })}
                             addressPlaceholder="Start typing an address..."
                             cityPlaceholder="Seattle"
                             statePlaceholder="WA"

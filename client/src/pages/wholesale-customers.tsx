@@ -977,10 +977,10 @@ export default function WholesaleCustomers() {
                     cityValue={locationForm.watch("city") || ""}
                     stateValue={locationForm.watch("state") || ""}
                     zipCodeValue={locationForm.watch("zipCode") || ""}
-                    onAddressChange={(val) => locationForm.setValue("address", val)}
-                    onCityChange={(val) => locationForm.setValue("city", val)}
-                    onStateChange={(val) => locationForm.setValue("state", val)}
-                    onZipCodeChange={(val) => locationForm.setValue("zipCode", val)}
+                    onAddressChange={(val) => locationForm.setValue("address", val, { shouldDirty: true, shouldValidate: true })}
+                    onCityChange={(val) => locationForm.setValue("city", val, { shouldDirty: true, shouldValidate: true })}
+                    onStateChange={(val) => locationForm.setValue("state", val, { shouldDirty: true, shouldValidate: true })}
+                    onZipCodeChange={(val) => locationForm.setValue("zipCode", val, { shouldDirty: true, shouldValidate: true })}
                     addressPlaceholder="Start typing an address..."
                     cityPlaceholder="Seattle"
                     statePlaceholder="WA"
