@@ -6,12 +6,89 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShoppingCart, Plus, Check, MapPin } from "lucide-react";
+import { ShoppingCart, Plus, Check, MapPin, ChevronLeft, ChevronRight, Image as ImageIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
 import logo from "@assets/text-stacked-black_1762299663824.png";
+
+function ProductImageCarousel({ 
+  primaryImageUrl, 
+  secondaryImageUrl, 
+  productName,
+  productId 
+}: { 
+  primaryImageUrl?: string | null; 
+  secondaryImageUrl?: string | null; 
+  productName: string;
+  productId: string;
+}) {
+  const images = [primaryImageUrl, secondaryImageUrl].filter(Boolean) as string[];
+  const [currentIndex, setCurrentIndex] = useState(0);
+  
+  if (images.length === 0) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-muted">
+        <ImageIcon className="w-16 h-16 text-muted-foreground" />
+      </div>
+    );
+  }
+  
+  return (
+    <div className="relative group w-full h-full">
+      <img 
+        src={images[currentIndex]} 
+        alt={`${productName} - ${currentIndex === 0 ? 'Primary' : 'Secondary'}`}
+        className="w-full h-full object-cover"
+        data-testid={`image-${productId}`}
+      />
+      
+      {images.length > 1 && (
+        <>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setCurrentIndex((currentIndex - 1 + images.length) % images.length);
+            }}
+            className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity"
+            data-testid={`button-prev-image-${productId}`}
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setCurrentIndex((currentIndex + 1) % images.length);
+            }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity"
+            data-testid={`button-next-image-${productId}`}
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+          
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+            {images.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCurrentIndex(idx);
+                }}
+                className={`w-2 h-2 rounded-full transition-all ${
+                  idx === currentIndex 
+                    ? 'bg-white w-6' 
+                    : 'bg-white/50 hover:bg-white/75'
+                }`}
+                data-testid={`button-dot-${productId}-${idx}`}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 type RetailProductWithFlavors = RetailProduct & {
   flavor: Flavor | null;
@@ -177,17 +254,26 @@ export default function ShopV2() {
                     <Card key={product.id} data-testid={`card-product-${product.id}`} className="overflow-hidden">
                       <CardHeader className="p-0">
                         <div className="aspect-square bg-muted overflow-hidden">
-                          {imageUrl ? (
-                            <img 
-                              src={imageUrl} 
-                              alt={displayName || 'Product'}
-                              className="w-full h-full object-cover"
-                              data-testid={`image-${product.id}`}
-                            />
+                          {isMultiFlavor ? (
+                            imageUrl ? (
+                              <img 
+                                src={imageUrl} 
+                                alt={displayName || 'Product'}
+                                className="w-full h-full object-cover"
+                                data-testid={`image-${product.id}`}
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center">
+                                <ImageIcon className="w-16 h-16 text-muted-foreground" />
+                              </div>
+                            )
                           ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <p className="text-muted-foreground">No image available</p>
-                            </div>
+                            <ProductImageCarousel
+                              primaryImageUrl={product.flavor?.primaryImageUrl}
+                              secondaryImageUrl={product.flavor?.secondaryImageUrl}
+                              productName={displayName || 'Product'}
+                              productId={product.id}
+                            />
                           )}
                         </div>
                       </CardHeader>
