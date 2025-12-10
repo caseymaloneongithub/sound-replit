@@ -6,7 +6,7 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShoppingCart, Plus, Check } from "lucide-react";
+import { ShoppingCart, Plus, Check, MapPin } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -113,6 +113,19 @@ export default function ShopV2() {
             className="h-48 mx-auto"
             style={{ filter: 'brightness(0) invert(1)' }}
           />
+        </div>
+      </div>
+
+      {/* Pickup Location Notice */}
+      <div className="bg-primary text-primary-foreground py-4">
+        <div className="max-w-4xl mx-auto px-6">
+          <div className="flex items-center justify-center gap-3">
+            <MapPin className="w-6 h-6 flex-shrink-0" />
+            <div className="text-center">
+              <p className="font-semibold text-lg">Pickup Only at Our Ballard Location</p>
+              <p className="text-sm opacity-90">4501 Shilshole Ave NW, Seattle, WA 98107</p>
+            </div>
+          </div>
         </div>
       </div>
 
