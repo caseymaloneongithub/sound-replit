@@ -230,7 +230,7 @@ export function CartDrawer() {
                 </div>
               )}
               
-              <div className="flex items-center justify-between text-sm pt-2">
+              <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Pickup at our Ballard facility</span>
                 <span>Free</span>
               </div>
