@@ -133,23 +133,19 @@ export default function ShopV2() {
         </div>
       </div>
 
-      {/* Pickup Location Notice */}
-      <div className="bg-primary text-primary-foreground py-4">
-        <div className="max-w-4xl mx-auto px-6">
-          <div className="flex items-center justify-center gap-3">
-            <MapPin className="w-6 h-6 flex-shrink-0" />
-            <div className="text-center">
-              <p className="font-semibold text-lg">Pickup Only at Our Ballard Location</p>
-              <p className="text-sm opacity-90">4501 Shilshole Ave NW, Seattle, WA 98107</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div className="container mx-auto px-4 py-8">
         <div className="mb-8">
           <h2 className="text-3xl font-bold mb-2" data-testid="text-products-title">Shop Our Kombucha</h2>
           <p className="text-muted-foreground" data-testid="text-products-subtitle">Choose from cases, kegs, and more</p>
+          
+          {/* Pickup Location Notice */}
+          <div className="bg-primary text-primary-foreground py-3 px-4 rounded-md mt-4 inline-flex items-center gap-3">
+            <MapPin className="w-5 h-5 flex-shrink-0" />
+            <div>
+              <span className="font-semibold">Pickup Only at Our Ballard Location:</span>{" "}
+              <span className="opacity-90">4501 Shilshole Ave NW, Seattle, WA 98107</span>
+            </div>
+          </div>
         </div>
 
         {Object.entries(groupedProducts).map(([unitType, unitProducts]) => (
