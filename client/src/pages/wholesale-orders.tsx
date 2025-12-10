@@ -193,8 +193,8 @@ export default function WholesaleOrders() {
 
     return (
       <div className="space-y-4">
-        {/* Consolidated Items Summary - Grid Layout */}
-        {consolidatedList.length > 0 && (
+        {/* Consolidated Items Summary - Grid Layout (hide for delivered orders) */}
+        {consolidatedList.length > 0 && status !== 'delivered' && (
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-4">
