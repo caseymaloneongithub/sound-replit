@@ -51,6 +51,12 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
     - **Transactions**: View, filter, and manage financial transactions with allocation to categories. Supports CSV import for manual transaction entry and split allocations across multiple categories.
     - **Categories**: Manage accounting categories (income, expense, transfer types) for transaction classification.
     - **Bank Connections**: Plaid integration for automatic bank transaction imports. Supports multiple bank accounts with incremental transaction sync. Gracefully handles missing Plaid credentials with fallback to manual CSV import.
+-   **Data Retention & Privacy Compliance**: GDPR-aligned data management with:
+    - **Privacy Policy**: Comprehensive policy page at `/privacy` covering data collection, usage, storage, and user rights
+    - **Data Retention Policy**: Detailed policy at `/data-retention` with specific retention periods for different data types
+    - **Automated Cleanup**: Hourly cron job purges expired verification codes (email and SMS) after 24 hours
+    - **Data Export**: Users can download their complete data (profile, orders, subscriptions) in JSON format via `/api/my-data/export`
+    - **Account Deletion**: GDPR-compliant account deletion at `/api/my-account` that cancels Stripe subscriptions, anonymizes all PII across users, orders, and subscriptions tables, and performs soft-delete with `deletedAt` timestamp
 
 ## External Dependencies
 
