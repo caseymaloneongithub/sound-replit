@@ -1074,6 +1074,7 @@ interface WholesaleInvoiceEmailParams {
   location?: WholesaleInvoiceLocation | null;
   allowOnlinePayment: boolean;
   paymentUrl?: string | null;
+  paidAt?: Date | null;
 }
 
 // PDF Layout Constants - Compact layout to fit on one page
@@ -1131,9 +1132,32 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
+    // ===== PAID WATERMARK (if paid) =====
+    if (params.paidAt) {
+      doc.save();
+      // Large diagonal watermark across the page
+      doc.translate(PDF_WIDTH / 2, 400);
+      doc.rotate(-45);
+      doc.fontSize(120).font('Helvetica-Bold').fillColor('#22c55e').opacity(0.15);
+      doc.text('PAID', -150, -50, { width: 300, align: 'center' });
+      doc.restore();
+      doc.opacity(1); // Reset opacity
+    }
+
     // ===== HEADER SECTION =====
     doc.fontSize(22).font('Helvetica-Bold').fillColor(TEXT_COLOR);
     doc.text('INVOICE', PDF_MARGIN, PDF_MARGIN);
+    
+    // Paid badge if paid
+    if (params.paidAt) {
+      doc.save();
+      const paidBadgeX = PDF_WIDTH - PDF_MARGIN - 120;
+      const paidBadgeY = PDF_MARGIN - 5;
+      doc.fillColor('#dcfce7').roundedRect(paidBadgeX, paidBadgeY, 120, 22, 4).fill();
+      doc.fillColor('#166534').fontSize(9).font('Helvetica-Bold');
+      doc.text(`PAID - ${format(params.paidAt, 'MMM dd, yyyy')}`, paidBadgeX + 8, paidBadgeY + 7, { width: 104, align: 'center' });
+      doc.restore();
+    }
     
     // Invoice meta info (right aligned)
     const metaX = PDF_WIDTH - PDF_MARGIN - 160;
@@ -1254,7 +1278,10 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
     const footerY = doc.page.height - 60;
     doc.fontSize(8).fillColor(LABEL_COLOR);
     
-    if (params.allowOnlinePayment && params.paymentUrl) {
+    if (params.paidAt) {
+      // Invoice is paid - no payment link needed
+      doc.text(`Paid on ${format(params.paidAt, 'MMM dd, yyyy')} - Thank you!`, PDF_MARGIN, footerY);
+    } else if (params.allowOnlinePayment && params.paymentUrl) {
       doc.text('Pay online at:', PDF_MARGIN, footerY);
       doc.fillColor(TEXT_COLOR).text(params.paymentUrl, PDF_MARGIN, footerY + 10, { width: PDF_CONTENT_WIDTH });
     } else {
@@ -1304,8 +1331,15 @@ export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailPar
     return `- ${item.productName} x ${item.quantity} @ $${parseFloat(item.unitPrice).toFixed(2)} = $${lineTotal.toFixed(2)}`;
   }).join('\n');
 
-  // Payment link section
-  const paymentHtml = params.allowOnlinePayment && params.paymentUrl ? `
+  // Payment link section - hide if invoice is already paid
+  const paidDateFormatted = params.paidAt ? format(params.paidAt, 'MMM dd, yyyy') : null;
+  
+  const paymentHtml = params.paidAt ? `
+    <div style="background-color: #dcfce7; padding: 16px; border-radius: 4px; margin: 24px 0; text-align: center;">
+      <p style="margin: 0; color: #166534; font-weight: 600; font-size: 16px;">PAID - ${paidDateFormatted}</p>
+      <p style="margin: 8px 0 0 0; color: #166534; font-size: 14px;">Thank you for your payment!</p>
+    </div>
+  ` : params.allowOnlinePayment && params.paymentUrl ? `
     <div style="text-align: center; margin: 32px 0;">
       <a href="${params.paymentUrl}" 
          style="background-color: ${BRAND_COLORS.black}; 
@@ -1328,9 +1362,11 @@ export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailPar
     </div>
   `;
 
-  const paymentText = params.allowOnlinePayment && params.paymentUrl 
-    ? `\nPay online: ${params.paymentUrl}\n`
-    : '\nPayment Terms: Net 30\n';
+  const paymentText = params.paidAt 
+    ? `\nPAID - ${paidDateFormatted}\nThank you for your payment!\n`
+    : params.allowOnlinePayment && params.paymentUrl 
+      ? `\nPay online: ${params.paymentUrl}\n`
+      : '\nPayment Terms: Net 30\n';
 
   // Delivery location section
   const locationHtml = params.location ? `

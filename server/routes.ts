@@ -4220,6 +4220,7 @@ If you have any questions, please don't hesitate to reach out!`,
         location,
         allowOnlinePayment: customer.allowOnlinePayment,
         paymentUrl,
+        paidAt: order.paidAt ? new Date(order.paidAt) : null,
       });
 
       res.json({ 

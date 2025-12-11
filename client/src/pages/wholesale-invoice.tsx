@@ -123,7 +123,7 @@ export default function WholesaleInvoice() {
           </Button>
           <h1 className="text-lg font-semibold">Invoice {order.invoiceNumber}</h1>
           <div className="ml-auto flex items-center gap-2">
-            {customer.allowOnlinePayment && (
+            {customer.allowOnlinePayment && !order.paidAt && (
               <Button
                 onClick={handlePayNow}
                 disabled={paymentMutation.isPending}
@@ -175,10 +175,27 @@ export default function WholesaleInvoice() {
       </div>
 
       <div className="container max-w-4xl py-8 px-4 print:p-0 print:max-w-none" id="invoice-print-area">
-        <Card className="print:shadow-none print:border-0">
-          <CardContent className="p-8 print:p-0">
+        <Card className="print:shadow-none print:border-0 relative overflow-hidden">
+          {order.paidAt && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+              <div 
+                className="text-green-500/20 font-bold text-[120px] transform -rotate-45 select-none"
+                style={{ fontFamily: 'Arial, sans-serif' }}
+              >
+                PAID
+              </div>
+            </div>
+          )}
+          <CardContent className="p-8 print:p-0 relative">
             <div className="mb-8">
-              <h1 className="text-3xl font-bold mb-2">INVOICE</h1>
+              <div className="flex items-start justify-between">
+                <h1 className="text-3xl font-bold mb-2">INVOICE</h1>
+                {order.paidAt && (
+                  <div className="bg-green-100 text-green-800 px-4 py-2 rounded-md font-semibold text-sm" data-testid="badge-paid">
+                    PAID - {format(new Date(order.paidAt), "MMM dd, yyyy")}
+                  </div>
+                )}
+              </div>
               <div className="text-muted-foreground">
                 Invoice #: <span className="font-semibold text-foreground" data-testid="text-invoice-number">{order.invoiceNumber}</span>
               </div>
