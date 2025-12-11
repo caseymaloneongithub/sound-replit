@@ -1,0 +1,176 @@
+Accounting Platform Specification
+Overview
+
+A full-featured accounting module for business financial management, featuring Plaid banking integration for automatic transaction syncing, manual CSV import, category-based transaction allocation (including split transactions), and income statement reporting.
+Core Features
+
+1. Bank Account Integration (Plaid)
+
+    Connect bank accounts via Plaid Link
+    Automatic transaction syncing with cursor-based pagination
+    Support for multiple bank accounts across institutions
+    Account details: name, mask (last 4 digits), institution name, account type
+
+2. Transaction Management
+
+    Automatic import from connected bank accounts
+    Manual CSV import with column mapping (date, description, amount)
+    Transaction fields: date, name, merchant name, amount, pending status, payment channel, Plaid category
+    Status tracking: active, removed (soft delete)
+    Search and filtering by account, allocation status, text search
+    Sortable columns (date, description, amount, account, status)
+    CSV export of filtered/sorted transactions
+
+3. Accounting Categories
+
+    Three category types: income, expense, transfer
+    Fields: name, type, code (optional accounting code like "5000"), description, display order, active status
+    Hierarchical support with parent-child relationships (parentId)
+    Ability to exclude specific categories from reports (e.g., scholarship account code 5015)
+
+4. Transaction Allocation
+
+    Assign transactions to one or more accounting categories
+    Split transaction support: divide a single transaction across multiple categories with different amounts
+    Each allocation has: transactionId, categoryId, amount, optional memo
+    Bulk allocation: assign multiple unallocated transactions to a single category at once
+
+5. Income Statement / Financial Reports
+
+    Summary by category with totals and transaction counts
+    Date range filtering (from/to dates)
+    Separate tracking of unallocated transactions (income vs expenses)
+    Clickable category rows to drill down into individual transactions
+    Excludes specified accounts from totals (configurable by category code)
+
+Database Schema
+
+// Bank account connections
+plaidItems: {
+  id: varchar (UUID primary key)
+  accessToken: text (encrypted Plaid access token)
+  itemId: text (Plaid item ID)
+  institutionId: text
+  institutionName: text
+  cursor: text (for incremental sync)
+  status: text ('active', 'error', 'pending_reauth')
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+
+// Individual bank accounts
+plaidAccounts: {
+  id: varchar (UUID primary key)
+  plaidItemId: varchar (FK to plaidItems)
+  accountId: text (Plaid account ID)
+  name: text
+  mask: text (last 4 digits)
+  type: text (checking, savings, etc.)
+  subtype: text
+  currentBalance: decimal
+  availableBalance: decimal
+  isoCurrencyCode: text
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+
+// Bank transactions
+bankTransactions: {
+  id: varchar (UUID primary key)
+  accountId: varchar (FK to plaidAccounts)
+  plaidTransactionId: text
+  name: text
+  merchantName: text (nullable)
+  amount: decimal (positive = expense, negative = income)
+  isoCurrencyCode: text
+  date: date string
+  pending: boolean
+  paymentChannel: text
+  categoryPrimary: text (Plaid's category)
+  categoryDetailed: text
+  status: text ('active', 'removed')
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+
+// Accounting categories
+accountingCategories: {
+  id: varchar (UUID primary key)
+  name: text
+  type: text ('income', 'expense', 'transfer')
+  code: text (optional, e.g., "5000", "5015")
+  description: text (nullable)
+  parentId: varchar (FK for hierarchy, nullable)
+  displayOrder: integer
+  isActive: boolean
+  createdAt: timestamp
+}
+
+// Transaction allocations (supports splits)
+transactionAllocations: {
+  id: varchar (UUID primary key)
+  transactionId: varchar (FK to bankTransactions)
+  categoryId: varchar (FK to accountingCategories)
+  amount: decimal (amount allocated to this category)
+  memo: text (nullable)
+  createdBy: varchar (FK to users)
+  createdAt: timestamp
+}
+
+API Endpoints
+
+Plaid Integration
+
+    POST /api/plaid/create-link-token - Initialize Plaid Link
+    POST /api/plaid/exchange-public-token - Complete account connection
+    POST /api/plaid/sync-transactions - Trigger manual sync
+    GET /api/plaid/accounts - List connected accounts
+    DELETE /api/plaid/items/:itemId - Disconnect bank
+
+Transactions
+
+    GET /api/accounting/transactions?limit=5000 - List all transactions with allocations
+    POST /api/accounting/transactions/:id/allocate - Allocate/split transaction
+    POST /api/accounting/transactions/bulk-allocate - Bulk assign to category
+    POST /api/accounting/transactions/preview-csv - Preview CSV for import
+    POST /api/accounting/transactions/import-csv - Import from CSV
+
+Categories
+
+    GET /api/accounting/categories - List all categories
+    POST /api/accounting/categories - Create category
+    PATCH /api/accounting/categories/:id - Update category
+    DELETE /api/accounting/categories/:id - Delete category
+
+Reports
+
+    GET /api/accounting/summary?from=YYYY-MM-DD&to=YYYY-MM-DD - Income statement summary by category
+    GET /api/accounting/transactions-by-category/:categoryId?from=&to= - Drill down to category transactions
+    GET /api/accounting/unallocated-transactions?type=income|expense&from=&to= - View unallocated items
+
+Frontend Pages
+
+    Accounting Dashboard (/admin/accounting)
+        Overview with connected accounts
+        Quick links to transactions, categories, reports
+
+    Transactions Page (/admin/accounting/transactions)
+        Sortable table with all transactions
+        Filter by: allocation status, account, search text
+        Import CSV / Export CSV buttons
+        Click row to allocate/split
+        Bulk allocation for unallocated items
+
+    Categories & Reports Page (/admin/accounting/categories)
+        Manage accounting categories (CRUD)
+        Income statement with date range picker
+        Clickable rows to see transaction details per category
+        Shows income, expenses, net income totals
+
+Key Implementation Notes
+
+    Amount convention: Positive = expense/outflow, Negative = income/inflow (Plaid standard)
+    Split transactions: Total allocations should equal transaction amount
+    Cursor-based sync: Plaid cursor stored for incremental transaction fetching
+    Report exclusions: Can filter out specific category codes from summary totals
+    CSV import: Auto-detects common column names, supports sign flipping option
