@@ -1873,6 +1873,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     customerName: z.string().min(2),
     customerEmail: z.string().email(),
     customerPhone: z.string().min(10),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    zipCode: z.string().optional(),
     password: z.string().min(6),
   });
 
@@ -1917,6 +1921,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         phoneNumber: validated.customerPhone,
         firstName,
         lastName,
+        address: validated.address || null,
+        city: validated.city || null,
+        state: validated.state || null,
+        zipCode: validated.zipCode || null,
         password: await hashPassword(validated.password),
         role: 'user',
         isAdmin: false,
@@ -1954,11 +1962,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update user address during checkout (for logged-in users)
+  const updateAddressSchema = z.object({
+    address: z.string().min(1),
+    city: z.string().min(1),
+    state: z.string().min(1),
+    zipCode: z.string().min(1),
+  });
+
+  app.patch("/api/checkout/update-address", isAuthenticated, async (req: any, res) => {
+    try {
+      const validated = updateAddressSchema.parse(req.body);
+      const userId = req.user.id;
+
+      // Update user address
+      await db.update(users)
+        .set({
+          address: validated.address,
+          city: validated.city,
+          state: validated.state,
+          zipCode: validated.zipCode,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, userId));
+
+      // Refresh the user session with updated data
+      const updatedUser = await storage.getUser(userId);
+      if (updatedUser) {
+        req.user = updatedUser;
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error updating address:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Please provide complete address information" });
+      }
+      res.status(500).json({ message: "Error updating address: " + error.message });
+    }
+  });
+
   // Create subscription with embedded payment method collection
   const createSubscriptionSchema = z.object({
     customerName: z.string().min(2),
     customerEmail: z.string().email(),
     customerPhone: z.string().min(10),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    zipCode: z.string().optional(),
     paymentMethodId: z.string(), // Stripe payment method ID from frontend
     password: z.string().min(6).optional(), // For new account creation
   });
@@ -2034,6 +2086,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           phoneNumber: validated.customerPhone,
           firstName,
           lastName,
+          address: validated.address || null,
+          city: validated.city || null,
+          state: validated.state || null,
+          zipCode: validated.zipCode || null,
           password: await hashPassword(validated.password),
           role: 'user',
           isAdmin: false,
@@ -2048,6 +2104,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             resolve(undefined);
           });
         });
+      } else {
+        // For logged-in users, update their address if provided
+        if (validated.address || validated.city || validated.state || validated.zipCode) {
+          await db.update(users)
+            .set({
+              address: validated.address || user.address,
+              city: validated.city || user.city,
+              state: validated.state || user.state,
+              zipCode: validated.zipCode || user.zipCode,
+              updatedAt: new Date(),
+            })
+            .where(eq(users.id, user.id));
+        }
       }
 
       // Create or get Stripe customer and create subscriptions atomically

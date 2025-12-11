@@ -25,6 +25,10 @@ const customerSchema = z.object({
   customerName: z.string().min(2, "Name must be at least 2 characters"),
   customerEmail: z.string().email("Invalid email address"),
   customerPhone: z.string().min(10, "Phone number must be at least 10 digits"),
+  address: z.string().min(5, "Please enter your street address"),
+  city: z.string().min(2, "Please enter your city"),
+  state: z.string().min(2, "Please enter your state"),
+  zipCode: z.string().min(5, "Please enter a valid ZIP code"),
   password: z.string().optional(),
   confirmPassword: z.string().optional(),
 }).superRefine((data, ctx) => {
@@ -99,6 +103,10 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
       customerName: "",
       customerEmail: "",
       customerPhone: "",
+      address: "",
+      city: "",
+      state: "",
+      zipCode: "",
       password: "",
       confirmPassword: "",
     },
@@ -116,6 +124,10 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
       form.setValue("customerName", fullName);
       form.setValue("customerEmail", user.email || "");
       form.setValue("customerPhone", user.phoneNumber || "");
+      form.setValue("address", user.address || "");
+      form.setValue("city", user.city || "");
+      form.setValue("state", user.state || "");
+      form.setValue("zipCode", user.zipCode || "");
     }
   }, [user, form]);
 
@@ -216,6 +228,10 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
           customerName: customerInfo.customerName,
           customerEmail: customerInfo.customerEmail,
           customerPhone: customerInfo.customerPhone,
+          address: customerInfo.address,
+          city: customerInfo.city,
+          state: customerInfo.state,
+          zipCode: customerInfo.zipCode,
           paymentMethodId: paymentMethod.id,
           ...(customerInfo.password && !isLoggedIn && { password: customerInfo.password }), // Only send password for non-logged-in users
         });
@@ -263,6 +279,10 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
               customerName: customerInfo.customerName,
               customerEmail: customerInfo.customerEmail,
               customerPhone: customerInfo.customerPhone,
+              address: customerInfo.address,
+              city: customerInfo.city,
+              state: customerInfo.state,
+              zipCode: customerInfo.zipCode,
               password: customerInfo.password,
             });
             
@@ -281,6 +301,21 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
               description: "Your order was successful, but we couldn't create your account. You can create one later.",
               variant: "default",
             });
+          }
+        } else {
+          // For logged-in users, update their address if changed
+          try {
+            await apiRequest("PATCH", "/api/checkout/update-address", {
+              address: customerInfo.address,
+              city: customerInfo.city,
+              state: customerInfo.state,
+              zipCode: customerInfo.zipCode,
+            });
+            // Refresh user data
+            queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+          } catch (addressError) {
+            // Non-critical error, just log it
+            console.error("Address update failed:", addressError);
           }
         }
         
@@ -362,6 +397,62 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
             {form.formState.errors.customerPhone && (
               <p className="text-sm text-destructive">{form.formState.errors.customerPhone.message}</p>
             )}
+          </div>
+
+          <div className="border-t pt-4 mt-4">
+            <h3 className="font-medium mb-4">Shipping Address</h3>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="address">Street Address</Label>
+                <Input
+                  id="address"
+                  {...form.register("address")}
+                  placeholder="123 Main Street"
+                  data-testid="input-address"
+                />
+                {form.formState.errors.address && (
+                  <p className="text-sm text-destructive">{form.formState.errors.address.message}</p>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="city">City</Label>
+                  <Input
+                    id="city"
+                    {...form.register("city")}
+                    placeholder="Seattle"
+                    data-testid="input-city"
+                  />
+                  {form.formState.errors.city && (
+                    <p className="text-sm text-destructive">{form.formState.errors.city.message}</p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="state">State</Label>
+                  <Input
+                    id="state"
+                    {...form.register("state")}
+                    placeholder="WA"
+                    data-testid="input-state"
+                  />
+                  {form.formState.errors.state && (
+                    <p className="text-sm text-destructive">{form.formState.errors.state.message}</p>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-2 w-1/2">
+                <Label htmlFor="zipCode">ZIP Code</Label>
+                <Input
+                  id="zipCode"
+                  {...form.register("zipCode")}
+                  placeholder="98107"
+                  data-testid="input-zip-code"
+                />
+                {form.formState.errors.zipCode && (
+                  <p className="text-sm text-destructive">{form.formState.errors.zipCode.message}</p>
+                )}
+              </div>
+            </div>
           </div>
           
           {!isLoggedIn && (
