@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Package, FileText, MapPin, Calendar, DollarSign } from "lucide-react";
+import { Package, FileText, MapPin, Calendar, DollarSign, CreditCard } from "lucide-react";
 import { format, differenceInDays, isPast } from "date-fns";
 import type { WholesaleCustomer } from "@shared/schema";
 import { WholesaleCustomerLayout } from "@/components/wholesale/wholesale-customer-layout";
@@ -213,15 +213,27 @@ export default function WholesaleCustomerOrders() {
                           {order.items.length} {order.items.length === 1 ? 'item' : 'items'}
                         </p>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => window.open(`/wholesale/invoice/${order.id}`, '_blank')}
-                        data-testid={`button-view-invoice-${order.id}`}
-                      >
-                        <FileText className="h-4 w-4 mr-2" />
-                        View Invoice
-                      </Button>
+                      <div className="flex gap-2">
+                        {customer?.allowOnlinePayment && !order.paidAt && (
+                          <Button
+                            size="sm"
+                            onClick={() => window.location.href = `/wholesale/invoice/${order.id}`}
+                            data-testid={`button-pay-now-${order.id}`}
+                          >
+                            <CreditCard className="h-4 w-4 mr-2" />
+                            Pay Now
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => window.open(`/wholesale/invoice/${order.id}`, '_blank')}
+                          data-testid={`button-view-invoice-${order.id}`}
+                        >
+                          <FileText className="h-4 w-4 mr-2" />
+                          View Invoice
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ))}
