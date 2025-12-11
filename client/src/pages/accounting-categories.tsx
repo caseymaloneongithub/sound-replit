@@ -341,6 +341,48 @@ export default function AccountingCategories() {
           </div>
         </div>
 
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <ArrowLeftRight className="h-5 w-5 text-blue-600" />
+            <h2 className="text-lg font-semibold">Transfer Categories</h2>
+            <Badge variant="outline">{transferCategories.length}</Badge>
+          </div>
+          
+          {isLoading ? (
+            <div className="space-y-3">
+              {[...Array(2)].map((_, i) => (
+                <Card key={i}>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-5 w-32 mb-2" />
+                    <Skeleton className="h-4 w-48" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : transferCategories.length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center text-muted-foreground">
+                No transfer categories yet. Use transfers for moving money between accounts.
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {transferCategories
+                .filter(c => !c.parentId)
+                .map((category) => (
+                  <div key={category.id}>
+                    <CategoryCard category={category} />
+                    {getChildCategories(category.id).map((child) => (
+                      <div key={child.id} className="ml-6 mt-2">
+                        <CategoryCard category={child} />
+                      </div>
+                    ))}
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
           <DialogContent>
             <DialogHeader>
@@ -397,6 +439,12 @@ export default function AccountingCategories() {
                             <div className="flex items-center gap-2">
                               <TrendingDown className="w-4 h-4 text-red-600" />
                               Expense
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="transfer">
+                            <div className="flex items-center gap-2">
+                              <ArrowLeftRight className="w-4 h-4 text-blue-600" />
+                              Transfer
                             </div>
                           </SelectItem>
                         </SelectContent>
@@ -458,6 +506,69 @@ export default function AccountingCategories() {
                     </FormItem>
                   )}
                 />
+
+                <FormField
+                  control={form.control}
+                  name="code"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Code (Optional)</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="e.g., 4000, COGS, OPS-01"
+                          {...field}
+                          value={field.value || ""}
+                          data-testid="input-category-code"
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Short code for accounting systems or quick reference
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="flex items-center justify-between gap-4">
+                  <FormField
+                    control={form.control}
+                    name="isActive"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-3">
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            data-testid="switch-category-active"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0">Active</FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="excludeFromReports"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center gap-2">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            data-testid="checkbox-exclude-reports"
+                          />
+                        </FormControl>
+                        <FormLabel className="!mt-0 text-sm">
+                          <span className="flex items-center gap-1">
+                            <EyeOff className="w-3 h-3" />
+                            Exclude from reports
+                          </span>
+                        </FormLabel>
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
                 <DialogFooter>
                   <Button 
