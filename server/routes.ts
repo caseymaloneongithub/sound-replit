@@ -11,7 +11,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { getObjectAclPolicy } from "./objectAcl";
@@ -4085,11 +4085,91 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(404).json({ message: "Order not found" });
       }
 
-      res.status(501).json({ 
-        message: "Email sending not configured. Please set up Gmail API credentials to enable invoice emails.",
-        instructions: "Add GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_REFRESH_TOKEN to environment secrets."
+      const { order, customer, items } = orderDetails;
+      
+      // Calculate subtotal
+      const subtotal = items.reduce((sum: number, item: any) => {
+        return sum + parseFloat(item.unitPrice) * item.quantity;
+      }, 0);
+
+      // Generate payment URL for online payment customers
+      let paymentUrl: string | null = null;
+      if (customer.allowOnlinePayment && stripe) {
+        const baseUrl = process.env.REPLIT_DOMAINS
+          ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
+          : 'http://localhost:5000';
+
+        const lineItems = items.map((item: any) => ({
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: item.product.name,
+            },
+            unit_amount: Math.round(parseFloat(item.unitPrice) * 100),
+          },
+          quantity: item.quantity,
+        }));
+
+        const session = await stripe.checkout.sessions.create({
+          mode: 'payment',
+          payment_method_types: ['card'],
+          line_items: lineItems,
+          customer_email: customer.email,
+          metadata: {
+            orderId: order.id,
+            invoiceNumber: order.invoiceNumber,
+            type: 'wholesale_invoice_payment',
+          },
+          success_url: `${baseUrl}/wholesale/invoice/${order.id}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${baseUrl}/wholesale/invoice/${order.id}`,
+        });
+
+        paymentUrl = session.url;
+      }
+
+      // Prepare invoice items for email
+      const invoiceItems = items.map((item: any) => ({
+        productName: item.product.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      }));
+
+      // Prepare location if available
+      const location = order.location ? {
+        locationName: order.location.locationName,
+        address: order.location.address,
+        city: order.location.city,
+        state: order.location.state,
+        zipCode: order.location.zipCode,
+        contactName: order.location.contactName,
+        contactPhone: order.location.contactPhone,
+      } : null;
+
+      // Send the invoice email
+      await sendWholesaleInvoiceEmail({
+        customerEmail: customer.email,
+        businessName: customer.businessName,
+        contactName: customer.contactName,
+        customerAddress: customer.address,
+        customerPhone: customer.phone,
+        invoiceNumber: order.invoiceNumber,
+        orderDate: new Date(order.orderDate),
+        deliveryDate: order.deliveryDate ? new Date(order.deliveryDate) : null,
+        items: invoiceItems,
+        subtotal,
+        notes: order.notes,
+        location,
+        allowOnlinePayment: customer.allowOnlinePayment,
+        paymentUrl,
+      });
+
+      res.json({ 
+        success: true, 
+        message: `Invoice sent to ${customer.email}`,
+        hasPaymentLink: !!paymentUrl,
       });
     } catch (error: any) {
+      console.error("Error sending invoice email:", error);
       res.status(500).json({ message: "Error sending invoice: " + error.message });
     }
   });

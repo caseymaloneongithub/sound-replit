@@ -5,7 +5,7 @@ import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Printer, ArrowLeft, CreditCard, Loader2 } from "lucide-react";
+import { Printer, ArrowLeft, CreditCard, Loader2, Mail } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -44,6 +44,30 @@ export default function WholesaleInvoice() {
       });
     },
   });
+
+  const sendInvoiceMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/wholesale/orders/${orderId}/send-invoice`, {});
+      return await response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Invoice Sent",
+        description: data.message || "Invoice email sent successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Email Error",
+        description: error.message || "Failed to send invoice email",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSendInvoice = () => {
+    sendInvoiceMutation.mutate();
+  };
 
   const handlePrint = () => {
     window.print();
@@ -111,6 +135,24 @@ export default function WholesaleInvoice() {
                 )}
               </Button>
             )}
+            <Button
+              onClick={handleSendInvoice}
+              variant="outline"
+              disabled={sendInvoiceMutation.isPending}
+              data-testid="button-send-invoice"
+            >
+              {sendInvoiceMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Mail className="mr-2 h-4 w-4" />
+                  Send Invoice
+                </>
+              )}
+            </Button>
             <Button
               onClick={handlePrint}
               variant="outline"
