@@ -22,7 +22,8 @@ import {
   Tags,
   Landmark,
   Calculator,
-  Route
+  Route,
+  FileCheck
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -59,6 +60,7 @@ export function StaffSidebar() {
       items: [
         { title: "Place Order", href: "/staff-portal/wholesale/place-order", icon: ShoppingCart },
         { title: "Orders", href: "/staff-portal/wholesale/orders", icon: FileText },
+        { title: "Invoices", href: "/staff-portal/wholesale/invoices", icon: FileCheck, adminOnly: true },
         { title: "Customers", href: "/staff-portal/wholesale/customers", icon: Users },
         { title: "Delivery Report", href: "/staff-portal/wholesale/delivery-report", icon: TruckIcon },
         { title: "Route Optimization", href: "/staff-portal/wholesale/delivery-routes", icon: Route },

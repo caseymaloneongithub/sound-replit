@@ -2476,6 +2476,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`[WEBHOOK] ✅ Created Stripe-managed retail subscription ${newRetailSubscription.id} for Stripe subscription ${stripeSubscription.id}`);
             break;
           }
+          
+          // Handle wholesale invoice payments
+          if (session.metadata?.type === 'wholesale_invoice_payment' && session.metadata?.orderId) {
+            const orderId = session.metadata.orderId;
+            const order = await storage.getWholesaleOrder(orderId);
+            
+            if (order && !order.paidAt) {
+              await storage.updateWholesaleOrder(orderId, {
+                paidAt: new Date(),
+                stripePaymentIntentId: session.payment_intent as string,
+              });
+              console.log(`[WEBHOOK] ✅ Marked wholesale invoice ${order.invoiceNumber} as paid via Stripe`);
+            }
+            break;
+          }
         }
         case 'invoice.payment_succeeded': {
           const invoice = event.data.object as any;
@@ -4080,6 +4095,8 @@ If you have any questions, please don't hesitate to reach out!`,
 
   app.post("/api/wholesale/orders/:id/send-invoice", isAuthenticated, isAdmin, async (req, res) => {
     try {
+      const { dueDate } = req.body;
+      
       const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
       if (!orderDetails) {
         return res.status(404).json({ message: "Order not found" });
@@ -4091,6 +4108,15 @@ If you have any questions, please don't hesitate to reach out!`,
       const subtotal = items.reduce((sum: number, item: any) => {
         return sum + parseFloat(item.unitPrice) * item.quantity;
       }, 0);
+      
+      // Set due date (default 30 days from now if not provided)
+      const dueDateValue = dueDate ? new Date(dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      
+      // Update order with due date and sent timestamp
+      await storage.updateWholesaleOrder(req.params.id, {
+        dueDate: dueDateValue,
+        invoiceSentAt: new Date(),
+      });
 
       // Generate payment URL for online payment customers
       let paymentUrl: string | null = null;
@@ -4171,6 +4197,34 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error("Error sending invoice email:", error);
       res.status(500).json({ message: "Error sending invoice: " + error.message });
+    }
+  });
+
+  // Mark invoice as paid (admin only)
+  app.post("/api/wholesale/orders/:id/mark-paid", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const order = await storage.getWholesaleOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      if (order.paidAt) {
+        return res.status(400).json({ message: "Invoice is already marked as paid" });
+      }
+
+      const user = req.user as any;
+      await storage.updateWholesaleOrder(req.params.id, {
+        paidAt: new Date(),
+        paidByUserId: user.id,
+      });
+
+      res.json({ 
+        success: true, 
+        message: "Invoice marked as paid",
+      });
+    } catch (error: any) {
+      console.error("Error marking invoice as paid:", error);
+      res.status(500).json({ message: "Error marking invoice as paid: " + error.message });
     }
   });
 

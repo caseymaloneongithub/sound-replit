@@ -223,7 +223,15 @@ export interface IStorage {
   getAllWholesaleOrderItems(): Promise<WholesaleOrderItem[]>;
   createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem>;
   deleteWholesaleOrderItems(orderId: string): Promise<void>;
-  updateWholesaleOrder(id: string, updates: { totalAmount?: string; notes?: string | null }): Promise<WholesaleOrder | undefined>;
+  updateWholesaleOrder(id: string, updates: { 
+    totalAmount?: string; 
+    notes?: string | null;
+    dueDate?: Date | null;
+    paidAt?: Date | null;
+    paidByUserId?: string | null;
+    stripePaymentIntentId?: string | null;
+    invoiceSentAt?: Date | null;
+  }): Promise<WholesaleOrder | undefined>;
   
   getAllWholesalePricing(): Promise<WholesalePricing[]>;
   getWholesalePricing(customerId: string): Promise<WholesalePricing[]>;
@@ -1731,7 +1739,15 @@ export class PostgresStorage implements IStorage {
     await db.delete(wholesaleOrderItems).where(eq(wholesaleOrderItems.orderId, orderId));
   }
 
-  async updateWholesaleOrder(id: string, updates: { totalAmount?: string; notes?: string | null }): Promise<WholesaleOrder | undefined> {
+  async updateWholesaleOrder(id: string, updates: { 
+    totalAmount?: string; 
+    notes?: string | null;
+    dueDate?: Date | null;
+    paidAt?: Date | null;
+    paidByUserId?: string | null;
+    stripePaymentIntentId?: string | null;
+    invoiceSentAt?: Date | null;
+  }): Promise<WholesaleOrder | undefined> {
     const result = await db
       .update(wholesaleOrders)
       .set(updates)

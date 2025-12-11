@@ -32,6 +32,7 @@ import WholesaleOrders from "@/pages/wholesale-orders";
 import WholesaleDeliveryReport from "@/pages/wholesale-delivery-report";
 import WholesaleCustomers from "@/pages/wholesale-customers";
 import WholesaleInvoice from "@/pages/wholesale-invoice";
+import WholesaleInvoices from "@/pages/wholesale-invoices";
 import WholesalePaymentSuccess from "@/pages/wholesale-payment-success";
 import RetailOrders from "@/pages/retail-orders";
 import RetailSubscriptions from "@/pages/retail-subscriptions";
@@ -93,6 +94,7 @@ function Router() {
       <StaffProtectedRoute path="/staff-portal/wholesale/delivery-report" component={WholesaleDeliveryReport} />
       <StaffProtectedRoute path="/staff-portal/wholesale/customers" component={WholesaleCustomers} />
       <StaffProtectedRoute path="/staff-portal/wholesale/delivery-routes" component={DeliveryRoutes} />
+      <StaffProtectedRoute path="/staff-portal/wholesale/invoices" component={WholesaleInvoices} />
       
       {/* Invoice pages remain accessible outside main navigation */}
       <StaffProtectedRoute path="/wholesale/invoice/:id/payment-success" component={WholesalePaymentSuccess} />
