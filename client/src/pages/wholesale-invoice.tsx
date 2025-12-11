@@ -114,7 +114,11 @@ export default function WholesaleInvoice() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setLocation("/wholesale/orders")}
+            onClick={() => {
+              // Navigate to appropriate orders page based on user role
+              const isStaffOrAdmin = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'staff';
+              setLocation(isStaffOrAdmin ? "/wholesale/orders" : "/wholesale-customer/orders");
+            }}
             data-testid="button-back"
           >
             <ArrowLeft className="h-4 w-4" />
