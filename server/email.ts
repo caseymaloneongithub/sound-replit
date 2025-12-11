@@ -1021,47 +1021,51 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
     
     doc.moveDown(1);
 
-    // Two column layout for From/Bill To
+    // Column layout for From/Bill To/Deliver To
     const startY = doc.y;
-    const columnWidth = 220;
+    const hasLocation = !!params.location;
+    const columnWidth = hasLocation ? 170 : 220;
+    const colGap = 10;
     
     // FROM
-    doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('FROM', 50, startY);
-    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text('Puget Sound Kombucha Co.', 50, startY + 15);
+    const fromX = 50;
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('FROM', fromX, startY, { width: columnWidth });
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text('Puget Sound Kombucha Co.', fromX, startY + 15, { width: columnWidth });
     doc.font('Helvetica').fontSize(9).fillColor('#666666');
-    doc.text('4501 Shilshole Ave NW', 50, startY + 30);
-    doc.text('Seattle, WA 98107', 50, startY + 42);
-    doc.text('emily@soundkombucha.com', 50, startY + 54);
-    doc.text('(206) 789-5219', 50, startY + 66);
+    doc.text('4501 Shilshole Ave NW', fromX, startY + 30, { width: columnWidth });
+    doc.text('Seattle, WA 98107', fromX, startY + 42, { width: columnWidth });
+    doc.text('emily@soundkombucha.com', fromX, startY + 54, { width: columnWidth });
+    doc.text('(206) 789-5219', fromX, startY + 66, { width: columnWidth });
     
     // BILL TO
-    doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('BILL TO', 50 + columnWidth, startY);
-    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text(params.businessName, 50 + columnWidth, startY + 15);
+    const billToX = fromX + columnWidth + colGap;
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('BILL TO', billToX, startY, { width: columnWidth });
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text(params.businessName, billToX, startY + 15, { width: columnWidth });
     doc.font('Helvetica').fontSize(9).fillColor('#666666');
-    doc.text(params.contactName, 50 + columnWidth, startY + 30);
-    doc.text(params.customerAddress, 50 + columnWidth, startY + 42);
-    doc.text(params.customerEmail, 50 + columnWidth, startY + 54);
-    doc.text(params.customerPhone, 50 + columnWidth, startY + 66);
+    doc.text(params.contactName, billToX, startY + 30, { width: columnWidth });
+    doc.text(params.customerAddress, billToX, startY + 42, { width: columnWidth });
+    doc.text(params.customerEmail, billToX, startY + 54, { width: columnWidth });
+    doc.text(params.customerPhone, billToX, startY + 66, { width: columnWidth });
 
     // DELIVER TO (if location provided)
     if (params.location) {
-      const deliverX = 50 + columnWidth * 2;
+      const deliverX = billToX + columnWidth + colGap;
       let deliverY = startY;
-      doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('DELIVER TO', deliverX, deliverY);
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('DELIVER TO', deliverX, deliverY, { width: columnWidth });
       deliverY += 15;
-      doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text(params.location.locationName, deliverX, deliverY);
+      doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text(params.location.locationName, deliverX, deliverY, { width: columnWidth });
       deliverY += 15;
       doc.font('Helvetica').fontSize(9).fillColor('#666666');
-      doc.text(params.location.address, deliverX, deliverY);
+      doc.text(params.location.address, deliverX, deliverY, { width: columnWidth });
       deliverY += 12;
-      doc.text(`${params.location.city}, ${params.location.state} ${params.location.zipCode}`, deliverX, deliverY);
+      doc.text(`${params.location.city}, ${params.location.state} ${params.location.zipCode}`, deliverX, deliverY, { width: columnWidth });
       deliverY += 12;
       if (params.location.contactName) {
-        doc.text(params.location.contactName, deliverX, deliverY);
+        doc.text(params.location.contactName, deliverX, deliverY, { width: columnWidth });
         deliverY += 12;
       }
       if (params.location.contactPhone) {
-        doc.text(params.location.contactPhone, deliverX, deliverY);
+        doc.text(params.location.contactPhone, deliverX, deliverY, { width: columnWidth });
       }
     }
 
