@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import Stripe from "stripe";
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { storage } from "./storage";
-import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema } from "@shared/schema";
+import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings } from "@shared/schema";
 import { eq, sql, and, desc } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -744,6 +744,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           flavorId: item.flavorId,
           quantity: item.quantity,
           unitPrice: unitPrice.toFixed(2),
+        });
+      }
+
+      // Check minimum order amount
+      const minOrderResult = await db.select().from(siteSettings).where(eq(siteSettings.key, 'wholesale_minimum_order'));
+      const minOrderAmount = minOrderResult[0] ? parseFloat(minOrderResult[0].value) : 0;
+      
+      if (minOrderAmount > 0 && totalAmount < minOrderAmount) {
+        return res.status(400).json({ 
+          message: `Order total of $${totalAmount.toFixed(2)} does not meet the minimum order amount of $${minOrderAmount.toFixed(2)}. Please add more items to your order.`,
+          minimumOrderAmount: minOrderAmount,
+          currentTotal: totalAmount
         });
       }
 
@@ -3679,6 +3691,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("[BILLING PORTAL] Error creating session:", error);
       res.status(500).json({ message: "Failed to create billing portal session: " + error.message });
+    }
+  });
+
+  // Site settings routes (admin-only)
+  app.get("/api/settings/wholesale-minimum-order", async (req, res) => {
+    try {
+      const result = await db.select().from(siteSettings).where(eq(siteSettings.key, 'wholesale_minimum_order'));
+      const setting = result[0];
+      res.json({ value: setting ? parseFloat(setting.value) : 0 });
+    } catch (error: any) {
+      console.error("Error fetching wholesale minimum order setting:", error);
+      res.status(500).json({ message: "Error fetching setting: " + error.message });
+    }
+  });
+
+  app.patch("/api/settings/wholesale-minimum-order", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { value } = req.body;
+      if (typeof value !== 'number' || value < 0) {
+        return res.status(400).json({ message: "Value must be a non-negative number" });
+      }
+
+      await db.insert(siteSettings)
+        .values({ key: 'wholesale_minimum_order', value: value.toString(), updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: siteSettings.key,
+          set: { value: value.toString(), updatedAt: new Date() }
+        });
+
+      res.json({ success: true, value });
+    } catch (error: any) {
+      console.error("Error updating wholesale minimum order setting:", error);
+      res.status(500).json({ message: "Error updating setting: " + error.message });
     }
   });
 

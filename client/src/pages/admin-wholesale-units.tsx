@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, Box, DollarSign, X } from "lucide-react";
+import { Loader2, Box, DollarSign, X, Settings } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import type { WholesaleUnitType, Flavor, WholesaleCustomer, WholesaleCustomerPricing } from "@shared/schema";
 
@@ -29,6 +29,31 @@ export default function AdminWholesaleUnits() {
   });
   const [customerPricing, setCustomerPricing] = useState<Record<string, number>>({});
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
+  const [minimumOrderAmount, setMinimumOrderAmount] = useState<number>(0);
+
+  // Query for minimum order amount setting
+  const { data: minOrderSetting } = useQuery<{ value: number }>({
+    queryKey: ['/api/settings/wholesale-minimum-order'],
+  });
+
+  // Update local state when setting is fetched
+  useEffect(() => {
+    if (minOrderSetting) {
+      setMinimumOrderAmount(minOrderSetting.value);
+    }
+  }, [minOrderSetting]);
+
+  // Mutation for updating minimum order amount
+  const updateMinOrderMutation = useMutation({
+    mutationFn: async (value: number) => apiRequest('PATCH', '/api/settings/wholesale-minimum-order', { value }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/settings/wholesale-minimum-order'] });
+      toast({ title: "Setting updated", description: "Minimum order amount has been updated successfully" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to update setting", variant: "destructive" });
+    },
+  });
 
   const { data: wholesaleUnitTypes = [], isLoading: wholesaleUnitTypesLoading } = useQuery<(WholesaleUnitType & { flavors?: Flavor[] })[]>({
     queryKey: ['/api/wholesale-unit-types'],
@@ -197,6 +222,52 @@ export default function AdminWholesaleUnits() {
             Define wholesale unit types with default pricing and which flavors are available for each unit
           </p>
         </div>
+
+        <Card className="mb-6">
+          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="w-5 h-5" />
+                Wholesale Order Settings
+              </CardTitle>
+              <CardDescription>Configure global settings for wholesale orders</CardDescription>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-end gap-4">
+              <div className="flex-1 max-w-xs">
+                <Label htmlFor="min-order-amount">Minimum Order Amount ($)</Label>
+                <Input
+                  id="min-order-amount"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={minimumOrderAmount}
+                  onChange={(e) => setMinimumOrderAmount(parseFloat(e.target.value) || 0)}
+                  placeholder="0.00"
+                  data-testid="input-min-order-amount"
+                />
+                <p className="text-sm text-muted-foreground mt-1">
+                  Set to 0 for no minimum. Customers cannot submit orders below this amount.
+                </p>
+              </div>
+              <Button 
+                onClick={() => updateMinOrderMutation.mutate(minimumOrderAmount)}
+                disabled={updateMinOrderMutation.isPending}
+                data-testid="button-save-min-order"
+              >
+                {updateMinOrderMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save'
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card className="mb-6">
           <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">

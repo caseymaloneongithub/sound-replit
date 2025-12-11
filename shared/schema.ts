@@ -70,6 +70,13 @@ export const emailVerificationCodes = pgTable("email_verification_codes", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Site settings for global configuration
+export const siteSettings = pgTable("site_settings", {
+  key: varchar("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // OLD SCHEMA - Keep for backwards compatibility during migration
 // Product Types - represents product categories with pricing (e.g., "Mixed Case - 12 bottles")
 export const productTypes = pgTable("product_types", {
@@ -703,3 +710,6 @@ export type PlaidAccount = typeof plaidAccounts.$inferSelect;
 export type AccountingCategory = typeof accountingCategories.$inferSelect;
 export type AccountingTransaction = typeof accountingTransactions.$inferSelect;
 export type TransactionAllocation = typeof transactionAllocations.$inferSelect;
+
+// Select types - SITE SETTINGS
+export type SiteSetting = typeof siteSettings.$inferSelect;

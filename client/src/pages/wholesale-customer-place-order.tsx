@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Minus, Trash2, ShoppingCart, MapPin } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Plus, Minus, Trash2, ShoppingCart, MapPin, AlertCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -44,6 +45,12 @@ export default function WholesaleCustomerPlaceOrder() {
   const { data: locations = [] } = useQuery<WholesaleLocation[]>({
     queryKey: ["/api/wholesale-customer/locations"],
   });
+
+  // Fetch minimum order amount setting
+  const { data: minOrderSetting } = useQuery<{ value: number }>({
+    queryKey: ["/api/settings/wholesale-minimum-order"],
+  });
+  const minimumOrderAmount = minOrderSetting?.value || 0;
 
   // Auto-select location if customer has exactly one
   useEffect(() => {
@@ -462,11 +469,30 @@ export default function WholesaleCustomerPlaceOrder() {
                         <span>Total:</span>
                         <span data-testid="text-total">${getCartTotal().toFixed(2)}</span>
                       </div>
+                      {minimumOrderAmount > 0 && (
+                        <div className="flex justify-between text-sm text-muted-foreground">
+                          <span>Minimum Order:</span>
+                          <span data-testid="text-minimum-order">${minimumOrderAmount.toFixed(2)}</span>
+                        </div>
+                      )}
                     </div>
+                    {minimumOrderAmount > 0 && getCartTotal() < minimumOrderAmount && (
+                      <Alert variant="destructive" className="mt-4">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          Your order total of ${getCartTotal().toFixed(2)} does not meet the minimum order amount of ${minimumOrderAmount.toFixed(2)}. Please add more items to your order.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                     <Button
                       className="w-full mt-4"
                       onClick={() => createOrderMutation.mutate()}
-                      disabled={createOrderMutation.isPending || cart.length === 0 || (locations.length > 1 && !selectedLocationId)}
+                      disabled={
+                        createOrderMutation.isPending || 
+                        cart.length === 0 || 
+                        (locations.length > 1 && !selectedLocationId) ||
+                        (minimumOrderAmount > 0 && getCartTotal() < minimumOrderAmount)
+                      }
                       data-testid="button-place-order"
                     >
                       {createOrderMutation.isPending ? 'Placing Order...' : 'Place Order'}
