@@ -53,6 +53,7 @@ import Contact from "@/pages/contact";
 import Cart from "@/pages/cart";
 import SecurityPolicy from "@/pages/security-policy";
 import PrivacyPolicy from "@/pages/privacy-policy";
+import DataRetentionPolicy from "@/pages/data-retention-policy";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -73,6 +74,7 @@ function Router() {
       <Route path="/contact" component={Contact} />
       <Route path="/security" component={SecurityPolicy} />
       <Route path="/privacy" component={PrivacyPolicy} />
+      <Route path="/data-retention" component={DataRetentionPolicy} />
       <Route path="/my-account" component={MyAccount} />
       <Route path="/subscriptions" component={() => <Redirect to="/my-account" />} />
       <Route path="/my-subscriptions" component={() => <Redirect to="/my-account" />} />

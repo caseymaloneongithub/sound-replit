@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { Shield, Lock, MapPin, Mail, Phone } from "lucide-react";
+import { Shield, Lock, Database, MapPin, Mail, Phone } from "lucide-react";
 
 export function Footer() {
   return (
@@ -49,6 +49,12 @@ export function Footer() {
                 <span className="flex items-center gap-2 text-muted-foreground hover:text-primary transition-colors cursor-pointer" data-testid="link-security-policy">
                   <Shield className="w-4 h-4" />
                   Information Security
+                </span>
+              </Link>
+              <Link href="/data-retention">
+                <span className="flex items-center gap-2 text-muted-foreground hover:text-primary transition-colors cursor-pointer" data-testid="link-data-retention-policy">
+                  <Database className="w-4 h-4" />
+                  Data Retention
                 </span>
               </Link>
             </div>
