@@ -3,7 +3,7 @@ import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TrendingUp, Users, DollarSign, ShoppingBag } from "lucide-react";
-import type { WholesaleOrder, Subscription } from "@shared/schema";
+import type { WholesaleOrder, RetailSubscription } from "@shared/schema";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useAuth } from "@/hooks/use-auth";
 
@@ -13,8 +13,8 @@ export default function Reports() {
     queryKey: ["/api/wholesale/orders"],
   });
 
-  const { data: subscriptions } = useQuery<Subscription[]>({
-    queryKey: ["/api/subscriptions"],
+  const { data: subscriptions } = useQuery<RetailSubscription[]>({
+    queryKey: ["/api/retail/subscriptions"],
   });
 
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
