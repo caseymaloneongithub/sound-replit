@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { db } from './db';
 import { emailVerificationCodes, verificationCodes } from '../shared/schema';
 import { lt, and, sql } from 'drizzle-orm';
+import { sendDataRetentionNotification } from './email';
 
 /**
  * Data Retention Enforcement
@@ -120,13 +121,27 @@ export async function cleanupConsumedSMSVerificationCodes(): Promise<number> {
 export async function runAllCleanupTasks(): Promise<void> {
   console.log('[DATA RETENTION] Running scheduled cleanup tasks...');
   
-  // Clean up email verification codes
-  await cleanupExpiredEmailVerificationCodes();
-  await cleanupConsumedEmailVerificationCodes();
+  // Clean up and track deletion counts
+  const emailCodesDeleted = await cleanupExpiredEmailVerificationCodes();
+  const consumedEmailCodesDeleted = await cleanupConsumedEmailVerificationCodes();
+  const smsCodesDeleted = await cleanupExpiredSMSVerificationCodes();
+  const consumedSmsCodesDeleted = await cleanupConsumedSMSVerificationCodes();
   
-  // Clean up SMS verification codes
-  await cleanupExpiredSMSVerificationCodes();
-  await cleanupConsumedSMSVerificationCodes();
+  const totalDeleted = emailCodesDeleted + consumedEmailCodesDeleted + smsCodesDeleted + consumedSmsCodesDeleted;
+  
+  // Send admin notification if anything was deleted
+  if (totalDeleted > 0) {
+    try {
+      await sendDataRetentionNotification({
+        emailCodesDeleted,
+        smsCodesDeleted,
+        consumedEmailCodesDeleted,
+        consumedSmsCodesDeleted,
+      });
+    } catch (error) {
+      console.error('[DATA RETENTION] Failed to send admin notification:', error);
+    }
+  }
   
   console.log('[DATA RETENTION] Cleanup tasks completed');
 }

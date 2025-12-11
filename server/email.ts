@@ -2052,3 +2052,112 @@ emily@soundkombucha.com
     throw error;
   }
 }
+
+// Admin email for notifications
+const ADMIN_EMAIL = 'emily@soundkombucha.com';
+
+/**
+ * Send data retention cleanup notification to admin
+ */
+export async function sendDataRetentionNotification(params: {
+  emailCodesDeleted: number;
+  smsCodesDeleted: number;
+  consumedEmailCodesDeleted: number;
+  consumedSmsCodesDeleted: number;
+}): Promise<void> {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log('[EMAIL] Skipping data retention notification - email not configured');
+    return;
+  }
+
+  const totalDeleted = params.emailCodesDeleted + params.smsCodesDeleted + 
+                       params.consumedEmailCodesDeleted + params.consumedSmsCodesDeleted;
+
+  if (totalDeleted === 0) {
+    return; // No notification needed if nothing was deleted
+  }
+
+  const timestamp = format(new Date(), 'MMMM d, yyyy h:mm a');
+
+  const mailOptions = {
+    from: `"Puget Sound Kombucha Co." <${process.env.GMAIL_USER}>`,
+    to: ADMIN_EMAIL,
+    subject: `[Data Retention] ${totalDeleted} expired records cleaned up`,
+    text: `
+Data Retention Cleanup Report
+${timestamp}
+
+The automated data retention job has cleaned up the following expired records:
+
+- Expired email verification codes: ${params.emailCodesDeleted}
+- Expired SMS verification codes: ${params.smsCodesDeleted}
+- Consumed email verification codes: ${params.consumedEmailCodesDeleted}
+- Consumed SMS verification codes: ${params.consumedSmsCodesDeleted}
+
+Total records deleted: ${totalDeleted}
+
+These are temporary security tokens that have expired per our data retention policy (24 hours for unused codes, 1 hour for consumed codes).
+
+No customer data, orders, or business records were affected.
+
+---
+Puget Sound Kombucha Co.
+Automated System Notification
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader('Data Retention Report')}
+  
+  <div style="padding: 32px 24px;">
+    <p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 24px 0; font-size: 14px;">
+      ${timestamp}
+    </p>
+    
+    <p style="color: ${BRAND_COLORS.darkGrey}; margin: 0 0 16px 0;">
+      The automated data retention job has cleaned up the following expired records:
+    </p>
+    
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+      <tr style="background-color: ${BRAND_COLORS.backgroundGrey};">
+        <td style="padding: 12px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey};">Expired email verification codes</td>
+        <td style="padding: 12px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; font-weight: bold;">${params.emailCodesDeleted}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey};">Expired SMS verification codes</td>
+        <td style="padding: 12px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; font-weight: bold;">${params.smsCodesDeleted}</td>
+      </tr>
+      <tr style="background-color: ${BRAND_COLORS.backgroundGrey};">
+        <td style="padding: 12px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey};">Consumed email verification codes</td>
+        <td style="padding: 12px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; font-weight: bold;">${params.consumedEmailCodesDeleted}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey};">Consumed SMS verification codes</td>
+        <td style="padding: 12px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; font-weight: bold;">${params.consumedSmsCodesDeleted}</td>
+      </tr>
+      <tr style="background-color: ${BRAND_COLORS.black}; color: ${BRAND_COLORS.white};">
+        <td style="padding: 12px; font-weight: bold;">Total records deleted</td>
+        <td style="padding: 12px; text-align: right; font-weight: bold;">${totalDeleted}</td>
+      </tr>
+    </table>
+    
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; border-left: 4px solid ${BRAND_COLORS.mediumGrey};">
+      <p style="margin: 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">
+        These are temporary security tokens that have expired per our data retention policy (24 hours for unused codes, 1 hour for consumed codes). No customer data, orders, or business records were affected.
+      </p>
+    </div>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent data retention notification to admin`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send data retention notification:', error);
+  }
+}
