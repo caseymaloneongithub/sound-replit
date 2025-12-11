@@ -39,6 +39,13 @@ Node.js with Express.js and TypeScript, following an ESM-first approach. It impl
 -   **Retail Product Offerings**: Admin interface for creating retail products by linking flavors to unit types (6-pack, 12-pack, case, kegs) with specific prices. Each product includes a configurable subscription discount percentage (default 10%) for subscribe & save functionality. Products can include optional refundable deposits (e.g., $75 for keg deposits) that are charged only on one-time purchases, not subscriptions. Deposits are not subject to sales tax.
 -   **Staff Portal**: A unified management portal for staff and admin users for managing retail and wholesale orders, inventory (production recording, stock overview, adjustments), a CRM system for lead tracking, and admin features (flavor library, retail products, wholesale units, product specs, user management). Super admins can impersonate users.
 -   **Delivery Route Optimization**: Staff can optimize wholesale delivery routes using Mapbox Optimization API. The system geocodes customer delivery locations, supports custom non-order stops (e.g., bank, supplier visits), and generates optimized routes that start and end at the Ballard facility (4501 Shilshole Ave NW). Routes minimize total drive time and display estimated distances/durations. Features include: date-based delivery filtering, batch geocoding, custom stop management, and route visualization with ordered stop list.
+-   **Invoice Management (Admin Only)**: Comprehensive wholesale invoice tracking accessible at `/staff-portal/wholesale/invoices`. Features include:
+    - **Dashboard view**: Summary cards showing unpaid total, overdue count, paid this month, and all-time paid amounts
+    - **Filtering tabs**: View Unpaid, Overdue, Paid, or All invoices with visual status badges
+    - **Configurable due dates**: Default 30-day payment terms, adjustable when sending invoices
+    - **Email delivery**: Send invoices with PDF attachments and Stripe payment links
+    - **Payment tracking**: Automatic marking when paid via Stripe webhook (`wholesale_invoice_payment`), plus manual "Mark as Paid" capability for cash/check payments
+    - **Schema fields**: `dueDate`, `paidAt`, `paidByUserId`, `stripePaymentIntentId`, `invoiceSentAt` on wholesale_orders
 -   **Accounting Module (Admin Only)**: Comprehensive financial management system accessible only to admin/super_admin users. Includes:
     - **Dashboard**: Income statement with revenue, expenses, and net income calculations by date range.
     - **Transactions**: View, filter, and manage financial transactions with allocation to categories. Supports CSV import for manual transaction entry and split allocations across multiple categories.
