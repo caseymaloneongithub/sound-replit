@@ -1,8 +1,8 @@
 import nodemailer from 'nodemailer';
-import { readFileSync, mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
 import { format } from 'date-fns';
 import PDFDocument from 'pdfkit';
+import { existsSync } from 'fs';
+import { join } from 'path';
 
 // Email branding - black, grey, and white color scheme
 const BRAND_COLORS = {
@@ -15,41 +15,40 @@ const BRAND_COLORS = {
   white: '#FFFFFF',
 };
 
-// Logo path for email embedding via CID attachment
+// Logo configuration for email embedding
 const LOGO_PATH = join(process.cwd(), 'attached_assets', 'text-stacked-black_1762299663824.png');
 const LOGO_CID = 'logo@pugetsoundkombucha';
 
 // Check if logo file exists
-let hasLogo = false;
-try {
-  readFileSync(LOGO_PATH);
-  hasLogo = true;
-} catch (error) {
-  console.warn('[EMAIL] Logo file not found, emails will use text-based header');
+const hasLogo = existsSync(LOGO_PATH);
+if (!hasLogo) {
+  console.warn('[EMAIL] Logo file not found at:', LOGO_PATH);
 }
 
-// Email header template - using text-based header since CSS filters for logo inversion 
-// don't work reliably across email clients (Gmail, Outlook, Apple Mail, etc.)
-const getEmailHeader = (title: string) => {
-  return `
-<div style="background-color: ${BRAND_COLORS.black}; padding: 32px 24px; text-align: center;">
-  <div style="margin-bottom: 16px;">
-    <span style="color: ${BRAND_COLORS.white}; font-size: 24px; font-weight: bold; letter-spacing: 1px;">PUGET SOUND KOMBUCHA CO.</span>
-  </div>
-  <h1 style="margin: 0; font-size: 24px; color: ${BRAND_COLORS.white}; font-weight: 600;">${title}</h1>
-</div>
-`;
-};
-
-// Get logo attachment for email
+// Get logo attachment for emails
 const getLogoAttachment = () => {
   if (!hasLogo) return [];
-  
   return [{
     filename: 'logo.png',
     path: LOGO_PATH,
     cid: LOGO_CID
   }];
+};
+
+// Email header template with embedded logo
+const getEmailHeader = (title: string) => {
+  const logoHtml = hasLogo 
+    ? `<img src="cid:${LOGO_CID}" alt="Puget Sound Kombucha Co." style="max-width: 200px; height: auto; margin-bottom: 16px;" />`
+    : `<span style="color: ${BRAND_COLORS.white}; font-size: 24px; font-weight: bold; letter-spacing: 1px;">PUGET SOUND KOMBUCHA CO.</span>`;
+  
+  return `
+<div style="background-color: ${BRAND_COLORS.black}; padding: 32px 24px; text-align: center;">
+  <div style="margin-bottom: 16px;">
+    ${logoHtml}
+  </div>
+  <h1 style="margin: 0; font-size: 24px; color: ${BRAND_COLORS.white}; font-weight: 600;">${title}</h1>
+</div>
+`;
 };
 
 // Email footer template
