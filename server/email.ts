@@ -995,12 +995,12 @@ interface WholesaleInvoiceEmailParams {
   paymentUrl?: string | null;
 }
 
-// PDF Layout Constants
-const PDF_MARGIN = 50;
+// PDF Layout Constants - Compact layout to fit on one page
+const PDF_MARGIN = 40;
 const PDF_WIDTH = 612; // Letter size
-const PDF_CONTENT_WIDTH = PDF_WIDTH - (PDF_MARGIN * 2); // 512px usable
-const LINE_HEIGHT = 14;
-const SECTION_GAP = 20;
+const PDF_CONTENT_WIDTH = PDF_WIDTH - (PDF_MARGIN * 2); // 532px usable
+const LINE_HEIGHT = 12;
+const SECTION_GAP = 12;
 const LABEL_COLOR = '#666666';
 const TEXT_COLOR = '#333333';
 const HEADER_BG = '#f5f5f5';
@@ -1017,23 +1017,23 @@ function renderAddressBlock(
   let currentY = y;
   
   // Label
-  doc.fontSize(9).font('Helvetica-Bold').fillColor(LABEL_COLOR);
+  doc.fontSize(8).font('Helvetica-Bold').fillColor(LABEL_COLOR);
   doc.text(label, x, currentY, { width });
-  currentY += LINE_HEIGHT;
+  currentY += 11;
   
   // First line (business/location name) - bold
   if (lines.length > 0) {
-    doc.fontSize(10).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+    doc.fontSize(9).font('Helvetica-Bold').fillColor(TEXT_COLOR);
     doc.text(lines[0], x, currentY, { width });
-    currentY += LINE_HEIGHT;
+    currentY += 11;
   }
   
   // Remaining lines - regular
-  doc.fontSize(9).font('Helvetica').fillColor(LABEL_COLOR);
+  doc.fontSize(8).font('Helvetica').fillColor(LABEL_COLOR);
   for (let i = 1; i < lines.length; i++) {
     if (lines[i]) {
       doc.text(lines[i], x, currentY, { width });
-      currentY += LINE_HEIGHT - 2;
+      currentY += 10;
     }
   }
   
@@ -1051,37 +1051,37 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
     doc.on('error', reject);
 
     // ===== HEADER SECTION =====
-    doc.fontSize(28).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+    doc.fontSize(22).font('Helvetica-Bold').fillColor(TEXT_COLOR);
     doc.text('INVOICE', PDF_MARGIN, PDF_MARGIN);
     
     // Invoice meta info (right aligned)
-    const metaX = PDF_WIDTH - PDF_MARGIN - 180;
+    const metaX = PDF_WIDTH - PDF_MARGIN - 160;
     let metaY = PDF_MARGIN;
-    doc.fontSize(10).font('Helvetica').fillColor(LABEL_COLOR);
+    doc.fontSize(9).font('Helvetica').fillColor(LABEL_COLOR);
     doc.text(`Invoice #: `, metaX, metaY, { continued: true });
     doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(params.invoiceNumber);
     metaY += LINE_HEIGHT;
     
     doc.font('Helvetica').fillColor(LABEL_COLOR);
     doc.text(`Date: `, metaX, metaY, { continued: true });
-    doc.fillColor(TEXT_COLOR).text(format(params.orderDate, 'MMMM dd, yyyy'));
+    doc.fillColor(TEXT_COLOR).text(format(params.orderDate, 'MMM dd, yyyy'));
     metaY += LINE_HEIGHT;
     
     if (params.deliveryDate) {
       doc.fillColor(LABEL_COLOR).text(`Delivery: `, metaX, metaY, { continued: true });
-      doc.fillColor(TEXT_COLOR).text(format(params.deliveryDate, 'MMMM dd, yyyy'));
+      doc.fillColor(TEXT_COLOR).text(format(params.deliveryDate, 'MMM dd, yyyy'));
       metaY += LINE_HEIGHT;
     }
     
     if (params.dueDate) {
       doc.fillColor(LABEL_COLOR).text(`Due: `, metaX, metaY, { continued: true });
-      doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(format(params.dueDate, 'MMMM dd, yyyy'));
+      doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(format(params.dueDate, 'MMM dd, yyyy'));
       metaY += LINE_HEIGHT;
     }
 
     // ===== ADDRESS SECTION =====
-    let addressY = PDF_MARGIN + 70;
-    const halfWidth = (PDF_CONTENT_WIDTH - 40) / 2; // 236px each with 40px gap
+    let addressY = PDF_MARGIN + 50;
+    const halfWidth = (PDF_CONTENT_WIDTH - 30) / 2; // columns with 30px gap
     
     // Row 1: FROM and BILL TO side by side
     const fromLines = [
@@ -1101,7 +1101,7 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
     ];
     
     const fromEndY = renderAddressBlock(doc, 'FROM', fromLines, PDF_MARGIN, addressY, halfWidth);
-    const billToEndY = renderAddressBlock(doc, 'BILL TO', billToLines, PDF_MARGIN + halfWidth + 40, addressY, halfWidth);
+    const billToEndY = renderAddressBlock(doc, 'BILL TO', billToLines, PDF_MARGIN + halfWidth + 30, addressY, halfWidth);
     
     let currentY = Math.max(fromEndY, billToEndY) + SECTION_GAP;
     
@@ -1120,68 +1120,68 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
     }
 
     // ===== ITEMS TABLE =====
-    currentY += 10;
+    currentY += 8;
     
     // Table header
-    doc.fillColor(HEADER_BG).rect(PDF_MARGIN, currentY, PDF_CONTENT_WIDTH, 24).fill();
-    doc.fillColor(TEXT_COLOR).fontSize(9).font('Helvetica-Bold');
-    doc.text('ITEM', PDF_MARGIN + 10, currentY + 7, { width: 280 });
-    doc.text('QTY', 360, currentY + 7, { width: 50, align: 'center' });
-    doc.text('PRICE', 420, currentY + 7, { width: 60, align: 'right' });
-    doc.text('TOTAL', 490, currentY + 7, { width: 60, align: 'right' });
+    doc.fillColor(HEADER_BG).rect(PDF_MARGIN, currentY, PDF_CONTENT_WIDTH, 20).fill();
+    doc.fillColor(TEXT_COLOR).fontSize(8).font('Helvetica-Bold');
+    doc.text('ITEM', PDF_MARGIN + 8, currentY + 6, { width: 300 });
+    doc.text('QTY', 380, currentY + 6, { width: 40, align: 'center' });
+    doc.text('PRICE', 430, currentY + 6, { width: 55, align: 'right' });
+    doc.text('TOTAL', 495, currentY + 6, { width: 55, align: 'right' });
     
-    currentY += 28;
+    currentY += 22;
     
     // Table rows
-    doc.font('Helvetica').fontSize(10);
+    doc.font('Helvetica').fontSize(9);
     for (const item of params.items) {
       const lineTotal = parseFloat(item.unitPrice) * item.quantity;
       
       doc.fillColor(TEXT_COLOR);
-      doc.text(item.productName, PDF_MARGIN + 10, currentY, { width: 280 });
-      doc.text(item.quantity.toString(), 360, currentY, { width: 50, align: 'center' });
-      doc.text(`$${parseFloat(item.unitPrice).toFixed(2)}`, 420, currentY, { width: 60, align: 'right' });
-      doc.text(`$${lineTotal.toFixed(2)}`, 490, currentY, { width: 60, align: 'right' });
+      doc.text(item.productName, PDF_MARGIN + 8, currentY, { width: 300 });
+      doc.text(item.quantity.toString(), 380, currentY, { width: 40, align: 'center' });
+      doc.text(`$${parseFloat(item.unitPrice).toFixed(2)}`, 430, currentY, { width: 55, align: 'right' });
+      doc.text(`$${lineTotal.toFixed(2)}`, 495, currentY, { width: 55, align: 'right' });
       
-      currentY += 20;
+      currentY += 16;
       
       // Row divider
       doc.strokeColor('#e0e0e0').lineWidth(0.5);
       doc.moveTo(PDF_MARGIN, currentY).lineTo(PDF_WIDTH - PDF_MARGIN, currentY).stroke();
-      currentY += 8;
+      currentY += 4;
     }
 
     // ===== TOTAL SECTION =====
-    currentY += 10;
-    doc.fillColor(HEADER_BG).rect(400, currentY, 162, 32).fill();
-    doc.fillColor(TEXT_COLOR).font('Helvetica-Bold').fontSize(12);
-    doc.text('TOTAL', 410, currentY + 9);
-    doc.text(`$${params.subtotal.toFixed(2)}`, 490, currentY + 9, { width: 60, align: 'right' });
+    currentY += 8;
+    doc.fillColor(HEADER_BG).rect(420, currentY, 132, 24).fill();
+    doc.fillColor(TEXT_COLOR).font('Helvetica-Bold').fontSize(10);
+    doc.text('TOTAL', 428, currentY + 6);
+    doc.text(`$${params.subtotal.toFixed(2)}`, 495, currentY + 6, { width: 55, align: 'right' });
     
-    currentY += 50;
+    currentY += 35;
 
     // ===== NOTES SECTION =====
     if (params.notes) {
-      doc.font('Helvetica-Bold').fontSize(10).fillColor(LABEL_COLOR);
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(LABEL_COLOR);
       doc.text('Notes:', PDF_MARGIN, currentY);
-      currentY += LINE_HEIGHT;
-      doc.font('Helvetica').fontSize(9).fillColor(TEXT_COLOR);
+      currentY += 10;
+      doc.font('Helvetica').fontSize(8).fillColor(TEXT_COLOR);
       doc.text(params.notes, PDF_MARGIN, currentY, { width: PDF_CONTENT_WIDTH });
     }
 
     // ===== FOOTER =====
-    const footerY = doc.page.height - 80;
-    doc.fontSize(9).fillColor(LABEL_COLOR);
+    const footerY = doc.page.height - 60;
+    doc.fontSize(8).fillColor(LABEL_COLOR);
     
     if (params.allowOnlinePayment && params.paymentUrl) {
       doc.text('Pay online at:', PDF_MARGIN, footerY);
-      doc.fillColor(TEXT_COLOR).text(params.paymentUrl, PDF_MARGIN, footerY + LINE_HEIGHT, { width: PDF_CONTENT_WIDTH });
+      doc.fillColor(TEXT_COLOR).text(params.paymentUrl, PDF_MARGIN, footerY + 10, { width: PDF_CONTENT_WIDTH });
     } else {
       doc.text('Payment Terms: Net 30', PDF_MARGIN, footerY);
     }
     
     doc.fillColor(LABEL_COLOR);
-    doc.text('Thank you for your business!', PDF_MARGIN, footerY + 35);
+    doc.text('Thank you for your business!', PDF_MARGIN, footerY + 25);
 
     doc.end();
   });
