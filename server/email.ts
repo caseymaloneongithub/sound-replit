@@ -520,6 +520,140 @@ Puget Sound Kombucha Co.
   }
 }
 
+// Retail Order Admin Notification - sent to admins when retail order is placed
+interface RetailOrderAdminNotificationParams {
+  adminEmails: string[];
+  customerName: string;
+  customerEmail: string;
+  orderNumber: string;
+  orderDate: Date;
+  orderItems: Array<{ productName: string; quantity: number; unitPrice: string }>;
+  subtotal: number;
+  taxAmount?: number;
+  total: number;
+  orderType: 'one-time' | 'subscription';
+}
+
+export async function sendRetailOrderAdminNotification(params: RetailOrderAdminNotificationParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send retail order notification to admins');
+    console.log('[EMAIL] Order number:', params.orderNumber);
+    return;
+  }
+
+  const orderDateFormatted = format(params.orderDate, 'MMMM d, yyyy \'at\' h:mm a');
+  
+  const itemsHtml = params.orderItems.map(item => {
+    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+    return `
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${item.productName}</td>
+        <td style="padding: 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: center; color: ${BRAND_COLORS.darkGrey};">${item.quantity} case${item.quantity > 1 ? 's' : ''}</td>
+        <td style="padding: 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">$${lineTotal.toFixed(2)}</td>
+      </tr>
+    `;
+  }).join('');
+  
+  const itemsText = params.orderItems.map(item => {
+    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+    return `- ${item.productName} x ${item.quantity} = $${lineTotal.toFixed(2)}`;
+  }).join('\n');
+
+  const orderTypeLabel = params.orderType === 'subscription' ? 'New Subscription' : 'New Retail Order';
+  const orderTypeBgColor = params.orderType === 'subscription' ? '#dcfce7' : '#dbeafe';
+  const orderTypeBorderColor = params.orderType === 'subscription' ? '#22c55e' : '#3b82f6';
+  const orderTypeTextColor = params.orderType === 'subscription' ? '#166534' : '#1e40af';
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.adminEmails.join(', '),
+    subject: `${orderTypeLabel}: #${params.orderNumber} - ${params.customerName} ($${params.total.toFixed(2)})`,
+    text: `
+${orderTypeLabel}
+
+Order #: ${params.orderNumber}
+Customer: ${params.customerName}
+Email: ${params.customerEmail}
+Order Date: ${orderDateFormatted}
+
+Items:
+${itemsText}
+
+Subtotal: $${params.subtotal.toFixed(2)}
+${params.taxAmount ? `Sales Tax: $${params.taxAmount.toFixed(2)}` : ''}
+Total: $${params.total.toFixed(2)}
+
+---
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader(orderTypeLabel)}
+  
+  <div style="padding: 32px 24px;">
+    <div style="background-color: ${orderTypeBgColor}; border: 2px solid ${orderTypeBorderColor}; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+      <p style="margin: 0; font-size: 14px; color: ${orderTypeTextColor}; font-weight: bold;">${orderTypeLabel.toUpperCase()}</p>
+      <p style="margin: 8px 0 0 0; font-size: 24px; color: ${orderTypeTextColor}; font-weight: bold;">$${params.total.toFixed(2)}</p>
+    </div>
+    
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey}; width: 120px;">Order #</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.orderNumber}</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey};">Customer</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.customerName}</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey};">Email</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${params.customerEmail}</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px 0; color: ${BRAND_COLORS.mediumGrey};">Order Date</td>
+        <td style="padding: 10px 0; color: ${BRAND_COLORS.darkGrey};">${orderDateFormatted}</td>
+      </tr>
+    </table>
+    
+    <h3 style="font-size: 14px; color: ${BRAND_COLORS.darkGrey}; margin: 0 0 12px 0;">Order Items</h3>
+    
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+      <thead>
+        <tr style="background-color: ${BRAND_COLORS.backgroundGrey};">
+          <th style="padding: 10px 8px; text-align: left; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Item</th>
+          <th style="padding: 10px 8px; text-align: center; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Qty</th>
+          <th style="padding: 10px 8px; text-align: right; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsHtml}
+      </tbody>
+    </table>
+    
+    <div style="text-align: right; padding: 16px; background-color: ${BRAND_COLORS.backgroundGrey}; border-radius: 4px;">
+      <p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Subtotal: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.subtotal.toFixed(2)}</strong></p>
+      ${params.taxAmount ? `<p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Sales Tax: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.taxAmount.toFixed(2)}</strong></p>` : ''}
+      <p style="margin: 8px 0 0 0; font-size: 18px; color: ${BRAND_COLORS.black}; padding-top: 8px; border-top: 2px solid ${BRAND_COLORS.borderGrey};">Total: <strong>$${params.total.toFixed(2)}</strong></p>
+    </div>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent retail order notification to admins for order ${params.orderNumber}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send retail order notification:', error);
+    throw error;
+  }
+}
+
 interface ReadyForPickupEmailParams {
   customerEmail: string;
   customerName: string;

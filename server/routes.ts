@@ -3073,6 +3073,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   console.error(`[WEBHOOK] Failed to send order receipt email for ${orderNumber}:`, emailError);
                   // Don't fail the webhook if email fails
                 });
+                
+                // Send admin notification for retail order (non-blocking)
+                (async () => {
+                  try {
+                    const { sendRetailOrderAdminNotification } = await import('./email');
+                    const admins = await storage.getUsersByRole('admin');
+                    const superAdmins = await storage.getUsersByRole('super_admin');
+                    const adminEmails = [...admins, ...superAdmins]
+                      .map(u => u.email)
+                      .filter((email): email is string => !!email);
+                    
+                    if (adminEmails.length > 0) {
+                      await sendRetailOrderAdminNotification({
+                        adminEmails,
+                        customerName: checkoutSession.customer_name,
+                        customerEmail: checkoutSession.customer_email,
+                        orderNumber,
+                        orderDate: new Date(),
+                        orderItems,
+                        subtotal: recomputedSubtotalCents / 100,
+                        taxAmount: recomputedTaxCents > 0 ? recomputedTaxCents / 100 : undefined,
+                        total: recomputedTotalCents / 100,
+                        orderType: isSubscriptionOrder ? 'subscription' : 'one-time',
+                      });
+                    }
+                  } catch (emailError) {
+                    console.error(`[WEBHOOK] Failed to send admin notification for ${orderNumber}:`, emailError);
+                  }
+                })();
               } else {
                 console.log(`[WEBHOOK] Order already exists for payment intent ${paymentIntent.id} - skipping creation (idempotent)`);
               }
