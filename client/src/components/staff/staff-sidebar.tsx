@@ -2,15 +2,11 @@ import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { 
-  LayoutDashboard,
   Package,
   ShoppingCart,
   Users,
   FileText,
   TruckIcon,
-  ClipboardList,
-  Settings,
-  BarChart3,
   DollarSign,
   UserCog,
   Building2,
@@ -77,7 +73,6 @@ export function StaffSidebar() {
     {
       title: "Reports",
       items: [
-        { title: "Inventory", href: "/inventory", icon: ClipboardList },
         { title: "Revenue", href: "/reports", icon: DollarSign },
       ],
     },
