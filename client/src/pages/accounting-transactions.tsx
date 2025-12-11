@@ -27,7 +27,10 @@ import {
   Loader2,
   MoreHorizontal,
   FileSpreadsheet,
-  Plus
+  Plus,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -80,6 +83,12 @@ export default function AccountingTransactions() {
   const [newTxAmount, setNewTxAmount] = useState("");
   const [newTxType, setNewTxType] = useState<"income" | "expense">("expense");
   const [newTxCategory, setNewTxCategory] = useState<string>("");
+  
+  // Sort state
+  type SortField = 'date' | 'name' | 'amount' | 'category';
+  type SortDirection = 'asc' | 'desc';
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -239,10 +248,10 @@ export default function AccountingTransactions() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedTransactions.length === transactions.length) {
+    if (selectedTransactions.length === sortedTransactions.length) {
       setSelectedTransactions([]);
     } else {
-      setSelectedTransactions(transactions.map(t => t.id));
+      setSelectedTransactions(sortedTransactions.map(t => t.id));
     }
   };
 
@@ -323,6 +332,104 @@ export default function AccountingTransactions() {
     setDateTo(undefined);
   };
 
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
+  };
+
+  const getSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return <ArrowUpDown className="w-4 h-4 ml-1 opacity-50" />;
+    }
+    return sortDirection === 'asc' 
+      ? <ArrowUp className="w-4 h-4 ml-1" />
+      : <ArrowDown className="w-4 h-4 ml-1" />;
+  };
+
+  const sortedTransactions = [...transactions].sort((a, b) => {
+    const getCategoryName = (tx: TransactionWithAllocation) => {
+      if (tx.allocations && tx.allocations.length > 0) {
+        const cat = categories.find(c => c.id === tx.allocations![0].categoryId);
+        return cat?.name || '';
+      }
+      return '';
+    };
+
+    let comparison = 0;
+    switch (sortField) {
+      case 'date':
+        comparison = new Date(a.date).getTime() - new Date(b.date).getTime();
+        break;
+      case 'name':
+        comparison = (a.name || '').localeCompare(b.name || '');
+        break;
+      case 'amount':
+        comparison = parseFloat(a.amount) - parseFloat(b.amount);
+        break;
+      case 'category':
+        comparison = getCategoryName(a).localeCompare(getCategoryName(b));
+        break;
+    }
+    return sortDirection === 'asc' ? comparison : -comparison;
+  });
+
+  const handleExportCSV = () => {
+    if (transactions.length === 0) {
+      toast({ title: "No transactions to export", variant: "destructive" });
+      return;
+    }
+
+    const getCategoryName = (tx: TransactionWithAllocation) => {
+      if (tx.allocations && tx.allocations.length > 0) {
+        return tx.allocations.map(a => {
+          const cat = categories.find(c => c.id === a.categoryId);
+          return cat?.name || 'Unknown';
+        }).join('; ');
+      }
+      return '';
+    };
+
+    const headers = ['Date', 'Description', 'Amount', 'Type', 'Category', 'Allocation Status', 'Transaction Status', 'Account'];
+    const rows = transactions.map(tx => {
+      const amount = parseFloat(tx.amount);
+      const type = amount > 0 ? 'Expense' : 'Income';
+      const displayAmount = Math.abs(amount).toFixed(2);
+      const allocationStatus = tx.allocations && tx.allocations.length > 0 ? 'Allocated' : 'Unallocated';
+      const transactionStatus = tx.status || 'active';
+      const category = getCategoryName(tx);
+      const account = tx.plaidAccountId || '';
+      
+      return [
+        new Date(tx.date).toLocaleDateString('en-US'),
+        `"${(tx.name || '').replace(/"/g, '""')}"`,
+        displayAmount,
+        type,
+        `"${category.replace(/"/g, '""')}"`,
+        allocationStatus,
+        transactionStatus,
+        account
+      ].join(',');
+    });
+
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const dateStr = format(new Date(), 'yyyy-MM-dd');
+    link.download = `transactions-${dateStr}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    toast({ title: `Exported ${transactions.length} transactions` });
+  };
+
   return (
     <StaffLayout>
       <div className="p-6 space-y-6">
@@ -339,6 +446,15 @@ export default function AccountingTransactions() {
             <Button onClick={() => setAddDialogOpen(true)} data-testid="button-add-transaction">
               <Plus className="w-4 h-4 mr-2" />
               Add Transaction
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={handleExportCSV}
+              disabled={transactions.length === 0 || transactionsLoading}
+              data-testid="button-export-csv"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Export CSV
             </Button>
             <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
               <DialogTrigger asChild>
@@ -533,15 +649,51 @@ export default function AccountingTransactions() {
                   <tr className="border-b">
                     <th className="p-4 text-left">
                       <Checkbox 
-                        checked={selectedTransactions.length === transactions.length && transactions.length > 0}
+                        checked={selectedTransactions.length === sortedTransactions.length && sortedTransactions.length > 0}
                         onCheckedChange={toggleSelectAll}
                         data-testid="checkbox-select-all"
                       />
                     </th>
-                    <th className="p-4 text-left text-sm font-medium">Date</th>
-                    <th className="p-4 text-left text-sm font-medium">Description</th>
-                    <th className="p-4 text-left text-sm font-medium">Category</th>
-                    <th className="p-4 text-right text-sm font-medium">Amount</th>
+                    <th className="p-4 text-left text-sm font-medium">
+                      <button 
+                        onClick={() => handleSort('date')}
+                        className="flex items-center hover:text-primary transition-colors"
+                        data-testid="sort-date"
+                      >
+                        Date
+                        {getSortIcon('date')}
+                      </button>
+                    </th>
+                    <th className="p-4 text-left text-sm font-medium">
+                      <button 
+                        onClick={() => handleSort('name')}
+                        className="flex items-center hover:text-primary transition-colors"
+                        data-testid="sort-description"
+                      >
+                        Description
+                        {getSortIcon('name')}
+                      </button>
+                    </th>
+                    <th className="p-4 text-left text-sm font-medium">
+                      <button 
+                        onClick={() => handleSort('category')}
+                        className="flex items-center hover:text-primary transition-colors"
+                        data-testid="sort-category"
+                      >
+                        Category
+                        {getSortIcon('category')}
+                      </button>
+                    </th>
+                    <th className="p-4 text-right text-sm font-medium">
+                      <button 
+                        onClick={() => handleSort('amount')}
+                        className="flex items-center justify-end hover:text-primary transition-colors w-full"
+                        data-testid="sort-amount"
+                      >
+                        Amount
+                        {getSortIcon('amount')}
+                      </button>
+                    </th>
                     <th className="p-4 text-center text-sm font-medium">Status</th>
                     <th className="p-4 text-right text-sm font-medium">Actions</th>
                   </tr>
@@ -559,14 +711,14 @@ export default function AccountingTransactions() {
                         <td className="p-4"><Skeleton className="h-4 w-16" /></td>
                       </tr>
                     ))
-                  ) : transactions.length === 0 ? (
+                  ) : sortedTransactions.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="p-8 text-center text-muted-foreground">
                         No transactions found
                       </td>
                     </tr>
                   ) : (
-                    transactions.map((tx) => {
+                    sortedTransactions.map((tx) => {
                       const allocation = tx.allocations?.[0];
                       const category = allocation ? categories.find(c => c.id === allocation.categoryId) : null;
                       const isAllocated = !!allocation;

@@ -48,6 +48,7 @@ import AccountingDashboard from "@/pages/accounting-dashboard";
 import AccountingTransactions from "@/pages/accounting-transactions";
 import AccountingCategories from "@/pages/accounting-categories";
 import AccountingBanks from "@/pages/accounting-banks";
+import AccountingIncomeStatement from "@/pages/accounting-income-statement";
 import DeliveryRoutes from "@/pages/delivery-routes";
 import Contact from "@/pages/contact";
 import Cart from "@/pages/cart";
@@ -115,6 +116,7 @@ function Router() {
       <StaffProtectedRoute path="/admin/accounting/transactions" component={AccountingTransactions} />
       <StaffProtectedRoute path="/admin/accounting/categories" component={AccountingCategories} />
       <StaffProtectedRoute path="/admin/accounting/banks" component={AccountingBanks} />
+      <StaffProtectedRoute path="/admin/accounting/income-statement" component={AccountingIncomeStatement} />
       <StaffProtectedRoute path="/inventory" component={Inventory} />
       <StaffProtectedRoute path="/reports" component={Reports} />
       <Route path="/account" component={Account} />
