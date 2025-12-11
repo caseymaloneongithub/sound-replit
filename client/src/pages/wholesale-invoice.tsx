@@ -325,17 +325,19 @@ export default function WholesaleInvoice() {
             background: #f9f9f9 !important;
           }
           
-          /* Page setup - no headers/footers, fit on one page */
+          /* Page setup - zero margin removes browser headers/footers */
           @page {
             size: letter;
-            margin: 0.4in;
+            margin: 0;
           }
           
-          /* Scale content to fit on one page */
+          /* Add padding to content since page margin is 0 */
           #invoice-print-area {
-            transform: scale(0.85);
+            padding: 0.5in !important;
+            transform: scale(0.82);
             transform-origin: top left;
-            width: 117.6% !important; /* Compensate for scale (100/0.85) */
+            width: 122% !important; /* Compensate for scale (100/0.82) */
+            box-sizing: border-box;
           }
           
           /* Prevent page breaks */
