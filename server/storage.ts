@@ -212,7 +212,7 @@ export interface IStorage {
   getWholesaleOrderWithDetails(id: string): Promise<{
     order: WholesaleOrder;
     customer: WholesaleCustomer;
-    items: Array<WholesaleOrderItem & { product: Product }>;
+    items: Array<WholesaleOrderItem & { product: { name: string; flavor: string } }>;
   } | undefined>;
   createWholesaleOrder(order: InsertWholesaleOrder): Promise<WholesaleOrder>;
   updateWholesaleOrderStatus(id: string, status: string): Promise<WholesaleOrder | undefined>;
@@ -1628,7 +1628,7 @@ export class PostgresStorage implements IStorage {
   async getWholesaleOrderWithDetails(id: string): Promise<{
     order: WholesaleOrder & { location?: { locationName: string; address: string; city: string; state: string; zipCode: string; contactName?: string; contactPhone?: string; } };
     customer: WholesaleCustomer;
-    items: Array<WholesaleOrderItem & { product: Product }>;
+    items: Array<WholesaleOrderItem & { product: { name: string; flavor: string } }>;
   } | undefined> {
     const order = await this.getWholesaleOrder(id);
     if (!order) return undefined;
@@ -1643,10 +1643,38 @@ export class PostgresStorage implements IStorage {
     }
 
     const orderItems = await this.getWholesaleOrderItems(id);
+    
+    // Pre-fetch all unit types and flavors for efficiency
+    const allUnitTypes = await this.getWholesaleUnitTypes();
+    const allFlavors = await this.getFlavors();
+    
     const itemsWithProducts = await Promise.all(
       orderItems.map(async (item) => {
-        const product = await this.getProduct(item.productId);
-        return { ...item, product: product! };
+        let productName = 'Unknown Product';
+        let flavorName = '';
+        
+        // New system: use unitTypeId and flavorId
+        if (item.unitTypeId && item.flavorId) {
+          const unitType = allUnitTypes.find(ut => ut.id === item.unitTypeId);
+          const flavor = allFlavors.find(f => f.id === item.flavorId);
+          productName = unitType?.name || 'Unknown Unit Type';
+          flavorName = flavor?.name || '';
+        } 
+        // Legacy fallback: use productId
+        else if (item.productId) {
+          const product = await this.getProduct(item.productId);
+          if (product) {
+            productName = product.name;
+          }
+        }
+        
+        return { 
+          ...item, 
+          product: { 
+            name: productName, 
+            flavor: flavorName 
+          } 
+        };
       })
     );
 
