@@ -15,8 +15,8 @@ const BRAND_COLORS = {
   white: '#FFFFFF',
 };
 
-// Logo configuration for email embedding
-const LOGO_PATH = join(process.cwd(), 'attached_assets', 'text-stacked-black_1762299663824.png');
+// Logo configuration for email embedding - using white logo for black backgrounds
+const LOGO_PATH = join(process.cwd(), 'attached_assets', 'text-stacked-white.png');
 const LOGO_CID = 'logo@pugetsoundkombucha';
 
 // Check if logo file exists
@@ -35,17 +35,16 @@ const getLogoAttachment = () => {
   }];
 };
 
-// Email header template with styled text logo (email clients don't support CSS filters for image inversion)
+// Email header template with white logo PNG on black background
 const getEmailHeader = (title: string) => {
-  // Use styled text for logo since we only have a black logo image and email clients don't support CSS filters
-  const logoHtml = `
-    <div style="margin-bottom: 8px;">
-      <span style="color: ${BRAND_COLORS.white}; font-size: 28px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;">PUGET SOUND</span>
-    </div>
-    <div>
-      <span style="color: ${BRAND_COLORS.white}; font-size: 18px; font-weight: 500; letter-spacing: 3px; text-transform: uppercase;">KOMBUCHA CO.</span>
-    </div>
-  `;
+  const logoHtml = hasLogo 
+    ? `<img src="cid:${LOGO_CID}" alt="Puget Sound Kombucha Co." style="max-width: 200px; height: auto;" />`
+    : `<div style="margin-bottom: 8px;">
+        <span style="color: ${BRAND_COLORS.white}; font-size: 28px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;">PUGET SOUND</span>
+      </div>
+      <div>
+        <span style="color: ${BRAND_COLORS.white}; font-size: 18px; font-weight: 500; letter-spacing: 3px; text-transform: uppercase;">KOMBUCHA CO.</span>
+      </div>`;
   
   return `
 <div style="background-color: ${BRAND_COLORS.black}; padding: 32px 24px; text-align: center;">
