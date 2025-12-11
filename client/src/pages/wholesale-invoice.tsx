@@ -325,15 +325,41 @@ export default function WholesaleInvoice() {
             background: #f9f9f9 !important;
           }
           
-          /* Page setup */
+          /* Page setup - no headers/footers, fit on one page */
           @page {
             size: letter;
-            margin: 0.5in;
+            margin: 0.4in;
           }
           
-          /* Prevent page breaks inside elements */
-          tr, .grid > div {
+          /* Scale content to fit on one page */
+          #invoice-print-area {
+            transform: scale(0.85);
+            transform-origin: top left;
+            width: 117.6% !important; /* Compensate for scale (100/0.85) */
+          }
+          
+          /* Prevent page breaks */
+          #invoice-print-area, #invoice-print-area * {
             page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+          
+          /* Compact spacing for print */
+          .mb-8 {
+            margin-bottom: 1rem !important;
+          }
+          
+          .mt-12 {
+            margin-top: 1.5rem !important;
+          }
+          
+          .gap-8 {
+            gap: 1rem !important;
+          }
+          
+          .py-4, .py-3 {
+            padding-top: 0.25rem !important;
+            padding-bottom: 0.25rem !important;
           }
         }
       `}</style>
