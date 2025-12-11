@@ -1,7 +1,8 @@
 import nodemailer from 'nodemailer';
-import { readFileSync } from 'fs';
+import { readFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { format } from 'date-fns';
+import PDFDocument from 'pdfkit';
 
 // Email branding - black, grey, and white color scheme
 const BRAND_COLORS = {
@@ -955,6 +956,344 @@ Puget Sound Kombucha Co.
     console.log(`[EMAIL] ✅ Sent subscription charge confirmation to ${params.customerEmail} for pickup on ${formattedPickupDate}`);
   } catch (error) {
     console.error('[EMAIL] Failed to send subscription charge confirmation email:', error);
+    throw error;
+  }
+}
+
+// Wholesale Invoice Email Types
+interface WholesaleInvoiceItem {
+  productName: string;
+  quantity: number;
+  unitPrice: string;
+}
+
+interface WholesaleInvoiceLocation {
+  locationName: string;
+  address: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  contactName?: string | null;
+  contactPhone?: string | null;
+}
+
+interface WholesaleInvoiceEmailParams {
+  customerEmail: string;
+  businessName: string;
+  contactName: string;
+  customerAddress: string;
+  customerPhone: string;
+  invoiceNumber: string;
+  orderDate: Date;
+  deliveryDate?: Date | null;
+  items: WholesaleInvoiceItem[];
+  subtotal: number;
+  notes?: string | null;
+  location?: WholesaleInvoiceLocation | null;
+  allowOnlinePayment: boolean;
+  paymentUrl?: string | null;
+}
+
+// Generate PDF invoice buffer
+export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
+
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    // Header
+    doc.fontSize(24).font('Helvetica-Bold').text('INVOICE', { align: 'left' });
+    doc.moveDown(0.5);
+    
+    doc.fontSize(10).font('Helvetica');
+    doc.text(`Invoice #: ${params.invoiceNumber}`);
+    doc.text(`Date: ${format(params.orderDate, 'MMM dd, yyyy')}`);
+    if (params.deliveryDate) {
+      doc.text(`Delivery Date: ${format(params.deliveryDate, 'MMM dd, yyyy')}`);
+    }
+    
+    doc.moveDown(1);
+
+    // Two column layout for From/Bill To
+    const startY = doc.y;
+    const columnWidth = 220;
+    
+    // FROM
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('FROM', 50, startY);
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text('Puget Sound Kombucha Co.', 50, startY + 15);
+    doc.font('Helvetica').fontSize(9).fillColor('#666666');
+    doc.text('4501 Shilshole Ave NW', 50, startY + 30);
+    doc.text('Seattle, WA 98107', 50, startY + 42);
+    doc.text('emily@soundkombucha.com', 50, startY + 54);
+    doc.text('(206) 789-5219', 50, startY + 66);
+    
+    // BILL TO
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('BILL TO', 50 + columnWidth, startY);
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text(params.businessName, 50 + columnWidth, startY + 15);
+    doc.font('Helvetica').fontSize(9).fillColor('#666666');
+    doc.text(params.contactName, 50 + columnWidth, startY + 30);
+    doc.text(params.customerAddress, 50 + columnWidth, startY + 42);
+    doc.text(params.customerEmail, 50 + columnWidth, startY + 54);
+    doc.text(params.customerPhone, 50 + columnWidth, startY + 66);
+
+    // DELIVER TO (if location provided)
+    if (params.location) {
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('DELIVER TO', 50 + columnWidth * 2, startY);
+      doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text(params.location.locationName, 50 + columnWidth * 2, startY + 15);
+      doc.font('Helvetica').fontSize(9).fillColor('#666666');
+      doc.text(params.location.address, 50 + columnWidth * 2, startY + 30);
+      doc.text(`${params.location.city}, ${params.location.state} ${params.location.zipCode}`, 50 + columnWidth * 2, startY + 42);
+      if (params.location.contactName) {
+        doc.text(params.location.contactName, 50 + columnWidth * 2, startY + 54);
+      }
+      if (params.location.contactPhone) {
+        doc.text(params.location.contactPhone, 50 + columnWidth * 2, startY + 66);
+      }
+    }
+
+    doc.y = startY + 100;
+    doc.moveDown(1);
+
+    // Table header
+    const tableTop = doc.y;
+    doc.fillColor('#f3f4f6').rect(50, tableTop, 512, 20).fill();
+    doc.fillColor('#000000').fontSize(10).font('Helvetica-Bold');
+    doc.text('Item', 55, tableTop + 5);
+    doc.text('Qty', 350, tableTop + 5, { width: 60, align: 'center' });
+    doc.text('Unit Price', 410, tableTop + 5, { width: 70, align: 'right' });
+    doc.text('Total', 485, tableTop + 5, { width: 70, align: 'right' });
+
+    // Table rows
+    let yPos = tableTop + 25;
+    doc.font('Helvetica').fontSize(10);
+    
+    for (const item of params.items) {
+      const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+      doc.fillColor('#000000');
+      doc.text(item.productName, 55, yPos, { width: 280 });
+      doc.text(item.quantity.toString(), 350, yPos, { width: 60, align: 'center' });
+      doc.text(`$${parseFloat(item.unitPrice).toFixed(2)}`, 410, yPos, { width: 70, align: 'right' });
+      doc.text(`$${lineTotal.toFixed(2)}`, 485, yPos, { width: 70, align: 'right' });
+      
+      // Draw line under row
+      yPos += 18;
+      doc.strokeColor('#e5e7eb').lineWidth(0.5).moveTo(50, yPos).lineTo(562, yPos).stroke();
+      yPos += 8;
+    }
+
+    // Total section
+    yPos += 10;
+    doc.fillColor('#f3f4f6').rect(380, yPos, 182, 30).fill();
+    doc.fillColor('#000000').font('Helvetica-Bold').fontSize(12);
+    doc.text('TOTAL:', 390, yPos + 8);
+    doc.text(`$${params.subtotal.toFixed(2)}`, 485, yPos + 8, { width: 70, align: 'right' });
+
+    // Notes section
+    if (params.notes) {
+      yPos += 50;
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#666666').text('Notes:', 50, yPos);
+      doc.font('Helvetica').fontSize(10).fillColor('#000000').text(params.notes, 50, yPos + 15, { width: 512 });
+    }
+
+    // Payment info at bottom
+    yPos = doc.page.height - 100;
+    doc.fontSize(9).fillColor('#666666');
+    if (params.allowOnlinePayment && params.paymentUrl) {
+      doc.text('Pay online at:', 50, yPos);
+      doc.fillColor('#000000').text(params.paymentUrl, 50, yPos + 12);
+    } else {
+      doc.text('Payment Terms: Net 30', 50, yPos);
+    }
+    
+    doc.fillColor('#666666').text('Thank you for your business!', 50, yPos + 30);
+
+    doc.end();
+  });
+}
+
+export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send wholesale invoice email to:', params.customerEmail);
+    console.log('[EMAIL] Invoice:', params.invoiceNumber);
+    console.log('[EMAIL] Total:', params.subtotal);
+    return;
+  }
+
+  // Generate PDF
+  const pdfBuffer = await generateInvoicePDF(params);
+  
+  const orderDateFormatted = format(params.orderDate, 'MMM dd, yyyy');
+  const deliveryDateFormatted = params.deliveryDate ? format(params.deliveryDate, 'MMM dd, yyyy') : null;
+
+  // Build items table HTML
+  const itemsHtml = params.items.map(item => {
+    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+    return `
+      <tr>
+        <td style="padding: 12px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${item.productName}</td>
+        <td style="padding: 12px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: center; color: ${BRAND_COLORS.darkGrey};">${item.quantity}</td>
+        <td style="padding: 12px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">$${parseFloat(item.unitPrice).toFixed(2)}</td>
+        <td style="padding: 12px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">$${lineTotal.toFixed(2)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  // Build items text list
+  const itemsText = params.items.map(item => {
+    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+    return `- ${item.productName} x ${item.quantity} @ $${parseFloat(item.unitPrice).toFixed(2)} = $${lineTotal.toFixed(2)}`;
+  }).join('\n');
+
+  // Payment link section
+  const paymentHtml = params.allowOnlinePayment && params.paymentUrl ? `
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="${params.paymentUrl}" 
+         style="background-color: ${BRAND_COLORS.black}; 
+                color: ${BRAND_COLORS.white}; 
+                padding: 14px 32px; 
+                text-decoration: none; 
+                border-radius: 4px; 
+                display: inline-block;
+                font-weight: 600;
+                font-size: 16px;">
+        Pay Invoice Online
+      </a>
+    </div>
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; text-align: center; margin: 0;">
+      Or copy this link: <a href="${params.paymentUrl}" style="color: ${BRAND_COLORS.darkGrey};">${params.paymentUrl}</a>
+    </p>
+  ` : `
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin: 24px 0;">
+      <p style="margin: 0; color: ${BRAND_COLORS.darkGrey};"><strong>Payment Terms:</strong> Net 30</p>
+    </div>
+  `;
+
+  const paymentText = params.allowOnlinePayment && params.paymentUrl 
+    ? `\nPay online: ${params.paymentUrl}\n`
+    : '\nPayment Terms: Net 30\n';
+
+  // Delivery location section
+  const locationHtml = params.location ? `
+    <div style="margin-top: 16px;">
+      <h3 style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 8px 0;">DELIVER TO</h3>
+      <p style="margin: 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.location.locationName}</p>
+      <p style="margin: 4px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.location.address}</p>
+      <p style="margin: 2px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.location.city}, ${params.location.state} ${params.location.zipCode}</p>
+      ${params.location.contactName ? `<p style="margin: 2px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.location.contactName}</p>` : ''}
+      ${params.location.contactPhone ? `<p style="margin: 2px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.location.contactPhone}</p>` : ''}
+    </div>
+  ` : '';
+
+  const locationText = params.location 
+    ? `\nDeliver To: ${params.location.locationName}, ${params.location.address}, ${params.location.city}, ${params.location.state} ${params.location.zipCode}\n`
+    : '';
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.customerEmail,
+    subject: `Invoice ${params.invoiceNumber} - Puget Sound Kombucha Co.`,
+    text: `
+Invoice ${params.invoiceNumber}
+Puget Sound Kombucha Co.
+
+Date: ${orderDateFormatted}
+${deliveryDateFormatted ? `Delivery Date: ${deliveryDateFormatted}` : ''}
+
+Bill To:
+${params.businessName}
+${params.contactName}
+${params.customerAddress}
+${params.customerPhone}
+${locationText}
+Items:
+${itemsText}
+
+TOTAL: $${params.subtotal.toFixed(2)}
+${params.notes ? `\nNotes: ${params.notes}` : ''}
+${paymentText}
+Thank you for your business!
+
+Puget Sound Kombucha Co.
+4501 Shilshole Ave NW
+Seattle, WA 98107
+emily@soundkombucha.com
+(206) 789-5219
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader(`Invoice ${params.invoiceNumber}`)}
+  
+  <div style="padding: 32px 24px;">
+    <div style="margin-bottom: 24px;">
+      <p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 4px 0; font-size: 14px;">Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${orderDateFormatted}</span></p>
+      ${deliveryDateFormatted ? `<p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0; font-size: 14px;">Delivery Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${deliveryDateFormatted}</span></p>` : ''}
+    </div>
+    
+    <div style="display: flex; gap: 24px; margin-bottom: 24px;">
+      <div>
+        <h3 style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 8px 0;">BILL TO</h3>
+        <p style="margin: 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.businessName}</p>
+        <p style="margin: 4px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.contactName}</p>
+        <p style="margin: 2px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.customerAddress}</p>
+        <p style="margin: 2px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.customerPhone}</p>
+      </div>
+      ${locationHtml}
+    </div>
+    
+    <h2 style="font-size: 16px; margin: 24px 0 12px 0; color: ${BRAND_COLORS.darkGrey}; border-bottom: 2px solid ${BRAND_COLORS.black}; padding-bottom: 8px;">Items</h2>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+      <thead>
+        <tr style="background-color: ${BRAND_COLORS.backgroundGrey};">
+          <th style="padding: 10px 8px; text-align: left; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Item</th>
+          <th style="padding: 10px 8px; text-align: center; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Qty</th>
+          <th style="padding: 10px 8px; text-align: right; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Unit Price</th>
+          <th style="padding: 10px 8px; text-align: right; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsHtml}
+      </tbody>
+    </table>
+    
+    <div style="text-align: right; margin: 24px 0; padding: 16px; background-color: ${BRAND_COLORS.backgroundGrey}; border-radius: 4px;">
+      <p style="margin: 0; font-size: 18px; color: ${BRAND_COLORS.black}; font-weight: bold;">Total: $${params.subtotal.toFixed(2)}</p>
+    </div>
+    
+    ${params.notes ? `
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin: 24px 0; border-left: 4px solid ${BRAND_COLORS.black};">
+      <p style="margin: 0 0 4px 0; font-weight: bold; color: ${BRAND_COLORS.darkGrey};">Notes:</p>
+      <p style="margin: 0; color: ${BRAND_COLORS.mediumGrey};">${params.notes}</p>
+    </div>
+    ` : ''}
+    
+    ${paymentHtml}
+    
+    <p style="color: ${BRAND_COLORS.darkGrey}; margin-top: 32px;">Thank you for your business!</p>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: [
+      ...getLogoAttachment(),
+      {
+        filename: `Invoice-${params.invoiceNumber}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      }
+    ],
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent wholesale invoice email to ${params.customerEmail} for invoice ${params.invoiceNumber}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send wholesale invoice email:', error);
     throw error;
   }
 }
