@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { Shield, MapPin, Mail, Phone } from "lucide-react";
+import { Shield, Lock, MapPin, Mail, Phone } from "lucide-react";
 
 export function Footer() {
   return (
@@ -39,6 +39,12 @@ export function Footer() {
           <div>
             <h3 className="font-semibold mb-4">Legal</h3>
             <div className="space-y-2 text-sm">
+              <Link href="/privacy">
+                <span className="flex items-center gap-2 text-muted-foreground hover:text-primary transition-colors cursor-pointer" data-testid="link-privacy-policy">
+                  <Lock className="w-4 h-4" />
+                  Privacy Policy
+                </span>
+              </Link>
               <Link href="/security">
                 <span className="flex items-center gap-2 text-muted-foreground hover:text-primary transition-colors cursor-pointer" data-testid="link-security-policy">
                   <Shield className="w-4 h-4" />
