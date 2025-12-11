@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Package, FileText, MapPin, Calendar } from "lucide-react";
-import { format } from "date-fns";
+import { Badge } from "@/components/ui/badge";
+import { Package, FileText, MapPin, Calendar, DollarSign } from "lucide-react";
+import { format, differenceInDays, isPast } from "date-fns";
 import type { WholesaleCustomer } from "@shared/schema";
 import { WholesaleCustomerLayout } from "@/components/wholesale/wholesale-customer-layout";
 
@@ -15,6 +16,8 @@ type WholesaleOrder = {
   totalAmount: string;
   notes: string | null;
   locationId: string | null;
+  dueDate: string | null;
+  paidAt: string | null;
   location?: {
     locationName: string;
     address: string;
@@ -32,6 +35,39 @@ type WholesaleOrder = {
     productName: string;
   }>;
 };
+
+function PaymentStatusBadge({ order }: { order: WholesaleOrder }) {
+  if (order.paidAt) {
+    return (
+      <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 hover:bg-green-100 dark:hover:bg-green-900">
+        <DollarSign className="h-3 w-3 mr-1" />
+        Paid
+      </Badge>
+    );
+  }
+
+  if (!order.dueDate) {
+    return null;
+  }
+
+  const dueDate = new Date(order.dueDate);
+  const today = new Date();
+  const daysUntilDue = differenceInDays(dueDate, today);
+
+  if (isPast(dueDate)) {
+    return (
+      <Badge variant="destructive">
+        Overdue
+      </Badge>
+    );
+  }
+
+  return (
+    <Badge className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 hover:bg-yellow-100 dark:hover:bg-yellow-900">
+      Due in {daysUntilDue} {daysUntilDue === 1 ? 'day' : 'days'}
+    </Badge>
+  );
+}
 
 export default function WholesaleCustomerOrders() {
   const { data: customer, isLoading: customerLoading } = useQuery<WholesaleCustomer>({
@@ -122,7 +158,7 @@ export default function WholesaleCustomerOrders() {
                     data-testid={`card-order-${order.id}`}
                   >
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-medium" data-testid={`text-invoice-${order.id}`}>
                           {order.invoiceNumber}
                         </p>
@@ -137,6 +173,7 @@ export default function WholesaleCustomerOrders() {
                         >
                           {order.status}
                         </span>
+                        <PaymentStatusBadge order={order} />
                       </div>
                       <p className="text-sm text-muted-foreground">
                         Ordered: {format(new Date(order.orderDate), 'MMM dd, yyyy')}
