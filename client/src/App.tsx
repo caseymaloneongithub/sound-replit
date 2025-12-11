@@ -51,6 +51,7 @@ import AccountingBanks from "@/pages/accounting-banks";
 import DeliveryRoutes from "@/pages/delivery-routes";
 import Contact from "@/pages/contact";
 import Cart from "@/pages/cart";
+import SecurityPolicy from "@/pages/security-policy";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -69,6 +70,7 @@ function Router() {
       <Route path="/shop-legacy" component={Shop} />
       <Route path="/shop-v2" component={() => <Redirect to="/shop" />} />
       <Route path="/contact" component={Contact} />
+      <Route path="/security" component={SecurityPolicy} />
       <Route path="/my-account" component={MyAccount} />
       <Route path="/subscriptions" component={() => <Redirect to="/my-account" />} />
       <Route path="/my-subscriptions" component={() => <Redirect to="/my-account" />} />

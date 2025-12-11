@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
 import logo from "@assets/text-stacked-black_1762299663824.png";
+import { Footer } from "@/components/layout/footer";
 
 type RetailCartItemWithProduct = RetailCartItem & {
   retailProduct: RetailProduct & { flavor: Flavor | null; flavors: Flavor[] };
@@ -550,6 +551,8 @@ export default function ShopV2() {
           </div>
         ))}
       </div>
+      
+      <Footer />
     </div>
   );
 }
