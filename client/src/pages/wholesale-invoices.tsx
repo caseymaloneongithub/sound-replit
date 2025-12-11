@@ -561,38 +561,49 @@ export default function WholesaleInvoices() {
           <DialogHeader>
             <DialogTitle>Send Invoice</DialogTitle>
             <DialogDescription>
-              Set the payment due date and send the invoice email to the customer.
+              {selectedOrderId && orders.find(o => o.id === selectedOrderId)?.dueDate
+                ? "Send the invoice email to the customer."
+                : "Set the payment due date and send the invoice email to the customer."}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Payment Due Date</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start text-left font-normal"
-                    data-testid="button-select-due-date"
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {dueDate ? format(dueDate, "PPP") : "Select due date"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={dueDate}
-                    onSelect={setDueDate}
-                    disabled={(date) => date < new Date()}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-              <p className="text-xs text-muted-foreground">
-                Default is 30 days from today. You can adjust as needed.
+          {selectedOrderId && !orders.find(o => o.id === selectedOrderId)?.dueDate && (
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Payment Due Date</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start text-left font-normal"
+                      data-testid="button-select-due-date"
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {dueDate ? format(dueDate, "PPP") : "Select due date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={dueDate}
+                      onSelect={setDueDate}
+                      disabled={(date) => date < new Date()}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+                <p className="text-xs text-muted-foreground">
+                  Default is 30 days from today. You can adjust as needed.
+                </p>
+              </div>
+            </div>
+          )}
+          {selectedOrderId && orders.find(o => o.id === selectedOrderId)?.dueDate && (
+            <div className="py-4">
+              <p className="text-sm text-muted-foreground">
+                Due date: <span className="font-medium text-foreground">{format(new Date(orders.find(o => o.id === selectedOrderId)!.dueDate!), "PPP")}</span>
               </p>
             </div>
-          </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setSendInvoiceDialogOpen(false)}>
               Cancel
