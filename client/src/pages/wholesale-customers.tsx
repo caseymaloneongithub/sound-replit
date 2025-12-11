@@ -54,8 +54,7 @@ export default function WholesaleCustomers() {
 
   const createCustomerMutation = useMutation({
     mutationFn: async (data: z.infer<typeof insertWholesaleCustomerSchema>) => {
-      const response = await apiRequest("POST", "/api/wholesale/customers", data);
-      return await response.json();
+      return await apiRequest("POST", "/api/wholesale/customers", data);
     },
     onSuccess: () => {
       toast({
@@ -78,8 +77,7 @@ export default function WholesaleCustomers() {
 
   const updateCustomerMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Partial<z.infer<typeof insertWholesaleCustomerSchema>> }) => {
-      const response = await apiRequest("PATCH", `/api/wholesale/customers/${id}`, data);
-      return await response.json();
+      return await apiRequest("PATCH", `/api/wholesale/customers/${id}`, data);
     },
     onSuccess: () => {
       toast({
@@ -136,8 +134,7 @@ export default function WholesaleCustomers() {
 
   const togglePaymentMutation = useMutation({
     mutationFn: async ({ id, allowOnlinePayment }: { id: string; allowOnlinePayment: boolean }) => {
-      const response = await apiRequest("PATCH", `/api/wholesale/customers/${id}`, { allowOnlinePayment });
-      return await response.json();
+      return await apiRequest("PATCH", `/api/wholesale/customers/${id}`, { allowOnlinePayment });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
