@@ -35,15 +35,21 @@ const getLogoAttachment = () => {
   }];
 };
 
-// Email header template with embedded logo
+// Email header template with styled text logo (email clients don't support CSS filters for image inversion)
 const getEmailHeader = (title: string) => {
-  const logoHtml = hasLogo 
-    ? `<img src="cid:${LOGO_CID}" alt="Puget Sound Kombucha Co." style="max-width: 200px; height: auto; margin-bottom: 16px;" />`
-    : `<span style="color: ${BRAND_COLORS.white}; font-size: 24px; font-weight: bold; letter-spacing: 1px;">PUGET SOUND KOMBUCHA CO.</span>`;
+  // Use styled text for logo since we only have a black logo image and email clients don't support CSS filters
+  const logoHtml = `
+    <div style="margin-bottom: 8px;">
+      <span style="color: ${BRAND_COLORS.white}; font-size: 28px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;">PUGET SOUND</span>
+    </div>
+    <div>
+      <span style="color: ${BRAND_COLORS.white}; font-size: 18px; font-weight: 500; letter-spacing: 3px; text-transform: uppercase;">KOMBUCHA CO.</span>
+    </div>
+  `;
   
   return `
 <div style="background-color: ${BRAND_COLORS.black}; padding: 32px 24px; text-align: center;">
-  <div style="margin-bottom: 16px;">
+  <div style="margin-bottom: 20px;">
     ${logoHtml}
   </div>
   <h1 style="margin: 0; font-size: 24px; color: ${BRAND_COLORS.white}; font-weight: 600;">${title}</h1>
