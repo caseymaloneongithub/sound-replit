@@ -190,6 +190,11 @@ export default function WholesaleInvoice() {
                   Delivery Date: <span className="font-semibold text-foreground">{format(new Date(order.deliveryDate), "MMM dd, yyyy")}</span>
                 </div>
               )}
+              {order.dueDate && (
+                <div className="text-muted-foreground">
+                  Payment Due: <span className="font-semibold text-foreground">{format(new Date(order.dueDate), "MMM dd, yyyy")}</span>
+                </div>
+              )}
             </div>
 
             <div className={`grid ${order.location ? 'grid-cols-3' : 'grid-cols-2'} gap-8 mb-8`}>

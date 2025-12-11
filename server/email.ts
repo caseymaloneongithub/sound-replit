@@ -986,6 +986,7 @@ interface WholesaleInvoiceEmailParams {
   invoiceNumber: string;
   orderDate: Date;
   deliveryDate?: Date | null;
+  dueDate?: Date | null;
   items: WholesaleInvoiceItem[];
   subtotal: number;
   notes?: string | null;
@@ -1013,6 +1014,9 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
     doc.text(`Date: ${format(params.orderDate, 'MMM dd, yyyy')}`);
     if (params.deliveryDate) {
       doc.text(`Delivery Date: ${format(params.deliveryDate, 'MMM dd, yyyy')}`);
+    }
+    if (params.dueDate) {
+      doc.text(`Payment Due: ${format(params.dueDate, 'MMM dd, yyyy')}`);
     }
     
     doc.moveDown(1);
@@ -1129,6 +1133,7 @@ export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailPar
   
   const orderDateFormatted = format(params.orderDate, 'MMM dd, yyyy');
   const deliveryDateFormatted = params.deliveryDate ? format(params.deliveryDate, 'MMM dd, yyyy') : null;
+  const dueDateFormatted = params.dueDate ? format(params.dueDate, 'MMM dd, yyyy') : null;
 
   // Build items table HTML
   const itemsHtml = params.items.map(item => {
@@ -1203,6 +1208,7 @@ Puget Sound Kombucha Co.
 
 Date: ${orderDateFormatted}
 ${deliveryDateFormatted ? `Delivery Date: ${deliveryDateFormatted}` : ''}
+${dueDateFormatted ? `Payment Due: ${dueDateFormatted}` : ''}
 
 Bill To:
 ${params.businessName}
@@ -1231,7 +1237,8 @@ emily@soundkombucha.com
   <div style="padding: 32px 24px;">
     <div style="margin-bottom: 24px;">
       <p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 4px 0; font-size: 14px;">Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${orderDateFormatted}</span></p>
-      ${deliveryDateFormatted ? `<p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0; font-size: 14px;">Delivery Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${deliveryDateFormatted}</span></p>` : ''}
+      ${deliveryDateFormatted ? `<p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 4px 0; font-size: 14px;">Delivery Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${deliveryDateFormatted}</span></p>` : ''}
+      ${dueDateFormatted ? `<p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0; font-size: 14px;">Payment Due: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${dueDateFormatted}</span></p>` : ''}
     </div>
     
     <div style="display: flex; gap: 24px; margin-bottom: 24px;">
