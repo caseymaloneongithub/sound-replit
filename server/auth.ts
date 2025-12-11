@@ -222,8 +222,10 @@ export function setupAuth(app: Express) {
         return res.status(401).send(info?.message || "Authentication failed");
       }
       
-      // For retail customers (role === 'user'), require 2FA via email
-      if (user.role === 'user' && user.email) {
+      // Require 2FA via email for all users EXCEPT wholesale customers
+      const requires2FA = user.role !== 'wholesale_customer' && user.email;
+      
+      if (requires2FA) {
         try {
           // Generate 6-digit code
           const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -231,7 +233,7 @@ export function setupAuth(app: Express) {
           // Store code in database with 5-minute expiration
           const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
           await storage.createEmailVerificationCode({
-            email: user.email,
+            email: user.email!,
             code,
             expiresAt,
             verified: false,
@@ -240,7 +242,7 @@ export function setupAuth(app: Express) {
           
           // Send verification code email
           await sendEmailVerificationCode({
-            email: user.email,
+            email: user.email!,
             code,
             name: user.firstName || user.username,
           });
@@ -257,7 +259,7 @@ export function setupAuth(app: Express) {
         }
       }
       
-      // For non-retail users (staff, admin, etc.), log in directly
+      // For wholesale customers, log in directly (no 2FA)
       const oldSessionId = req.sessionID;
       
       req.login(user, async (err) => {

@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -44,6 +45,13 @@ export default function StaffLogin() {
   const [emailLoginCodeSent, setEmailLoginCodeSent] = useState(false);
   const [sendingEmailLoginCode, setSendingEmailLoginCode] = useState(false);
   const [verifyingEmailLoginCode, setVerifyingEmailLoginCode] = useState(false);
+  
+  // 2FA state for password login
+  const [requires2FA, setRequires2FA] = useState(false);
+  const [twoFAEmail, setTwoFAEmail] = useState('');
+  const [twoFACode, setTwoFACode] = useState('');
+  const [verifying2FA, setVerifying2FA] = useState(false);
+  const [resending2FA, setResending2FA] = useState(false);
 
   const loginForm = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -147,9 +155,20 @@ export default function StaffLogin() {
 
   const onLogin = async (values: z.infer<typeof loginSchema>) => {
     try {
-      const result = await loginMutation.mutateAsync(values);
+      const response = await apiRequest("POST", "/api/login", values);
       
-      if (!['staff', 'admin', 'super_admin'].includes(result.role)) {
+      // Check if 2FA is required
+      if (response.requires2FA) {
+        setTwoFAEmail(response.email);
+        setRequires2FA(true);
+        toast({
+          title: "Verification Required",
+          description: "A verification code has been sent to your email",
+        });
+        return;
+      }
+      
+      if (!['staff', 'admin', 'super_admin'].includes(response.role)) {
         toast({
           title: "Access Denied",
           description: "This login is for staff and administrators only. Please use the retail login page.",
@@ -178,6 +197,83 @@ export default function StaffLogin() {
       });
     }
   };
+  
+  const verify2FACode = async () => {
+    if (twoFACode.length !== 6) {
+      toast({
+        title: "Invalid Code",
+        description: "Please enter the 6-digit verification code",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setVerifying2FA(true);
+    try {
+      const response = await apiRequest("POST", "/api/verify-2fa", {
+        email: twoFAEmail,
+        code: twoFACode,
+      });
+      
+      // Check if user is staff/admin
+      if (!['staff', 'admin', 'super_admin'].includes(response.user.role)) {
+        toast({
+          title: "Access Denied",
+          description: "This login is for staff and administrators only. Please use the retail login page.",
+          variant: "destructive",
+        });
+        setRequires2FA(false);
+        setTwoFAEmail('');
+        setTwoFACode('');
+        return;
+      }
+      
+      queryClient.setQueryData(["/api/user"], response.user);
+      queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+      
+      toast({
+        title: "Welcome back!",
+        description: "You have successfully logged in.",
+      });
+      
+      setTimeout(() => {
+        setLocation("/staff-portal/wholesale/orders");
+      }, 100);
+    } catch (error: any) {
+      toast({
+        title: "Verification Failed",
+        description: error.message || "Invalid or expired code",
+        variant: "destructive",
+      });
+    } finally {
+      setVerifying2FA(false);
+    }
+  };
+  
+  const resend2FACode = async () => {
+    setResending2FA(true);
+    try {
+      await apiRequest("POST", "/api/resend-2fa", { email: twoFAEmail });
+      toast({
+        title: "Code Resent",
+        description: "A new verification code has been sent to your email",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to resend code",
+        variant: "destructive",
+      });
+    } finally {
+      setResending2FA(false);
+    }
+  };
+  
+  const cancel2FA = () => {
+    setRequires2FA(false);
+    setTwoFAEmail('');
+    setTwoFACode('');
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/20 p-4">
@@ -194,12 +290,60 @@ export default function StaffLogin() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Staff Login</CardTitle>
+            <CardTitle>{requires2FA ? "Verify Your Identity" : "Staff Login"}</CardTitle>
             <CardDescription>
-              Choose your preferred login method
+              {requires2FA 
+                ? `Enter the 6-digit code sent to ${twoFAEmail}`
+                : "Choose your preferred login method"
+              }
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {requires2FA ? (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="staff-2fa-code">Verification Code</Label>
+                  <Input
+                    id="staff-2fa-code"
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="000000"
+                    value={twoFACode}
+                    onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, ''))}
+                    className="text-center text-2xl tracking-widest"
+                    data-testid="input-staff-2fa-code"
+                  />
+                </div>
+                <Button
+                  onClick={verify2FACode}
+                  className="w-full"
+                  disabled={verifying2FA || twoFACode.length !== 6}
+                  data-testid="button-staff-verify-2fa"
+                >
+                  {verifying2FA ? "Verifying..." : "Verify & Sign In"}
+                </Button>
+                <div className="flex items-center justify-between text-sm">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={resend2FACode}
+                    disabled={resending2FA}
+                    data-testid="button-staff-resend-2fa"
+                  >
+                    {resending2FA ? "Sending..." : "Resend Code"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={cancel2FA}
+                    data-testid="button-staff-cancel-2fa"
+                  >
+                    Back to Login
+                  </Button>
+                </div>
+              </div>
+            ) : (
             <Tabs value={loginMethod} onValueChange={(v) => setLoginMethod(v as 'password' | 'email')} className="w-full">
               <TabsList className="grid w-full grid-cols-2 mb-4">
                 <TabsTrigger value="password" data-testid="tab-staff-login-password">Password</TabsTrigger>
@@ -247,10 +391,10 @@ export default function StaffLogin() {
                     <Button
                       type="submit"
                       className="w-full"
-                      disabled={loginMutation.isPending}
+                      disabled={loginForm.formState.isSubmitting}
                       data-testid="button-staff-login-submit"
                     >
-                      {loginMutation.isPending ? "Signing in..." : "Sign In"}
+                      {loginForm.formState.isSubmitting ? "Signing in..." : "Sign In"}
                     </Button>
                     <div className="text-center mt-4">
                       <Link href="/forgot-password" className="text-sm text-primary hover:underline" data-testid="link-staff-forgot-password">
@@ -347,6 +491,7 @@ export default function StaffLogin() {
                 </Form>
               </TabsContent>
             </Tabs>
+            )}
           </CardContent>
         </Card>
 
