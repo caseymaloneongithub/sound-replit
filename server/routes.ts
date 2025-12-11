@@ -750,13 +750,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Generate invoice number
       const invoiceNumber = `WO-${Date.now()}`;
 
-      // Create order for the logged-in customer
+      // Create order for the logged-in customer with default 30-day due date
+      const orderDate = new Date();
+      const dueDate = new Date(orderDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+      
       const orderData = {
         customerId: customer.id,
         invoiceNumber,
         totalAmount: totalAmount.toFixed(2),
         notes: notes || undefined,
         locationId: locationId || undefined,
+        dueDate,
       };
 
       const createdOrder = await storage.createWholesaleOrder(orderData);
@@ -4038,10 +4042,15 @@ If you have any questions, please don't hesitate to reach out!`,
       
       const invoiceNumber = await storage.generateNextInvoiceNumber();
       
+      // Set default 30-day due date from order date
+      const orderDate = order.orderDate ? new Date(order.orderDate) : new Date();
+      const dueDate = new Date(orderDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+      
       const orderData = insertWholesaleOrderSchema.parse({
         ...order,
         invoiceNumber,
         totalAmount: serverCalculatedTotal.toFixed(2),
+        dueDate,
       });
       
       const createdOrder = await storage.createWholesaleOrder(orderData);
