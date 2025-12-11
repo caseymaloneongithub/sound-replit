@@ -30,6 +30,7 @@ export const users = pgTable("users", {
   stripeCustomerId: text("stripe_customer_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  deletedAt: timestamp("deleted_at"),
 });
 
 // Verification codes for SMS authentication

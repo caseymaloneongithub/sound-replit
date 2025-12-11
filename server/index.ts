@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
 import { startBillingCron } from "./billing-cron";
+import { scheduleDataRetentionJobs } from "./data-retention-cron";
 
 const app = express();
 
@@ -55,6 +56,9 @@ app.use((req, res, next) => {
 
   // Start daily billing cron for local subscription management
   startBillingCron();
+  
+  // Start data retention cleanup jobs
+  scheduleDataRetentionJobs();
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

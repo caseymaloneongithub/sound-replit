@@ -522,6 +522,195 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Data Export - GDPR/Privacy compliance
+  app.get("/api/my-data/export", isAuthenticated, async (req, res) => {
+    try {
+      const user = req.user;
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      // Collect all user data
+      const exportData: any = {
+        exportedAt: new Date().toISOString(),
+        userData: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          phoneNumber: user.phoneNumber,
+          role: user.role,
+          createdAt: user.createdAt,
+        },
+        orders: [],
+        subscriptions: [],
+      };
+
+      // Get retail orders
+      const orders = await db
+        .select()
+        .from(retailOrders)
+        .where(eq(retailOrders.userId, user.id));
+      
+      exportData.orders = orders.map(order => ({
+        id: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        subtotal: order.subtotal,
+        taxAmount: order.taxAmount,
+        totalAmount: order.totalAmount,
+        pickupDate: order.pickupDate,
+        orderDate: order.orderDate,
+      }));
+
+      // Get retail subscriptions
+      const subs = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.userId, user.id));
+      
+      exportData.subscriptions = subs.map(sub => ({
+        id: sub.id,
+        status: sub.status,
+        subscriptionFrequency: sub.subscriptionFrequency,
+        scheduledPickupDate: sub.scheduledPickupDate,
+        scheduledPickupTime: sub.scheduledPickupTime,
+      }));
+
+      res.json({
+        message: "Data export generated successfully",
+        data: exportData
+      });
+    } catch (error: any) {
+      console.error("Error exporting user data:", error);
+      res.status(500).json({ message: "Error exporting data: " + error.message });
+    }
+  });
+
+  // Account Deletion Request - GDPR/Privacy compliance
+  app.delete("/api/my-account", isAuthenticated, async (req, res) => {
+    try {
+      const user = req.user;
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const { confirmDeletion } = req.body;
+      
+      if (confirmDeletion !== true) {
+        return res.status(400).json({ 
+          message: "Please confirm account deletion by setting confirmDeletion to true" 
+        });
+      }
+
+      const stripeFailures: string[] = [];
+      
+      // Cancel active subscriptions (both local and Stripe)
+      const activeSubs = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(and(
+          eq(retailSubscriptions.userId, user.id),
+          eq(retailSubscriptions.status, 'active')
+        ));
+
+      for (const sub of activeSubs) {
+        // Cancel Stripe subscription if exists
+        let stripeCancelled = false;
+        if (stripe && sub.stripeSubscriptionId) {
+          try {
+            await stripe.subscriptions.cancel(sub.stripeSubscriptionId);
+            console.log(`[ACCOUNT DELETION] Cancelled Stripe subscription ${sub.stripeSubscriptionId}`);
+            stripeCancelled = true;
+          } catch (stripeError: any) {
+            console.error(`[ACCOUNT DELETION] Error cancelling Stripe subscription:`, stripeError.message);
+            stripeFailures.push(sub.stripeSubscriptionId);
+          }
+        }
+        
+        // Update subscription status and clear Stripe IDs if successfully cancelled
+        await db
+          .update(retailSubscriptions)
+          .set({ 
+            status: 'cancelled',
+            cancelledAt: new Date(),
+            ...(stripeCancelled ? { 
+              stripeSubscriptionId: null,
+              stripeCheckoutSessionId: null
+            } : {})
+          })
+          .where(eq(retailSubscriptions.id, sub.id));
+      }
+
+      // Anonymize PII in subscription records (regardless of Stripe status - GDPR right to be forgotten)
+      await db
+        .update(retailSubscriptions)
+        .set({
+          customerName: 'DELETED',
+          customerEmail: 'deleted@deleted.local',
+          customerPhone: null,
+        })
+        .where(eq(retailSubscriptions.userId, user.id));
+
+      // Anonymize PII in order records
+      await db
+        .update(retailOrders)
+        .set({
+          customerName: 'DELETED',
+          customerEmail: 'deleted@deleted.local',
+          customerPhone: null,
+          deliveryAddress: null,
+          deliveryCity: null,
+          deliveryState: null,
+          deliveryZipCode: null,
+        })
+        .where(eq(retailOrders.userId, user.id));
+
+      // Anonymize ALL user PII (for order history integrity, we keep the record but remove identifying info)
+      await db
+        .update(users)
+        .set({
+          username: `deleted_${user.id.slice(0, 8)}`,
+          email: null,
+          firstName: null,
+          lastName: null,
+          phoneNumber: null,
+          address: null,
+          city: null,
+          state: null,
+          zipCode: null,
+          stripeCustomerId: null,
+          password: 'DELETED',
+          deletedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, user.id));
+
+      // Log the user out
+      req.logout((err) => {
+        if (err) {
+          console.error("Error logging out during account deletion:", err);
+        }
+      });
+
+      // Report any Stripe failures (but don't block deletion - GDPR right to be forgotten takes precedence)
+      if (stripeFailures.length > 0) {
+        console.warn(`[ACCOUNT DELETION] Some Stripe subscriptions could not be cancelled: ${stripeFailures.join(', ')}`);
+      }
+
+      res.json({ 
+        message: "Account deleted successfully. Your personal data has been removed.",
+        ...(stripeFailures.length > 0 ? { 
+          warning: "Some payment subscriptions may need manual cancellation. Please contact support if you see any unexpected charges." 
+        } : {})
+      });
+    } catch (error: any) {
+      console.error("Error deleting account:", error);
+      res.status(500).json({ message: "Error deleting account: " + error.message });
+    }
+  });
+
   // Wholesale customer registration
   app.post("/api/register-wholesale", async (req, res) => {
     try {
