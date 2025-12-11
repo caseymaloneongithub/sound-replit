@@ -29,6 +29,7 @@ export default function WholesaleInvoices() {
   const [activeTab, setActiveTab] = useState("unpaid");
   const [markPaidDialogOpen, setMarkPaidDialogOpen] = useState(false);
   const [sendInvoiceDialogOpen, setSendInvoiceDialogOpen] = useState(false);
+  const [setDueDateDialogOpen, setSetDueDateDialogOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
 
@@ -110,6 +111,31 @@ export default function WholesaleInvoices() {
     },
   });
 
+  const setDueDateMutation = useMutation({
+    mutationFn: async ({ orderId, dueDateValue }: { orderId: string; dueDateValue: Date }) => {
+      return await apiRequest("POST", `/api/wholesale/orders/${orderId}/set-due-date`, {
+        dueDate: dueDateValue.toISOString(),
+      });
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: "Due Date Set",
+        description: data.message || "Due date updated successfully",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
+      setSetDueDateDialogOpen(false);
+      setSelectedOrderId(null);
+      setDueDate(undefined);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to set due date",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleMarkPaid = (orderId: string) => {
     setSelectedOrderId(orderId);
     setMarkPaidDialogOpen(true);
@@ -117,9 +143,26 @@ export default function WholesaleInvoices() {
 
   const handleSendInvoice = (orderId: string) => {
     setSelectedOrderId(orderId);
-    // Default due date is 30 days from today
-    setDueDate(addDays(new Date(), 30));
+    // Get existing due date or default to 30 days from today
+    const order = orders.find(o => o.id === orderId);
+    if (order?.dueDate) {
+      setDueDate(new Date(order.dueDate));
+    } else {
+      setDueDate(addDays(new Date(), 30));
+    }
     setSendInvoiceDialogOpen(true);
+  };
+
+  const handleSetDueDate = (orderId: string) => {
+    setSelectedOrderId(orderId);
+    // Get existing due date or default to 30 days from today
+    const order = orders.find(o => o.id === orderId);
+    if (order?.dueDate) {
+      setDueDate(new Date(order.dueDate));
+    } else {
+      setDueDate(addDays(new Date(), 30));
+    }
+    setSetDueDateDialogOpen(true);
   };
 
   const confirmMarkPaid = () => {
@@ -131,6 +174,12 @@ export default function WholesaleInvoices() {
   const confirmSendInvoice = () => {
     if (selectedOrderId && dueDate) {
       sendInvoiceMutation.mutate({ orderId: selectedOrderId, dueDateValue: dueDate });
+    }
+  };
+
+  const confirmSetDueDate = () => {
+    if (selectedOrderId && dueDate) {
+      setDueDateMutation.mutate({ orderId: selectedOrderId, dueDateValue: dueDate });
     }
   };
 
@@ -198,7 +247,17 @@ export default function WholesaleInvoices() {
                 <Button
                   variant="ghost"
                   size="icon"
+                  onClick={() => handleSetDueDate(order.id)}
+                  title="Set Due Date"
+                  data-testid={`button-set-due-date-${order.id}`}
+                >
+                  <CalendarIcon className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={() => handleSendInvoice(order.id)}
+                  title="Send Invoice"
                   data-testid={`button-send-invoice-${order.id}`}
                 >
                   <Mail className="h-4 w-4" />
@@ -207,6 +266,7 @@ export default function WholesaleInvoices() {
                   variant="ghost"
                   size="icon"
                   onClick={() => handleMarkPaid(order.id)}
+                  title="Mark as Paid"
                   data-testid={`button-mark-paid-${order.id}`}
                 >
                   <DollarSign className="h-4 w-4" />
@@ -551,6 +611,69 @@ export default function WholesaleInvoices() {
                 <>
                   <Mail className="mr-2 h-4 w-4" />
                   Send Invoice
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Set Due Date Dialog (without sending) */}
+      <Dialog open={setDueDateDialogOpen} onOpenChange={setSetDueDateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Set Due Date</DialogTitle>
+            <DialogDescription>
+              Set the payment due date for this invoice without sending an email.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Payment Due Date</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start text-left font-normal"
+                    data-testid="button-select-due-date-only"
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {dueDate ? format(dueDate, "PPP") : "Select due date"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={dueDate}
+                    onSelect={setDueDate}
+                    disabled={(date) => date < new Date()}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+              <p className="text-xs text-muted-foreground">
+                This will update the due date without sending the invoice email.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSetDueDateDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={confirmSetDueDate} 
+              disabled={setDueDateMutation.isPending || !dueDate}
+              data-testid="button-confirm-set-due-date"
+            >
+              {setDueDateMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  Set Due Date
                 </>
               )}
             </Button>

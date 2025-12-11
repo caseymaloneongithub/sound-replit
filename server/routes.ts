@@ -4229,6 +4229,35 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
+  // Set due date without sending invoice (admin only)
+  app.post("/api/wholesale/orders/:id/set-due-date", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { dueDate } = req.body;
+      
+      if (!dueDate) {
+        return res.status(400).json({ message: "Due date is required" });
+      }
+
+      const order = await storage.getWholesaleOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      const dueDateValue = new Date(dueDate);
+      await storage.updateWholesaleOrder(req.params.id, {
+        dueDate: dueDateValue,
+      });
+
+      res.json({ 
+        success: true, 
+        message: `Due date set to ${dueDateValue.toLocaleDateString()}`,
+      });
+    } catch (error: any) {
+      console.error("Error setting due date:", error);
+      res.status(500).json({ message: "Error setting due date: " + error.message });
+    }
+  });
+
   app.patch("/api/wholesale/orders/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { status, deliveryDate, notes, items } = req.body;
