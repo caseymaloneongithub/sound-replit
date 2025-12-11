@@ -1180,6 +1180,289 @@ emily@soundkombucha.com
   }
 }
 
+// Wholesale Order Confirmation - sent to customer when order is placed
+interface WholesaleOrderConfirmationParams {
+  customerEmail: string;
+  businessName: string;
+  contactName: string;
+  invoiceNumber: string;
+  orderDate: Date;
+  deliveryDate?: Date | null;
+  dueDate?: Date | null;
+  totalAmount: number;
+  items: { productName: string; quantity: number; unitPrice: string }[];
+  notes?: string | null;
+}
+
+export async function sendWholesaleOrderConfirmation(params: WholesaleOrderConfirmationParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send order confirmation to:', params.customerEmail);
+    console.log('[EMAIL] Invoice:', params.invoiceNumber);
+    return;
+  }
+
+  const orderDateFormatted = format(params.orderDate, 'MMMM d, yyyy');
+  const deliveryDateFormatted = params.deliveryDate ? format(params.deliveryDate, 'MMMM d, yyyy') : null;
+  const dueDateFormatted = params.dueDate ? format(params.dueDate, 'MMMM d, yyyy') : null;
+  
+  const itemsHtml = params.items.map(item => {
+    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+    return `
+      <tr>
+        <td style="padding: 10px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${item.productName}</td>
+        <td style="padding: 10px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: center; color: ${BRAND_COLORS.darkGrey};">${item.quantity}</td>
+        <td style="padding: 10px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">$${parseFloat(item.unitPrice).toFixed(2)}</td>
+        <td style="padding: 10px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">$${lineTotal.toFixed(2)}</td>
+      </tr>
+    `;
+  }).join('');
+  
+  const itemsText = params.items.map(item => {
+    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+    return `- ${item.productName} x ${item.quantity} @ $${parseFloat(item.unitPrice).toFixed(2)} = $${lineTotal.toFixed(2)}`;
+  }).join('\n');
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.customerEmail,
+    subject: `Order Confirmation - ${params.invoiceNumber} - Puget Sound Kombucha Co.`,
+    text: `
+Order Confirmation
+
+Thank you for your order!
+
+Invoice #: ${params.invoiceNumber}
+Order Date: ${orderDateFormatted}
+${deliveryDateFormatted ? `Delivery Date: ${deliveryDateFormatted}` : ''}
+${dueDateFormatted ? `Payment Due: ${dueDateFormatted}` : ''}
+
+Items:
+${itemsText}
+
+Total: $${params.totalAmount.toFixed(2)}
+${params.notes ? `\nNotes: ${params.notes}` : ''}
+
+We will contact you to confirm delivery details.
+
+---
+Puget Sound Kombucha Co.
+4501 Shilshole Ave NW
+Seattle, WA 98107
+emily@soundkombucha.com
+(206) 789-5219
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader('Order Confirmation')}
+  
+  <div style="padding: 32px 24px;">
+    <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 16px; margin: 0 0 24px 0;">
+      Dear ${params.contactName},
+    </p>
+    
+    <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 16px; margin: 0 0 24px 0;">
+      Thank you for your order! We've received your order and will contact you to confirm delivery details.
+    </p>
+    
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey}; width: 120px;">Invoice #</td>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.invoiceNumber}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey};">Order Date</td>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey};">${orderDateFormatted}</td>
+        </tr>
+        ${deliveryDateFormatted ? `
+        <tr>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey};">Delivery Date</td>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey};">${deliveryDateFormatted}</td>
+        </tr>
+        ` : ''}
+        ${dueDateFormatted ? `
+        <tr>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey};">Payment Due</td>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${dueDateFormatted}</td>
+        </tr>
+        ` : ''}
+      </table>
+    </div>
+    
+    <h3 style="font-size: 14px; color: ${BRAND_COLORS.darkGrey}; margin: 24px 0 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; padding-bottom: 8px;">Order Items</h3>
+    
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+      <thead>
+        <tr style="background-color: ${BRAND_COLORS.backgroundGrey};">
+          <th style="padding: 10px 8px; text-align: left; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Item</th>
+          <th style="padding: 10px 8px; text-align: center; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Qty</th>
+          <th style="padding: 10px 8px; text-align: right; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Price</th>
+          <th style="padding: 10px 8px; text-align: right; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsHtml}
+      </tbody>
+    </table>
+    
+    <div style="text-align: right; padding: 16px 0; border-top: 2px solid ${BRAND_COLORS.borderGrey};">
+      <span style="font-size: 18px; color: ${BRAND_COLORS.darkGrey}; font-weight: bold;">Total: $${params.totalAmount.toFixed(2)}</span>
+    </div>
+    
+    ${params.notes ? `
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin-top: 16px;">
+      <p style="margin: 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; font-weight: bold;">ORDER NOTES</p>
+      <p style="margin: 8px 0 0 0; color: ${BRAND_COLORS.darkGrey}; font-size: 14px;">${params.notes}</p>
+    </div>
+    ` : ''}
+    
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; margin: 24px 0 0 0;">
+      If you have any questions about your order, please don't hesitate to contact us.
+    </p>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent order confirmation to ${params.customerEmail} for ${params.invoiceNumber}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send order confirmation:', error);
+    throw error;
+  }
+}
+
+// Wholesale Order Admin Notification - sent to admins when order is placed
+interface WholesaleOrderAdminNotificationParams {
+  adminEmails: string[];
+  businessName: string;
+  contactName: string;
+  invoiceNumber: string;
+  orderDate: Date;
+  deliveryDate?: Date | null;
+  totalAmount: number;
+  items: { productName: string; quantity: number; unitPrice: string }[];
+}
+
+export async function sendWholesaleOrderAdminNotification(params: WholesaleOrderAdminNotificationParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send order notification to admins');
+    console.log('[EMAIL] Invoice:', params.invoiceNumber);
+    return;
+  }
+
+  const orderDateFormatted = format(params.orderDate, 'MMMM d, yyyy \'at\' h:mm a');
+  const deliveryDateFormatted = params.deliveryDate ? format(params.deliveryDate, 'MMMM d, yyyy') : 'Not specified';
+  
+  const itemsHtml = params.items.map(item => {
+    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+    return `
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${item.productName}</td>
+        <td style="padding: 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: center; color: ${BRAND_COLORS.darkGrey};">${item.quantity}</td>
+        <td style="padding: 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">$${lineTotal.toFixed(2)}</td>
+      </tr>
+    `;
+  }).join('');
+  
+  const itemsText = params.items.map(item => {
+    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+    return `- ${item.productName} x ${item.quantity} = $${lineTotal.toFixed(2)}`;
+  }).join('\n');
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.adminEmails.join(', '),
+    subject: `New Wholesale Order: ${params.invoiceNumber} - ${params.businessName} ($${params.totalAmount.toFixed(2)})`,
+    text: `
+New Wholesale Order
+
+Invoice #: ${params.invoiceNumber}
+Customer: ${params.businessName}
+Contact: ${params.contactName}
+Order Date: ${orderDateFormatted}
+Delivery Date: ${deliveryDateFormatted}
+
+Items:
+${itemsText}
+
+Total: $${params.totalAmount.toFixed(2)}
+
+---
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader('New Wholesale Order')}
+  
+  <div style="padding: 32px 24px;">
+    <div style="background-color: #dbeafe; border: 2px solid #3b82f6; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+      <p style="margin: 0; font-size: 14px; color: #1e40af; font-weight: bold;">NEW ORDER RECEIVED</p>
+      <p style="margin: 8px 0 0 0; font-size: 24px; color: #1e40af; font-weight: bold;">$${params.totalAmount.toFixed(2)}</p>
+    </div>
+    
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey}; width: 120px;">Invoice #</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.invoiceNumber}</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey};">Customer</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.businessName}</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey};">Contact</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${params.contactName}</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey};">Order Date</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${orderDateFormatted}</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px 0; color: ${BRAND_COLORS.mediumGrey};">Delivery</td>
+        <td style="padding: 10px 0; color: ${BRAND_COLORS.darkGrey};">${deliveryDateFormatted}</td>
+      </tr>
+    </table>
+    
+    <h3 style="font-size: 14px; color: ${BRAND_COLORS.darkGrey}; margin: 0 0 12px 0;">Order Items</h3>
+    
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+      <thead>
+        <tr style="background-color: ${BRAND_COLORS.backgroundGrey};">
+          <th style="padding: 10px 8px; text-align: left; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Item</th>
+          <th style="padding: 10px 8px; text-align: center; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Qty</th>
+          <th style="padding: 10px 8px; text-align: right; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsHtml}
+      </tbody>
+    </table>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent order notification to admins for ${params.invoiceNumber}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send order notification:', error);
+    throw error;
+  }
+}
+
 // Wholesale Invoice Email Types
 interface WholesaleInvoiceItem {
   productName: string;

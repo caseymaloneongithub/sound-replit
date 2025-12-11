@@ -11,7 +11,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesalePaymentReceipt } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesalePaymentReceipt, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { getObjectAclPolicy } from "./objectAcl";
@@ -773,6 +773,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
           quantity: item.quantity,
           unitPrice: item.unitPrice,
         });
+      }
+
+      // Build items list with product names for emails
+      const emailItems = await Promise.all(validatedItems.map(async (item) => {
+        const unitType = await storage.getWholesaleUnitType(item.unitTypeId);
+        const flavor = item.flavorId ? await storage.getFlavor(item.flavorId) : null;
+        const productName = flavor 
+          ? `${unitType?.name || 'Item'} - ${flavor.name}`
+          : unitType?.name || 'Item';
+        return {
+          productName,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+        };
+      }));
+
+      // Send order confirmation to customer
+      try {
+        await sendWholesaleOrderConfirmation({
+          customerEmail: customer.email,
+          businessName: customer.businessName,
+          contactName: customer.contactName,
+          invoiceNumber,
+          orderDate,
+          deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
+          dueDate,
+          totalAmount,
+          items: emailItems,
+          notes: notes || null,
+        });
+      } catch (emailError) {
+        console.error('[ORDER] Failed to send customer confirmation:', emailError);
+      }
+
+      // Send notification to admins
+      try {
+        const admins = await storage.getUsersByRole('admin');
+        const superAdmins = await storage.getUsersByRole('super_admin');
+        const adminEmails = [...admins, ...superAdmins]
+          .map(u => u.email)
+          .filter((email): email is string => !!email);
+        
+        if (adminEmails.length > 0) {
+          await sendWholesaleOrderAdminNotification({
+            adminEmails,
+            businessName: customer.businessName,
+            contactName: customer.contactName,
+            invoiceNumber,
+            orderDate,
+            deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
+            totalAmount,
+            items: emailItems,
+          });
+        }
+      } catch (emailError) {
+        console.error('[ORDER] Failed to send admin notification:', emailError);
       }
 
       res.json(createdOrder);
@@ -4120,6 +4176,67 @@ If you have any questions, please don't hesitate to reach out!`,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
         });
+      }
+      
+      // Get customer for email notifications
+      const customer = await storage.getWholesaleCustomer(order.customerId);
+      
+      if (customer) {
+        // Build items list with product names for emails
+        const emailItems = await Promise.all(validatedItems.map(async (item) => {
+          const unitType = await storage.getWholesaleUnitType(item.unitTypeId);
+          const flavor = item.flavorId ? await storage.getFlavor(item.flavorId) : null;
+          const productName = flavor 
+            ? `${unitType?.name || 'Item'} - ${flavor.name}`
+            : unitType?.name || 'Item';
+          return {
+            productName,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+          };
+        }));
+
+        // Send order confirmation to customer
+        try {
+          await sendWholesaleOrderConfirmation({
+            customerEmail: customer.email,
+            businessName: customer.businessName,
+            contactName: customer.contactName,
+            invoiceNumber,
+            orderDate,
+            deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
+            dueDate,
+            totalAmount: serverCalculatedTotal,
+            items: emailItems,
+            notes: order.notes || null,
+          });
+        } catch (emailError) {
+          console.error('[ORDER] Failed to send customer confirmation:', emailError);
+        }
+
+        // Send notification to admins
+        try {
+          const admins = await storage.getUsersByRole('admin');
+          const superAdmins = await storage.getUsersByRole('super_admin');
+          const adminEmails = [...admins, ...superAdmins]
+            .map(u => u.email)
+            .filter((email): email is string => !!email);
+          
+          if (adminEmails.length > 0) {
+            await sendWholesaleOrderAdminNotification({
+              adminEmails,
+              businessName: customer.businessName,
+              contactName: customer.contactName,
+              invoiceNumber,
+              orderDate,
+              deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
+              totalAmount: serverCalculatedTotal,
+              items: emailItems,
+            });
+          }
+        } catch (emailError) {
+          console.error('[ORDER] Failed to send admin notification:', emailError);
+        }
       }
       
       res.json(createdOrder);
