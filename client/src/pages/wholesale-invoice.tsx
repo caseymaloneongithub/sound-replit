@@ -123,9 +123,9 @@ export default function WholesaleInvoice() {
         </div>
       </div>
 
-      <div className="container max-w-4xl py-8 px-4">
-        <Card>
-          <CardContent className="p-8">
+      <div className="container max-w-4xl py-8 px-4 print:p-0 print:max-w-none" id="invoice-print-area">
+        <Card className="print:shadow-none print:border-0">
+          <CardContent className="p-8 print:p-0">
             <div className="mb-8">
               <h1 className="text-3xl font-bold mb-2">INVOICE</h1>
               <div className="text-muted-foreground">
@@ -250,7 +250,26 @@ export default function WholesaleInvoice() {
 
       <style>{`
         @media print {
-          /* Reset all backgrounds and colors for clean printing */
+          /* Hide everything by default */
+          body * {
+            visibility: hidden;
+          }
+          
+          /* Show only the invoice print area and its contents */
+          #invoice-print-area,
+          #invoice-print-area * {
+            visibility: visible;
+          }
+          
+          /* Position the print area at top-left */
+          #invoice-print-area {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+          }
+          
+          /* Reset backgrounds and colors for clean printing */
           * {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
@@ -263,17 +282,13 @@ export default function WholesaleInvoice() {
             line-height: 1.4 !important;
           }
           
-          /* Hide non-print elements */
-          .print\\:hidden {
-            display: none !important;
-          }
-          
-          /* Remove shadows and borders that don't print well */
-          .shadow, .shadow-sm, .shadow-md, .shadow-lg {
+          /* Remove shadows and borders from card */
+          .shadow, .shadow-sm, .shadow-md, .shadow-lg,
+          [class*="border"] {
             box-shadow: none !important;
           }
           
-          /* Make card backgrounds white */
+          /* Make all backgrounds white */
           [class*="bg-card"], [class*="bg-muted"], [class*="bg-background"] {
             background: white !important;
           }
@@ -299,13 +314,6 @@ export default function WholesaleInvoice() {
             font-weight: bold !important;
           }
           
-          /* Container adjustments */
-          .container {
-            max-width: 100% !important;
-            padding: 0 !important;
-            margin: 0 !important;
-          }
-          
           /* Remove rounded corners for cleaner print */
           [class*="rounded"] {
             border-radius: 0 !important;
@@ -326,11 +334,6 @@ export default function WholesaleInvoice() {
           /* Prevent page breaks inside elements */
           tr, .grid > div {
             page-break-inside: avoid !important;
-          }
-          
-          /* Ensure invoice fits on one page if possible */
-          .min-h-screen {
-            min-height: auto !important;
           }
         }
       `}</style>
