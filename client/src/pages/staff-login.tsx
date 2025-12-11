@@ -210,7 +210,7 @@ export default function StaffLogin() {
     
     setVerifying2FA(true);
     try {
-      const response = await apiRequest("POST", "/api/verify-2fa", {
+      const response = await apiRequest("POST", "/api/verify-retail-2fa", {
         email: twoFAEmail,
         code: twoFACode,
       });
@@ -253,7 +253,7 @@ export default function StaffLogin() {
   const resend2FACode = async () => {
     setResending2FA(true);
     try {
-      await apiRequest("POST", "/api/resend-2fa", { email: twoFAEmail });
+      await apiRequest("POST", "/api/resend-retail-2fa", { email: twoFAEmail });
       toast({
         title: "Code Resent",
         description: "A new verification code has been sent to your email",
