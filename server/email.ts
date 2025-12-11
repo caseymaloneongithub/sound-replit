@@ -1045,16 +1045,23 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
 
     // DELIVER TO (if location provided)
     if (params.location) {
-      doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('DELIVER TO', 50 + columnWidth * 2, startY);
-      doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text(params.location.locationName, 50 + columnWidth * 2, startY + 15);
+      const deliverX = 50 + columnWidth * 2;
+      let deliverY = startY;
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#666666').text('DELIVER TO', deliverX, deliverY);
+      deliverY += 15;
+      doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000').text(params.location.locationName, deliverX, deliverY);
+      deliverY += 15;
       doc.font('Helvetica').fontSize(9).fillColor('#666666');
-      doc.text(params.location.address, 50 + columnWidth * 2, startY + 30);
-      doc.text(`${params.location.city}, ${params.location.state} ${params.location.zipCode}`, 50 + columnWidth * 2, startY + 42);
+      doc.text(params.location.address, deliverX, deliverY);
+      deliverY += 12;
+      doc.text(`${params.location.city}, ${params.location.state} ${params.location.zipCode}`, deliverX, deliverY);
+      deliverY += 12;
       if (params.location.contactName) {
-        doc.text(params.location.contactName, 50 + columnWidth * 2, startY + 54);
+        doc.text(params.location.contactName, deliverX, deliverY);
+        deliverY += 12;
       }
       if (params.location.contactPhone) {
-        doc.text(params.location.contactPhone, 50 + columnWidth * 2, startY + 66);
+        doc.text(params.location.contactPhone, deliverX, deliverY);
       }
     }
 
