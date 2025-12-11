@@ -14,6 +14,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { StaffLayout } from "@/components/staff/staff-layout";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { 
   Tags, 
   Plus,
@@ -21,8 +23,10 @@ import {
   Trash2,
   TrendingUp,
   TrendingDown,
+  ArrowLeftRight,
   Loader2,
-  FolderTree
+  FolderTree,
+  EyeOff
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -30,9 +34,12 @@ import type { AccountingCategory } from "@shared/schema";
 
 const categoryFormSchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
-  type: z.enum(['income', 'expense']),
+  type: z.enum(['income', 'expense', 'transfer']),
+  code: z.string().max(20).optional().nullable(),
   description: z.string().optional(),
   parentId: z.string().nullable().optional(),
+  isActive: z.boolean().optional(),
+  excludeFromReports: z.boolean().optional(),
 });
 
 type CategoryFormData = z.infer<typeof categoryFormSchema>;
@@ -52,8 +59,11 @@ export default function AccountingCategories() {
     defaultValues: {
       name: "",
       type: "expense",
+      code: "",
       description: "",
       parentId: null,
+      isActive: true,
+      excludeFromReports: false,
     },
   });
 
@@ -107,8 +117,11 @@ export default function AccountingCategories() {
     form.reset({
       name: "",
       type: "expense",
+      code: "",
       description: "",
       parentId: null,
+      isActive: true,
+      excludeFromReports: false,
     });
     setEditDialogOpen(true);
   };
@@ -117,9 +130,12 @@ export default function AccountingCategories() {
     setSelectedCategory(category);
     form.reset({
       name: category.name,
-      type: category.type as 'income' | 'expense',
+      type: category.type as 'income' | 'expense' | 'transfer',
+      code: category.code || "",
       description: category.description || "",
       parentId: category.parentId || null,
+      isActive: category.isActive !== false,
+      excludeFromReports: category.excludeFromReports || false,
     });
     setEditDialogOpen(true);
   };
@@ -145,6 +161,7 @@ export default function AccountingCategories() {
 
   const incomeCategories = categories.filter(c => c.type === 'income');
   const expenseCategories = categories.filter(c => c.type === 'expense');
+  const transferCategories = categories.filter(c => c.type === 'transfer');
 
   const getParentName = (parentId: string | null) => {
     if (!parentId) return null;
@@ -159,17 +176,27 @@ export default function AccountingCategories() {
   const CategoryCard = ({ category }: { category: AccountingCategory }) => {
     const children = getChildCategories(category.id);
     const parentName = getParentName(category.parentId);
+    const isInactive = category.isActive === false;
 
     return (
-      <Card key={category.id} className="hover-elevate">
+      <Card key={category.id} className={`hover-elevate ${isInactive ? 'opacity-60' : ''}`}>
         <CardContent className="p-4">
           <div className="flex items-start justify-between">
             <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <h3 className="font-medium">{category.name}</h3>
-                <Badge variant={category.type === 'income' ? 'default' : 'secondary'}>
+                {category.code && (
+                  <span className="text-xs text-muted-foreground font-mono">({category.code})</span>
+                )}
+                <Badge variant={category.type === 'income' ? 'default' : category.type === 'transfer' ? 'outline' : 'secondary'}>
                   {category.type}
                 </Badge>
+                {isInactive && (
+                  <Badge variant="outline" className="text-muted-foreground">Inactive</Badge>
+                )}
+                {category.excludeFromReports && (
+                  <EyeOff className="w-3 h-3 text-muted-foreground" title="Excluded from reports" />
+                )}
               </div>
               {category.description && (
                 <p className="text-sm text-muted-foreground mb-2">{category.description}</p>

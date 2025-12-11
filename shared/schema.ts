@@ -527,11 +527,14 @@ export const accountingCategories = pgTable("accounting_categories", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
   type: text("type").notNull(), // 'income', 'expense', 'transfer'
+  code: text("code"), // Optional accounting code (e.g., "5000", "5015")
   description: text("description"),
   color: text("color"), // Hex color for UI
   parentId: varchar("parent_id"), // For hierarchical categories (self-reference)
   displayOrder: integer("display_order").notNull().default(0),
   isDefault: boolean("is_default").notNull().default(false), // System default categories
+  isActive: boolean("is_active").notNull().default(true), // Active/inactive toggle
+  excludeFromReports: boolean("exclude_from_reports").notNull().default(false), // Exclude from income statement totals
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -545,12 +548,16 @@ export const accountingTransactions = pgTable("accounting_transactions", {
   merchantName: text("merchant_name"), // Merchant name from Plaid
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(), // Positive = expense (Plaid convention)
   category: text("category"), // Plaid's category (for reference)
+  categoryDetailed: text("category_detailed"), // Detailed Plaid category
   pending: boolean("pending").notNull().default(false),
+  paymentChannel: text("payment_channel"), // Plaid payment channel (online, in store, etc.)
+  status: text("status").notNull().default('active'), // 'active', 'removed' (soft delete)
   isManualImport: boolean("is_manual_import").notNull().default(false), // True for CSV imports
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => ({
   dateIdx: index("accounting_transactions_date_idx").on(table.date),
   accountIdx: index("accounting_transactions_account_idx").on(table.plaidAccountId),
+  statusIdx: index("accounting_transactions_status_idx").on(table.status),
 }));
 
 // Transaction Allocations - Assigns transactions to accounting categories
