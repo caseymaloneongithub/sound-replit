@@ -35,8 +35,7 @@ export default function WholesaleInvoice() {
 
   const paymentMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("POST", `/api/wholesale/orders/${orderId}/create-payment`, {});
-      return await response.json();
+      return await apiRequest("POST", `/api/wholesale/orders/${orderId}/create-payment`, {});
     },
     onSuccess: (data) => {
       if (data.url) {
@@ -54,8 +53,7 @@ export default function WholesaleInvoice() {
 
   const sendInvoiceMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("POST", `/api/wholesale/orders/${orderId}/send-invoice`, {});
-      return await response.json();
+      return await apiRequest("POST", `/api/wholesale/orders/${orderId}/send-invoice`, {});
     },
     onSuccess: (data) => {
       toast({
