@@ -959,6 +959,88 @@ Puget Sound Kombucha Co.
   }
 }
 
+// Admin notification when wholesale invoice is paid online
+interface WholesaleInvoicePaidNotificationParams {
+  adminEmails: string[];
+  businessName: string;
+  invoiceNumber: string;
+  amount: number;
+  paidAt: Date;
+}
+
+export async function sendWholesaleInvoicePaidNotification(params: WholesaleInvoicePaidNotificationParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send wholesale invoice paid notification to admins');
+    console.log('[EMAIL] Invoice:', params.invoiceNumber, 'Amount:', params.amount);
+    return;
+  }
+
+  const formattedDate = format(params.paidAt, 'MMMM d, yyyy \'at\' h:mm a');
+  
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.adminEmails.join(', '),
+    subject: `Invoice Paid: ${params.invoiceNumber} - ${params.businessName} ($${params.amount.toFixed(2)})`,
+    text: `
+Wholesale Invoice Paid Online
+
+Invoice: ${params.invoiceNumber}
+Customer: ${params.businessName}
+Amount: $${params.amount.toFixed(2)}
+Paid: ${formattedDate}
+
+This payment was processed via Stripe.
+
+---
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader('Invoice Paid')}
+  
+  <div style="padding: 32px 24px;">
+    <div style="background-color: #dcfce7; border: 2px solid #16a34a; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+      <p style="margin: 0; font-size: 16px; color: #166534; font-weight: bold;">Payment Received</p>
+      <p style="margin: 8px 0 0 0; font-size: 24px; color: #166534; font-weight: bold;">$${params.amount.toFixed(2)}</p>
+    </div>
+    
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+      <tr>
+        <td style="padding: 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey}; width: 120px;">Invoice</td>
+        <td style="padding: 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.invoiceNumber}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey};">Customer</td>
+        <td style="padding: 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.businessName}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey};">Paid</td>
+        <td style="padding: 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${formattedDate}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; color: ${BRAND_COLORS.mediumGrey};">Method</td>
+        <td style="padding: 12px 0; color: ${BRAND_COLORS.darkGrey};">Stripe (Online)</td>
+      </tr>
+    </table>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent wholesale invoice paid notification to admins for ${params.invoiceNumber}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send wholesale invoice paid notification:', error);
+    throw error;
+  }
+}
+
 // Wholesale Invoice Email Types
 interface WholesaleInvoiceItem {
   productName: string;

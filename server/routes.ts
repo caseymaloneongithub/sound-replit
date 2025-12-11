@@ -11,7 +11,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { getObjectAclPolicy } from "./objectAcl";
@@ -2487,11 +2487,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const order = await storage.getWholesaleOrder(orderId);
             
             if (order && !order.paidAt) {
+              const paidAt = new Date();
               await storage.updateWholesaleOrder(orderId, {
-                paidAt: new Date(),
+                paidAt,
                 stripePaymentIntentId: session.payment_intent as string,
               });
               console.log(`[WEBHOOK] ✅ Marked wholesale invoice ${order.invoiceNumber} as paid via Stripe`);
+              
+              // Send notification to admins
+              try {
+                const customer = await storage.getWholesaleCustomer(order.customerId);
+                const admins = await storage.getUsersByRole('admin');
+                const superAdmins = await storage.getUsersByRole('super_admin');
+                const adminEmails = [...admins, ...superAdmins]
+                  .map(u => u.email)
+                  .filter((email): email is string => !!email);
+                
+                if (adminEmails.length > 0 && customer) {
+                  await sendWholesaleInvoicePaidNotification({
+                    adminEmails,
+                    businessName: customer.businessName,
+                    invoiceNumber: order.invoiceNumber,
+                    amount: Number(order.totalAmount),
+                    paidAt,
+                  });
+                }
+              } catch (emailError) {
+                console.error('[WEBHOOK] Failed to send admin notification for invoice payment:', emailError);
+              }
             }
             break;
           }

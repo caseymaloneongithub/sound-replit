@@ -101,6 +101,7 @@ export interface IStorage {
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   updateUserStripeId(id: string, stripeCustomerId: string): Promise<User | undefined>;
   getUsersWithoutStripeId(): Promise<User[]>;
+  getUsersByRole(role: string): Promise<User[]>;
   
   startImpersonation(adminUserId: string, impersonatedUserId: string, ipAddress?: string, userAgent?: string): Promise<ImpersonationLog>;
   endImpersonation(logId: string): Promise<void>;
@@ -448,6 +449,14 @@ export class PostgresStorage implements IStorage {
           eq(users.role, 'user')
         )
       );
+    return result;
+  }
+
+  async getUsersByRole(role: string): Promise<User[]> {
+    const result = await db
+      .select()
+      .from(users)
+      .where(eq(users.role, role));
     return result;
   }
 
