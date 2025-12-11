@@ -1041,6 +1041,145 @@ Puget Sound Kombucha Co.
   }
 }
 
+// Wholesale Invoice Payment Receipt - sent to customer when they pay online
+interface WholesalePaymentReceiptParams {
+  customerEmail: string;
+  businessName: string;
+  contactName: string;
+  invoiceNumber: string;
+  amount: number;
+  paidAt: Date;
+  items: { productName: string; quantity: number; unitPrice: string }[];
+}
+
+export async function sendWholesalePaymentReceipt(params: WholesalePaymentReceiptParams): Promise<void> {
+  const transporter = createTransporter();
+  
+  if (!transporter) {
+    console.log('[EMAIL] Would send payment receipt to:', params.customerEmail);
+    console.log('[EMAIL] Invoice:', params.invoiceNumber, 'Amount:', params.amount);
+    return;
+  }
+
+  const formattedDate = format(params.paidAt, 'MMMM d, yyyy \'at\' h:mm a');
+  
+  // Build items table
+  const itemsHtml = params.items.map(item => {
+    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+    return `
+      <tr>
+        <td style="padding: 8px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${item.productName}</td>
+        <td style="padding: 8px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: center; color: ${BRAND_COLORS.darkGrey};">${item.quantity}</td>
+        <td style="padding: 8px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">$${parseFloat(item.unitPrice).toFixed(2)}</td>
+        <td style="padding: 8px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">$${lineTotal.toFixed(2)}</td>
+      </tr>
+    `;
+  }).join('');
+  
+  const itemsText = params.items.map(item => {
+    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
+    return `- ${item.productName} x ${item.quantity} @ $${parseFloat(item.unitPrice).toFixed(2)} = $${lineTotal.toFixed(2)}`;
+  }).join('\n');
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.customerEmail,
+    subject: `Payment Receipt - Invoice ${params.invoiceNumber} - Puget Sound Kombucha Co.`,
+    text: `
+Payment Receipt
+
+Thank you for your payment!
+
+Invoice: ${params.invoiceNumber}
+Amount Paid: $${params.amount.toFixed(2)}
+Date: ${formattedDate}
+
+Items:
+${itemsText}
+
+Total: $${params.amount.toFixed(2)}
+
+This receipt confirms your payment has been successfully processed.
+
+---
+Puget Sound Kombucha Co.
+4501 Shilshole Ave NW
+Seattle, WA 98107
+emily@soundkombucha.com
+(206) 789-5219
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader('Payment Receipt')}
+  
+  <div style="padding: 32px 24px;">
+    <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 16px; margin: 0 0 24px 0;">
+      Dear ${params.contactName},
+    </p>
+    
+    <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 16px; margin: 0 0 24px 0;">
+      Thank you for your payment! This email confirms that your payment has been successfully processed.
+    </p>
+    
+    <div style="background-color: #dcfce7; border: 2px solid #16a34a; border-radius: 8px; padding: 20px; margin-bottom: 24px; text-align: center;">
+      <p style="margin: 0; font-size: 14px; color: #166534; font-weight: bold;">PAYMENT CONFIRMED</p>
+      <p style="margin: 8px 0 0 0; font-size: 28px; color: #166534; font-weight: bold;">$${params.amount.toFixed(2)}</p>
+      <p style="margin: 8px 0 0 0; font-size: 12px; color: #166534;">${formattedDate}</p>
+    </div>
+    
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+      <tr>
+        <td style="padding: 8px 0; color: ${BRAND_COLORS.mediumGrey}; width: 120px;">Invoice #</td>
+        <td style="padding: 8px 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.invoiceNumber}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; color: ${BRAND_COLORS.mediumGrey};">Business</td>
+        <td style="padding: 8px 0; color: ${BRAND_COLORS.darkGrey};">${params.businessName}</td>
+      </tr>
+    </table>
+    
+    <h3 style="font-size: 14px; color: ${BRAND_COLORS.darkGrey}; margin: 24px 0 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; padding-bottom: 8px;">Order Details</h3>
+    
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+      <thead>
+        <tr style="background-color: ${BRAND_COLORS.backgroundGrey};">
+          <th style="padding: 10px 8px; text-align: left; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Item</th>
+          <th style="padding: 10px 8px; text-align: center; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Qty</th>
+          <th style="padding: 10px 8px; text-align: right; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Price</th>
+          <th style="padding: 10px 8px; text-align: right; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsHtml}
+      </tbody>
+    </table>
+    
+    <div style="text-align: right; padding: 16px 0; border-top: 2px solid ${BRAND_COLORS.borderGrey};">
+      <span style="font-size: 16px; color: ${BRAND_COLORS.darkGrey}; font-weight: bold;">Total Paid: $${params.amount.toFixed(2)}</span>
+    </div>
+    
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin-top: 24px;">
+      <p style="margin: 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">
+        Please keep this email for your records. If you have any questions about this payment, please contact us.
+      </p>
+    </div>
+    
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent payment receipt to ${params.customerEmail} for invoice ${params.invoiceNumber}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send payment receipt:', error);
+    throw error;
+  }
+}
+
 // Wholesale Invoice Email Types
 interface WholesaleInvoiceItem {
   productName: string;

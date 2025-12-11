@@ -11,7 +11,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesalePaymentReceipt } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { getObjectAclPolicy } from "./objectAcl";
@@ -2494,9 +2494,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
               });
               console.log(`[WEBHOOK] ✅ Marked wholesale invoice ${order.invoiceNumber} as paid via Stripe`);
               
+              // Get customer and order items for emails
+              const customer = await storage.getWholesaleCustomer(order.customerId);
+              const orderItems = await storage.getWholesaleOrderItems(orderId);
+              
+              // Build items list with names for receipt
+              const receiptItems = await Promise.all(orderItems.map(async (item) => {
+                const unitType = await storage.getWholesaleUnitType(item.unitTypeId);
+                const flavor = item.flavorId ? await storage.getFlavor(item.flavorId) : null;
+                const productName = flavor 
+                  ? `${unitType?.name || 'Item'} - ${flavor.name}`
+                  : unitType?.name || 'Item';
+                return {
+                  productName,
+                  quantity: item.quantity,
+                  unitPrice: item.unitPrice,
+                };
+              }));
+              
+              // Send receipt to customer
+              if (customer) {
+                try {
+                  await sendWholesalePaymentReceipt({
+                    customerEmail: customer.email,
+                    businessName: customer.businessName,
+                    contactName: customer.contactName,
+                    invoiceNumber: order.invoiceNumber,
+                    amount: Number(order.totalAmount),
+                    paidAt,
+                    items: receiptItems,
+                  });
+                } catch (emailError) {
+                  console.error('[WEBHOOK] Failed to send payment receipt to customer:', emailError);
+                }
+              }
+              
               // Send notification to admins
               try {
-                const customer = await storage.getWholesaleCustomer(order.customerId);
                 const admins = await storage.getUsersByRole('admin');
                 const superAdmins = await storage.getUsersByRole('super_admin');
                 const adminEmails = [...admins, ...superAdmins]
