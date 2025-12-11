@@ -4078,7 +4078,7 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
-  app.post("/api/wholesale/orders/:id/send-invoice", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+  app.post("/api/wholesale/orders/:id/send-invoice", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
       if (!orderDetails) {

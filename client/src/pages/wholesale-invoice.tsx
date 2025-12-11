@@ -10,12 +10,19 @@ import { useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatCaseQuantity } from "@shared/pricing";
+import type { User } from "@shared/schema";
 
 export default function WholesaleInvoice() {
   const [, params] = useRoute("/wholesale/invoice/:id");
   const [, setLocation] = useLocation();
   const orderId = params?.id;
   const { toast } = useToast();
+
+  const { data: user } = useQuery<User>({
+    queryKey: ["/api/user"],
+  });
+
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
   const { data: invoiceData, isLoading } = useQuery<{
     order: any;
@@ -135,24 +142,26 @@ export default function WholesaleInvoice() {
                 )}
               </Button>
             )}
-            <Button
-              onClick={handleSendInvoice}
-              variant="outline"
-              disabled={sendInvoiceMutation.isPending}
-              data-testid="button-send-invoice"
-            >
-              {sendInvoiceMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                <>
-                  <Mail className="mr-2 h-4 w-4" />
-                  Send Invoice
-                </>
-              )}
-            </Button>
+            {isAdmin && (
+              <Button
+                onClick={handleSendInvoice}
+                variant="outline"
+                disabled={sendInvoiceMutation.isPending}
+                data-testid="button-send-invoice"
+              >
+                {sendInvoiceMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Mail className="mr-2 h-4 w-4" />
+                    Send Invoice
+                  </>
+                )}
+              </Button>
+            )}
             <Button
               onClick={handlePrint}
               variant="outline"
