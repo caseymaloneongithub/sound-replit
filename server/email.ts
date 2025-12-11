@@ -258,6 +258,7 @@ Action Required: Follow up with customer regarding payment issue.
 interface EmailVerificationCodeParams {
   email: string;
   code: string;
+  name?: string;
 }
 
 export async function sendEmailVerificationCode(params: EmailVerificationCodeParams): Promise<void> {

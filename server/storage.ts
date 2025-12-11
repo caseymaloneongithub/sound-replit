@@ -118,7 +118,7 @@ export interface IStorage {
   
   createEmailVerificationCode(code: InsertEmailVerificationCode): Promise<EmailVerificationCode>;
   getLatestEmailVerificationCode(email: string): Promise<EmailVerificationCode | undefined>;
-  getLatestEmailVerificationCodeByPurpose(email: string, purpose: 'registration' | 'login'): Promise<EmailVerificationCode | undefined>;
+  getLatestEmailVerificationCodeByPurpose(email: string, purpose: 'registration' | 'login' | 'retail_2fa'): Promise<EmailVerificationCode | undefined>;
   markEmailVerificationCodeAsVerified(id: string): Promise<void>;
   markEmailVerificationCodeAsConsumed(id: string): Promise<void>;
   incrementEmailVerificationAttempts(id: string): Promise<void>;
@@ -617,7 +617,7 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async getLatestEmailVerificationCodeByPurpose(email: string, purpose: 'registration' | 'login'): Promise<EmailVerificationCode | undefined> {
+  async getLatestEmailVerificationCodeByPurpose(email: string, purpose: 'registration' | 'login' | 'retail_2fa'): Promise<EmailVerificationCode | undefined> {
     const result = await db
       .select()
       .from(emailVerificationCodes)

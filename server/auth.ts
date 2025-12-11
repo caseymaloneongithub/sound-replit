@@ -7,7 +7,7 @@ import { promisify } from "util";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
 import { createStripeCustomer } from "./stripeCustomer";
-import { sendPasswordResetEmail } from "./email";
+import { sendPasswordResetEmail, sendEmailVerificationCode } from "./email";
 
 declare global {
   namespace Express {
@@ -222,7 +222,42 @@ export function setupAuth(app: Express) {
         return res.status(401).send(info?.message || "Authentication failed");
       }
       
-      // Save old session ID to migrate cart
+      // For retail customers (role === 'user'), require 2FA via email
+      if (user.role === 'user' && user.email) {
+        try {
+          // Generate 6-digit code
+          const code = Math.floor(100000 + Math.random() * 900000).toString();
+          
+          // Store code in database with 5-minute expiration
+          const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+          await storage.createEmailVerificationCode({
+            email: user.email,
+            code,
+            expiresAt,
+            verified: false,
+            purpose: 'retail_2fa'
+          });
+          
+          // Send verification code email
+          await sendEmailVerificationCode({
+            email: user.email,
+            code,
+            name: user.firstName || user.username,
+          });
+          
+          // Return 2FA required response (don't log in yet)
+          return res.status(200).json({
+            requires2FA: true,
+            email: user.email,
+            message: "Verification code sent to your email"
+          });
+        } catch (error: any) {
+          console.error('[Login] 2FA code generation error:', error);
+          return res.status(500).send("Error sending verification code");
+        }
+      }
+      
+      // For non-retail users (staff, admin, etc.), log in directly
       const oldSessionId = req.sessionID;
       
       req.login(user, async (err) => {
@@ -269,6 +304,139 @@ export function setupAuth(app: Express) {
         res.status(200).json(userWithoutPassword);
       });
     })(req, res, next);
+  });
+  
+  // Verify retail 2FA code and complete login
+  app.post("/api/verify-retail-2fa", async (req, res, next) => {
+    try {
+      const { email, code } = req.body;
+      
+      if (!email || !code) {
+        return res.status(400).json({ message: "Email and code are required" });
+      }
+      
+      // Get latest verification code for this email with retail_2fa purpose
+      const verificationCode = await storage.getLatestEmailVerificationCodeByPurpose(email, 'retail_2fa');
+      
+      if (!verificationCode) {
+        return res.status(400).json({ message: "No verification code found. Please try logging in again." });
+      }
+      
+      // Check if code is expired
+      if (new Date() > verificationCode.expiresAt) {
+        return res.status(400).json({ message: "Verification code has expired. Please try logging in again." });
+      }
+      
+      // Check if code matches
+      if (verificationCode.code !== code) {
+        await storage.incrementEmailVerificationAttempts(verificationCode.id);
+        return res.status(400).json({ message: "Invalid verification code" });
+      }
+      
+      // Check if already verified
+      if (verificationCode.verified) {
+        return res.status(400).json({ message: "Verification code already used. Please try logging in again." });
+      }
+      
+      // Mark as verified
+      await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
+      
+      // Get user to log them in
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(400).json({ message: "User not found" });
+      }
+      
+      // Save old session ID to migrate cart
+      const oldSessionId = req.sessionID;
+      
+      // Log the user in
+      req.login(user, async (err) => {
+        if (err) {
+          console.error("Login error after 2FA:", err);
+          return res.status(500).json({ message: "Error logging in" });
+        }
+        
+        // Migrate cart items from old session to new session
+        if (oldSessionId && oldSessionId !== req.sessionID) {
+          try {
+            const oldLegacyCart = await storage.getCartItems(oldSessionId);
+            const oldRetailCart = await storage.getRetailCart(oldSessionId);
+            
+            for (const item of oldLegacyCart) {
+              await storage.addToCart({
+                sessionId: req.sessionID,
+                productId: item.productId,
+                quantity: item.quantity,
+                isSubscription: item.isSubscription,
+                subscriptionFrequency: item.subscriptionFrequency,
+              });
+            }
+            
+            for (const item of oldRetailCart) {
+              await storage.addRetailProductToCart({
+                sessionId: req.sessionID,
+                retailProductId: item.retailProductId,
+                quantity: item.quantity,
+                isSubscription: item.isSubscription,
+                subscriptionFrequency: item.subscriptionFrequency,
+              });
+            }
+            
+            await storage.clearCart(oldSessionId);
+            await storage.clearRetailCart(oldSessionId);
+          } catch (cartMigrationError) {
+            console.error('[2FA Login] Cart migration error:', cartMigrationError);
+          }
+        }
+        
+        const { password, ...userWithoutPassword } = user;
+        res.json({ message: "Verified successfully", user: userWithoutPassword });
+      });
+    } catch (error: any) {
+      console.error("Error verifying 2FA code:", error);
+      res.status(500).json({ message: "Error verifying code: " + error.message });
+    }
+  });
+  
+  // Resend 2FA code
+  app.post("/api/resend-retail-2fa", async (req, res) => {
+    try {
+      const { email } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+      
+      // Check if user exists
+      const user = await storage.getUserByEmail(email);
+      if (!user || user.role !== 'user') {
+        return res.status(400).json({ message: "Invalid request" });
+      }
+      
+      // Generate new code
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      
+      await storage.createEmailVerificationCode({
+        email,
+        code,
+        expiresAt,
+        verified: false,
+        purpose: 'retail_2fa'
+      });
+      
+      await sendEmailVerificationCode({
+        email,
+        code,
+        name: user.firstName || user.username,
+      });
+      
+      res.json({ message: "New verification code sent" });
+    } catch (error: any) {
+      console.error("Error resending 2FA code:", error);
+      res.status(500).json({ message: "Error sending code: " + error.message });
+    }
   });
 
   app.post("/api/logout", async (req, res, next) => {

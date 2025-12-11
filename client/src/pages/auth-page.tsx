@@ -58,6 +58,13 @@ export default function AuthPage() {
   const [emailLoginCodeSent, setEmailLoginCodeSent] = useState(false);
   const [sendingEmailLoginCode, setSendingEmailLoginCode] = useState(false);
   const [verifyingEmailLoginCode, setVerifyingEmailLoginCode] = useState(false);
+  
+  // 2FA state for password login
+  const [requires2FA, setRequires2FA] = useState(false);
+  const [twoFAEmail, setTwoFAEmail] = useState('');
+  const [twoFACode, setTwoFACode] = useState('');
+  const [verifying2FA, setVerifying2FA] = useState(false);
+  const [resending2FA, setResending2FA] = useState(false);
 
   const loginForm = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -157,8 +164,89 @@ export default function AuthPage() {
   };
 
   const onLogin = async (values: z.infer<typeof loginSchema>) => {
-    await loginMutation.mutateAsync(values);
-    setLocation(redirectUrl);
+    try {
+      const response = await apiRequest("POST", "/api/login", values);
+      
+      // Check if 2FA is required
+      if (response.requires2FA) {
+        setRequires2FA(true);
+        setTwoFAEmail(response.email);
+        toast({
+          title: "Verification Required",
+          description: "We've sent a verification code to your email",
+        });
+        return;
+      }
+      
+      // Regular login success - update auth state
+      queryClient.setQueryData(["/api/user"], response);
+      setLocation(redirectUrl);
+    } catch (error: any) {
+      toast({
+        title: "Login Failed",
+        description: error.message || "Invalid email/username or password",
+        variant: "destructive",
+      });
+    }
+  };
+  
+  const verify2FACode = async () => {
+    if (!twoFACode || twoFACode.length !== 6) {
+      toast({
+        title: "Error",
+        description: "Please enter the 6-digit verification code",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setVerifying2FA(true);
+    try {
+      const response = await apiRequest("POST", "/api/verify-retail-2fa", {
+        email: twoFAEmail,
+        code: twoFACode,
+      });
+      
+      queryClient.setQueryData(["/api/user"], response.user);
+      toast({
+        title: "Success",
+        description: "Logged in successfully",
+      });
+      setLocation(redirectUrl);
+    } catch (error: any) {
+      toast({
+        title: "Verification Failed",
+        description: error.message || "Invalid verification code",
+        variant: "destructive",
+      });
+    } finally {
+      setVerifying2FA(false);
+    }
+  };
+  
+  const resend2FACode = async () => {
+    setResending2FA(true);
+    try {
+      await apiRequest("POST", "/api/resend-retail-2fa", { email: twoFAEmail });
+      toast({
+        title: "Code Sent",
+        description: "A new verification code has been sent to your email",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to resend code",
+        variant: "destructive",
+      });
+    } finally {
+      setResending2FA(false);
+    }
+  };
+  
+  const cancel2FA = () => {
+    setRequires2FA(false);
+    setTwoFAEmail('');
+    setTwoFACode('');
   };
 
   const onRegister = async (values: z.infer<typeof registerSchema>) => {
@@ -195,12 +283,60 @@ export default function AuthPage() {
           <TabsContent value="login">
             <Card>
               <CardHeader>
-                <CardTitle>Login</CardTitle>
+                <CardTitle>{requires2FA ? "Verify Your Identity" : "Login"}</CardTitle>
                 <CardDescription>
-                  Choose your preferred login method
+                  {requires2FA 
+                    ? `Enter the 6-digit code sent to ${twoFAEmail}`
+                    : "Choose your preferred login method"
+                  }
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                {requires2FA ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="2fa-code">Verification Code</Label>
+                      <Input
+                        id="2fa-code"
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="000000"
+                        value={twoFACode}
+                        onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, ''))}
+                        className="text-center text-2xl tracking-widest"
+                        data-testid="input-2fa-code"
+                      />
+                    </div>
+                    <Button
+                      onClick={verify2FACode}
+                      className="w-full"
+                      disabled={verifying2FA || twoFACode.length !== 6}
+                      data-testid="button-verify-2fa"
+                    >
+                      {verifying2FA ? "Verifying..." : "Verify & Login"}
+                    </Button>
+                    <div className="flex items-center justify-between text-sm">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={resend2FACode}
+                        disabled={resending2FA}
+                        data-testid="button-resend-2fa"
+                      >
+                        {resending2FA ? "Sending..." : "Resend Code"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={cancel2FA}
+                        data-testid="button-cancel-2fa"
+                      >
+                        Back to Login
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
                 <Tabs value={loginMethod} onValueChange={(v) => setLoginMethod(v as 'password' | 'email')} className="w-full">
                   <TabsList className="grid w-full grid-cols-2 mb-4">
                     <TabsTrigger value="password" data-testid="tab-login-password">Password</TabsTrigger>
@@ -248,10 +384,10 @@ export default function AuthPage() {
                         <Button
                           type="submit"
                           className="w-full"
-                          disabled={loginMutation.isPending}
+                          disabled={loginForm.formState.isSubmitting}
                           data-testid="button-login-submit"
                         >
-                          {loginMutation.isPending ? "Logging in..." : "Login"}
+                          {loginForm.formState.isSubmitting ? "Logging in..." : "Login"}
                         </Button>
                         <div className="text-center mt-4">
                           <Link href="/forgot-password" className="text-sm text-primary hover:underline" data-testid="link-forgot-password">
@@ -335,6 +471,7 @@ export default function AuthPage() {
                     </Form>
                   </TabsContent>
                 </Tabs>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
