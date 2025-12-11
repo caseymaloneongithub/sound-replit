@@ -146,10 +146,10 @@ export default function WholesaleInvoice() {
                 <h2 className="font-semibold text-sm text-muted-foreground mb-2">FROM</h2>
                 <div>
                   <div className="font-semibold">Puget Sound Kombucha Co.</div>
-                  <div className="text-sm text-muted-foreground">123 Brew Street</div>
-                  <div className="text-sm text-muted-foreground">Seattle, WA 98101</div>
-                  <div className="text-sm text-muted-foreground">info@pugetsoundkombucha.com</div>
-                  <div className="text-sm text-muted-foreground">(206) 555-0100</div>
+                  <div className="text-sm text-muted-foreground">4501 Shilshole Ave NW</div>
+                  <div className="text-sm text-muted-foreground">Seattle, WA 98107</div>
+                  <div className="text-sm text-muted-foreground">emily@soundkombucha.com</div>
+                  <div className="text-sm text-muted-foreground">(206) 789-5219</div>
                 </div>
               </div>
 
@@ -242,7 +242,7 @@ export default function WholesaleInvoice() {
 
             <div className="mt-12 text-center text-sm text-muted-foreground">
               <p>Thank you for your business!</p>
-              <p className="mt-2">Questions? Contact us at info@pugetsoundkombucha.com or (206) 555-0100</p>
+              <p className="mt-2">Questions? Contact us at emily@soundkombucha.com or (206) 789-5219</p>
             </div>
           </CardContent>
         </Card>
@@ -250,14 +250,87 @@ export default function WholesaleInvoice() {
 
       <style>{`
         @media print {
-          body {
-            background: white;
+          /* Reset all backgrounds and colors for clean printing */
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
+          
+          html, body {
+            background: white !important;
+            color: black !important;
+            font-size: 12pt !important;
+            line-height: 1.4 !important;
+          }
+          
+          /* Hide non-print elements */
           .print\\:hidden {
             display: none !important;
           }
+          
+          /* Remove shadows and borders that don't print well */
+          .shadow, .shadow-sm, .shadow-md, .shadow-lg {
+            box-shadow: none !important;
+          }
+          
+          /* Make card backgrounds white */
+          [class*="bg-card"], [class*="bg-muted"], [class*="bg-background"] {
+            background: white !important;
+          }
+          
+          /* Ensure all text is black */
+          [class*="text-muted"], [class*="text-foreground"], p, span, div, h1, h2, h3, td, th {
+            color: black !important;
+          }
+          
+          /* Table styling for print */
+          table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+          }
+          
+          th, td {
+            border: 1px solid #ccc !important;
+            padding: 8px !important;
+          }
+          
+          th {
+            background: #f5f5f5 !important;
+            font-weight: bold !important;
+          }
+          
+          /* Container adjustments */
+          .container {
+            max-width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+          
+          /* Remove rounded corners for cleaner print */
+          [class*="rounded"] {
+            border-radius: 0 !important;
+          }
+          
+          /* Notes section styling */
+          [class*="bg-muted"] {
+            border: 1px solid #ccc !important;
+            background: #f9f9f9 !important;
+          }
+          
+          /* Page setup */
           @page {
+            size: letter;
             margin: 0.5in;
+          }
+          
+          /* Prevent page breaks inside elements */
+          tr, .grid > div {
+            page-break-inside: avoid !important;
+          }
+          
+          /* Ensure invoice fits on one page if possible */
+          .min-h-screen {
+            min-height: auto !important;
           }
         }
       `}</style>
