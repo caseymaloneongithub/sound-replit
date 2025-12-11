@@ -21,6 +21,10 @@ export const users = pgTable("users", {
   phoneNumber: varchar("phone_number"),
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
+  address: text("address"),
+  city: text("city"),
+  state: text("state"),
+  zipCode: text("zip_code"),
   role: text("role").notNull().default('user'), // 'user', 'wholesale_customer', 'staff', 'admin', 'super_admin'
   isAdmin: boolean("is_admin").notNull().default(false),
   stripeCustomerId: text("stripe_customer_id"),
