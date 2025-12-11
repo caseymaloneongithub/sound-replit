@@ -418,6 +418,12 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   fulfilledAt: timestamp("fulfilled_at"),
   fulfilledByUserId: varchar("fulfilled_by_user_id").references(() => users.id),
   notes: text("notes"),
+  // Invoice payment tracking
+  dueDate: timestamp("due_date"), // Payment due date (default 30 days from order)
+  paidAt: timestamp("paid_at"), // When payment was received
+  paidByUserId: varchar("paid_by_user_id").references(() => users.id), // Who marked it as paid (for manual marking)
+  stripePaymentIntentId: text("stripe_payment_intent_id"), // Links to Stripe payment
+  invoiceSentAt: timestamp("invoice_sent_at"), // When invoice was emailed
 });
 
 export const wholesaleOrderItems = pgTable("wholesale_order_items", {
