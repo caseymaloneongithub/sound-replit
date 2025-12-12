@@ -611,7 +611,7 @@ export class PostgresStorage implements IStorage {
     const result = await db
       .select()
       .from(emailVerificationCodes)
-      .where(eq(emailVerificationCodes.email, email))
+      .where(sql`LOWER(${emailVerificationCodes.email}) = LOWER(${email})`)
       .orderBy(desc(emailVerificationCodes.createdAt))
       .limit(1);
     return result[0];
@@ -623,7 +623,7 @@ export class PostgresStorage implements IStorage {
       .from(emailVerificationCodes)
       .where(
         and(
-          eq(emailVerificationCodes.email, email),
+          sql`LOWER(${emailVerificationCodes.email}) = LOWER(${email})`,
           eq(emailVerificationCodes.purpose, purpose)
         )
       )
@@ -1392,11 +1392,11 @@ export class PostgresStorage implements IStorage {
   }
 
   async getWholesaleCustomerByAnyEmail(email: string): Promise<WholesaleCustomer | undefined> {
-    // Check both the primary email field and the emails array
+    // Check both the primary email field and the emails array (case-insensitive)
     const result = await db.select().from(wholesaleCustomers).where(
       or(
-        eq(wholesaleCustomers.email, email),
-        sql`${email} = ANY(${wholesaleCustomers.emails})`
+        sql`LOWER(${wholesaleCustomers.email}) = LOWER(${email})`,
+        sql`LOWER(${email}) = ANY(SELECT LOWER(e) FROM unnest(${wholesaleCustomers.emails}) e)`
       )
     );
     return result[0];
