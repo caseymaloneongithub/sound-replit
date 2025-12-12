@@ -697,6 +697,8 @@ export default function AccountingTransactions() {
                         {getSortIcon('amount')}
                       </button>
                     </th>
+                    <th className="p-4 text-center text-sm font-medium">Allocation</th>
+                    <th className="p-4 text-center text-sm font-medium">Channel</th>
                     <th className="p-4 text-center text-sm font-medium">Status</th>
                     <th className="p-4 text-right text-sm font-medium">Actions</th>
                   </tr>
@@ -712,11 +714,13 @@ export default function AccountingTransactions() {
                         <td className="p-4"><Skeleton className="h-4 w-20" /></td>
                         <td className="p-4"><Skeleton className="h-4 w-16" /></td>
                         <td className="p-4"><Skeleton className="h-4 w-16" /></td>
+                        <td className="p-4"><Skeleton className="h-4 w-16" /></td>
+                        <td className="p-4"><Skeleton className="h-4 w-16" /></td>
                       </tr>
                     ))
                   ) : sortedTransactions.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                      <td colSpan={9} className="p-8 text-center text-muted-foreground">
                         No transactions found
                       </td>
                     </tr>
@@ -762,6 +766,24 @@ export default function AccountingTransactions() {
                               <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
                                 <XCircle className="w-3 h-3 mr-1" />
                                 Pending
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="p-4 text-center">
+                            {tx.paymentChannel ? (
+                              <span className="text-xs text-muted-foreground capitalize">{tx.paymentChannel}</span>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="p-4 text-center">
+                            {tx.status === 'removed' ? (
+                              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                                Removed
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                Active
                               </Badge>
                             )}
                           </td>

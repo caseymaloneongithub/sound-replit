@@ -382,6 +382,7 @@ export const retailCheckoutSessions = pgTable("retail_checkout_sessions", {
   taxRateBps: integer("tax_rate_bps").notNull().default(1035), // 10.35% = 1035 basis points
   taxAmountCents: integer("tax_amount_cents").notNull().default(0),
   isTaxExempt: boolean("is_tax_exempt").notNull().default(false),
+  notes: text("notes"), // Customer flavor notes for mixed cases
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

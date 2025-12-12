@@ -2007,6 +2007,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     customerEmail: z.string().email(),
     customerPhone: z.string().min(10),
     paymentIntentId: z.string().optional(),
+    flavorNotes: z.string().optional(),
   });
 
   app.post("/api/checkout/customer-info", async (req: any, res) => {
@@ -2060,6 +2061,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         taxRateBps,
         taxAmountCents,
         isTaxExempt,
+        notes: validated.flavorNotes || null,
       });
       
       res.json({ success: true });
@@ -3157,8 +3159,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const orderResult = await client.query(
                   `INSERT INTO retail_orders (
                     order_number, user_id, customer_name, customer_email, customer_phone,
-                    status, subtotal, tax_amount, deposit_amount, total_amount, stripe_payment_intent_id, is_subscription_order
-                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+                    status, subtotal, tax_amount, deposit_amount, total_amount, stripe_payment_intent_id, is_subscription_order, notes
+                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
                   [
                     orderNumber,
                     checkoutSession.user_id,
@@ -3171,7 +3173,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     (recomputedDepositCents / 100).toFixed(2),
                     (recomputedTotalCents / 100).toFixed(2),
                     paymentIntent.id,
-                    isSubscriptionOrder
+                    isSubscriptionOrder,
+                    checkoutSession.notes || null
                   ]
                 );
                 

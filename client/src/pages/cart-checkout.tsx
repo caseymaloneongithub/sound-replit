@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Loader2, LogIn, UserPlus } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -31,6 +32,7 @@ const customerSchema = z.object({
   zipCode: z.string().min(5, "Please enter a valid ZIP code"),
   password: z.string().optional(),
   confirmPassword: z.string().optional(),
+  flavorNotes: z.string().optional(),
 }).superRefine((data, ctx) => {
   // If password is provided, validate it
   if (data.password || data.confirmPassword) {
@@ -109,6 +111,7 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
       zipCode: "",
       password: "",
       confirmPassword: "",
+      flavorNotes: "",
     },
   });
   
@@ -171,6 +174,7 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
         customerEmail: data.customerEmail,
         customerPhone: data.customerPhone,
         paymentIntentId,
+        flavorNotes: data.flavorNotes,
       });
       
       setCustomerInfo(data);
@@ -234,6 +238,7 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
           zipCode: customerInfo.zipCode,
           paymentMethodId: paymentMethod.id,
           ...(customerInfo.password && !isLoggedIn && { password: customerInfo.password }), // Only send password for non-logged-in users
+          flavorNotes: customerInfo.flavorNotes,
         });
 
         // Clear cart and redirect to success page
@@ -452,6 +457,23 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
                   <p className="text-sm text-destructive">{form.formState.errors.zipCode.message}</p>
                 )}
               </div>
+            </div>
+          </div>
+
+          <div className="border-t pt-4 mt-4">
+            <h3 className="font-medium mb-2">Order Notes (Optional)</h3>
+            <div className="space-y-2">
+              <Label htmlFor="flavorNotes">Flavor Preferences</Label>
+              <Textarea
+                id="flavorNotes"
+                {...form.register("flavorNotes")}
+                placeholder="For mixed cases, let us know your preferred flavors (e.g., '6 Ginger Lemon, 4 Lavender Blueberry, 2 Classic')"
+                rows={3}
+                data-testid="input-flavor-notes"
+              />
+              <p className="text-xs text-muted-foreground">
+                Tell us which flavors you'd like in your order. This is especially helpful for mixed cases or if you have specific preferences.
+              </p>
             </div>
           </div>
           
