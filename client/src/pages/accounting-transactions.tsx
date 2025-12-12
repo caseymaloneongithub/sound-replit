@@ -62,12 +62,15 @@ export default function AccountingTransactions() {
   const searchString = useSearch();
   const urlParams = new URLSearchParams(searchString);
   const initialFilter = urlParams.get('filter') || 'all';
+  const initialCategoryId = urlParams.get('categoryId') || 'all';
+  const initialStartDate = urlParams.get('startDate');
+  const initialEndDate = urlParams.get('endDate');
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>(initialCategoryId);
   const [allocationFilter, setAllocationFilter] = useState<string>(initialFilter);
-  const [dateFrom, setDateFrom] = useState<Date | undefined>();
-  const [dateTo, setDateTo] = useState<Date | undefined>();
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(initialStartDate ? new Date(initialStartDate) : undefined);
+  const [dateTo, setDateTo] = useState<Date | undefined>(initialEndDate ? new Date(initialEndDate) : undefined);
   const [selectedTransactions, setSelectedTransactions] = useState<string[]>([]);
   const [allocateDialogOpen, setAllocateDialogOpen] = useState(false);
   const [splitDialogOpen, setSplitDialogOpen] = useState(false);
