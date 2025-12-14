@@ -6195,6 +6195,164 @@ If you have any questions, please don't hesitate to reach out!`,
   });
 
   // ============================================
+  // ADMIN TASKS - Recurring Checklist Management
+  // ============================================
+
+  // Get all admin tasks
+  app.get("/api/admin-tasks", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const includeInactive = req.query.includeInactive === 'true';
+      const tasks = await storage.getAdminTasks(includeInactive);
+      res.json(tasks);
+    } catch (error: any) {
+      console.error("Error fetching admin tasks:", error);
+      res.status(500).json({ message: "Error fetching tasks: " + error.message });
+    }
+  });
+
+  // Get single admin task
+  app.get("/api/admin-tasks/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const task = await storage.getAdminTask(req.params.id);
+      if (!task) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      res.json(task);
+    } catch (error: any) {
+      console.error("Error fetching admin task:", error);
+      res.status(500).json({ message: "Error fetching task: " + error.message });
+    }
+  });
+
+  // Create admin task
+  app.post("/api/admin-tasks", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const taskSchema = z.object({
+        title: z.string().min(1, "Title is required"),
+        description: z.string().optional(),
+        category: z.string().optional(),
+        recurrence: z.enum(['daily', 'weekly', 'monthly', 'quarterly', 'yearly', 'one-time']),
+        dayOfWeek: z.number().min(0).max(6).optional(),
+        dayOfMonth: z.number().min(1).max(31).optional(),
+        monthOfYear: z.number().min(1).max(12).optional(),
+        assignedToUserId: z.string().optional(),
+        isActive: z.boolean().optional(),
+        displayOrder: z.number().optional(),
+      });
+
+      const parsed = taskSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid task data", errors: parsed.error.errors });
+      }
+
+      const task = await storage.createAdminTask({
+        ...parsed.data,
+        createdByUserId: req.user?.id,
+      });
+      res.status(201).json(task);
+    } catch (error: any) {
+      console.error("Error creating admin task:", error);
+      res.status(500).json({ message: "Error creating task: " + error.message });
+    }
+  });
+
+  // Update admin task
+  app.patch("/api/admin-tasks/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const taskSchema = z.object({
+        title: z.string().min(1).optional(),
+        description: z.string().optional(),
+        category: z.string().optional(),
+        recurrence: z.enum(['daily', 'weekly', 'monthly', 'quarterly', 'yearly', 'one-time']).optional(),
+        dayOfWeek: z.number().min(0).max(6).optional().nullable(),
+        dayOfMonth: z.number().min(1).max(31).optional().nullable(),
+        monthOfYear: z.number().min(1).max(12).optional().nullable(),
+        assignedToUserId: z.string().optional().nullable(),
+        isActive: z.boolean().optional(),
+        displayOrder: z.number().optional(),
+      });
+
+      const parsed = taskSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid task data", errors: parsed.error.errors });
+      }
+
+      const task = await storage.updateAdminTask(req.params.id, parsed.data);
+      if (!task) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      res.json(task);
+    } catch (error: any) {
+      console.error("Error updating admin task:", error);
+      res.status(500).json({ message: "Error updating task: " + error.message });
+    }
+  });
+
+  // Delete admin task
+  app.delete("/api/admin-tasks/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      await storage.deleteAdminTask(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error deleting admin task:", error);
+      res.status(500).json({ message: "Error deleting task: " + error.message });
+    }
+  });
+
+  // Get task completions for a date
+  app.get("/api/admin-tasks/completions/by-date", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const dateStr = req.query.date as string;
+      if (!dateStr) {
+        return res.status(400).json({ message: "Date is required" });
+      }
+      const date = new Date(dateStr);
+      const completions = await storage.getAdminTaskCompletionsByDate(date);
+      res.json(completions);
+    } catch (error: any) {
+      console.error("Error fetching task completions:", error);
+      res.status(500).json({ message: "Error fetching completions: " + error.message });
+    }
+  });
+
+  // Complete a task
+  app.post("/api/admin-tasks/:taskId/complete", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const completionSchema = z.object({
+        instanceDate: z.string().transform(s => new Date(s)),
+        notes: z.string().optional(),
+      });
+
+      const parsed = completionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid completion data", errors: parsed.error.errors });
+      }
+
+      const completion = await storage.createAdminTaskCompletion({
+        taskId: req.params.taskId,
+        completedByUserId: req.user?.id,
+        instanceDate: parsed.data.instanceDate,
+        notes: parsed.data.notes,
+      });
+      res.status(201).json(completion);
+    } catch (error: any) {
+      console.error("Error completing task:", error);
+      res.status(500).json({ message: "Error completing task: " + error.message });
+    }
+  });
+
+  // Undo task completion
+  app.delete("/api/admin-tasks/completions/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      await storage.deleteAdminTaskCompletion(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error undoing task completion:", error);
+      res.status(500).json({ message: "Error undoing completion: " + error.message });
+    }
+  });
+
+  // ============================================
   // CRM - Lead Management Routes
   // ============================================
 

@@ -32,6 +32,8 @@ import {
   type AccountingCategory, type InsertAccountingCategory,
   type AccountingTransaction, type InsertAccountingTransaction,
   type TransactionAllocation, type InsertTransactionAllocation,
+  type AdminTask, type InsertAdminTask,
+  type AdminTaskCompletion, type InsertAdminTaskCompletion,
   flavors,
   retailProducts,
   retailProductFlavors,
@@ -66,6 +68,8 @@ import {
   accountingCategories,
   accountingTransactions,
   transactionAllocations,
+  adminTasks,
+  adminTaskCompletions,
   // Compatibility imports (temporary - old names mapping to new tables)
   products,
   productTypes,
@@ -3035,6 +3039,81 @@ export class PostgresStorage implements IStorage {
       .from(wholesaleLocations)
       .where(sql`${wholesaleLocations.latitude} IS NULL OR ${wholesaleLocations.longitude} IS NULL`);
     return result;
+  }
+
+  // ADMIN TASKS - Recurring task management
+  async getAdminTasks(includeInactive: boolean = false): Promise<AdminTask[]> {
+    if (includeInactive) {
+      return await db.select().from(adminTasks).orderBy(adminTasks.displayOrder, adminTasks.createdAt);
+    }
+    return await db
+      .select()
+      .from(adminTasks)
+      .where(eq(adminTasks.isActive, true))
+      .orderBy(adminTasks.displayOrder, adminTasks.createdAt);
+  }
+
+  async getAdminTask(id: string): Promise<AdminTask | undefined> {
+    const result = await db.select().from(adminTasks).where(eq(adminTasks.id, id));
+    return result[0];
+  }
+
+  async createAdminTask(task: InsertAdminTask): Promise<AdminTask> {
+    const result = await db.insert(adminTasks).values(task).returning();
+    return result[0];
+  }
+
+  async updateAdminTask(id: string, updates: Partial<InsertAdminTask>): Promise<AdminTask | undefined> {
+    const result = await db
+      .update(adminTasks)
+      .set(updates)
+      .where(eq(adminTasks.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteAdminTask(id: string): Promise<void> {
+    await db.delete(adminTasks).where(eq(adminTasks.id, id));
+  }
+
+  // ADMIN TASK COMPLETIONS - Track completed tasks
+  async getAdminTaskCompletions(taskId: string, startDate?: Date, endDate?: Date): Promise<AdminTaskCompletion[]> {
+    const conditions = [eq(adminTaskCompletions.taskId, taskId)];
+    if (startDate) {
+      conditions.push(sql`${adminTaskCompletions.instanceDate} >= ${startDate}`);
+    }
+    if (endDate) {
+      conditions.push(sql`${adminTaskCompletions.instanceDate} <= ${endDate}`);
+    }
+    return await db
+      .select()
+      .from(adminTaskCompletions)
+      .where(and(...conditions))
+      .orderBy(desc(adminTaskCompletions.completedAt));
+  }
+
+  async getAdminTaskCompletionsByDate(instanceDate: Date): Promise<AdminTaskCompletion[]> {
+    const startOfDay = new Date(instanceDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(instanceDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    return await db
+      .select()
+      .from(adminTaskCompletions)
+      .where(and(
+        sql`${adminTaskCompletions.instanceDate} >= ${startOfDay}`,
+        sql`${adminTaskCompletions.instanceDate} <= ${endOfDay}`
+      ));
+  }
+
+  async createAdminTaskCompletion(completion: InsertAdminTaskCompletion): Promise<AdminTaskCompletion> {
+    const result = await db.insert(adminTaskCompletions).values(completion).returning();
+    return result[0];
+  }
+
+  async deleteAdminTaskCompletion(id: string): Promise<void> {
+    await db.delete(adminTaskCompletions).where(eq(adminTaskCompletions.id, id));
   }
 }
 
