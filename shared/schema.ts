@@ -571,6 +571,33 @@ export const transactionAllocations = pgTable("transaction_allocations", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Admin Tasks - Recurring task checklists for staff/admin
+export const adminTasks = pgTable("admin_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  category: text("category"), // e.g., 'operations', 'finance', 'maintenance', 'compliance'
+  recurrence: text("recurrence").notNull().default('daily'), // 'daily', 'weekly', 'monthly', 'quarterly', 'yearly', 'one-time'
+  dayOfWeek: integer("day_of_week"), // 0-6 (Sun-Sat) for weekly tasks
+  dayOfMonth: integer("day_of_month"), // 1-31 for monthly tasks
+  monthOfYear: integer("month_of_year"), // 1-12 for yearly tasks
+  assignedToUserId: varchar("assigned_to_user_id").references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
+  isActive: boolean("is_active").notNull().default(true),
+  displayOrder: integer("display_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Admin Task Completions - Records of task completions with instance tracking
+export const adminTaskCompletions = pgTable("admin_task_completions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taskId: varchar("task_id").notNull().references(() => adminTasks.id, { onDelete: 'cascade' }),
+  completedByUserId: varchar("completed_by_user_id").references(() => users.id),
+  completedAt: timestamp("completed_at").notNull().defaultNow(),
+  instanceDate: timestamp("instance_date").notNull(), // The specific date this completion is for
+  notes: text("notes"),
+});
+
 // Insert schemas - OLD SCHEMA (for backwards compatibility)
 export const insertProductTypeSchema = createInsertSchema(productTypes).omit({ id: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
@@ -617,6 +644,10 @@ export const insertPlaidAccountSchema = createInsertSchema(plaidAccounts).omit({
 export const insertAccountingCategorySchema = createInsertSchema(accountingCategories).omit({ id: true, createdAt: true });
 export const insertAccountingTransactionSchema = createInsertSchema(accountingTransactions).omit({ id: true, createdAt: true });
 export const insertTransactionAllocationSchema = createInsertSchema(transactionAllocations).omit({ id: true, createdAt: true });
+
+// Insert schemas - ADMIN TASKS
+export const insertAdminTaskSchema = createInsertSchema(adminTasks).omit({ id: true, createdAt: true });
+export const insertAdminTaskCompletionSchema = createInsertSchema(adminTaskCompletions).omit({ id: true, completedAt: true });
 
 // Update profile schema - allows customers to update their contact information
 export const updateProfileSchema = z.object({
@@ -674,6 +705,10 @@ export type InsertAccountingCategory = z.infer<typeof insertAccountingCategorySc
 export type InsertAccountingTransaction = z.infer<typeof insertAccountingTransactionSchema>;
 export type InsertTransactionAllocation = z.infer<typeof insertTransactionAllocationSchema>;
 
+// Insert types - ADMIN TASKS
+export type InsertAdminTask = z.infer<typeof insertAdminTaskSchema>;
+export type InsertAdminTaskCompletion = z.infer<typeof insertAdminTaskCompletionSchema>;
+
 // Select types - OLD SCHEMA
 export type ProductType = typeof productTypes.$inferSelect;
 export type Product = typeof products.$inferSelect;
@@ -719,6 +754,10 @@ export type PlaidAccount = typeof plaidAccounts.$inferSelect;
 export type AccountingCategory = typeof accountingCategories.$inferSelect;
 export type AccountingTransaction = typeof accountingTransactions.$inferSelect;
 export type TransactionAllocation = typeof transactionAllocations.$inferSelect;
+
+// Select types - ADMIN TASKS
+export type AdminTask = typeof adminTasks.$inferSelect;
+export type AdminTaskCompletion = typeof adminTaskCompletions.$inferSelect;
 
 // Select types - SITE SETTINGS
 export type SiteSetting = typeof siteSettings.$inferSelect;
