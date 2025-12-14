@@ -19,7 +19,8 @@ import {
   Landmark,
   Calculator,
   Route,
-  FileCheck
+  FileCheck,
+  ClipboardCheck
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -83,6 +84,12 @@ export function StaffSidebar() {
         { title: "Transactions", href: "/admin/accounting/transactions", icon: Receipt, adminOnly: true },
         { title: "Categories", href: "/admin/accounting/categories", icon: Tags, adminOnly: true },
         { title: "Bank Connections", href: "/admin/accounting/banks", icon: Landmark, adminOnly: true },
+      ],
+    },
+    {
+      title: "Operations",
+      items: [
+        { title: "Daily Checklist", href: "/staff-portal/checklist", icon: ClipboardCheck },
       ],
     },
     {
