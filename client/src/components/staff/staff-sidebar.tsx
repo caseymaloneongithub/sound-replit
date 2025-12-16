@@ -36,7 +36,11 @@ interface NavSection {
   items: NavItem[];
 }
 
-export function StaffSidebar() {
+interface StaffSidebarProps {
+  onLinkClick?: () => void;
+}
+
+export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
   const [location] = useLocation();
   const { user } = useAuth();
 
@@ -139,6 +143,7 @@ export function StaffSidebar() {
                       className="w-full justify-start gap-3"
                       data-testid={`staff-nav-${item.href.replace(/\//g, "-")}`}
                       asChild
+                      onClick={onLinkClick}
                     >
                       <Link href={item.href}>
                         <Icon className="w-4 h-4" />

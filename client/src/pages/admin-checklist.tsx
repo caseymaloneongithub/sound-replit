@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { format, startOfDay, addDays, subDays, isToday, getDay, getDate, getMonth } from "date-fns";
+import { format, startOfDay, startOfWeek, endOfWeek, addWeeks, subWeeks, isWithinInterval, getDay, getDate, getMonth } from "date-fns";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -511,9 +511,14 @@ export default function AdminChecklist() {
     }
   };
 
-  const goToPreviousDay = () => setSelectedDate((d) => subDays(d, 1));
-  const goToNextDay = () => setSelectedDate((d) => addDays(d, 1));
-  const goToToday = () => setSelectedDate(startOfDay(new Date()));
+  const goToPreviousWeek = () => setSelectedDate((d) => subWeeks(d, 1));
+  const goToNextWeek = () => setSelectedDate((d) => addWeeks(d, 1));
+  const goToThisWeek = () => setSelectedDate(startOfDay(new Date()));
+
+  // Get the week range for the selected date
+  const weekStart = startOfWeek(selectedDate, { weekStartsOn: 0 }); // Sunday
+  const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 0 }); // Saturday
+  const isCurrentWeek = isWithinInterval(new Date(), { start: weekStart, end: weekEnd });
 
   const isLoading = tasksLoading || completionsLoading;
 
@@ -564,15 +569,15 @@ export default function AdminChecklist() {
               <CardContent className="py-4">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="icon" onClick={goToPreviousDay} data-testid="button-prev-day">
+                    <Button variant="outline" size="icon" onClick={goToPreviousWeek} data-testid="button-prev-week">
                       <ChevronLeft className="w-4 h-4" />
                     </Button>
                     
                     <Popover>
                       <PopoverTrigger asChild>
-                        <Button variant="outline" className="min-w-[200px]" data-testid="button-date-picker">
+                        <Button variant="outline" className="min-w-[280px]" data-testid="button-date-picker">
                           <CalendarIcon className="w-4 h-4 mr-2" />
-                          {format(selectedDate, "EEEE, MMMM d, yyyy")}
+                          {format(weekStart, "MMM d")} - {format(weekEnd, "MMM d, yyyy")}
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-auto p-0" align="start">
@@ -585,15 +590,15 @@ export default function AdminChecklist() {
                       </PopoverContent>
                     </Popover>
 
-                    <Button variant="outline" size="icon" onClick={goToNextDay} data-testid="button-next-day">
+                    <Button variant="outline" size="icon" onClick={goToNextWeek} data-testid="button-next-week">
                       <ChevronRight className="w-4 h-4" />
                     </Button>
                   </div>
 
                   <div className="flex items-center gap-3">
-                    {!isToday(selectedDate) && (
-                      <Button variant="ghost" onClick={goToToday} data-testid="button-go-today">
-                        Go to Today
+                    {!isCurrentWeek && (
+                      <Button variant="ghost" onClick={goToThisWeek} data-testid="button-go-this-week">
+                        This Week
                       </Button>
                     )}
                     <Badge variant={completedCount === totalCount && totalCount > 0 ? "default" : "secondary"} data-testid="badge-progress">
