@@ -89,7 +89,7 @@ export function StaffSidebar() {
     {
       title: "Operations",
       items: [
-        { title: "Daily Checklist", href: "/staff-portal/checklist", icon: ClipboardCheck },
+        { title: "Weekly Checklist", href: "/staff-portal/checklist", icon: ClipboardCheck },
       ],
     },
     {

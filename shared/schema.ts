@@ -577,7 +577,7 @@ export const adminTasks = pgTable("admin_tasks", {
   title: text("title").notNull(),
   description: text("description"),
   category: text("category"), // e.g., 'operations', 'finance', 'maintenance', 'compliance'
-  recurrence: text("recurrence").notNull().default('daily'), // 'daily', 'weekly', 'monthly', 'quarterly', 'yearly', 'one-time'
+  recurrence: text("recurrence").notNull().default('weekly'), // 'daily', 'weekly', 'monthly', 'quarterly', 'yearly', 'one-time'
   dayOfWeek: integer("day_of_week"), // 0-6 (Sun-Sat) for weekly tasks
   dayOfMonth: integer("day_of_month"), // 1-31 for monthly tasks
   monthOfYear: integer("month_of_year"), // 1-12 for yearly tasks

@@ -167,7 +167,7 @@ function TaskForm({
       title: task?.title || "",
       description: task?.description || "",
       category: task?.category || "",
-      recurrence: (task?.recurrence as TaskFormValues["recurrence"]) || "daily",
+      recurrence: (task?.recurrence as TaskFormValues["recurrence"]) || "weekly",
       dayOfWeek: task?.dayOfWeek ?? null,
       dayOfMonth: task?.dayOfMonth ?? null,
       monthOfYear: task?.monthOfYear ?? null,
@@ -524,9 +524,9 @@ export default function AdminChecklist() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <ClipboardCheck className="w-6 h-6" />
-              Daily Checklist
+              Weekly Checklist
             </h1>
-            <p className="text-muted-foreground">Track and complete daily operational tasks</p>
+            <p className="text-muted-foreground">Track and complete weekly operational tasks</p>
           </div>
 
           {isAdmin && (
