@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { ShoppingCart, Loader2, Package, XCircle, ArrowUpDown, DollarSign } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ShoppingCart, Loader2, Package, XCircle, ArrowUpDown, DollarSign, ChevronDown, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { RetailOrder } from "@shared/schema";
@@ -48,8 +50,9 @@ function getStatusLabel(status: string): string {
 export default function RetailOrders() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('pending');
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
   const [sortOrders, setSortOrders] = useState<Record<string, 'asc' | 'desc'>>({
-    pending: 'asc',      // oldest to newest by default
+    pending: 'asc',
     ready_for_pickup: 'desc',
     fulfilled: 'desc',
     cancelled: 'desc',
@@ -94,7 +97,6 @@ export default function RetailOrders() {
       let errorMessage = "Failed to cancel order with refund";
       let errorDetails = "";
       
-      // Try to parse JSON error response
       if (error instanceof Response) {
         try {
           const errorData = await error.json();
@@ -106,7 +108,6 @@ export default function RetailOrders() {
             errorDetails += `\nPayment Intent: ${errorData.paymentIntentId}`;
           }
         } catch {
-          // If parsing fails, use default message
         }
       } else if (error.message) {
         errorMessage = error.message;
@@ -139,7 +140,6 @@ export default function RetailOrders() {
           const errorData = await error.json();
           errorMessage = errorData.message || errorMessage;
         } catch {
-          // If parsing fails, use default message
         }
       } else if (error.message) {
         errorMessage = error.message;
@@ -160,6 +160,18 @@ export default function RetailOrders() {
     }));
   };
 
+  const toggleExpand = (orderId: string) => {
+    setExpandedOrders(prev => {
+      const next = new Set(prev);
+      if (next.has(orderId)) {
+        next.delete(orderId);
+      } else {
+        next.add(orderId);
+      }
+      return next;
+    });
+  };
+
   const getFilteredAndSortedOrders = (status: string) => {
     const filtered = orders.filter(order => order.status === status);
     const sortOrder = sortOrders[status] || 'desc';
@@ -171,7 +183,7 @@ export default function RetailOrders() {
     });
   };
 
-  const renderOrdersList = (status: string) => {
+  const renderOrdersTable = (status: string) => {
     const filteredOrders = getFilteredAndSortedOrders(status);
     const sortOrder = sortOrders[status] || 'desc';
 
@@ -186,7 +198,6 @@ export default function RetailOrders() {
       );
     }
 
-    // Calculate consolidated items for pending and ready_for_pickup orders
     const consolidatedItems = (status === 'pending' || status === 'ready_for_pickup') ? (() => {
       const itemMap: Record<string, { productName: string; unitDescription: string; quantity: number }> = {};
       
@@ -211,11 +222,10 @@ export default function RetailOrders() {
 
     return (
       <div className="space-y-4">
-        {/* Items Summary - For pending and ready_for_pickup orders */}
         {(status === 'pending' || status === 'ready_for_pickup') && consolidatedItems.length > 0 && (
           <Card data-testid={`card-items-summary-${status}`}>
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
                 <h3 className="font-semibold text-lg flex items-center gap-2">
                   <Package className="w-5 h-5" />
                   {summaryTitle}
@@ -260,170 +270,242 @@ export default function RetailOrders() {
             {sortOrder === 'asc' ? 'Oldest to Newest' : 'Newest to Oldest'}
           </Button>
         </div>
-        {filteredOrders.map((order) => (
-          <Card key={order.id} data-testid={`card-retail-order-${order.id}`}>
-            <CardHeader>
-              <div className="flex items-start justify-between gap-4 flex-wrap">
-                <div className="flex-1 min-w-[200px]">
-                  <CardTitle className="text-lg mb-1">
-                    Order #{order.orderNumber}
-                  </CardTitle>
-                  <CardDescription className="space-y-1">
-                    <div><strong>Customer:</strong> {order.customerName}</div>
-                    <div><strong>Email:</strong> {order.customerEmail}</div>
-                    <div><strong>Phone:</strong> {order.customerPhone}</div>
-                    <div><strong>Order Date:</strong> {new Date(order.orderDate).toLocaleDateString()}</div>
-                  </CardDescription>
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold mb-2">
-                    ${Number(order.totalAmount).toFixed(2)}
-                  </div>
-                  <div className="text-sm text-muted-foreground mb-2">
-                    Subtotal: ${Number(order.subtotal).toFixed(2)}
-                    <br />
-                    Tax: ${Number(order.taxAmount).toFixed(2)}
-                    {Number(order.depositAmount || 0) > 0 && (
+
+        <Card>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10"></TableHead>
+                  <TableHead>Order #</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredOrders.map((order) => {
+                  const isExpanded = expandedOrders.has(order.id);
+                  return (
+                    <Collapsible key={order.id} open={isExpanded} onOpenChange={() => toggleExpand(order.id)} asChild>
                       <>
-                        <br />
-                        Deposit: ${Number(order.depositAmount).toFixed(2)}
-                        {order.depositRefundedAt && (
-                          <span className="text-green-600 dark:text-green-400"> (Refunded)</span>
-                        )}
+                        <TableRow 
+                          className="cursor-pointer hover-elevate"
+                          data-testid={`row-retail-order-${order.id}`}
+                        >
+                          <TableCell>
+                            <CollapsibleTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-6 w-6" data-testid={`button-expand-${order.id}`}>
+                                {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </Button>
+                            </CollapsibleTrigger>
+                          </TableCell>
+                          <TableCell className="font-medium" data-testid={`text-order-number-${order.id}`}>
+                            #{order.orderNumber}
+                          </TableCell>
+                          <TableCell data-testid={`text-customer-name-${order.id}`}>
+                            {order.customerName}
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-sm">
+                              <div data-testid={`text-customer-email-${order.id}`}>{order.customerEmail}</div>
+                              <div className="text-muted-foreground" data-testid={`text-customer-phone-${order.id}`}>{order.customerPhone}</div>
+                            </div>
+                          </TableCell>
+                          <TableCell data-testid={`text-order-date-${order.id}`}>
+                            {new Date(order.orderDate).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="font-semibold" data-testid={`text-order-total-${order.id}`}>
+                              ${Number(order.totalAmount).toFixed(2)}
+                            </div>
+                            {Number(order.depositAmount || 0) > 0 && (
+                              <div className="text-xs text-muted-foreground">
+                                Dep: ${Number(order.depositAmount).toFixed(2)}
+                                {order.depositRefundedAt && (
+                                  <span className="text-green-600 dark:text-green-400"> (Ref)</span>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Select
+                              value={order.status}
+                              onValueChange={(status) => 
+                                updateOrderStatusMutation.mutate({ orderId: order.id, status })
+                              }
+                              disabled={updateOrderStatusMutation.isPending || order.status === 'fulfilled' || order.status === 'cancelled'}
+                            >
+                              <SelectTrigger className="w-[140px] h-8" data-testid={`select-retail-order-status-${order.id}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="pending" data-testid="status-pending">Pending</SelectItem>
+                                <SelectItem value="ready_for_pickup" data-testid="status-ready-for-pickup">Ready for Pickup</SelectItem>
+                                <SelectItem value="fulfilled" data-testid="status-fulfilled">Fulfilled</SelectItem>
+                                <SelectItem value="cancelled" data-testid="status-cancelled">Cancelled</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex gap-1 justify-end flex-wrap">
+                              {Number(order.depositAmount || 0) > 0 && !order.depositRefundedAt && order.stripePaymentIntentId && (
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm"
+                                      disabled={refundDepositMutation.isPending}
+                                      data-testid={`button-refund-deposit-${order.id}`}
+                                    >
+                                      <DollarSign className="w-3 h-3" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Refund Deposit?</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        This will refund the deposit of ${Number(order.depositAmount).toFixed(2)} to the customer's payment method for order #{order.orderNumber}. 
+                                        This action cannot be undone.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel data-testid="button-cancel-deposit-refund-dialog">Cancel</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => refundDepositMutation.mutate(order.id)}
+                                        data-testid="button-confirm-deposit-refund"
+                                      >
+                                        Confirm Refund
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              )}
+                              {order.status !== 'cancelled' && order.status !== 'fulfilled' && order.stripePaymentIntentId && (
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button 
+                                      variant="destructive" 
+                                      size="sm"
+                                      disabled={cancelOrderWithRefundMutation.isPending}
+                                      data-testid={`button-cancel-order-${order.id}`}
+                                    >
+                                      <XCircle className="w-3 h-3" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Cancel Order with Refund?</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        This will cancel order #{order.orderNumber} and process a full refund of ${Number(order.totalAmount).toFixed(2)} to the customer's payment method. 
+                                        This action cannot be undone.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel data-testid="button-cancel-refund-dialog">Cancel</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => cancelOrderWithRefundMutation.mutate(order.id)}
+                                        data-testid="button-confirm-refund"
+                                      >
+                                        Confirm Refund
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                        <CollapsibleContent asChild>
+                          <TableRow className="bg-muted/30">
+                            <TableCell colSpan={8} className="p-0">
+                              <div className="px-6 py-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  <div>
+                                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                                      <Package className="w-4 h-4" />
+                                      Order Items
+                                    </h4>
+                                    {order.items && order.items.length > 0 ? (
+                                      <div className="space-y-1">
+                                        {order.items.map((item) => (
+                                          <div 
+                                            key={item.id} 
+                                            className="flex justify-between items-center text-sm bg-background rounded-md px-3 py-2"
+                                            data-testid={`order-item-${item.id}`}
+                                          >
+                                            <div className="flex-1">
+                                              <span className="font-medium">{item.productName}</span>
+                                              {item.unitDescription && (
+                                                <span className="text-muted-foreground ml-2">
+                                                  ({item.unitDescription})
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="flex items-center gap-4">
+                                              <span className="text-muted-foreground">
+                                                x{item.quantity}
+                                              </span>
+                                              <span className="font-medium">
+                                                ${(Number(item.unitPrice) * item.quantity).toFixed(2)}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-sm text-muted-foreground">No items</p>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <h4 className="text-sm font-medium mb-2">Order Summary</h4>
+                                    <div className="text-sm space-y-1 bg-background rounded-md px-3 py-2">
+                                      <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Subtotal:</span>
+                                        <span>${Number(order.subtotal).toFixed(2)}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Tax:</span>
+                                        <span>${Number(order.taxAmount).toFixed(2)}</span>
+                                      </div>
+                                      {Number(order.depositAmount || 0) > 0 && (
+                                        <div className="flex justify-between">
+                                          <span className="text-muted-foreground">Deposit:</span>
+                                          <span>
+                                            ${Number(order.depositAmount).toFixed(2)}
+                                            {order.depositRefundedAt && (
+                                              <span className="text-green-600 dark:text-green-400 ml-1">(Refunded)</span>
+                                            )}
+                                          </span>
+                                        </div>
+                                      )}
+                                      <div className="flex justify-between font-semibold border-t pt-1 mt-1">
+                                        <span>Total:</span>
+                                        <span>${Number(order.totalAmount).toFixed(2)}</span>
+                                      </div>
+                                      {order.fulfilledAt && (
+                                        <div className="text-xs text-muted-foreground pt-2 border-t mt-2">
+                                          Fulfilled: {new Date(order.fulfilledAt).toLocaleString()}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        </CollapsibleContent>
                       </>
-                    )}
-                  </div>
-                  <div className="flex gap-2 flex-wrap justify-end">
-                    <Select
-                      value={order.status}
-                      onValueChange={(status) => 
-                        updateOrderStatusMutation.mutate({ orderId: order.id, status })
-                      }
-                      disabled={updateOrderStatusMutation.isPending || order.status === 'fulfilled' || order.status === 'cancelled'}
-                    >
-                      <SelectTrigger className="w-[180px]" data-testid={`select-retail-order-status-${order.id}`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pending" data-testid="status-pending">Pending</SelectItem>
-                        <SelectItem value="ready_for_pickup" data-testid="status-ready-for-pickup">Ready for Pickup</SelectItem>
-                        <SelectItem value="fulfilled" data-testid="status-fulfilled">Fulfilled</SelectItem>
-                        <SelectItem value="cancelled" data-testid="status-cancelled">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {Number(order.depositAmount || 0) > 0 && !order.depositRefundedAt && order.stripePaymentIntentId && (
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            disabled={refundDepositMutation.isPending}
-                            data-testid={`button-refund-deposit-${order.id}`}
-                          >
-                            <DollarSign className="w-4 h-4 mr-2" />
-                            Refund Deposit
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Refund Deposit?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              This will refund the deposit of ${Number(order.depositAmount).toFixed(2)} to the customer's payment method for order #{order.orderNumber}. 
-                              This action cannot be undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel data-testid="button-cancel-deposit-refund-dialog">Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => refundDepositMutation.mutate(order.id)}
-                              data-testid="button-confirm-deposit-refund"
-                            >
-                              Confirm Refund
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    )}
-                    {order.status !== 'cancelled' && order.status !== 'fulfilled' && order.stripePaymentIntentId && (
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button 
-                            variant="destructive" 
-                            size="sm"
-                            disabled={cancelOrderWithRefundMutation.isPending}
-                            data-testid={`button-cancel-order-${order.id}`}
-                          >
-                            <XCircle className="w-4 h-4 mr-2" />
-                            Cancel with Refund
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Cancel Order with Refund?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              This will cancel order #{order.orderNumber} and process a full refund of ${Number(order.totalAmount).toFixed(2)} to the customer's payment method. 
-                              This action cannot be undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel data-testid="button-cancel-refund-dialog">Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => cancelOrderWithRefundMutation.mutate(order.id)}
-                              data-testid="button-confirm-refund"
-                            >
-                              Confirm Refund
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    )}
-                  </div>
-                  {order.fulfilledAt && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Fulfilled: {new Date(order.fulfilledAt).toLocaleString()}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </CardHeader>
-            {order.items && order.items.length > 0 && (
-              <CardContent className="pt-0">
-                <div className="border-t pt-4">
-                  <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                    <Package className="w-4 h-4" />
-                    Order Items
-                  </h4>
-                  <div className="space-y-2">
-                    {order.items.map((item) => (
-                      <div 
-                        key={item.id} 
-                        className="flex justify-between items-center text-sm bg-muted/50 rounded-md px-3 py-2"
-                        data-testid={`order-item-${item.id}`}
-                      >
-                        <div className="flex-1">
-                          <span className="font-medium">{item.productName}</span>
-                          {item.unitDescription && (
-                            <span className="text-muted-foreground ml-2">
-                              ({item.unitDescription})
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <span className="text-muted-foreground">
-                            Qty: {item.quantity}
-                          </span>
-                          <span className="font-medium">
-                            ${(Number(item.unitPrice) * item.quantity).toFixed(2)}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            )}
-          </Card>
-        ))}
+                    </Collapsible>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
       </div>
     );
   };
@@ -497,16 +579,16 @@ export default function RetailOrders() {
             </TabsList>
 
             <TabsContent value="pending">
-              {renderOrdersList('pending')}
+              {renderOrdersTable('pending')}
             </TabsContent>
             <TabsContent value="ready_for_pickup">
-              {renderOrdersList('ready_for_pickup')}
+              {renderOrdersTable('ready_for_pickup')}
             </TabsContent>
             <TabsContent value="fulfilled">
-              {renderOrdersList('fulfilled')}
+              {renderOrdersTable('fulfilled')}
             </TabsContent>
             <TabsContent value="cancelled">
-              {renderOrdersList('cancelled')}
+              {renderOrdersTable('cancelled')}
             </TabsContent>
           </Tabs>
         )}
