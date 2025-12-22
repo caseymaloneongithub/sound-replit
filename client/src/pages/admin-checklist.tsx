@@ -25,8 +25,10 @@ import {
   Pencil,
   Trash2,
   Check,
-  User
+  User,
+  AlertTriangle
 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -440,6 +442,54 @@ export default function AdminChecklist() {
     },
   });
 
+  // Calculate prior weeks range (4 weeks back from current week start)
+  const currentWeekStart = startOfWeek(new Date(), { weekStartsOn: 0 });
+  const priorWeeksStart = subWeeks(currentWeekStart, 4);
+  const priorWeeksEnd = subWeeks(currentWeekStart, 1); // End of last week (day before current week)
+  const priorStartString = format(priorWeeksStart, "yyyy-MM-dd");
+  const priorEndString = format(endOfWeek(priorWeeksEnd, { weekStartsOn: 0 }), "yyyy-MM-dd");
+
+  // Fetch completions from prior 4 weeks to check for overdue tasks
+  const { data: priorCompletions = [] } = useQuery<AdminTaskCompletion[]>({
+    queryKey: ["/api/admin-tasks/completions/by-week", priorStartString, priorEndString],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin-tasks/completions/by-week?start=${priorStartString}&end=${priorEndString}`);
+      if (!res.ok) throw new Error("Failed to fetch prior completions");
+      return res.json();
+    },
+  });
+
+  // Calculate overdue tasks from prior weeks
+  const overdueTasks: { task: AdminTask; dueDate: Date; weekLabel: string }[] = [];
+  
+  // Check each of the prior 4 weeks for incomplete tasks
+  for (let i = 1; i <= 4; i++) {
+    const priorWeekStart = subWeeks(currentWeekStart, i);
+    const priorWeekEnd = endOfWeek(priorWeekStart, { weekStartsOn: 0 });
+    
+    tasks.forEach((task) => {
+      if (!task.isActive) return;
+      if (!isTaskDueInWeek(task, priorWeekStart, priorWeekEnd)) return;
+      
+      const dueDate = getTaskDueDateInWeek(task, priorWeekStart, priorWeekEnd);
+      if (!dueDate) return;
+      
+      // Check if this task instance was completed
+      const wasCompleted = priorCompletions.some((c) => {
+        const completionDate = startOfDay(new Date(c.instanceDate));
+        return c.taskId === task.id && completionDate.getTime() === startOfDay(dueDate).getTime();
+      });
+      
+      if (!wasCompleted) {
+        overdueTasks.push({
+          task,
+          dueDate,
+          weekLabel: `${format(priorWeekStart, "MMM d")} - ${format(priorWeekEnd, "MMM d")}`,
+        });
+      }
+    });
+  }
+
   // Tasks due within the selected week with completion status
   const tasksForWeek: TaskWithCompletionAndDueDate[] = tasks
     .filter((task) => task.isActive && isTaskDueInWeek(task, weekStart, weekEnd))
@@ -588,6 +638,29 @@ export default function AdminChecklist() {
             </Dialog>
           )}
         </div>
+
+        {/* Overdue Tasks Alert */}
+        {overdueTasks.length > 0 && (
+          <Alert variant="destructive" data-testid="alert-overdue-tasks">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Incomplete Tasks from Prior Weeks</AlertTitle>
+            <AlertDescription>
+              <p className="mb-2">
+                You have {overdueTasks.length} incomplete task{overdueTasks.length !== 1 ? "s" : ""} from previous weeks:
+              </p>
+              <ul className="list-disc pl-5 space-y-1 max-h-32 overflow-y-auto">
+                {overdueTasks.map((item, idx) => (
+                  <li key={`${item.task.id}-${idx}`} className="text-sm">
+                    <span className="font-medium">{item.task.title}</span>
+                    <span className="text-muted-foreground ml-1">
+                      (Due {format(item.dueDate, "MMM d")} - Week of {item.weekLabel})
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
