@@ -45,6 +45,8 @@ const taskFormSchema = z.object({
   dayOfWeek: z.number().min(0).max(6).optional().nullable(),
   dayOfMonth: z.number().min(1).max(31).optional().nullable(),
   monthOfYear: z.number().min(1).max(12).optional().nullable(),
+  startDate: z.string().optional().nullable(), // ISO date string
+  endDate: z.string().optional().nullable(), // ISO date string (optional)
   displayOrder: z.number().default(0),
 }).refine((data) => {
   // Validate required fields based on recurrence type
@@ -58,6 +60,10 @@ const taskFormSchema = z.object({
     return false;
   }
   if (data.recurrence === "one-time" && (!data.dayOfMonth || !data.monthOfYear)) {
+    return false;
+  }
+  // Require start date for recurring tasks (not one-time)
+  if (data.recurrence !== "one-time" && !data.startDate) {
     return false;
   }
   return true;
@@ -118,6 +124,16 @@ function getCategoryBadgeVariant(category: string | null): "default" | "secondar
 }
 
 function isTaskDueOnDate(task: AdminTask, date: Date): boolean {
+  // Check if date is within task's start/end date range
+  if (task.startDate) {
+    const startDate = startOfDay(new Date(task.startDate));
+    if (date < startDate) return false;
+  }
+  if (task.endDate) {
+    const endDate = startOfDay(new Date(task.endDate));
+    if (date > endDate) return false;
+  }
+
   const dayOfWeek = getDay(date);
   const dayOfMonth = getDate(date);
   const month = getMonth(date) + 1; // getMonth returns 0-11
@@ -185,6 +201,8 @@ function TaskForm({
       dayOfWeek: task?.dayOfWeek ?? null,
       dayOfMonth: task?.dayOfMonth ?? null,
       monthOfYear: task?.monthOfYear ?? null,
+      startDate: task?.startDate ? format(new Date(task.startDate), "yyyy-MM-dd") : null,
+      endDate: task?.endDate ? format(new Date(task.endDate), "yyyy-MM-dd") : null,
       displayOrder: task?.displayOrder || 0,
     },
   });
@@ -370,6 +388,48 @@ function TaskForm({
               </FormItem>
             )}
           />
+        )}
+
+        {recurrence !== "one-time" && (
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="startDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Start Date *</FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="date" 
+                      {...field}
+                      value={field.value || ""}
+                      data-testid="input-start-date"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="endDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>End Date (Optional)</FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="date" 
+                      {...field}
+                      value={field.value || ""}
+                      data-testid="input-end-date"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         )}
 
         <FormField

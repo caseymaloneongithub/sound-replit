@@ -581,6 +581,8 @@ export const adminTasks = pgTable("admin_tasks", {
   dayOfWeek: integer("day_of_week"), // 0-6 (Sun-Sat) for weekly tasks
   dayOfMonth: integer("day_of_month"), // 1-31 for monthly tasks
   monthOfYear: integer("month_of_year"), // 1-12 for yearly tasks
+  startDate: timestamp("start_date"), // When the task starts recurring (required for recurring tasks)
+  endDate: timestamp("end_date"), // Optional end date for the recurring task
   assignedToUserId: varchar("assigned_to_user_id").references(() => users.id),
   createdByUserId: varchar("created_by_user_id").references(() => users.id),
   isActive: boolean("is_active").notNull().default(true),
