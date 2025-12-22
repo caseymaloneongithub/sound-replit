@@ -3107,6 +3107,21 @@ export class PostgresStorage implements IStorage {
       ));
   }
 
+  async getAdminTaskCompletionsByDateRange(startDate: Date, endDate: Date): Promise<AdminTaskCompletion[]> {
+    const rangeStart = new Date(startDate);
+    rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = new Date(endDate);
+    rangeEnd.setHours(23, 59, 59, 999);
+    
+    return await db
+      .select()
+      .from(adminTaskCompletions)
+      .where(and(
+        sql`${adminTaskCompletions.instanceDate} >= ${rangeStart}`,
+        sql`${adminTaskCompletions.instanceDate} <= ${rangeEnd}`
+      ));
+  }
+
   async createAdminTaskCompletion(completion: InsertAdminTaskCompletion): Promise<AdminTaskCompletion> {
     const result = await db.insert(adminTaskCompletions).values(completion).returning();
     return result[0];

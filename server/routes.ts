@@ -6315,6 +6315,24 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
+  // Get task completions for a week range
+  app.get("/api/admin-tasks/completions/by-week", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const startStr = req.query.start as string;
+      const endStr = req.query.end as string;
+      if (!startStr || !endStr) {
+        return res.status(400).json({ message: "Start and end dates are required" });
+      }
+      const startDate = new Date(startStr);
+      const endDate = new Date(endStr);
+      const completions = await storage.getAdminTaskCompletionsByDateRange(startDate, endDate);
+      res.json(completions);
+    } catch (error: any) {
+      console.error("Error fetching task completions:", error);
+      res.status(500).json({ message: "Error fetching completions: " + error.message });
+    }
+  });
+
   // Complete a task
   app.post("/api/admin-tasks/:taskId/complete", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {

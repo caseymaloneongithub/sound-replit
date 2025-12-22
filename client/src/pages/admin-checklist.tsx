@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { format, startOfDay, startOfWeek, endOfWeek, addWeeks, subWeeks, isWithinInterval, getDay, getDate, getMonth } from "date-fns";
+import { format, startOfDay, startOfWeek, endOfWeek, addWeeks, subWeeks, addDays, isWithinInterval, getDay, getDate, getMonth, eachDayOfInterval } from "date-fns";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -148,6 +148,18 @@ function isTaskDueOnDate(task: AdminTask, date: Date): boolean {
     default:
       return false;
   }
+}
+
+function isTaskDueInWeek(task: AdminTask, weekStart: Date, weekEnd: Date): boolean {
+  // Check if the task is due on any day within the week
+  const daysInWeek = eachDayOfInterval({ start: weekStart, end: weekEnd });
+  return daysInWeek.some(day => isTaskDueOnDate(task, day));
+}
+
+function getTaskDueDateInWeek(task: AdminTask, weekStart: Date, weekEnd: Date): Date | null {
+  // Find the specific date this task is due within the week
+  const daysInWeek = eachDayOfInterval({ start: weekStart, end: weekEnd });
+  return daysInWeek.find(day => isTaskDueOnDate(task, day)) || null;
 }
 
 function TaskForm({ 
@@ -392,6 +404,10 @@ function TaskForm({
   );
 }
 
+interface TaskWithCompletionAndDueDate extends TaskWithCompletion {
+  dueDate: Date;
+}
+
 export default function AdminChecklist() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -402,34 +418,53 @@ export default function AdminChecklist() {
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
-  const dateString = format(selectedDate, "yyyy-MM-dd");
+  
+  // Calculate week range based on selected date
+  const weekStart = startOfWeek(selectedDate, { weekStartsOn: 0 }); // Sunday
+  const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 0 }); // Saturday
+  const weekStartString = format(weekStart, "yyyy-MM-dd");
+  const weekEndString = format(weekEnd, "yyyy-MM-dd");
 
   // Fetch all tasks
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<AdminTask[]>({
     queryKey: ["/api/admin-tasks"],
   });
 
-  // Fetch completions for selected date
+  // Fetch completions for the entire week
   const { data: completions = [], isLoading: completionsLoading } = useQuery<(AdminTaskCompletion & { completedByUser?: UserType })[]>({
-    queryKey: ["/api/admin-tasks/completions/by-date", dateString],
+    queryKey: ["/api/admin-tasks/completions/by-week", weekStartString, weekEndString],
     queryFn: async () => {
-      const res = await fetch(`/api/admin-tasks/completions/by-date?date=${dateString}`);
+      const res = await fetch(`/api/admin-tasks/completions/by-week?start=${weekStartString}&end=${weekEndString}`);
       if (!res.ok) throw new Error("Failed to fetch completions");
       return res.json();
     },
   });
 
-  // Tasks due on selected date with completion status
-  const tasksForDate: TaskWithCompletion[] = tasks
-    .filter((task) => task.isActive && isTaskDueOnDate(task, selectedDate))
-    .map((task) => ({
-      ...task,
-      completion: completions.find((c) => c.taskId === task.id),
-    }))
-    .sort((a, b) => a.displayOrder - b.displayOrder);
+  // Tasks due within the selected week with completion status
+  const tasksForWeek: TaskWithCompletionAndDueDate[] = tasks
+    .filter((task) => task.isActive && isTaskDueInWeek(task, weekStart, weekEnd))
+    .map((task) => {
+      const dueDate = getTaskDueDateInWeek(task, weekStart, weekEnd) || weekStart;
+      // Find completion that matches this task AND instance date
+      const completion = completions.find((c) => {
+        const completionDate = startOfDay(new Date(c.instanceDate));
+        return c.taskId === task.id && completionDate.getTime() === startOfDay(dueDate).getTime();
+      });
+      return {
+        ...task,
+        dueDate,
+        completion,
+      };
+    })
+    .sort((a, b) => {
+      // Sort by due date first, then by display order
+      const dateCompare = a.dueDate.getTime() - b.dueDate.getTime();
+      if (dateCompare !== 0) return dateCompare;
+      return a.displayOrder - b.displayOrder;
+    });
 
-  const completedCount = tasksForDate.filter((t) => t.completion).length;
-  const totalCount = tasksForDate.length;
+  const completedCount = tasksForWeek.filter((t) => t.completion).length;
+  const totalCount = tasksForWeek.length;
 
   // Mutations
   const createTaskMutation = useMutation({
@@ -475,14 +510,14 @@ export default function AdminChecklist() {
   });
 
   const completeTaskMutation = useMutation({
-    mutationFn: async ({ taskId, notes }: { taskId: string; notes?: string }) => {
+    mutationFn: async ({ taskId, instanceDate, notes }: { taskId: string; instanceDate: Date; notes?: string }) => {
       return await apiRequest("POST", `/api/admin-tasks/${taskId}/complete`, { 
-        instanceDate: selectedDate.toISOString(),
+        instanceDate: instanceDate.toISOString(),
         notes 
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin-tasks/completions/by-date", dateString] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin-tasks/completions/by-week", weekStartString, weekEndString] });
       toast({ title: "Task completed", description: "Task has been marked as complete" });
     },
     onError: (error: any) => {
@@ -495,7 +530,7 @@ export default function AdminChecklist() {
       return await apiRequest("DELETE", `/api/admin-tasks/completions/${completionId}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin-tasks/completions/by-date", dateString] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin-tasks/completions/by-week", weekStartString, weekEndString] });
       toast({ title: "Task uncompleted", description: "Task completion has been undone" });
     },
     onError: (error: any) => {
@@ -503,11 +538,11 @@ export default function AdminChecklist() {
     },
   });
 
-  const handleToggleTask = (task: TaskWithCompletion) => {
+  const handleToggleTask = (task: TaskWithCompletionAndDueDate) => {
     if (task.completion) {
       uncompleteTaskMutation.mutate(task.completion.id);
     } else {
-      completeTaskMutation.mutate({ taskId: task.id });
+      completeTaskMutation.mutate({ taskId: task.id, instanceDate: task.dueDate });
     }
   };
 
@@ -515,9 +550,6 @@ export default function AdminChecklist() {
   const goToNextWeek = () => setSelectedDate((d) => addWeeks(d, 1));
   const goToThisWeek = () => setSelectedDate(startOfDay(new Date()));
 
-  // Get the week range for the selected date
-  const weekStart = startOfWeek(selectedDate, { weekStartsOn: 0 }); // Sunday
-  const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 0 }); // Saturday
   const isCurrentWeek = isWithinInterval(new Date(), { start: weekStart, end: weekEnd });
 
   const isLoading = tasksLoading || completionsLoading;
@@ -617,18 +649,18 @@ export default function AdminChecklist() {
                   <p className="mt-2 text-muted-foreground">Loading tasks...</p>
                 </CardContent>
               </Card>
-            ) : tasksForDate.length === 0 ? (
+            ) : tasksForWeek.length === 0 ? (
               <Card>
                 <CardContent className="py-12 text-center">
                   <ClipboardCheck className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                  <p className="text-muted-foreground">No tasks scheduled for this date</p>
+                  <p className="text-muted-foreground">No tasks scheduled for this week</p>
                 </CardContent>
               </Card>
             ) : (
               <div className="space-y-2">
-                {tasksForDate.map((task) => (
+                {tasksForWeek.map((task) => (
                   <Card 
-                    key={task.id} 
+                    key={`${task.id}-${task.dueDate.getTime()}`} 
                     className={task.completion ? "bg-muted/50" : ""}
                     data-testid={`task-card-${task.id}`}
                   >
@@ -646,6 +678,9 @@ export default function AdminChecklist() {
                             <span className={`font-medium ${task.completion ? "line-through text-muted-foreground" : ""}`}>
                               {task.title}
                             </span>
+                            <Badge variant="outline" className="text-xs">
+                              {format(task.dueDate, "EEE, MMM d")}
+                            </Badge>
                             <Badge 
                               variant={getCategoryBadgeVariant(task.category)}
                               className="text-xs"
