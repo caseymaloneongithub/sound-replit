@@ -188,22 +188,22 @@ export function AddressAutofillFields({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <MapPin className="h-3 w-3" />
-        <span>Start typing to search addresses</span>
-      </div>
-      <FormItem>
-        <FormLabel>Street Address</FormLabel>
-        <FormControl>
-          <AddressAutofill 
-            accessToken={MAPBOX_TOKEN} 
-            onRetrieve={handleRetrieve}
-            options={{
-              country: "US",
-              proximity: { lng: -122.3321, lat: 47.6062 }
-            }}
-          >
+    <AddressAutofill 
+      accessToken={MAPBOX_TOKEN} 
+      onRetrieve={handleRetrieve}
+      options={{
+        country: "US",
+        proximity: { lng: -122.3321, lat: 47.6062 }
+      }}
+    >
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <MapPin className="h-3 w-3" />
+          <span>Start typing to search addresses</span>
+        </div>
+        <FormItem>
+          <FormLabel>Street Address</FormLabel>
+          <FormControl>
             <input
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
               placeholder={addressPlaceholder}
@@ -212,57 +212,57 @@ export function AddressAutofillFields({
               autoComplete="address-line1"
               data-testid={addressTestId}
             />
-          </AddressAutofill>
-        </FormControl>
-        {addressError && <p className="text-sm font-medium text-destructive">{addressError}</p>}
-      </FormItem>
-      <div className="grid grid-cols-2 gap-4">
-        <FormItem>
-          <FormLabel>City</FormLabel>
-          <FormControl>
-            <input
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-              placeholder={cityPlaceholder}
-              value={cityValue}
-              onChange={(e) => onCityChange(e.target.value)}
-              autoComplete="address-level2"
-              data-testid={cityTestId}
-            />
           </FormControl>
-          {cityError && <p className="text-sm font-medium text-destructive">{cityError}</p>}
+          {addressError && <p className="text-sm font-medium text-destructive">{addressError}</p>}
         </FormItem>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-4">
           <FormItem>
-            <FormLabel>State</FormLabel>
+            <FormLabel>City</FormLabel>
             <FormControl>
               <input
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-                placeholder={statePlaceholder}
-                value={stateValue}
-                onChange={(e) => onStateChange(e.target.value)}
-                autoComplete="address-level1"
-                data-testid={stateTestId}
-                maxLength={2}
+                placeholder={cityPlaceholder}
+                value={cityValue}
+                onChange={(e) => onCityChange(e.target.value)}
+                autoComplete="address-level2"
+                data-testid={cityTestId}
               />
             </FormControl>
-            {stateError && <p className="text-sm font-medium text-destructive">{stateError}</p>}
+            {cityError && <p className="text-sm font-medium text-destructive">{cityError}</p>}
           </FormItem>
-          <FormItem>
-            <FormLabel>ZIP</FormLabel>
-            <FormControl>
-              <input
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-                placeholder={zipPlaceholder}
-                value={zipCodeValue}
-                onChange={(e) => onZipCodeChange(e.target.value)}
-                autoComplete="postal-code"
-                data-testid={zipTestId}
-              />
-            </FormControl>
-            {zipError && <p className="text-sm font-medium text-destructive">{zipError}</p>}
-          </FormItem>
+          <div className="grid grid-cols-2 gap-2">
+            <FormItem>
+              <FormLabel>State</FormLabel>
+              <FormControl>
+                <input
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  placeholder={statePlaceholder}
+                  value={stateValue}
+                  onChange={(e) => onStateChange(e.target.value)}
+                  autoComplete="address-level1"
+                  data-testid={stateTestId}
+                  maxLength={2}
+                />
+              </FormControl>
+              {stateError && <p className="text-sm font-medium text-destructive">{stateError}</p>}
+            </FormItem>
+            <FormItem>
+              <FormLabel>ZIP</FormLabel>
+              <FormControl>
+                <input
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  placeholder={zipPlaceholder}
+                  value={zipCodeValue}
+                  onChange={(e) => onZipCodeChange(e.target.value)}
+                  autoComplete="postal-code"
+                  data-testid={zipTestId}
+                />
+              </FormControl>
+              {zipError && <p className="text-sm font-medium text-destructive">{zipError}</p>}
+            </FormItem>
+          </div>
         </div>
       </div>
-    </div>
+    </AddressAutofill>
   );
 }
