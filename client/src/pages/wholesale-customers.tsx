@@ -883,78 +883,78 @@ export default function WholesaleCustomers() {
           locationForm.reset();
         }
       }}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-visible">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[600px] flex flex-col max-h-[90vh]">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>Manage Delivery Locations</DialogTitle>
             <DialogDescription>
               {selectedCustomer?.businessName} - Add or manage delivery locations for this customer
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-6">
-            {/* Existing Locations */}
-            {locations && locations.length > 0 && (
-              <div>
-                <Label className="text-sm font-medium">Existing Locations</Label>
-                <div className="mt-2 space-y-2">
-                  {locations.map((location) => (
-                    <Card key={location.id} className="p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1">
-                          <div className="font-medium">{location.locationName || '(No name)'}</div>
-                          {(location.address || location.city || location.state || location.zipCode) ? (
-                            <div className="text-sm text-muted-foreground mt-1">
-                              {location.address && <div>{location.address}</div>}
-                              {(location.city || location.state || location.zipCode) && (
-                                <div>
-                                  {[location.city, location.state].filter(Boolean).join(', ')}
-                                  {location.zipCode && ` ${location.zipCode}`}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="text-sm text-muted-foreground mt-1 italic">No address</div>
-                          )}
-                          {location.contactName && (
-                            <div className="text-sm text-muted-foreground mt-2">
-                              <div className="font-medium">Contact:</div>
-                              <div>{location.contactName}</div>
-                              {location.contactPhone && <div>{location.contactPhone}</div>}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            onClick={() => handleEditLocation(location)}
-                            data-testid={`button-edit-location-${location.id}`}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            onClick={() => {
-                              if (confirm('Are you sure you want to delete this location?')) {
-                                deleteLocationMutation.mutate(location.id);
-                              }
-                            }}
-                            disabled={deleteLocationMutation.isPending}
-                            data-testid={`button-delete-location-${location.id}`}
-                          >
-                            <X className="w-4 h-4" />
-                          </Button>
-                        </div>
+          {/* Scrollable area for existing locations only */}
+          {locations && locations.length > 0 && (
+            <div className="flex-shrink-0 max-h-[200px] overflow-y-auto">
+              <Label className="text-sm font-medium">Existing Locations</Label>
+              <div className="mt-2 space-y-2">
+                {locations.map((location) => (
+                  <Card key={location.id} className="p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1">
+                        <div className="font-medium">{location.locationName || '(No name)'}</div>
+                        {(location.address || location.city || location.state || location.zipCode) ? (
+                          <div className="text-sm text-muted-foreground mt-1">
+                            {location.address && <div>{location.address}</div>}
+                            {(location.city || location.state || location.zipCode) && (
+                              <div>
+                                {[location.city, location.state].filter(Boolean).join(', ')}
+                                {location.zipCode && ` ${location.zipCode}`}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-muted-foreground mt-1 italic">No address</div>
+                        )}
+                        {location.contactName && (
+                          <div className="text-sm text-muted-foreground mt-2">
+                            <div className="font-medium">Contact:</div>
+                            <div>{location.contactName}</div>
+                            {location.contactPhone && <div>{location.contactPhone}</div>}
+                          </div>
+                        )}
                       </div>
-                    </Card>
-                  ))}
-                </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => handleEditLocation(location)}
+                          data-testid={`button-edit-location-${location.id}`}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => {
+                            if (confirm('Are you sure you want to delete this location?')) {
+                              deleteLocationMutation.mutate(location.id);
+                            }
+                          }}
+                          disabled={deleteLocationMutation.isPending}
+                          data-testid={`button-delete-location-${location.id}`}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Add/Edit Location Form */}
-            <div>
+          {/* Add/Edit Location Form - no overflow to allow dropdown to show */}
+          <div className="flex-shrink-0">
+            <div className="space-y-4 pb-4">
               <Label className="text-sm font-medium">
                 {editingLocation ? 'Edit Location' : 'Add New Location'}
               </Label>
