@@ -1,8 +1,13 @@
-import { AddressAutofill } from "@mapbox/search-js-react";
 import { Input } from "@/components/ui/input";
 import { FormControl, FormItem, FormLabel } from "@/components/ui/form";
-import { useCallback } from "react";
-import { MapPin } from "lucide-react";
+import { useCallback, useState, useEffect, useRef } from "react";
+import { MapPin, Loader2 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Command, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
 
 interface AddressAutofillFieldsProps {
   onAddressChange: (address: string) => void;
@@ -66,6 +71,18 @@ function normalizeStateCode(stateValue: string): string {
   return cleaned.substring(0, 2).toUpperCase();
 }
 
+interface AddressSuggestion {
+  id: string;
+  place_name: string;
+  address?: string;
+  text?: string;
+  context?: Array<{
+    id: string;
+    text: string;
+    short_code?: string;
+  }>;
+}
+
 export function AddressAutofillFields({
   onAddressChange,
   onCityChange,
@@ -88,39 +105,95 @@ export function AddressAutofillFields({
   stateError,
   zipError,
 }: AddressAutofillFieldsProps) {
-  
-  // Handle when Mapbox fills the form - sync values back to react-hook-form
-  const handleRetrieve = useCallback((res: any) => {
-    const feature = res.features?.[0];
-    if (!feature) return;
-    
-    const props = feature.properties || {};
-    
-    // Extract and set address
-    if (props.address_line1) {
-      onAddressChange(props.address_line1);
-    } else if (props.full_address) {
-      const parts = props.full_address.split(',');
-      if (parts.length > 0) onAddressChange(parts[0].trim());
+  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch address suggestions from Mapbox Geocoding API
+  const fetchSuggestions = useCallback(async (query: string) => {
+    if (!query || query.length < 3 || !MAPBOX_TOKEN) {
+      setSuggestions([]);
+      return;
     }
-    
-    // Extract and set city
-    if (props.address_level2) {
-      onCityChange(props.address_level2);
-    } else if (props.place) {
-      onCityChange(props.place);
+
+    setIsLoading(true);
+    try {
+      const params = new URLSearchParams({
+        access_token: MAPBOX_TOKEN,
+        country: 'US',
+        types: 'address',
+        limit: '5',
+        proximity: '-122.3321,47.6062', // Seattle area
+      });
+
+      const response = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?${params}`
+      );
+
+      if (!response.ok) throw new Error('Failed to fetch suggestions');
+
+      const data = await response.json();
+      setSuggestions(data.features || []);
+      if (data.features?.length > 0) {
+        setIsOpen(true);
+      }
+    } catch (error) {
+      console.error('Address autocomplete error:', error);
+      setSuggestions([]);
+    } finally {
+      setIsLoading(false);
     }
+  }, []);
+
+  // Debounced search
+  const handleAddressInput = useCallback((value: string) => {
+    onAddressChange(value);
     
-    // Extract and set state
-    if (props.address_level1) {
-      onStateChange(normalizeStateCode(props.address_level1));
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
     }
+
+    debounceRef.current = setTimeout(() => {
+      fetchSuggestions(value);
+    }, 300);
+  }, [onAddressChange, fetchSuggestions]);
+
+  // Handle suggestion selection
+  const handleSelectSuggestion = useCallback((suggestion: AddressSuggestion) => {
+    // Extract street address (the main text before the first comma)
+    const streetAddress = suggestion.address 
+      ? `${suggestion.address} ${suggestion.text}` 
+      : suggestion.text || suggestion.place_name.split(',')[0];
     
-    // Extract and set zip
-    if (props.postcode) {
-      onZipCodeChange(props.postcode);
+    onAddressChange(streetAddress);
+
+    // Parse context for city, state, zip
+    if (suggestion.context) {
+      for (const ctx of suggestion.context) {
+        if (ctx.id.startsWith('place')) {
+          onCityChange(ctx.text);
+        } else if (ctx.id.startsWith('region')) {
+          onStateChange(normalizeStateCode(ctx.short_code || ctx.text));
+        } else if (ctx.id.startsWith('postcode')) {
+          onZipCodeChange(ctx.text);
+        }
+      }
     }
+
+    setSuggestions([]);
+    setIsOpen(false);
   }, [onAddressChange, onCityChange, onStateChange, onZipCodeChange]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, []);
 
   // Fallback to manual entry when no Mapbox token
   if (!MAPBOX_TOKEN) {
@@ -188,81 +261,106 @@ export function AddressAutofillFields({
   }
 
   return (
-    <AddressAutofill 
-      accessToken={MAPBOX_TOKEN} 
-      onRetrieve={handleRetrieve}
-      options={{
-        country: "US",
-        proximity: { lng: -122.3321, lat: 47.6062 }
-      }}
-    >
-      <div className="space-y-4">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <MapPin className="h-3 w-3" />
-          <span>Start typing to search addresses</span>
-        </div>
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <MapPin className="h-3 w-3" />
+        <span>Start typing to search addresses</span>
+      </div>
+      <FormItem>
+        <FormLabel>Street Address</FormLabel>
+        <Popover open={isOpen && suggestions.length > 0} onOpenChange={setIsOpen}>
+          <PopoverTrigger asChild>
+            <FormControl>
+              <div className="relative">
+                <Input
+                  ref={inputRef}
+                  placeholder={addressPlaceholder}
+                  value={addressValue}
+                  onChange={(e) => handleAddressInput(e.target.value)}
+                  onFocus={() => suggestions.length > 0 && setIsOpen(true)}
+                  onBlur={() => {
+                    // Delay closing to allow click on suggestion
+                    setTimeout(() => setIsOpen(false), 200);
+                  }}
+                  data-testid={addressTestId}
+                />
+                {isLoading && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+              </div>
+            </FormControl>
+          </PopoverTrigger>
+          <PopoverContent 
+            className="w-[var(--radix-popover-trigger-width)] p-0" 
+            align="start"
+            sideOffset={4}
+            onOpenAutoFocus={(e) => e.preventDefault()}
+          >
+            <Command>
+              <CommandList>
+                <CommandGroup>
+                  {suggestions.map((suggestion) => (
+                    <CommandItem
+                      key={suggestion.id}
+                      value={suggestion.place_name}
+                      onSelect={() => handleSelectSuggestion(suggestion)}
+                      className="cursor-pointer"
+                      data-testid={`suggestion-${suggestion.id}`}
+                    >
+                      <MapPin className="mr-2 h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <span className="truncate">{suggestion.place_name}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        {addressError && <p className="text-sm font-medium text-destructive">{addressError}</p>}
+      </FormItem>
+      <div className="grid grid-cols-2 gap-4">
         <FormItem>
-          <FormLabel>Street Address</FormLabel>
+          <FormLabel>City</FormLabel>
           <FormControl>
-            <input
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-              placeholder={addressPlaceholder}
-              value={addressValue}
-              onChange={(e) => onAddressChange(e.target.value)}
-              autoComplete="address-line1"
-              data-testid={addressTestId}
+            <Input
+              placeholder={cityPlaceholder}
+              value={cityValue}
+              onChange={(e) => onCityChange(e.target.value)}
+              data-testid={cityTestId}
             />
           </FormControl>
-          {addressError && <p className="text-sm font-medium text-destructive">{addressError}</p>}
+          {cityError && <p className="text-sm font-medium text-destructive">{cityError}</p>}
         </FormItem>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-2">
           <FormItem>
-            <FormLabel>City</FormLabel>
+            <FormLabel>State</FormLabel>
             <FormControl>
-              <input
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-                placeholder={cityPlaceholder}
-                value={cityValue}
-                onChange={(e) => onCityChange(e.target.value)}
-                autoComplete="address-level2"
-                data-testid={cityTestId}
+              <Input
+                placeholder={statePlaceholder}
+                value={stateValue}
+                onChange={(e) => onStateChange(e.target.value)}
+                data-testid={stateTestId}
+                maxLength={2}
               />
             </FormControl>
-            {cityError && <p className="text-sm font-medium text-destructive">{cityError}</p>}
+            {stateError && <p className="text-sm font-medium text-destructive">{stateError}</p>}
           </FormItem>
-          <div className="grid grid-cols-2 gap-2">
-            <FormItem>
-              <FormLabel>State</FormLabel>
-              <FormControl>
-                <input
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-                  placeholder={statePlaceholder}
-                  value={stateValue}
-                  onChange={(e) => onStateChange(e.target.value)}
-                  autoComplete="address-level1"
-                  data-testid={stateTestId}
-                  maxLength={2}
-                />
-              </FormControl>
-              {stateError && <p className="text-sm font-medium text-destructive">{stateError}</p>}
-            </FormItem>
-            <FormItem>
-              <FormLabel>ZIP</FormLabel>
-              <FormControl>
-                <input
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-                  placeholder={zipPlaceholder}
-                  value={zipCodeValue}
-                  onChange={(e) => onZipCodeChange(e.target.value)}
-                  autoComplete="postal-code"
-                  data-testid={zipTestId}
-                />
-              </FormControl>
-              {zipError && <p className="text-sm font-medium text-destructive">{zipError}</p>}
-            </FormItem>
-          </div>
+          <FormItem>
+            <FormLabel>ZIP</FormLabel>
+            <FormControl>
+              <Input
+                placeholder={zipPlaceholder}
+                value={zipCodeValue}
+                onChange={(e) => onZipCodeChange(e.target.value)}
+                data-testid={zipTestId}
+              />
+            </FormControl>
+            {zipError && <p className="text-sm font-medium text-destructive">{zipError}</p>}
+          </FormItem>
         </div>
       </div>
-    </AddressAutofill>
+    </div>
   );
 }
