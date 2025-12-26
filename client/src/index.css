@@ -335,3 +335,39 @@
     inset: -1px;
   }
 }
+
+/* Mapbox Address Autofill - ensure dropdown is clickable above dialogs/modals */
+mapbox-address-autofill {
+  position: relative;
+  z-index: 99999 !important;
+}
+
+/* Mapbox uses shadow DOM - style the host element's children via CSS custom properties */
+mapbox-address-autofill::part(results),
+mapbox-address-autofill::part(result),
+mapbox-address-autofill::part(result-item) {
+  z-index: 99999 !important;
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}
+
+/* The actual results dropdown is rendered outside the Shadow DOM in the document body */
+/* Target all possible Mapbox suggestion containers */
+.mbx-address-suggestion,
+.mbxSuggestion,
+.mbx-suggestion-list,
+.MapboxSearch,
+.MapboxAddressAutofill,
+[class*="mbx-"][class*="Suggestion"],
+[class*="mbx-"][class*="Result"],
+div[data-mapbox-autofill],
+ul[role="listbox"] {
+  z-index: 99999 !important;
+  pointer-events: auto !important;
+}
+
+ul[role="listbox"] li,
+ul[role="listbox"] li * {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}

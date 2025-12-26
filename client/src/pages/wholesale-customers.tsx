@@ -883,7 +883,7 @@ export default function WholesaleCustomers() {
           locationForm.reset();
         }
       }}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-visible">
           <DialogHeader>
             <DialogTitle>Manage Delivery Locations</DialogTitle>
             <DialogDescription>
