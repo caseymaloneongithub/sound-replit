@@ -229,8 +229,17 @@ export default function WholesaleCustomers() {
     enabled: !!selectedCustomer && locationDialogOpen,
   });
 
-  const locationForm = useForm<z.infer<typeof insertWholesaleLocationSchema>>({
-    resolver: zodResolver(insertWholesaleLocationSchema),
+  // Extended validation schema for location form - require key fields
+  const locationFormSchema = insertWholesaleLocationSchema.extend({
+    locationName: z.string().min(1, "Location name is required"),
+    address: z.string().min(1, "Street address is required"),
+    city: z.string().min(1, "City is required"),
+    state: z.string().min(1, "State is required").max(2, "Use 2-letter state code"),
+    zipCode: z.string().min(1, "ZIP code is required"),
+  });
+
+  const locationForm = useForm<z.infer<typeof locationFormSchema>>({
+    resolver: zodResolver(locationFormSchema),
     defaultValues: {
       customerId: "",
       locationName: "",
