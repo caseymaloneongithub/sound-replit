@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { WholesaleCustomer, WholesaleUnitType, Flavor, WholesaleCustomerPricing } from "@shared/schema";
+import { WholesaleCustomer, WholesaleUnitType, Flavor, WholesaleCustomerPricing, WholesaleLocation } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -21,6 +21,7 @@ interface CartItem {
 
 export default function WholesalePlaceOrder() {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
+  const [selectedLocationId, setSelectedLocationId] = useState<string>("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState("");
   const [selectedUnitTypeId, setSelectedUnitTypeId] = useState<string>("");
@@ -48,6 +49,12 @@ export default function WholesalePlaceOrder() {
     enabled: !!selectedCustomerId,
   });
 
+  // Fetch locations for the selected customer
+  const { data: customerLocations = [] } = useQuery<WholesaleLocation[]>({
+    queryKey: ["/api/wholesale/customers", selectedCustomerId, "locations"],
+    enabled: !!selectedCustomerId,
+  });
+
   // Get available flavors for selected unit type
   const availableFlavors = selectedUnitTypeId
     ? unitTypes.find(ut => ut.id === selectedUnitTypeId)?.flavors || []
@@ -56,6 +63,7 @@ export default function WholesalePlaceOrder() {
   // Reset selections when customer or unit type changes
   useEffect(() => {
     setCart([]);
+    setSelectedLocationId("");
     setSelectedUnitTypeId("");
     setSelectedFlavorId("");
     setQuantity(1);
@@ -73,10 +81,15 @@ export default function WholesalePlaceOrder() {
       if (cart.length === 0) {
         throw new Error("Cart is empty");
       }
+      // Require location if customer has locations
+      if (customerLocations.length > 0 && !selectedLocationId) {
+        throw new Error("Please select a delivery location");
+      }
 
       return await apiRequest("POST", "/api/wholesale/orders", {
         order: {
           customerId: selectedCustomerId,
+          locationId: selectedLocationId || undefined,
           notes: notes || undefined,
         },
         items: cart,
@@ -91,6 +104,7 @@ export default function WholesalePlaceOrder() {
       setCart([]);
       setNotes("");
       setSelectedCustomerId("");
+      setSelectedLocationId("");
       setSelectedUnitTypeId("");
       setSelectedFlavorId("");
       setQuantity(1);
@@ -202,19 +216,47 @@ export default function WholesalePlaceOrder() {
               <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>Select Customer</CardTitle>
               <CardDescription>Choose the customer for this order</CardDescription>
             </CardHeader>
-            <CardContent>
-              <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
-                <SelectTrigger data-testid="select-customer">
-                  <SelectValue placeholder="Select a customer" />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map((customer) => (
-                    <SelectItem key={customer.id} value={customer.id}>
-                      {customer.businessName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Customer</label>
+                <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
+                  <SelectTrigger data-testid="select-customer">
+                    <SelectValue placeholder="Select a customer" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customers.map((customer) => (
+                      <SelectItem key={customer.id} value={customer.id}>
+                        {customer.businessName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {selectedCustomerId && customerLocations.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Delivery Location</label>
+                  <Select value={selectedLocationId} onValueChange={setSelectedLocationId}>
+                    <SelectTrigger data-testid="select-location">
+                      <SelectValue placeholder="Select delivery location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customerLocations.filter(loc => loc.isActive).map((location) => (
+                        <SelectItem key={location.id} value={location.id}>
+                          <div className="flex flex-col">
+                            <span>{location.locationName}</span>
+                            {location.address && (
+                              <span className="text-xs text-muted-foreground">
+                                {location.address}, {location.city}
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </CardContent>
           </Card>
 
