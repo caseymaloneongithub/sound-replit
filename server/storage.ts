@@ -201,7 +201,7 @@ export interface IStorage {
   getWholesaleCustomerByUserId(userId: string): Promise<WholesaleCustomer | undefined>;
   createWholesaleCustomer(customer: InsertWholesaleCustomer): Promise<WholesaleCustomer>;
   updateWholesaleCustomer(id: string, updates: Partial<InsertWholesaleCustomer>): Promise<WholesaleCustomer | undefined>;
-  importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[] }>;
+  importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[]; locationsAdded: number }>;
   
   getWholesaleLocations(customerId: string): Promise<WholesaleLocation[]>;
   getWholesaleLocation(id: string): Promise<WholesaleLocation | undefined>;
@@ -1424,70 +1424,109 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[] }> {
+  async importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[]; locationsAdded: number }> {
     const results = {
       imported: 0,
       failed: 0,
       errors: [] as string[],
+      locationsAdded: 0,
     };
 
+    // Group rows by businessName to support multiple locations/emails per customer
+    const customerGroups = new Map<string, any[]>();
     for (const row of csvData) {
+      const businessName = row.businessName?.trim();
+      if (!businessName) {
+        results.errors.push(`Row skipped: Missing business name`);
+        results.failed++;
+        continue;
+      }
+      
+      if (!customerGroups.has(businessName)) {
+        customerGroups.set(businessName, []);
+      }
+      customerGroups.get(businessName)!.push(row);
+    }
+
+    // Process each customer group
+    for (const [businessName, rows] of customerGroups) {
       try {
-        // Parse additional emails
-        const emails = [row.email];
-        if (row.additionalEmails && row.additionalEmails.trim()) {
-          const additionalEmailsList = row.additionalEmails
-            .split('|')
-            .map((e: string) => e.trim())
-            .filter((e: string) => e.length > 0);
-          emails.push(...additionalEmailsList);
+        // First row contains the primary customer data
+        const primaryRow = rows[0];
+        
+        // Collect all unique emails from all rows (preserve original casing, dedupe case-insensitively)
+        const emailMap = new Map<string, string>(); // lowercase -> original
+        for (const row of rows) {
+          if (row.email?.trim()) {
+            const email = row.email.trim();
+            emailMap.set(email.toLowerCase(), email);
+          }
+          if (row.additionalEmails?.trim()) {
+            const additionalEmailsList = row.additionalEmails
+              .split('|')
+              .map((e: string) => e.trim())
+              .filter((e: string) => e.length > 0);
+            additionalEmailsList.forEach((e: string) => emailMap.set(e.toLowerCase(), e));
+          }
         }
 
-        // Check if customer already exists by primary email
-        const existing = await this.getWholesaleCustomerByEmail(row.email);
-        if (existing) {
-          results.errors.push(`Customer with email ${row.email} already exists (${row.businessName})`);
+        const emails = Array.from(emailMap.values());
+        const primaryEmail = primaryRow.email?.trim() || emails[0];
+        
+        if (!primaryEmail) {
+          results.errors.push(`${businessName}: No email address provided`);
           results.failed++;
           continue;
         }
 
-        // Create customer
+        // Check if customer already exists by any email (case-insensitive)
+        const existing = await this.getWholesaleCustomerByAnyEmail(primaryEmail);
+        if (existing) {
+          results.errors.push(`Customer with email ${primaryEmail} already exists (${businessName})`);
+          results.failed++;
+          continue;
+        }
+
+        // Create customer using primary row data
         const customerData: InsertWholesaleCustomer = {
-          businessName: row.businessName,
-          contactName: row.contactName,
-          email: row.email,
+          businessName: businessName,
+          contactName: primaryRow.contactName?.trim() || '',
+          email: primaryEmail,
           emails: emails,
-          phone: row.phone,
-          address: row.address,
-          allowOnlinePayment: row.allowOnlinePayment === 'true' || row.allowOnlinePayment === true,
+          phone: primaryRow.phone?.trim() || '',
+          address: primaryRow.address?.trim() || '',
+          allowOnlinePayment: primaryRow.allowOnlinePayment === 'true' || primaryRow.allowOnlinePayment === true,
         };
 
         const newCustomer = await this.createWholesaleCustomer(customerData);
 
-        // Create location if location data is provided
-        if (row.locationName && row.locationName.trim() && 
-            row.locationAddress && row.locationAddress.trim() &&
-            row.locationCity && row.locationCity.trim() &&
-            row.locationState && row.locationState.trim() &&
-            row.locationZipCode && row.locationZipCode.trim()) {
-          
-          const locationData: InsertWholesaleLocation = {
-            customerId: newCustomer.id,
-            locationName: row.locationName.trim(),
-            address: row.locationAddress.trim(),
-            city: row.locationCity.trim(),
-            state: row.locationState.trim(),
-            zipCode: row.locationZipCode.trim(),
-            contactName: row.locationContactName?.trim() || null,
-            contactPhone: row.locationContactPhone?.trim() || null,
-          };
+        // Create locations from all rows that have location data
+        for (const row of rows) {
+          if (row.locationName?.trim() && 
+              row.locationAddress?.trim() &&
+              row.locationCity?.trim() &&
+              row.locationState?.trim() &&
+              row.locationZipCode?.trim()) {
+            
+            const locationData: InsertWholesaleLocation = {
+              customerId: newCustomer.id,
+              locationName: row.locationName.trim(),
+              address: row.locationAddress.trim(),
+              city: row.locationCity.trim(),
+              state: row.locationState.trim().toUpperCase(),
+              zipCode: row.locationZipCode.trim(),
+              contactName: row.locationContactName?.trim() || null,
+              contactPhone: row.locationContactPhone?.trim() || null,
+            };
 
-          await this.createWholesaleLocation(locationData);
+            await this.createWholesaleLocation(locationData);
+            results.locationsAdded++;
+          }
         }
 
         results.imported++;
       } catch (error: any) {
-        results.errors.push(`Row ${results.imported + results.failed + 1}: ${error.message}`);
+        results.errors.push(`${businessName}: ${error.message}`);
         results.failed++;
       }
     }

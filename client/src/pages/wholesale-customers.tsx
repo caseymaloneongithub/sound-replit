@@ -204,9 +204,10 @@ export default function WholesaleCustomers() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
+      const locationMsg = data.locationsAdded > 0 ? ` with ${data.locationsAdded} location(s)` : '';
       toast({
         title: "Import Complete",
-        description: `Successfully imported ${data.imported} customer(s). ${data.failed} failed.`,
+        description: `Successfully imported ${data.imported} customer(s)${locationMsg}. ${data.failed} failed.`,
       });
       if (data.errors.length > 0) {
         console.error("Import errors:", data.errors);
@@ -505,7 +506,10 @@ export default function WholesaleCustomers() {
                       data-testid="input-csv-file"
                     />
                     <p className="text-sm text-muted-foreground mt-2">
-                      CSV must include columns: businessName, contactName, email, additionalEmails, phone, address, allowOnlinePayment. Optional location columns: locationName, locationAddress, locationCity, locationState, locationZipCode, locationContactName, locationContactPhone
+                      Required columns: businessName, contactName, email, phone, address. Optional: additionalEmails (pipe-separated), allowOnlinePayment. Location columns: locationName, locationAddress, locationCity, locationState, locationZipCode, locationContactName, locationContactPhone.
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Multiple rows with the same business name will be grouped as one customer with multiple locations and combined emails.
                     </p>
                   </div>
                 </div>
