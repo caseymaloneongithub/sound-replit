@@ -229,6 +229,7 @@ export interface IStorage {
   getAllWholesaleOrderItems(): Promise<WholesaleOrderItem[]>;
   createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem>;
   deleteWholesaleOrderItems(orderId: string): Promise<void>;
+  deleteWholesaleOrder(id: string): Promise<void>;
   updateWholesaleOrder(id: string, updates: { 
     totalAmount?: string; 
     notes?: string | null;
@@ -1824,6 +1825,13 @@ export class PostgresStorage implements IStorage {
 
   async deleteWholesaleOrderItems(orderId: string): Promise<void> {
     await db.delete(wholesaleOrderItems).where(eq(wholesaleOrderItems.orderId, orderId));
+  }
+
+  async deleteWholesaleOrder(id: string): Promise<void> {
+    // First delete all order items
+    await db.delete(wholesaleOrderItems).where(eq(wholesaleOrderItems.orderId, id));
+    // Then delete the order
+    await db.delete(wholesaleOrders).where(eq(wholesaleOrders.id, id));
   }
 
   async updateWholesaleOrder(id: string, updates: { 

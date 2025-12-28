@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -151,6 +152,28 @@ export default function WholesaleOrders() {
       toast({
         title: "Error",
         description: error.message || "Failed to update order",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteOrderMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      return await apiRequest("DELETE", `/api/wholesale/orders/${orderId}`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Order Deleted",
+        description: "Order has been deleted successfully",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/all-order-items"] });
+      handleCloseDialog();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete order",
         variant: "destructive",
       });
     },
@@ -644,16 +667,53 @@ export default function WholesaleOrders() {
                   Invoice: {selectedOrder?.invoiceNumber}
                 </DialogDescription>
               </div>
-              {!isEditMode && selectedOrder?.status !== 'delivered' && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={initializeEditMode}
-                  data-testid="button-edit-order"
-                >
-                  <Pencil className="w-4 h-4 mr-2" />
-                  Edit Order
-                </Button>
+              {!isEditMode && (
+                <div className="flex items-center gap-2">
+                  {selectedOrder?.status !== 'delivered' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={initializeEditMode}
+                      data-testid="button-edit-order"
+                    >
+                      <Pencil className="w-4 h-4 mr-2" />
+                      Edit Order
+                    </Button>
+                  )}
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        data-testid="button-delete-order"
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Delete
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Order</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to delete this order ({selectedOrder?.invoiceNumber})? This action cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => selectedOrderId && deleteOrderMutation.mutate(selectedOrderId)}
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          data-testid="button-confirm-delete"
+                        >
+                          {deleteOrderMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : null}
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
               )}
             </div>
           </DialogHeader>

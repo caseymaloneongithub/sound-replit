@@ -4891,6 +4891,19 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
+  app.delete("/api/wholesale/orders/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const order = await storage.getWholesaleOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+      await storage.deleteWholesaleOrder(req.params.id);
+      res.json({ message: "Order deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting order: " + error.message });
+    }
+  });
+
   app.get("/api/wholesale/pricing/all", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const pricing = await storage.getAllWholesalePricing();
