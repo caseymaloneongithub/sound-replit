@@ -307,7 +307,6 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   email: text("email").notNull().unique(), // Primary contact email (kept for backwards compatibility)
   emails: text("emails").array().notNull().default(sql`ARRAY[]::text[]`), // All authorized email addresses
   phone: text("phone").notNull(),
-  address: text("address").notNull(),
   allowOnlinePayment: boolean("allow_online_payment").notNull().default(false),
 });
 
@@ -322,6 +321,7 @@ export const wholesaleLocations = pgTable("wholesale_locations", {
   contactName: text("contact_name"),
   contactPhone: text("contact_phone"),
   deliveryInstructions: text("delivery_instructions"),
+  isPrimary: boolean("is_primary").notNull().default(false), // Primary/default location for this customer
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   // Geocoding cache
