@@ -3993,6 +3993,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.delete("/api/wholesale/customers/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const customer = await storage.getWholesaleCustomer(req.params.id);
+      if (!customer) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+      await storage.deleteWholesaleCustomer(req.params.id);
+      res.json({ message: "Customer deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting customer: " + error.message });
+    }
+  });
+
   // Send wholesale customer CSV template via email
   app.post("/api/wholesale/customers/send-template", isAuthenticated, isAdmin, async (req, res) => {
     try {

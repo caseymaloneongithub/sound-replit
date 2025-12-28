@@ -201,6 +201,7 @@ export interface IStorage {
   getWholesaleCustomerByUserId(userId: string): Promise<WholesaleCustomer | undefined>;
   createWholesaleCustomer(customer: InsertWholesaleCustomer): Promise<WholesaleCustomer>;
   updateWholesaleCustomer(id: string, updates: Partial<InsertWholesaleCustomer>): Promise<WholesaleCustomer | undefined>;
+  deleteWholesaleCustomer(id: string): Promise<void>;
   importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[]; locationsAdded: number }>;
   
   getWholesaleLocations(customerId: string): Promise<WholesaleLocation[]>;
@@ -1422,6 +1423,13 @@ export class PostgresStorage implements IStorage {
       .where(eq(wholesaleCustomers.id, id))
       .returning();
     return result[0];
+  }
+
+  async deleteWholesaleCustomer(id: string): Promise<void> {
+    // First delete all associated locations
+    await db.delete(wholesaleLocations).where(eq(wholesaleLocations.customerId, id));
+    // Then delete the customer
+    await db.delete(wholesaleCustomers).where(eq(wholesaleCustomers.id, id));
   }
 
   // Normalize phone numbers to format: (XXX) XXX-XXXX or just digits if not 10 digits
