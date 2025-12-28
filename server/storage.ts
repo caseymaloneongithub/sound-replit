@@ -1426,7 +1426,19 @@ export class PostgresStorage implements IStorage {
   }
 
   async deleteWholesaleCustomer(id: string): Promise<void> {
-    // First delete all associated locations
+    // Check if customer has any orders - if so, don't allow deletion
+    const orders = await db.select({ id: wholesaleOrders.id })
+      .from(wholesaleOrders)
+      .where(eq(wholesaleOrders.customerId, id))
+      .limit(1);
+    
+    if (orders.length > 0) {
+      throw new Error("Cannot delete customer with existing orders. Please archive or reassign their orders first.");
+    }
+    
+    // Delete associated pricing records
+    await db.delete(wholesalePricing).where(eq(wholesalePricing.customerId, id));
+    // Delete all associated locations
     await db.delete(wholesaleLocations).where(eq(wholesaleLocations.customerId, id));
     // Then delete the customer
     await db.delete(wholesaleCustomers).where(eq(wholesaleCustomers.id, id));
