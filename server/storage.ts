@@ -1424,6 +1424,21 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
+  // Normalize phone numbers to format: (XXX) XXX-XXXX or just digits if not 10 digits
+  private normalizePhone(phone: string | undefined | null): string {
+    if (!phone) return '';
+    // Remove all non-digit characters
+    const digits = phone.replace(/\D/g, '');
+    // Handle 11-digit numbers starting with 1 (US country code)
+    const normalized = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+    // Format as (XXX) XXX-XXXX if exactly 10 digits
+    if (normalized.length === 10) {
+      return `(${normalized.slice(0, 3)}) ${normalized.slice(3, 6)}-${normalized.slice(6)}`;
+    }
+    // Return cleaned digits for non-standard lengths
+    return normalized;
+  }
+
   async importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[]; locationsAdded: number }> {
     const results = {
       imported: 0,
@@ -1493,7 +1508,7 @@ export class PostgresStorage implements IStorage {
           contactName: primaryRow.contactName?.trim() || '',
           email: primaryEmail,
           emails: emails,
-          phone: primaryRow.phone?.trim() || '',
+          phone: this.normalizePhone(primaryRow.phone),
           address: primaryRow.address?.trim() || '',
           allowOnlinePayment: primaryRow.allowOnlinePayment === 'true' || primaryRow.allowOnlinePayment === true,
         };
@@ -1516,7 +1531,7 @@ export class PostgresStorage implements IStorage {
               state: row.locationState.trim().toUpperCase(),
               zipCode: row.locationZipCode.trim(),
               contactName: row.locationContactName?.trim() || null,
-              contactPhone: row.locationContactPhone?.trim() || null,
+              contactPhone: this.normalizePhone(row.locationContactPhone) || null,
             };
 
             await this.createWholesaleLocation(locationData);
