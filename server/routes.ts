@@ -4002,6 +4002,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteWholesaleCustomer(req.params.id);
       res.json({ message: "Customer deleted successfully" });
     } catch (error: any) {
+      // Return 400 for business logic errors (e.g., customer has orders)
+      if (error.message?.includes("existing orders")) {
+        return res.status(400).json({ message: error.message });
+      }
       res.status(500).json({ message: "Error deleting customer: " + error.message });
     }
   });
