@@ -1548,7 +1548,6 @@ export class PostgresStorage implements IStorage {
           const hasLegacyAddress = !hasLocationData && row === primaryRow && row.address?.trim();
           
           if (hasLocationData) {
-            
             const locationData: InsertWholesaleLocation = {
               customerId: newCustomer.id,
               locationName: row.locationName.trim(),
@@ -1558,6 +1557,24 @@ export class PostgresStorage implements IStorage {
               zipCode: row.locationZipCode.trim(),
               contactName: row.locationContactName?.trim() || null,
               contactPhone: this.normalizePhone(row.locationContactPhone) || null,
+            };
+
+            await this.createWholesaleLocation(locationData);
+            results.locationsAdded++;
+          } else if (hasLegacyAddress) {
+            // Create a "Main Location" from legacy address field
+            // Store the full address as-is - staff can manually update structured fields later
+            const fullAddress = row.address.trim();
+            
+            const locationData: InsertWholesaleLocation = {
+              customerId: newCustomer.id,
+              locationName: 'Main Location',
+              address: fullAddress,
+              city: '',
+              state: '',
+              zipCode: '',
+              contactName: primaryRow.contactName?.trim() || null,
+              contactPhone: this.normalizePhone(primaryRow.phone) || null,
             };
 
             await this.createWholesaleLocation(locationData);
