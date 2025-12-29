@@ -760,7 +760,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         contactName,
         email,
         phone,
-        address,
       });
 
       // Create Stripe customer (non-blocking - log errors but don't fail registration)
@@ -4706,12 +4705,25 @@ If you have any questions, please don't hesitate to reach out!`,
         contactPhone: order.location.contactPhone,
       } : null;
 
+      // Get customer address from location (if available)
+      let customerAddress = '';
+      if (location) {
+        customerAddress = `${location.address}, ${location.city}, ${location.state} ${location.zipCode}`;
+      } else {
+        // Fall back to first location if no specific location on order
+        const locations = await storage.getWholesaleLocations(customer.id);
+        if (locations.length > 0) {
+          const loc = locations[0];
+          customerAddress = `${loc.address}, ${loc.city}, ${loc.state} ${loc.zipCode}`;
+        }
+      }
+
       // Send the invoice email
       await sendWholesaleInvoiceEmail({
         customerEmail: customer.email,
         businessName: customer.businessName,
         contactName: customer.contactName,
-        customerAddress: customer.address,
+        customerAddress,
         customerPhone: customer.phone,
         invoiceNumber: order.invoiceNumber,
         orderDate: new Date(order.orderDate),

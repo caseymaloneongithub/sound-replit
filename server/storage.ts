@@ -1530,19 +1530,24 @@ export class PostgresStorage implements IStorage {
           email: primaryEmail,
           emails: emails,
           phone: this.normalizePhone(primaryRow.phone),
-          address: primaryRow.address?.trim() || '',
           allowOnlinePayment: primaryRow.allowOnlinePayment === 'true' || primaryRow.allowOnlinePayment === true,
         };
 
         const newCustomer = await this.createWholesaleCustomer(customerData);
 
         // Create locations from all rows that have location data
+        // Also create a location from the primary row's address if provided
         for (const row of rows) {
-          if (row.locationName?.trim() && 
+          const hasLocationData = row.locationName?.trim() && 
               row.locationAddress?.trim() &&
               row.locationCity?.trim() &&
               row.locationState?.trim() &&
-              row.locationZipCode?.trim()) {
+              row.locationZipCode?.trim();
+          
+          // Also support legacy 'address' field - create a "Main Location" from it
+          const hasLegacyAddress = !hasLocationData && row === primaryRow && row.address?.trim();
+          
+          if (hasLocationData) {
             
             const locationData: InsertWholesaleLocation = {
               customerId: newCustomer.id,
@@ -2399,16 +2404,34 @@ export class PostgresStorage implements IStorage {
         contactName: "Sarah Johnson",
         email: "sarah@greenvalleycafe.com",
         phone: "(555) 123-4567",
-        address: "123 Main St, Portland, OR 97201",
       },
       {
         businessName: "Wellness Studio",
         contactName: "Michael Chen",
         email: "michael@wellnessstudio.com",
         phone: "(555) 234-5678",
-        address: "456 Oak Ave, Portland, OR 97202",
       },
     ]).returning();
+
+      // Create locations for each customer
+      await db.insert(wholesaleLocations).values([
+        {
+          customerId: customerResults[0].id,
+          locationName: "Main Location",
+          address: "123 Main St",
+          city: "Portland",
+          state: "OR",
+          zipCode: "97201",
+        },
+        {
+          customerId: customerResults[1].id,
+          locationName: "Main Location",
+          address: "456 Oak Ave",
+          city: "Portland",
+          state: "OR",
+          zipCode: "97202",
+        },
+      ]);
 
       await db.insert(wholesaleOrders).values([
         {

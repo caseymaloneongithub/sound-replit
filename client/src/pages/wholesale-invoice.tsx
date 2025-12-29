@@ -233,7 +233,6 @@ export default function WholesaleInvoice() {
                 <div data-testid="customer-info">
                   <div className="font-semibold">{customer.businessName}</div>
                   <div className="text-sm text-muted-foreground">{customer.contactName}</div>
-                  <div className="text-sm text-muted-foreground">{customer.address}</div>
                   <div className="text-sm text-muted-foreground">{customer.email}</div>
                   <div className="text-sm text-muted-foreground">{customer.phone}</div>
                 </div>

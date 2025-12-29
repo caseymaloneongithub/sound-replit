@@ -558,10 +558,6 @@ export default function WholesaleOrders() {
                                 <span className="text-muted-foreground">Phone:</span>{" "}
                                 <span className="font-medium">{customer?.phone}</span>
                               </div>
-                              <div className="col-span-2">
-                                <span className="text-muted-foreground">Address:</span>{" "}
-                                <span className="font-medium">{customer?.address}</span>
-                              </div>
                             </div>
                             {order.notes && (
                               <div className="pt-3 border-t">
@@ -727,7 +723,6 @@ export default function WholesaleOrders() {
                   <div><strong>Contact:</strong> {selectedCustomer.contactName}</div>
                   <div><strong>Email:</strong> {selectedCustomer.email}</div>
                   <div><strong>Phone:</strong> {selectedCustomer.phone}</div>
-                  <div className="col-span-2"><strong>Address:</strong> {selectedCustomer.address}</div>
                 </div>
               </div>
 

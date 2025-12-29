@@ -50,7 +50,6 @@ export default function WholesaleCustomers() {
       contactName: "",
       email: "",
       phone: "",
-      address: "",
       allowOnlinePayment: false,
     },
   });
@@ -116,7 +115,6 @@ export default function WholesaleCustomers() {
       contactName: customer.contactName,
       email: customer.email,
       phone: customer.phone,
-      address: customer.address,
       allowOnlinePayment: customer.allowOnlinePayment,
     });
     setDialogOpen(true);
@@ -129,7 +127,6 @@ export default function WholesaleCustomers() {
       contactName: "",
       email: "",
       phone: "",
-      address: "",
       allowOnlinePayment: false,
     });
     setDialogOpen(true);
@@ -638,22 +635,6 @@ export default function WholesaleCustomers() {
                           <FormLabel>Phone</FormLabel>
                           <FormControl>
                             <Input {...field} data-testid="input-phone" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="address"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Address</FormLabel>
-                          <FormControl>
-                            <Textarea 
-                              {...field} 
-                              data-testid="input-address"
-                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>

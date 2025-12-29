@@ -321,7 +321,6 @@ export const wholesaleLocations = pgTable("wholesale_locations", {
   contactName: text("contact_name"),
   contactPhone: text("contact_phone"),
   deliveryInstructions: text("delivery_instructions"),
-  isPrimary: boolean("is_primary").notNull().default(false), // Primary/default location for this customer
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   // Geocoding cache
