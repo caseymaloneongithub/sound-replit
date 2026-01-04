@@ -2453,12 +2453,14 @@ export class PostgresStorage implements IStorage {
       await db.insert(wholesaleOrders).values([
         {
           customerId: customerResults[0].id,
+          invoiceNumber: "INV-2026-0001",
           status: "delivered",
           totalAmount: "210.00",
           notes: "Regular weekly order",
         },
         {
           customerId: customerResults[1].id,
+          invoiceNumber: "INV-2026-0002",
           status: "pending",
           totalAmount: "157.50",
           notes: null,
