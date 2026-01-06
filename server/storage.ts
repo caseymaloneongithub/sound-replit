@@ -1608,6 +1608,10 @@ export class PostgresStorage implements IStorage {
           }
           
           if (hasLocationData) {
+            // Fall back to contactName/phone if locationContactName/Phone not provided
+            const locContactName = row.locationContactName?.trim() || row.contactName?.trim() || null;
+            const locContactPhone = row.locationContactPhone?.trim() || row.phone?.trim() || null;
+            
             const locationData: InsertWholesaleLocation = {
               customerId: newCustomer.id,
               locationName: row.locationName.trim(),
@@ -1615,8 +1619,8 @@ export class PostgresStorage implements IStorage {
               city: row.locationCity.trim(),
               state: row.locationState.trim().toUpperCase(),
               zipCode: row.locationZipCode.trim(),
-              contactName: row.locationContactName?.trim() || null,
-              contactPhone: this.normalizePhone(row.locationContactPhone) || null,
+              contactName: locContactName,
+              contactPhone: this.normalizePhone(locContactPhone) || null,
             };
 
             await this.createWholesaleLocation(locationData);
