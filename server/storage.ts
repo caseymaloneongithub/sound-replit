@@ -1384,7 +1384,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async getWholesaleCustomers(): Promise<WholesaleCustomer[]> {
-    return await db.select().from(wholesaleCustomers);
+    return await db.select().from(wholesaleCustomers).orderBy(wholesaleCustomers.businessName);
   }
 
   async getWholesaleCustomer(id: string): Promise<WholesaleCustomer | undefined> {
