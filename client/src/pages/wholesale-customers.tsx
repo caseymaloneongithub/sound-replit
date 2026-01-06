@@ -34,6 +34,8 @@ export default function WholesaleCustomers() {
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [importResult, setImportResult] = useState<{ imported: number; failed: number; locationsAdded: number; usersCreated: number } | null>(null);
   const [templateEmail, setTemplateEmail] = useState("casey@soundkombucha.com");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState<WholesaleCustomer | null>(null);
@@ -226,16 +228,20 @@ export default function WholesaleCustomers() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
-      const locationMsg = data.locationsAdded > 0 ? ` with ${data.locationsAdded} location(s)` : '';
-      toast({
-        title: "Import Complete",
-        description: `Successfully imported ${data.imported} customer(s)${locationMsg}. ${data.failed} failed.`,
-      });
-      if (data.errors.length > 0) {
-        console.error("Import errors:", data.errors);
+      setImportResult({ imported: data.imported, failed: data.failed, locationsAdded: data.locationsAdded, usersCreated: data.usersCreated });
+      setImportErrors(data.errors || []);
+      
+      if (data.failed === 0) {
+        const locationMsg = data.locationsAdded > 0 ? ` with ${data.locationsAdded} location(s)` : '';
+        toast({
+          title: "Import Complete",
+          description: `Successfully imported ${data.imported} customer(s)${locationMsg}.`,
+        });
+        setImportDialogOpen(false);
+        setCsvFile(null);
+        setImportResult(null);
+        setImportErrors([]);
       }
-      setImportDialogOpen(false);
-      setCsvFile(null);
     },
     onError: (error: any) => {
       toast({
@@ -525,14 +531,21 @@ export default function WholesaleCustomers() {
               </DialogContent>
             </Dialog>
 
-            <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+            <Dialog open={importDialogOpen} onOpenChange={(open) => {
+              setImportDialogOpen(open);
+              if (!open) {
+                setCsvFile(null);
+                setImportResult(null);
+                setImportErrors([]);
+              }
+            }}>
               <DialogTrigger asChild>
                 <Button variant="outline" data-testid="button-import-csv">
                   <Upload className="w-4 h-4 mr-2" />
                   Import CSV
                 </Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="sm:max-w-[550px]">
                 <DialogHeader>
                   <DialogTitle>Import Wholesale Customers</DialogTitle>
                   <DialogDescription>
@@ -540,6 +553,32 @@ export default function WholesaleCustomers() {
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
+                  {importResult && (
+                    <div className="rounded-md border p-4 space-y-2">
+                      <div className="flex items-center gap-4 text-sm">
+                        <span className="text-green-600 font-medium">Imported: {importResult.imported}</span>
+                        {importResult.failed > 0 && (
+                          <span className="text-red-600 font-medium">Failed: {importResult.failed}</span>
+                        )}
+                        {importResult.locationsAdded > 0 && (
+                          <span className="text-muted-foreground">Locations: {importResult.locationsAdded}</span>
+                        )}
+                        {importResult.usersCreated > 0 && (
+                          <span className="text-muted-foreground">Users: {importResult.usersCreated}</span>
+                        )}
+                      </div>
+                      {importErrors.length > 0 && (
+                        <div className="mt-2">
+                          <p className="text-sm font-medium text-red-600 mb-1">Errors:</p>
+                          <div className="max-h-40 overflow-y-auto text-sm bg-muted rounded p-2 space-y-1">
+                            {importErrors.map((error, index) => (
+                              <p key={index} className="text-red-600">{error}</p>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <Label htmlFor="csv-file">CSV File</Label>
                     <Input
@@ -563,28 +602,32 @@ export default function WholesaleCustomers() {
                     onClick={() => {
                       setImportDialogOpen(false);
                       setCsvFile(null);
+                      setImportResult(null);
+                      setImportErrors([]);
                     }}
                     data-testid="button-cancel-import"
                   >
-                    Cancel
+                    {importResult ? "Close" : "Cancel"}
                   </Button>
-                  <Button
-                    onClick={handleCsvImport}
-                    disabled={importCsvMutation.isPending || !csvFile}
-                    data-testid="button-confirm-import"
-                  >
-                    {importCsvMutation.isPending ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Importing...
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="w-4 h-4 mr-2" />
-                        Import Customers
-                      </>
-                    )}
-                  </Button>
+                  {!importResult && (
+                    <Button
+                      onClick={handleCsvImport}
+                      disabled={importCsvMutation.isPending || !csvFile}
+                      data-testid="button-confirm-import"
+                    >
+                      {importCsvMutation.isPending ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Importing...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4 mr-2" />
+                          Import Customers
+                        </>
+                      )}
+                    </Button>
+                  )}
                 </DialogFooter>
               </DialogContent>
             </Dialog>
