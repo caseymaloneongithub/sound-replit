@@ -422,11 +422,33 @@ export default function WholesaleCustomers() {
 
     const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
     const csvData = lines.slice(1).map(line => {
-      // Simple CSV parsing (handles quoted values)
-      const values = line.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || [];
+      // Proper CSV parsing that handles empty values and quoted strings
+      const values: string[] = [];
+      let current = '';
+      let inQuotes = false;
+      
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        
+        if (char === '"') {
+          if (inQuotes && line[i + 1] === '"') {
+            current += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (char === ',' && !inQuotes) {
+          values.push(current.trim());
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      values.push(current.trim());
+      
       const row: any = {};
       headers.forEach((header, index) => {
-        row[header] = values[index] ? values[index].replace(/^"|"$/g, '').trim() : '';
+        row[header] = values[index] || '';
       });
       return row;
     });
