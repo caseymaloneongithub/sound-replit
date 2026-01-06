@@ -2413,7 +2413,10 @@ export class PostgresStorage implements IStorage {
         lowStockThreshold: 30,
       },
     ]);
+    }
 
+    // Subscription plans seeding disabled - plans already exist in database
+    if (false) {
       await db.insert(subscriptionPlans).values([
         {
           name: "Weekly Fresh",
