@@ -528,15 +528,50 @@ export default function WholesaleOrders() {
                         ${Number(order.totalAmount).toFixed(2)}
                       </TableCell>
                       <TableCell>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => window.open(`/wholesale/invoice/${order.id}`, '_blank')}
-                          data-testid={`button-invoice-${order.id}`}
-                          title="View Invoice"
-                        >
-                          <FileText className="w-4 h-4" />
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => window.open(`/wholesale/invoice/${order.id}`, '_blank')}
+                            data-testid={`button-invoice-${order.id}`}
+                            title="View Invoice"
+                          >
+                            <FileText className="w-4 h-4" />
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                data-testid={`button-delete-order-${order.id}`}
+                                title="Delete Order"
+                                className="text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete Order</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Are you sure you want to delete order {order.invoiceNumber}? This action cannot be undone.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel data-testid={`button-cancel-delete-${order.id}`}>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => deleteOrderMutation.mutate(order.id)}
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                  data-testid={`button-confirm-delete-${order.id}`}
+                                >
+                                  {deleteOrderMutation.isPending ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : "Delete"}
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
                       </TableCell>
                     </TableRow>
                     
