@@ -2459,7 +2459,8 @@ export class PostgresStorage implements IStorage {
       ]);
     }
 
-    if (existingCustomers.length === 0) {
+    // Sample wholesale customers removed - use CSV import or manual creation for real data
+    if (false && existingCustomers.length === 0) {
       const customerResults = await db.insert(wholesaleCustomers).values([
       {
         businessName: "Green Valley Cafe",
