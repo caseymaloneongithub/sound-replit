@@ -1583,14 +1583,29 @@ export class PostgresStorage implements IStorage {
         // Create locations from all rows that have location data
         // Also create a location from the primary row's address if provided
         for (const row of rows) {
-          const hasLocationData = row.locationName?.trim() && 
-              row.locationAddress?.trim() &&
-              row.locationCity?.trim() &&
-              row.locationState?.trim() &&
-              row.locationZipCode?.trim();
+          const locationFields = {
+            locationName: row.locationName?.trim(),
+            locationAddress: row.locationAddress?.trim(),
+            locationCity: row.locationCity?.trim(),
+            locationState: row.locationState?.trim(),
+            locationZipCode: row.locationZipCode?.trim(),
+          };
+          
+          const filledFields = Object.entries(locationFields).filter(([_, v]) => v);
+          const hasLocationData = filledFields.length === 5;
+          const hasPartialLocationData = filledFields.length > 0 && filledFields.length < 5;
           
           // Also support legacy 'address' field - create a "Main Location" from it
           const hasLegacyAddress = !hasLocationData && row === primaryRow && row.address?.trim();
+          
+          // Warn about partial location data
+          if (hasPartialLocationData && !hasLegacyAddress) {
+            const missingFields = Object.entries(locationFields)
+              .filter(([_, v]) => !v)
+              .map(([k]) => k);
+            const locationIdentifier = locationFields.locationName || locationFields.locationAddress || 'row';
+            results.errors.push(`${businessName} (${locationIdentifier}): Missing location fields: ${missingFields.join(', ')}`);
+          }
           
           if (hasLocationData) {
             const locationData: InsertWholesaleLocation = {
