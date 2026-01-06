@@ -28,6 +28,7 @@ export const users = pgTable("users", {
   role: text("role").notNull().default('user'), // 'user', 'wholesale_customer', 'staff', 'admin', 'super_admin'
   isAdmin: boolean("is_admin").notNull().default(false),
   stripeCustomerId: text("stripe_customer_id"),
+  wholesaleCustomerId: varchar("wholesale_customer_id"), // Links wholesale users to their business
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   deletedAt: timestamp("deleted_at"),

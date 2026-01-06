@@ -202,7 +202,7 @@ export interface IStorage {
   createWholesaleCustomer(customer: InsertWholesaleCustomer): Promise<WholesaleCustomer>;
   updateWholesaleCustomer(id: string, updates: Partial<InsertWholesaleCustomer>): Promise<WholesaleCustomer | undefined>;
   deleteWholesaleCustomer(id: string): Promise<void>;
-  importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[]; locationsAdded: number }>;
+  importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[]; locationsAdded: number; usersCreated: number }>;
   
   getWholesaleLocations(customerId: string): Promise<WholesaleLocation[]>;
   getWholesaleLocation(id: string): Promise<WholesaleLocation | undefined>;
@@ -1409,6 +1409,13 @@ export class PostgresStorage implements IStorage {
   }
 
   async getWholesaleCustomerByUserId(userId: string): Promise<WholesaleCustomer | undefined> {
+    // First check if user has wholesaleCustomerId set (new approach)
+    const user = await db.select().from(users).where(eq(users.id, userId));
+    if (user[0]?.wholesaleCustomerId) {
+      const result = await db.select().from(wholesaleCustomers).where(eq(wholesaleCustomers.id, user[0].wholesaleCustomerId));
+      return result[0];
+    }
+    // Fall back to old approach for backward compatibility
     const result = await db.select().from(wholesaleCustomers).where(eq(wholesaleCustomers.userId, userId));
     return result[0];
   }
@@ -1460,12 +1467,13 @@ export class PostgresStorage implements IStorage {
     return normalized;
   }
 
-  async importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[]; locationsAdded: number }> {
+  async importWholesaleCustomers(csvData: any[]): Promise<{ imported: number; failed: number; errors: string[]; locationsAdded: number; usersCreated: number }> {
     const results = {
       imported: 0,
       failed: 0,
       errors: [] as string[],
       locationsAdded: 0,
+      usersCreated: 0,
     };
 
     // Group rows by businessName to support multiple locations/emails per customer
@@ -1534,6 +1542,43 @@ export class PostgresStorage implements IStorage {
         };
 
         const newCustomer = await this.createWholesaleCustomer(customerData);
+
+        // Create a user account for each unique email
+        for (const email of emails) {
+          try {
+            // Check if user with this email already exists
+            const existingUser = await db.select().from(users).where(eq(users.email, email));
+            if (existingUser.length > 0) {
+              // User exists - only link if not already linked to any customer
+              if (!existingUser[0].wholesaleCustomerId) {
+                await db.update(users)
+                  .set({ 
+                    wholesaleCustomerId: newCustomer.id,
+                    role: 'wholesale_customer'
+                  })
+                  .where(eq(users.id, existingUser[0].id));
+                results.usersCreated++;
+              } else if (existingUser[0].wholesaleCustomerId !== newCustomer.id) {
+                // User belongs to a different customer - skip with warning
+                results.errors.push(`${businessName}: Email ${email} already belongs to another wholesale account`);
+              }
+              // If already linked to this customer, do nothing
+            } else {
+              // Create new user with UUID-based username to avoid collisions
+              const uuid = crypto.randomUUID().slice(0, 8);
+              const username = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_') + '_' + uuid;
+              await db.insert(users).values({
+                username: username,
+                email: email,
+                role: 'wholesale_customer',
+                wholesaleCustomerId: newCustomer.id,
+              });
+              results.usersCreated++;
+            }
+          } catch (userError: any) {
+            results.errors.push(`${businessName}: Failed to create user for ${email}: ${userError.message}`);
+          }
+        }
 
         // Create locations from all rows that have location data
         // Also create a location from the primary row's address if provided
