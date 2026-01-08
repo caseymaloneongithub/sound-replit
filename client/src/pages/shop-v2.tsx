@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { RetailProduct, Flavor, RetailCartItem } from "@shared/schema";
 import { Button } from "@/components/ui/button";
@@ -281,35 +282,39 @@ export default function ShopV2() {
                     return (
                     <Card key={product.id} data-testid={`card-product-${product.id}`} className="overflow-hidden">
                       <CardHeader className="p-0">
-                        <div className="aspect-square bg-muted overflow-hidden">
-                          {isMultiFlavor ? (
-                            imageUrl ? (
-                              <img 
-                                src={imageUrl} 
-                                alt={displayName || 'Product'}
-                                className="w-full h-full object-cover"
-                                data-testid={`image-${product.id}`}
-                              />
+                        <Link href={`/products/${product.id}`} data-testid={`link-product-${product.id}`}>
+                          <div className="aspect-square bg-muted overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
+                            {isMultiFlavor ? (
+                              imageUrl ? (
+                                <img 
+                                  src={imageUrl} 
+                                  alt={displayName || 'Product'}
+                                  className="w-full h-full object-cover"
+                                  data-testid={`image-${product.id}`}
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <ImageIcon className="w-16 h-16 text-muted-foreground" />
+                                </div>
+                              )
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <ImageIcon className="w-16 h-16 text-muted-foreground" />
-                              </div>
-                            )
-                          ) : (
-                            <ProductImageCarousel
-                              primaryImageUrl={product.flavor?.primaryImageUrl}
-                              secondaryImageUrl={product.flavor?.secondaryImageUrl}
-                              productName={displayName || 'Product'}
-                              productId={product.id}
-                            />
-                          )}
-                        </div>
+                              <ProductImageCarousel
+                                primaryImageUrl={product.flavor?.primaryImageUrl}
+                                secondaryImageUrl={product.flavor?.secondaryImageUrl}
+                                productName={displayName || 'Product'}
+                                productId={product.id}
+                              />
+                            )}
+                          </div>
+                        </Link>
                       </CardHeader>
                       <CardContent className="p-4">
                         <div className="flex items-center gap-2 flex-wrap mb-2">
-                          <h3 className="text-xl font-semibold" data-testid={`text-flavor-${product.id}`}>
-                            {displayName}
-                          </h3>
+                          <Link href={`/products/${product.id}`}>
+                            <h3 className="text-xl font-semibold hover:text-primary transition-colors cursor-pointer" data-testid={`text-flavor-${product.id}`}>
+                              {displayName}
+                            </h3>
+                          </Link>
                         </div>
                         {!isMultiFlavor && product.flavor && (
                           <Badge variant="secondary" className="mb-2" data-testid={`badge-profile-${product.id}`}>

@@ -23,6 +23,7 @@ import MySubscriptions from "@/pages/my-subscriptions";
 import OrderHistory from "@/pages/order-history";
 import Subscribe from "@/pages/subscribe";
 import ProductSubscribe from "@/pages/product-subscribe";
+import ProductDetail from "@/pages/product-detail";
 import Checkout from "@/pages/checkout";
 import CartCheckout from "@/pages/cart-checkout";
 import CheckoutSuccess from "@/pages/checkout-success";
@@ -71,6 +72,7 @@ function Router() {
       <WholesaleCustomerProtectedRoute path="/wholesale-customer/orders" component={WholesaleCustomerOrders} />
       <Route path="/" component={() => <Redirect to="/shop" />} />
       <Route path="/shop" component={ShopV2} />
+      <Route path="/products/:id" component={ProductDetail} />
       <Route path="/shop-legacy" component={Shop} />
       <Route path="/shop-v2" component={() => <Redirect to="/shop" />} />
       <Route path="/contact" component={Contact} />
