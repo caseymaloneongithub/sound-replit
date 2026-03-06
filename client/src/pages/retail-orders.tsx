@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
 import { ShoppingCart, Loader2, Package, XCircle, ArrowUpDown, DollarSign, ChevronDown, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -27,15 +28,9 @@ interface RetailOrderWithItems extends RetailOrder {
   items: OrderItem[];
 }
 
-function getStatusColor(status: string): string {
-  switch (status) {
-    case 'pending': return 'bg-yellow-500';
-    case 'ready_for_pickup': return 'bg-blue-500';
-    case 'fulfilled': return 'bg-green-500';
-    case 'cancelled': return 'bg-red-500';
-    default: return 'bg-gray-500';
-  }
-}
+const PAGE_SIZE = 25;
+
+const STATUSES = ['pending', 'ready_for_pickup', 'fulfilled', 'cancelled'] as const;
 
 function getStatusLabel(status: string): string {
   switch (status) {
@@ -47,10 +42,42 @@ function getStatusLabel(status: string): string {
   }
 }
 
+function getPageNumbers(currentPage: number, totalPages: number): (number | 'ellipsis')[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+
+  const pages: (number | 'ellipsis')[] = [1];
+
+  if (currentPage > 3) {
+    pages.push('ellipsis');
+  }
+
+  const start = Math.max(2, currentPage - 1);
+  const end = Math.min(totalPages - 1, currentPage + 1);
+
+  for (let i = start; i <= end; i++) {
+    pages.push(i);
+  }
+
+  if (currentPage < totalPages - 2) {
+    pages.push('ellipsis');
+  }
+
+  pages.push(totalPages);
+  return pages;
+}
+
 export default function RetailOrders() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('pending');
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+  const [tabPages, setTabPages] = useState<Record<string, number>>({
+    pending: 1,
+    ready_for_pickup: 1,
+    fulfilled: 1,
+    cancelled: 1,
+  });
   const [sortOrders, setSortOrders] = useState<Record<string, 'asc' | 'desc'>>({
     pending: 'asc',
     ready_for_pickup: 'desc',
@@ -58,16 +85,43 @@ export default function RetailOrders() {
     cancelled: 'desc',
   });
 
-  const { data: orders = [], isLoading } = useQuery<RetailOrderWithItems[]>({
-    queryKey: ['/api/retail/orders'],
+  const currentPage = tabPages[activeTab] || 1;
+  const offset = (currentPage - 1) * PAGE_SIZE;
+
+  // Fetch order counts for all tab badges
+  const { data: orderCounts } = useQuery<Record<string, number>>({
+    queryKey: ['/api/retail/orders/counts'],
   });
+
+  // Fetch orders for the active tab with pagination
+  const { data: ordersData, isLoading } = useQuery<{ orders: RetailOrderWithItems[]; total: number }>({
+    queryKey: [`/api/retail/orders?status=${activeTab}&limit=${PAGE_SIZE}&offset=${offset}`],
+  });
+
+  const orders = ordersData?.orders ?? [];
+  const totalOrders = ordersData?.total ?? 0;
+  const totalPages = Math.ceil(totalOrders / PAGE_SIZE);
+
+  const setPage = (page: number) => {
+    setTabPages(prev => ({ ...prev, [activeTab]: page }));
+    setExpandedOrders(new Set());
+  };
 
   const updateOrderStatusMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: string; status: string }) => {
       return await apiRequest('PATCH', `/api/retail/orders/${orderId}/status`, { status });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/retail/orders'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/retail/orders/counts'] });
+      // Invalidate all tab queries since status change moves orders between tabs
+      STATUSES.forEach(s => {
+        queryClient.invalidateQueries({
+          predicate: (query) => {
+            const key = query.queryKey[0];
+            return typeof key === 'string' && key.startsWith(`/api/retail/orders?status=${s}`);
+          },
+        });
+      });
       toast({
         title: "Order updated",
         description: "Retail order status has been updated successfully",
@@ -87,7 +141,15 @@ export default function RetailOrders() {
       return await apiRequest('POST', `/api/retail/orders/${orderId}/cancel-with-refund`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/retail/orders'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/retail/orders/counts'] });
+      STATUSES.forEach(s => {
+        queryClient.invalidateQueries({
+          predicate: (query) => {
+            const key = query.queryKey[0];
+            return typeof key === 'string' && key.startsWith(`/api/retail/orders?status=${s}`);
+          },
+        });
+      });
       toast({
         title: "Order cancelled",
         description: "Order has been cancelled and refund has been processed",
@@ -96,7 +158,7 @@ export default function RetailOrders() {
     onError: async (error: any) => {
       let errorMessage = "Failed to cancel order with refund";
       let errorDetails = "";
-      
+
       if (error instanceof Response) {
         try {
           const errorData = await error.json();
@@ -112,7 +174,7 @@ export default function RetailOrders() {
       } else if (error.message) {
         errorMessage = error.message;
       }
-      
+
       toast({
         title: "Error",
         description: errorDetails ? `${errorMessage}\n${errorDetails}` : errorMessage,
@@ -126,7 +188,12 @@ export default function RetailOrders() {
       return await apiRequest('POST', `/api/retail/orders/${orderId}/refund-deposit`);
     },
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/retail/orders'] });
+      queryClient.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey[0];
+          return typeof key === 'string' && key.startsWith('/api/retail/orders');
+        },
+      });
       toast({
         title: "Deposit refunded",
         description: `Deposit of $${data.amount?.toFixed(2) || '0.00'} has been refunded successfully`,
@@ -134,7 +201,7 @@ export default function RetailOrders() {
     },
     onError: async (error: any) => {
       let errorMessage = "Failed to refund deposit";
-      
+
       if (error instanceof Response) {
         try {
           const errorData = await error.json();
@@ -144,7 +211,7 @@ export default function RetailOrders() {
       } else if (error.message) {
         errorMessage = error.message;
       }
-      
+
       toast({
         title: "Error",
         description: errorMessage,
@@ -172,22 +239,21 @@ export default function RetailOrders() {
     });
   };
 
-  const getFilteredAndSortedOrders = (status: string) => {
-    const filtered = orders.filter(order => order.status === status);
-    const sortOrder = sortOrders[status] || 'desc';
-    
-    return filtered.sort((a, b) => {
+  const getSortedOrders = () => {
+    const sortOrder = sortOrders[activeTab] || 'desc';
+    return [...orders].sort((a, b) => {
       const dateA = new Date(a.orderDate).getTime();
       const dateB = new Date(b.orderDate).getTime();
       return sortOrder === 'asc' ? dateA - dateB : dateB - dateA;
     });
   };
 
-  const renderOrdersTable = (status: string) => {
-    const filteredOrders = getFilteredAndSortedOrders(status);
-    const sortOrder = sortOrders[status] || 'desc';
+  const renderOrdersTable = () => {
+    const sortedOrders = getSortedOrders();
+    const sortOrder = sortOrders[activeTab] || 'desc';
+    const status = activeTab;
 
-    if (filteredOrders.length === 0) {
+    if (sortedOrders.length === 0 && !isLoading) {
       return (
         <Card>
           <CardContent className="py-12 text-center">
@@ -200,8 +266,8 @@ export default function RetailOrders() {
 
     const consolidatedItems = (status === 'pending' || status === 'ready_for_pickup') ? (() => {
       const itemMap: Record<string, { productName: string; unitDescription: string; quantity: number }> = {};
-      
-      filteredOrders.forEach(order => {
+
+      sortedOrders.forEach(order => {
         order.items?.forEach(item => {
           const key = `${item.productName}-${item.unitDescription}`;
           if (!itemMap[key]) {
@@ -214,7 +280,7 @@ export default function RetailOrders() {
           itemMap[key].quantity += item.quantity;
         });
       });
-      
+
       return Object.values(itemMap).sort((a, b) => a.productName.localeCompare(b.productName));
     })() : [];
 
@@ -229,6 +295,9 @@ export default function RetailOrders() {
                 <h3 className="font-semibold text-lg flex items-center gap-2">
                   <Package className="w-5 h-5" />
                   {summaryTitle}
+                  {totalPages > 1 && (
+                    <span className="text-sm font-normal text-muted-foreground">(this page)</span>
+                  )}
                 </h3>
                 <Badge variant="secondary" data-testid={`badge-item-count-${status}`}>
                   {consolidatedItems.length} {consolidatedItems.length === 1 ? 'product' : 'products'}
@@ -236,7 +305,7 @@ export default function RetailOrders() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {consolidatedItems.map((item, index) => (
-                  <div 
+                  <div
                     key={index}
                     className="flex justify-between items-center bg-muted/50 rounded-md px-3 py-2"
                     data-testid={`summary-item-${status}-${index}`}
@@ -259,7 +328,10 @@ export default function RetailOrders() {
           </Card>
         )}
 
-        <div className="flex justify-end">
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-muted-foreground">
+            {totalOrders} {totalOrders === 1 ? 'order' : 'orders'}
+          </span>
           <Button
             variant="outline"
             size="sm"
@@ -287,12 +359,12 @@ export default function RetailOrders() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredOrders.map((order) => {
+                {sortedOrders.map((order) => {
                   const isExpanded = expandedOrders.has(order.id);
                   return (
                     <Collapsible key={order.id} open={isExpanded} onOpenChange={() => toggleExpand(order.id)} asChild>
                       <>
-                        <TableRow 
+                        <TableRow
                           className="cursor-pointer hover-elevate"
                           data-testid={`row-retail-order-${order.id}`}
                         >
@@ -334,8 +406,8 @@ export default function RetailOrders() {
                           <TableCell>
                             <Select
                               value={order.status}
-                              onValueChange={(status) => 
-                                updateOrderStatusMutation.mutate({ orderId: order.id, status })
+                              onValueChange={(newStatus) =>
+                                updateOrderStatusMutation.mutate({ orderId: order.id, status: newStatus })
                               }
                               disabled={updateOrderStatusMutation.isPending || order.status === 'fulfilled' || order.status === 'cancelled'}
                             >
@@ -355,8 +427,8 @@ export default function RetailOrders() {
                               {Number(order.depositAmount || 0) > 0 && !order.depositRefundedAt && order.stripePaymentIntentId && (
                                 <AlertDialog>
                                   <AlertDialogTrigger asChild>
-                                    <Button 
-                                      variant="outline" 
+                                    <Button
+                                      variant="outline"
                                       size="sm"
                                       disabled={refundDepositMutation.isPending}
                                       data-testid={`button-refund-deposit-${order.id}`}
@@ -368,7 +440,7 @@ export default function RetailOrders() {
                                     <AlertDialogHeader>
                                       <AlertDialogTitle>Refund Deposit?</AlertDialogTitle>
                                       <AlertDialogDescription>
-                                        This will refund the deposit of ${Number(order.depositAmount).toFixed(2)} to the customer's payment method for order #{order.orderNumber}. 
+                                        This will refund the deposit of ${Number(order.depositAmount).toFixed(2)} to the customer's payment method for order #{order.orderNumber}.
                                         This action cannot be undone.
                                       </AlertDialogDescription>
                                     </AlertDialogHeader>
@@ -387,8 +459,8 @@ export default function RetailOrders() {
                               {order.status !== 'cancelled' && order.status !== 'fulfilled' && order.stripePaymentIntentId && (
                                 <AlertDialog>
                                   <AlertDialogTrigger asChild>
-                                    <Button 
-                                      variant="destructive" 
+                                    <Button
+                                      variant="destructive"
                                       size="sm"
                                       disabled={cancelOrderWithRefundMutation.isPending}
                                       data-testid={`button-cancel-order-${order.id}`}
@@ -400,7 +472,7 @@ export default function RetailOrders() {
                                     <AlertDialogHeader>
                                       <AlertDialogTitle>Cancel Order with Refund?</AlertDialogTitle>
                                       <AlertDialogDescription>
-                                        This will cancel order #{order.orderNumber} and process a full refund of ${Number(order.totalAmount).toFixed(2)} to the customer's payment method. 
+                                        This will cancel order #{order.orderNumber} and process a full refund of ${Number(order.totalAmount).toFixed(2)} to the customer's payment method.
                                         This action cannot be undone.
                                       </AlertDialogDescription>
                                     </AlertDialogHeader>
@@ -432,8 +504,8 @@ export default function RetailOrders() {
                                     {order.items && order.items.length > 0 ? (
                                       <div className="space-y-1">
                                         {order.items.map((item) => (
-                                          <div 
-                                            key={item.id} 
+                                          <div
+                                            key={item.id}
                                             className="flex justify-between items-center text-sm bg-background rounded-md px-3 py-2"
                                             data-testid={`order-item-${item.id}`}
                                           >
@@ -506,15 +578,49 @@ export default function RetailOrders() {
             </Table>
           </div>
         </Card>
+
+        {totalPages > 1 && (
+          <Pagination>
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  onClick={() => setPage(Math.max(1, currentPage - 1))}
+                  className={currentPage <= 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                />
+              </PaginationItem>
+              {getPageNumbers(currentPage, totalPages).map((pageNum, i) =>
+                pageNum === 'ellipsis' ? (
+                  <PaginationItem key={`ellipsis-${i}`}>
+                    <PaginationEllipsis />
+                  </PaginationItem>
+                ) : (
+                  <PaginationItem key={pageNum}>
+                    <PaginationLink
+                      isActive={pageNum === currentPage}
+                      onClick={() => setPage(pageNum)}
+                      className="cursor-pointer"
+                    >
+                      {pageNum}
+                    </PaginationLink>
+                  </PaginationItem>
+                )
+              )}
+              <PaginationItem>
+                <PaginationNext
+                  onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
+                  className={currentPage >= totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        )}
       </div>
     );
   };
 
-  const orderCounts = {
-    pending: orders.filter(o => o.status === 'pending').length,
-    ready_for_pickup: orders.filter(o => o.status === 'ready_for_pickup').length,
-    fulfilled: orders.filter(o => o.status === 'fulfilled').length,
-    cancelled: orders.filter(o => o.status === 'cancelled').length,
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    setExpandedOrders(new Set());
   };
 
   return (
@@ -529,69 +635,64 @@ export default function RetailOrders() {
           </p>
         </div>
 
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12 gap-2">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            <span className="text-muted-foreground">Loading orders...</span>
-          </div>
-        ) : orders.length === 0 ? (
-          <Card>
-            <CardContent className="py-12 text-center">
-              <ShoppingCart className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-              <p className="text-muted-foreground">No retail orders found</p>
-            </CardContent>
-          </Card>
-        ) : (
-          <Tabs value={activeTab} onValueChange={setActiveTab} data-testid="tabs-retail-orders">
-            <TabsList className="mb-6">
-              <TabsTrigger value="pending" data-testid="tab-pending">
-                Pending
-                {orderCounts.pending > 0 && (
-                  <Badge variant="secondary" className="ml-2">
-                    {orderCounts.pending}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="ready_for_pickup" data-testid="tab-ready-for-pickup">
-                Ready for Pickup
-                {orderCounts.ready_for_pickup > 0 && (
-                  <Badge variant="secondary" className="ml-2">
-                    {orderCounts.ready_for_pickup}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="fulfilled" data-testid="tab-fulfilled">
-                Fulfilled
-                {orderCounts.fulfilled > 0 && (
-                  <Badge variant="secondary" className="ml-2">
-                    {orderCounts.fulfilled}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="cancelled" data-testid="tab-cancelled">
-                Cancelled
-                {orderCounts.cancelled > 0 && (
-                  <Badge variant="secondary" className="ml-2">
-                    {orderCounts.cancelled}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TabsList>
+        <Tabs value={activeTab} onValueChange={handleTabChange} data-testid="tabs-retail-orders">
+          <TabsList className="mb-6">
+            <TabsTrigger value="pending" data-testid="tab-pending">
+              Pending
+              {(orderCounts?.pending ?? 0) > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {orderCounts!.pending}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="ready_for_pickup" data-testid="tab-ready-for-pickup">
+              Ready for Pickup
+              {(orderCounts?.ready_for_pickup ?? 0) > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {orderCounts!.ready_for_pickup}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="fulfilled" data-testid="tab-fulfilled">
+              Fulfilled
+              {(orderCounts?.fulfilled ?? 0) > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {orderCounts!.fulfilled}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="cancelled" data-testid="tab-cancelled">
+              Cancelled
+              {(orderCounts?.cancelled ?? 0) > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {orderCounts!.cancelled}
+                </Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
 
-            <TabsContent value="pending">
-              {renderOrdersTable('pending')}
-            </TabsContent>
-            <TabsContent value="ready_for_pickup">
-              {renderOrdersTable('ready_for_pickup')}
-            </TabsContent>
-            <TabsContent value="fulfilled">
-              {renderOrdersTable('fulfilled')}
-            </TabsContent>
-            <TabsContent value="cancelled">
-              {renderOrdersTable('cancelled')}
-            </TabsContent>
-          </Tabs>
-        )}
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12 gap-2">
+              <Loader2 className="w-6 h-6 animate-spin" />
+              <span className="text-muted-foreground">Loading orders...</span>
+            </div>
+          ) : (
+            <>
+              <TabsContent value="pending">
+                {renderOrdersTable()}
+              </TabsContent>
+              <TabsContent value="ready_for_pickup">
+                {renderOrdersTable()}
+              </TabsContent>
+              <TabsContent value="fulfilled">
+                {renderOrdersTable()}
+              </TabsContent>
+              <TabsContent value="cancelled">
+                {renderOrdersTable()}
+              </TabsContent>
+            </>
+          )}
+        </Tabs>
       </div>
     </StaffLayout>
   );

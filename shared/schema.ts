@@ -236,6 +236,7 @@ export const retailSubscriptions = pgTable("retail_subscriptions", {
   startDate: timestamp("start_date").notNull().defaultNow(),
   nextDeliveryDate: timestamp("next_delivery_date"),
   cancelledAt: timestamp("cancelled_at"),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdateFn(() => new Date()),
 });
 
 // NEW SCHEMA - Retail Subscription Items V2 (junction table)
@@ -410,6 +411,8 @@ export const retailOrders = pgTable("retail_orders", {
   fulfilledAt: timestamp("fulfilled_at"),
   fulfilledByUserId: varchar("fulfilled_by_user_id").references(() => users.id),
   notes: text("notes"),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdateFn(() => new Date()),
+  deletedAt: timestamp("deleted_at"), // Soft delete - null means active
 });
 
 export const retailOrderItems = pgTable("retail_order_items", {
@@ -618,7 +621,7 @@ export const insertWholesaleUnitTypeFlavorSchema = createInsertSchema(wholesaleU
 export const insertWholesaleCustomerPricingSchema = createInsertSchema(wholesaleCustomerPricing).omit({ id: true });
 export const insertRetailCartItemSchema = createInsertSchema(retailCartItems).omit({ id: true });
 export const insertRetailOrderItemV2Schema = createInsertSchema(retailOrderItemsV2).omit({ id: true });
-export const insertRetailSubscriptionSchema = createInsertSchema(retailSubscriptions).omit({ id: true, startDate: true, cancelledAt: true });
+export const insertRetailSubscriptionSchema = createInsertSchema(retailSubscriptions).omit({ id: true, startDate: true, cancelledAt: true, updatedAt: true });
 export const insertRetailSubscriptionItemSchema = createInsertSchema(retailSubscriptionItems).omit({ id: true });
 
 // Insert schemas - COMMON (used by both old and new)
@@ -628,7 +631,7 @@ export const insertCartItemSchema = createInsertSchema(cartItems).omit({ id: tru
 export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({ id: true, startDate: true, cancelledAt: true });
 export const insertSubscriptionItemSchema = createInsertSchema(subscriptionItems).omit({ id: true });
 export const insertRetailCheckoutSessionSchema = createInsertSchema(retailCheckoutSessions).omit({ id: true, createdAt: true });
-export const insertRetailOrderSchema = createInsertSchema(retailOrders).omit({ id: true, orderDate: true, fulfilledAt: true });
+export const insertRetailOrderSchema = createInsertSchema(retailOrders).omit({ id: true, orderDate: true, fulfilledAt: true, updatedAt: true, deletedAt: true });
 export const insertRetailOrderItemSchema = createInsertSchema(retailOrderItems).omit({ id: true });
 export const insertWholesaleCustomerSchema = createInsertSchema(wholesaleCustomers).omit({ id: true });
 export const insertWholesaleLocationSchema = createInsertSchema(wholesaleLocations).omit({ id: true, createdAt: true, geocodedAt: true });
