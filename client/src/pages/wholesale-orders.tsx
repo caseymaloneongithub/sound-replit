@@ -434,7 +434,7 @@ export default function WholesaleOrders() {
                           size="icon"
                           onClick={() => toggleRowExpansion(order.id)}
                           data-testid={`button-expand-${order.id}`}
-                          className="h-6 w-6"
+                          className="h-5 w-5"
                         >
                           {isExpanded ? (
                             <ChevronDown className="w-4 h-4" />
