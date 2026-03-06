@@ -370,7 +370,7 @@ export default function RetailOrders() {
                         >
                           <TableCell>
                             <CollapsibleTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-6 w-6" data-testid={`button-expand-${order.id}`}>
+                              <Button variant="ghost" size="icon" className="h-5 w-5" data-testid={`button-expand-${order.id}`}>
                                 {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                               </Button>
                             </CollapsibleTrigger>
