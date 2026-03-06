@@ -5321,12 +5321,24 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
+  // Retail order counts by status
+  app.get("/api/retail/orders/counts", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
+    try {
+      const counts = await storage.getRetailOrderCounts();
+      res.json(counts);
+    } catch (error: any) {
+      console.error("Error fetching retail order counts:", error);
+      res.status(500).json({ message: "Failed to fetch retail order counts" });
+    }
+  });
+
   // Retail orders routes (staff and admin access)
   app.get("/api/retail/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
       const offset = req.query.offset ? parseInt(req.query.offset as string) : undefined;
-      const { orders, total } = await storage.getRetailOrders({ limit, offset });
+      const status = req.query.status as string | undefined;
+      const { orders, total } = await storage.getRetailOrders({ limit, offset, status });
       
       // Get all order items with product details
       const orderIds = orders.map(o => o.id);

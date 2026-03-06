@@ -262,7 +262,8 @@ export interface IStorage {
   getRetailCheckoutSessionByPaymentIntent(paymentIntentId: string): Promise<RetailCheckoutSession | undefined>;
   deleteRetailCheckoutSession(id: string): Promise<void>;
   
-  getRetailOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: RetailOrder[]; total: number }>;
+  getRetailOrders(options?: { limit?: number; offset?: number; status?: string }): Promise<{ orders: RetailOrder[]; total: number }>;
+  getRetailOrderCounts(): Promise<Record<string, number>>;
   getRetailOrder(id: string): Promise<RetailOrder | undefined>;
   getRetailOrdersByUserId(userId: string): Promise<RetailOrder[]>;
   getRetailOrderWithDetails(id: string): Promise<{
@@ -2658,8 +2659,12 @@ export class PostgresStorage implements IStorage {
     await db.delete(retailCheckoutSessions).where(eq(retailCheckoutSessions.id, id));
   }
 
-  async getRetailOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: RetailOrder[]; total: number }> {
-    const whereClause = isNull(retailOrders.deletedAt);
+  async getRetailOrders(options?: { limit?: number; offset?: number; status?: string }): Promise<{ orders: RetailOrder[]; total: number }> {
+    const conditions = [isNull(retailOrders.deletedAt)];
+    if (options?.status) {
+      conditions.push(eq(retailOrders.status, options.status));
+    }
+    const whereClause = and(...conditions);
 
     const [countResult] = await db
       .select({ count: sql<number>`count(*)::int` })
@@ -2677,6 +2682,23 @@ export class PostgresStorage implements IStorage {
 
     const orders = await query;
     return { orders, total: countResult.count };
+  }
+
+  async getRetailOrderCounts(): Promise<Record<string, number>> {
+    const result = await db
+      .select({
+        status: retailOrders.status,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(retailOrders)
+      .where(isNull(retailOrders.deletedAt))
+      .groupBy(retailOrders.status);
+
+    const counts: Record<string, number> = {};
+    for (const row of result) {
+      counts[row.status] = row.count;
+    }
+    return counts;
   }
 
   async getRetailOrder(id: string): Promise<RetailOrder | undefined> {
