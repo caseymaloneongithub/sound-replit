@@ -437,6 +437,8 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   paidByUserId: varchar("paid_by_user_id").references(() => users.id), // Who marked it as paid (for manual marking)
   stripePaymentIntentId: text("stripe_payment_intent_id"), // Links to Stripe payment
   invoiceSentAt: timestamp("invoice_sent_at"), // When invoice was emailed
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdateFn(() => new Date()),
+  deletedAt: timestamp("deleted_at"), // Soft delete - null means active
 });
 
 export const wholesaleOrderItems = pgTable("wholesale_order_items", {
@@ -632,7 +634,7 @@ export const insertWholesaleLocationSchema = createInsertSchema(wholesaleLocatio
 export const insertDeliveryStopSchema = createInsertSchema(deliveryStops).omit({ id: true, createdAt: true, geocodedAt: true, latitude: true, longitude: true, createdByUserId: true });
 export const insertDeliveryRouteSchema = createInsertSchema(deliveryRoutes).omit({ id: true, generatedAt: true });
 export const insertDeliveryRouteStopSchema = createInsertSchema(deliveryRouteStops).omit({ id: true });
-export const insertWholesaleOrderSchema = createInsertSchema(wholesaleOrders).omit({ id: true, orderDate: true, fulfilledAt: true });
+export const insertWholesaleOrderSchema = createInsertSchema(wholesaleOrders).omit({ id: true, orderDate: true, fulfilledAt: true, updatedAt: true, deletedAt: true });
 export const insertWholesaleOrderItemSchema = createInsertSchema(wholesaleOrderItems).omit({ id: true });
 export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
 export const insertEmailVerificationCodeSchema = createInsertSchema(emailVerificationCodes).omit({ id: true, createdAt: true, consumedAt: true });

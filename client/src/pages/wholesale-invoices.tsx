@@ -39,9 +39,10 @@ export default function WholesaleInvoices() {
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
-  const { data: orders = [], isLoading: ordersLoading } = useQuery<WholesaleOrderWithPayment[]>({
+  const { data: ordersData, isLoading: ordersLoading } = useQuery<{ orders: WholesaleOrderWithPayment[]; total: number }>({
     queryKey: ["/api/wholesale/orders"],
   });
+  const orders = ordersData?.orders ?? [];
 
   const { data: customers = [] } = useQuery<WholesaleCustomer[]>({
     queryKey: ["/api/wholesale/customers"],
