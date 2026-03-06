@@ -713,7 +713,7 @@ export default function AdminProducts() {
                           <img 
                             src={product.imageUrl} 
                             alt={product.name}
-                            className="w-12 h-12 object-cover rounded"
+                            className="w-8 h-8 object-cover rounded"
                           />
                           <div>
                             <p className="font-medium">{product.name}</p>
