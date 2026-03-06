@@ -2461,7 +2461,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Create first order immediately
           if (paymentIntent.status === 'succeeded') {
-            const orderCount = await db.select({ count: sql<number>`count(*)` }).from(retailOrders);
+            const orderCount = await db.select({ count: sql<number>`count(*)` }).from(retailOrders).where(isNull(retailOrders.deletedAt));
             const orderNumber = `RO-${String((orderCount[0].count as number) + 1).padStart(6, '0')}`;
 
             const [newOrder] = await db.insert(retailOrders).values({
@@ -3361,10 +3361,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const subIds = retailSubs.map(s => s.id);
 
       // Batch-fetch all items for all subscriptions (avoids N+1)
-      const allItems = await db
-        .select()
-        .from(retailSubscriptionItems)
-        .where(inArray(retailSubscriptionItems.subscriptionId, subIds));
+      const allItems = subIds.length > 0
+        ? await db
+            .select()
+            .from(retailSubscriptionItems)
+            .where(inArray(retailSubscriptionItems.subscriptionId, subIds))
+        : [];
 
       // Batch-fetch all referenced retail products and flavors
       const productIds = Array.from(new Set(allItems.map(i => i.retailProductId)));
@@ -5596,8 +5598,9 @@ If you have any questions, please don't hesitate to reach out!`,
           .set({
             depositRefundedAt: new Date(),
             depositRefundedByUserId: req.user!.id,
+            updatedAt: new Date(),
           })
-          .where(eq(retailOrders.id, req.params.id));
+          .where(and(eq(retailOrders.id, req.params.id), isNull(retailOrders.deletedAt)));
 
         res.json({ 
           success: true, 

@@ -2823,7 +2823,7 @@ export class PostgresStorage implements IStorage {
         }
 
         await client.query(
-          'UPDATE retail_orders SET status = $1, fulfilled_at = $2, fulfilled_by_user_id = $3, updated_at = $4 WHERE id = $5',
+          'UPDATE retail_orders SET status = $1, fulfilled_at = $2, fulfilled_by_user_id = $3, updated_at = $4 WHERE id = $5 AND deleted_at IS NULL',
           [status, new Date(), userId, new Date(), id]
         );
 
@@ -2842,7 +2842,7 @@ export class PostgresStorage implements IStorage {
       const result = await db
         .update(retailOrders)
         .set(updates)
-        .where(eq(retailOrders.id, id))
+        .where(and(eq(retailOrders.id, id), isNull(retailOrders.deletedAt)))
         .returning();
       return result[0];
     }
@@ -2882,7 +2882,7 @@ export class PostgresStorage implements IStorage {
 
       // Update order status to cancelled
       await client.query(
-        'UPDATE retail_orders SET status = $1, updated_at = $2 WHERE id = $3',
+        'UPDATE retail_orders SET status = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL',
         ['cancelled', new Date(), id]
       );
 
@@ -2905,9 +2905,9 @@ export class PostgresStorage implements IStorage {
       await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
       
       const result = await client.query(
-        `SELECT order_number FROM retail_orders 
-         WHERE order_number LIKE $1
-         ORDER BY order_number DESC 
+        `SELECT order_number FROM retail_orders
+         WHERE order_number LIKE $1 AND deleted_at IS NULL
+         ORDER BY order_number DESC
          LIMIT 1`,
         [`RO-${currentYear}-%`]
       );
@@ -2924,7 +2924,7 @@ export class PostgresStorage implements IStorage {
       const result = await db
         .select()
         .from(retailOrders)
-        .where(sql`${retailOrders.orderNumber} LIKE ${`RO-${currentYear}-%`}`)
+        .where(and(sql`${retailOrders.orderNumber} LIKE ${`RO-${currentYear}-%`}`, isNull(retailOrders.deletedAt)))
         .orderBy(desc(retailOrders.orderNumber));
       
       if (result.length === 0) {
