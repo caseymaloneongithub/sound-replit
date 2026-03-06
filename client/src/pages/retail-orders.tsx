@@ -58,9 +58,10 @@ export default function RetailOrders() {
     cancelled: 'desc',
   });
 
-  const { data: orders = [], isLoading } = useQuery<RetailOrderWithItems[]>({
+  const { data: ordersData, isLoading } = useQuery<{ orders: RetailOrderWithItems[]; total: number }>({
     queryKey: ['/api/retail/orders'],
   });
+  const orders = ordersData?.orders ?? [];
 
   const updateOrderStatusMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: string; status: string }) => {

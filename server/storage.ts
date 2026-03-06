@@ -262,7 +262,7 @@ export interface IStorage {
   getRetailCheckoutSessionByPaymentIntent(paymentIntentId: string): Promise<RetailCheckoutSession | undefined>;
   deleteRetailCheckoutSession(id: string): Promise<void>;
   
-  getRetailOrders(): Promise<RetailOrder[]>;
+  getRetailOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: RetailOrder[]; total: number }>;
   getRetailOrder(id: string): Promise<RetailOrder | undefined>;
   getRetailOrdersByUserId(userId: string): Promise<RetailOrder[]>;
   getRetailOrderWithDetails(id: string): Promise<{
@@ -2658,17 +2658,34 @@ export class PostgresStorage implements IStorage {
     await db.delete(retailCheckoutSessions).where(eq(retailCheckoutSessions.id, id));
   }
 
-  async getRetailOrders(): Promise<RetailOrder[]> {
-    return await db.select().from(retailOrders).orderBy(desc(retailOrders.orderDate));
+  async getRetailOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: RetailOrder[]; total: number }> {
+    const whereClause = isNull(retailOrders.deletedAt);
+
+    const [countResult] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(retailOrders)
+      .where(whereClause);
+
+    let query = db.select().from(retailOrders).where(whereClause).orderBy(desc(retailOrders.orderDate)).$dynamic();
+
+    if (options?.limit !== undefined) {
+      query = query.limit(options.limit);
+    }
+    if (options?.offset !== undefined) {
+      query = query.offset(options.offset);
+    }
+
+    const orders = await query;
+    return { orders, total: countResult.count };
   }
 
   async getRetailOrder(id: string): Promise<RetailOrder | undefined> {
-    const result = await db.select().from(retailOrders).where(eq(retailOrders.id, id));
+    const result = await db.select().from(retailOrders).where(and(eq(retailOrders.id, id), isNull(retailOrders.deletedAt)));
     return result[0];
   }
 
   async getRetailOrdersByUserId(userId: string): Promise<RetailOrder[]> {
-    return await db.select().from(retailOrders).where(eq(retailOrders.userId, userId)).orderBy(desc(retailOrders.orderDate));
+    return await db.select().from(retailOrders).where(and(eq(retailOrders.userId, userId), isNull(retailOrders.deletedAt))).orderBy(desc(retailOrders.orderDate));
   }
 
   async getRetailOrderWithDetails(id: string): Promise<{
@@ -2769,39 +2786,45 @@ export class PostgresStorage implements IStorage {
           .from(retailOrderItems)
           .where(eq(retailOrderItems.orderId, id));
 
-        for (const item of orderItems) {
-          const productResult = await client.query(
-            'SELECT stock_quantity FROM products WHERE id = $1 FOR UPDATE',
-            [item.productId]
+        if (orderItems.length > 0) {
+          // Batch-lock all product rows at once (avoids N individual SELECT FOR UPDATE queries)
+          const productIds = orderItems.map(i => i.productId);
+          const stockResult = await client.query(
+            'SELECT id, stock_quantity FROM products WHERE id = ANY($1::text[]) FOR UPDATE',
+            [productIds]
           );
 
-          if (productResult.rows.length === 0) {
-            throw new Error(`Product not found: ${item.productId}`);
+          const stockMap = new Map(stockResult.rows.map((r: any) => [r.id, r.stock_quantity]));
+
+          // Validate stock and apply updates
+          for (const item of orderItems) {
+            const currentStock = stockMap.get(item.productId);
+            if (currentStock === undefined) {
+              throw new Error(`Product not found: ${item.productId}`);
+            }
+
+            const newStock = currentStock - item.quantity;
+            if (newStock < 0) {
+              throw new Error(`Insufficient stock for product ${item.productId}. Required: ${item.quantity}, Available: ${currentStock}`);
+            }
+
+            await client.query(
+              'UPDATE products SET stock_quantity = $1, in_stock = $2 WHERE id = $3',
+              [newStock, newStock > 0, item.productId]
+            );
+
+            await client.query(
+              `INSERT INTO inventory_adjustments
+              (product_id, quantity, reason, staff_user_id, order_id, order_type)
+              VALUES ($1, $2, $3, $4, $5, $6)`,
+              [item.productId, -item.quantity, 'fulfillment', userId, id, 'retail']
+            );
           }
-
-          const currentStock = productResult.rows[0].stock_quantity;
-          const newStock = currentStock - item.quantity;
-
-          if (newStock < 0) {
-            throw new Error(`Insufficient stock for product ${item.productId}. Required: ${item.quantity}, Available: ${currentStock}`);
-          }
-
-          await client.query(
-            'UPDATE products SET stock_quantity = $1, in_stock = $2 WHERE id = $3',
-            [newStock, newStock > 0, item.productId]
-          );
-
-          await client.query(
-            `INSERT INTO inventory_adjustments 
-            (product_id, quantity, reason, staff_user_id, order_id, order_type)
-            VALUES ($1, $2, $3, $4, $5, $6)`,
-            [item.productId, -item.quantity, 'fulfillment', userId, id, 'retail']
-          );
         }
 
         await client.query(
-          'UPDATE retail_orders SET status = $1, fulfilled_at = $2, fulfilled_by_user_id = $3 WHERE id = $4',
-          [status, new Date(), userId, id]
+          'UPDATE retail_orders SET status = $1, fulfilled_at = $2, fulfilled_by_user_id = $3, updated_at = $4 WHERE id = $5',
+          [status, new Date(), userId, new Date(), id]
         );
 
         await client.query('COMMIT');
@@ -2815,7 +2838,7 @@ export class PostgresStorage implements IStorage {
         client.release();
       }
     } else {
-      const updates: any = { status };
+      const updates: any = { status, updatedAt: new Date() };
       const result = await db
         .update(retailOrders)
         .set(updates)
@@ -2859,8 +2882,8 @@ export class PostgresStorage implements IStorage {
 
       // Update order status to cancelled
       await client.query(
-        'UPDATE retail_orders SET status = $1 WHERE id = $2',
-        ['cancelled', id]
+        'UPDATE retail_orders SET status = $1, updated_at = $2 WHERE id = $3',
+        ['cancelled', new Date(), id]
       );
 
       await client.query('COMMIT');

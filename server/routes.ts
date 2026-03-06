@@ -4,14 +4,14 @@ import Stripe from "stripe";
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { storage } from "./storage";
 import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings } from "@shared/schema";
-import { eq, sql, and, desc } from "drizzle-orm";
+import { eq, sql, and, desc, isNull, inArray } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
 import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesalePaymentReceipt, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesalePaymentReceipt, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { getObjectAclPolicy } from "./objectAcl";
@@ -575,11 +575,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         subscriptions: [],
       };
 
-      // Get retail orders
+      // Get retail orders (exclude soft-deleted)
       const orders = await db
         .select()
         .from(retailOrders)
-        .where(eq(retailOrders.userId, user.id));
+        .where(and(eq(retailOrders.userId, user.id), isNull(retailOrders.deletedAt)));
       
       exportData.orders = orders.map(order => ({
         id: order.id,
@@ -3290,33 +3290,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 });
                 
                 // Send admin notification for retail order (non-blocking)
-                (async () => {
-                  try {
-                    const { sendRetailOrderAdminNotification } = await import('./email');
-                    const admins = await storage.getUsersByRole('admin');
-                    const superAdmins = await storage.getUsersByRole('super_admin');
-                    const adminEmails = [...admins, ...superAdmins]
-                      .map(u => u.email)
-                      .filter((email): email is string => !!email);
-                    
-                    if (adminEmails.length > 0) {
-                      await sendRetailOrderAdminNotification({
-                        adminEmails,
-                        customerName: checkoutSession.customer_name,
-                        customerEmail: checkoutSession.customer_email,
-                        orderNumber,
-                        orderDate: new Date(),
-                        orderItems,
-                        subtotal: recomputedSubtotalCents / 100,
-                        taxAmount: recomputedTaxCents > 0 ? recomputedTaxCents / 100 : undefined,
-                        total: recomputedTotalCents / 100,
-                        orderType: isSubscriptionOrder ? 'subscription' : 'one-time',
-                      });
-                    }
-                  } catch (emailError) {
-                    console.error(`[WEBHOOK] Failed to send admin notification for ${orderNumber}:`, emailError);
+                storage.getUsersByRole('admin').then(async (admins) => {
+                  const superAdmins = await storage.getUsersByRole('super_admin');
+                  const adminEmails = [...admins, ...superAdmins]
+                    .map(u => u.email)
+                    .filter((email): email is string => !!email);
+
+                  if (adminEmails.length > 0) {
+                    await sendRetailOrderAdminNotification({
+                      adminEmails,
+                      customerName: checkoutSession.customer_name,
+                      customerEmail: checkoutSession.customer_email,
+                      orderNumber,
+                      orderDate: new Date(),
+                      orderItems,
+                      subtotal: recomputedSubtotalCents / 100,
+                      taxAmount: recomputedTaxCents > 0 ? recomputedTaxCents / 100 : undefined,
+                      total: recomputedTotalCents / 100,
+                      orderType: isSubscriptionOrder ? 'subscription' : 'one-time',
+                    });
                   }
-                })();
+                }).catch(emailError => {
+                  console.error(`[WEBHOOK] Failed to send admin notification for ${orderNumber}:`, emailError);
+                });
               } else {
                 console.log(`[WEBHOOK] Order already exists for payment intent ${paymentIntent.id} - skipping creation (idempotent)`);
               }
@@ -3357,35 +3353,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .select()
         .from(retailSubscriptions)
         .where(eq(retailSubscriptions.userId, userId));
-      
-      // Fetch items for each subscription
-      const subscriptionsWithItems = await Promise.all(
-        retailSubs.map(async (sub) => {
-          const items = await db
-            .select()
-            .from(retailSubscriptionItems)
-            .where(eq(retailSubscriptionItems.subscriptionId, sub.id));
-          
-          // Enrich items with retail product and flavor data
-          const itemsWithProducts = await Promise.all(
-            items.map(async (item) => {
-              const [retailProduct] = await db
-                .select()
-                .from(retailProducts)
-                .where(eq(retailProducts.id, item.retailProductId));
-              
-              const [flavor] = item.selectedFlavorId 
-                ? await db.select().from(flavors).where(eq(flavors.id, item.selectedFlavorId))
-                : [null];
-              
-              return { ...item, retailProduct, flavor };
-            })
-          );
-          
-          return { ...sub, items: itemsWithProducts };
-        })
-      );
-      
+
+      if (retailSubs.length === 0) {
+        return res.json([]);
+      }
+
+      const subIds = retailSubs.map(s => s.id);
+
+      // Batch-fetch all items for all subscriptions (avoids N+1)
+      const allItems = await db
+        .select()
+        .from(retailSubscriptionItems)
+        .where(inArray(retailSubscriptionItems.subscriptionId, subIds));
+
+      // Batch-fetch all referenced retail products and flavors
+      const productIds = Array.from(new Set(allItems.map(i => i.retailProductId)));
+      const flavorIds = Array.from(new Set(allItems.map(i => i.selectedFlavorId).filter((id): id is string => !!id)));
+
+      const allProducts = productIds.length > 0
+        ? await db.select().from(retailProducts).where(inArray(retailProducts.id, productIds))
+        : [];
+      const allFlavors = flavorIds.length > 0
+        ? await db.select().from(flavors).where(inArray(flavors.id, flavorIds))
+        : [];
+
+      const productMap = new Map(allProducts.map(p => [p.id, p]));
+      const flavorMap = new Map(allFlavors.map(f => [f.id, f]));
+
+      // Group items by subscription and enrich
+      const subscriptionsWithItems = retailSubs.map(sub => {
+        const items = allItems
+          .filter(item => item.subscriptionId === sub.id)
+          .map(item => ({
+            ...item,
+            retailProduct: productMap.get(item.retailProductId) || null,
+            flavor: item.selectedFlavorId ? flavorMap.get(item.selectedFlavorId) || null : null,
+          }));
+        return { ...sub, items };
+      });
+
       res.json(subscriptionsWithItems);
     } catch (error: any) {
       console.error('[ERROR] Failed to fetch user subscriptions:', error);
@@ -5316,7 +5322,9 @@ If you have any questions, please don't hesitate to reach out!`,
   // Retail orders routes (staff and admin access)
   app.get("/api/retail/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const orders = await storage.getRetailOrders();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : undefined;
+      const { orders, total } = await storage.getRetailOrders({ limit, offset });
       
       // Get all order items with product details
       const orderIds = orders.map(o => o.id);
@@ -5367,8 +5375,8 @@ If you have any questions, please don't hesitate to reach out!`,
         ...order,
         items: itemsByOrderId[order.id] || [],
       }));
-      
-      res.json(ordersWithItems);
+
+      res.json({ orders: ordersWithItems, total });
     } catch (error: any) {
       console.error("Error fetching retail orders:", error);
       res.status(500).json({ message: "Failed to fetch retail orders" });
