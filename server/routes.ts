@@ -58,6 +58,29 @@ async function getProductPricing(productId: string): Promise<{ retailPrice: stri
   };
 }
 
+// Simple in-memory rate limiter for email verification codes
+const emailCodeRateLimiter = new Map<string, { count: number; resetAt: number }>();
+const EMAIL_CODE_RATE_LIMIT = 5;
+const EMAIL_CODE_RATE_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+function checkEmailCodeRateLimit(email: string): boolean {
+  const key = email.toLowerCase();
+  const now = Date.now();
+  const entry = emailCodeRateLimiter.get(key);
+
+  if (!entry || now >= entry.resetAt) {
+    emailCodeRateLimiter.set(key, { count: 1, resetAt: now + EMAIL_CODE_RATE_WINDOW_MS });
+    return true;
+  }
+
+  if (entry.count >= EMAIL_CODE_RATE_LIMIT) {
+    return false;
+  }
+
+  entry.count++;
+  return true;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware - sets up /api/register, /api/login, /api/logout, /api/user
   await setupAuth(app);
@@ -341,6 +364,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
         return res.status(400).json({ message: "Invalid email address" });
+      }
+
+      // Rate limit: max 5 requests per email per 15 minutes
+      if (!checkEmailCodeRateLimit(email)) {
+        return res.status(429).json({ message: "Too many verification code requests. Please try again later." });
       }
 
       // SECURITY: Check if this email belongs to a wholesale customer
@@ -947,8 +975,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Generate invoice number
-      const invoiceNumber = `WO-${Date.now()}`;
+      // Generate invoice number (same INV-YYYY-#### format as admin-created orders)
+      const invoiceNumber = await storage.generateNextInvoiceNumber();
 
       // Create order for the logged-in customer with default 30-day due date
       const orderDate = new Date();
@@ -989,32 +1017,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       }));
 
-      // Send order confirmation to customer
-      try {
-        await sendWholesaleOrderConfirmation({
-          customerEmail: customer.email,
-          businessName: customer.businessName,
-          contactName: customer.contactName,
-          invoiceNumber,
-          orderDate,
-          deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
-          dueDate,
-          totalAmount,
-          items: emailItems,
-          notes: notes || null,
-        });
-      } catch (emailError) {
+      // Send emails in the background (don't block the response)
+      sendWholesaleOrderConfirmation({
+        customerEmail: customer.email,
+        businessName: customer.businessName,
+        contactName: customer.contactName,
+        invoiceNumber,
+        orderDate,
+        deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
+        dueDate,
+        totalAmount,
+        items: emailItems,
+        notes: notes || null,
+      }).catch(emailError => {
         console.error('[ORDER] Failed to send customer confirmation:', emailError);
-      }
+      });
 
-      // Send notification to admins
-      try {
-        const admins = await storage.getUsersByRole('admin');
+      storage.getUsersByRole('admin').then(async (admins) => {
         const superAdmins = await storage.getUsersByRole('super_admin');
         const adminEmails = [...admins, ...superAdmins]
           .map(u => u.email)
           .filter((email): email is string => !!email);
-        
+
         if (adminEmails.length > 0) {
           await sendWholesaleOrderAdminNotification({
             adminEmails,
@@ -1027,9 +1051,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             items: emailItems,
           });
         }
-      } catch (emailError) {
+      }).catch(emailError => {
         console.error('[ORDER] Failed to send admin notification:', emailError);
-      }
+      });
 
       res.json(createdOrder);
     } catch (error: any) {
@@ -4378,8 +4402,10 @@ If you have any questions, please don't hesitate to reach out!`,
   // Wholesale order routes (staff and admin access)
   app.get("/api/wholesale/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const orders = await storage.getWholesaleOrders();
-      res.json(orders);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : undefined;
+      const result = await storage.getWholesaleOrders({ limit, offset });
+      res.json(result);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching orders: " + error.message });
     }
@@ -4547,32 +4573,28 @@ If you have any questions, please don't hesitate to reach out!`,
           };
         }));
 
-        // Send order confirmation to customer
-        try {
-          await sendWholesaleOrderConfirmation({
-            customerEmail: customer.email,
-            businessName: customer.businessName,
-            contactName: customer.contactName,
-            invoiceNumber,
-            orderDate,
-            deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
-            dueDate,
-            totalAmount: serverCalculatedTotal,
-            items: emailItems,
-            notes: order.notes || null,
-          });
-        } catch (emailError) {
+        // Send emails in the background (don't block the response)
+        sendWholesaleOrderConfirmation({
+          customerEmail: customer.email,
+          businessName: customer.businessName,
+          contactName: customer.contactName,
+          invoiceNumber,
+          orderDate,
+          deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
+          dueDate,
+          totalAmount: serverCalculatedTotal,
+          items: emailItems,
+          notes: order.notes || null,
+        }).catch(emailError => {
           console.error('[ORDER] Failed to send customer confirmation:', emailError);
-        }
+        });
 
-        // Send notification to admins
-        try {
-          const admins = await storage.getUsersByRole('admin');
+        storage.getUsersByRole('admin').then(async (admins) => {
           const superAdmins = await storage.getUsersByRole('super_admin');
           const adminEmails = [...admins, ...superAdmins]
             .map(u => u.email)
             .filter((email): email is string => !!email);
-          
+
           if (adminEmails.length > 0) {
             await sendWholesaleOrderAdminNotification({
               adminEmails,
@@ -4585,9 +4607,9 @@ If you have any questions, please don't hesitate to reach out!`,
               items: emailItems,
             });
           }
-        } catch (emailError) {
+        }).catch(emailError => {
           console.error('[ORDER] Failed to send admin notification:', emailError);
-        }
+        });
       }
       
       res.json(createdOrder);
@@ -7324,11 +7346,11 @@ If you have any questions, please don't hesitate to reach out!`,
       const targetDate = new Date(date);
       
       // Get all scheduled wholesale orders for this date
-      const orders = await storage.getWholesaleOrders();
+      const { orders } = await storage.getWholesaleOrders();
       const scheduledOrders = orders.filter(order => {
         if (!order.deliveryDate) return false;
         const orderDate = new Date(order.deliveryDate);
-        return orderDate.toDateString() === targetDate.toDateString() && 
+        return orderDate.toDateString() === targetDate.toDateString() &&
                order.status !== 'cancelled';
       });
 
@@ -7366,11 +7388,11 @@ If you have any questions, please don't hesitate to reach out!`,
       const targetDate = new Date(date);
       
       // Get all scheduled wholesale orders for this date
-      const orders = await storage.getWholesaleOrders();
+      const { orders } = await storage.getWholesaleOrders();
       const scheduledOrders = orders.filter(order => {
         if (!order.deliveryDate) return false;
         const orderDate = new Date(order.deliveryDate);
-        return orderDate.toDateString() === targetDate.toDateString() && 
+        return orderDate.toDateString() === targetDate.toDateString() &&
                order.status !== 'cancelled';
       });
 

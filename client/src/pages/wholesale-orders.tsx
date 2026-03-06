@@ -59,9 +59,10 @@ export default function WholesaleOrders() {
   const [editNotes, setEditNotes] = useState('');
   const { toast } = useToast();
 
-  const { data: orders = [], isLoading } = useQuery<WholesaleOrder[]>({
+  const { data: ordersData, isLoading } = useQuery<{ orders: WholesaleOrder[]; total: number }>({
     queryKey: ["/api/wholesale/orders"],
   });
+  const orders = ordersData?.orders ?? [];
   
   const { data: customers = [] } = useQuery<WholesaleCustomer[]>({
     queryKey: ["/api/wholesale/customers"],
