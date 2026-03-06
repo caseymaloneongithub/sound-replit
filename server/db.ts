@@ -1,38 +1,33 @@
-import { neon, types } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { Pool, neonConfig, types } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-serverless";
+import ws from "ws";
 import * as schema from "../shared/schema";
 
-// Fix 1: Neon HTTP driver v0.10.4 bug — boolean values (OID 16) are incorrectly
-// deserialized. The driver passes the raw value (true/false/"t"/"f") to the parser
-// but the default handler converts it wrong. This override ensures correct behavior.
+// Configure WebSocket for Neon serverless driver in Node.js environment
+neonConfig.webSocketConstructor = ws;
+
+// Fix 1: Neon driver bug — boolean values (OID 16) are incorrectly deserialized.
+// The driver passes raw values that need explicit coercion to boolean.
 types.setTypeParser(16, (val: unknown) => {
   return val === true || val === 't' || val === 'true' || val === 1;
 });
 
-// Fix 2: Neon HTTP gateway returns `"rows": null` (instead of `"rows": []`) for
-// SELECT queries that return 0 rows. The driver then calls `.map()` on null and
-// crashes. We patch globalThis.fetch to rewrite null rows to an empty array before
-// the driver sees the response.
-const _originalFetch = globalThis.fetch;
-globalThis.fetch = async function patchedFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit
-): Promise<Response> {
-  const response = await _originalFetch(input, init);
-  const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
-  if (url && (url.includes(".neon.tech") || url.includes("neondb.io") || url.includes("/sql"))) {
-    const text = await response.text();
-    const patched = text.includes('"rows":null')
-      ? text.replace('"rows":null', '"rows":[]')
-      : text;
-    return new Response(patched, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-  }
-  return response;
-} as typeof fetch;
+// Fix 2: Neon HTTP driver bug — timestamp values (OID 1114) returned as ISO strings
+// with a 'Z' suffix (e.g., "2026-01-04T23:59:35.761423Z") are not handled by the
+// default parser which expects PostgreSQL format ("2026-01-04 23:59:35.761423").
+// This fix normalizes both formats and truncates microseconds to milliseconds.
+types.setTypeParser(1114, (val: string | null) => {
+  if (val === null || val === undefined) return null;
+  const d = new Date(val.includes("T") ? val : val.replace(" ", "T") + "Z");
+  return isNaN(d.getTime()) ? null : d;
+});
 
-const sql = neon(process.env.DATABASE_URL!);
-export const db = drizzle(sql, { schema });
+// Fix 3: Same issue for timestamptz (OID 1184).
+types.setTypeParser(1184, (val: string | null) => {
+  if (val === null || val === undefined) return null;
+  const d = new Date(val.includes("T") ? val : val.replace(" ", "T") + "Z");
+  return isNaN(d.getTime()) ? null : d;
+});
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL! });
+export const db = drizzle(pool, { schema });
