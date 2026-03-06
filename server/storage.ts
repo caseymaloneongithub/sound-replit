@@ -1721,7 +1721,7 @@ export class PostgresStorage implements IStorage {
   async updateWholesaleOrderStatus(id: string, status: string): Promise<WholesaleOrder> {
     const result = await db
       .update(wholesaleOrders)
-      .set({ status })
+      .set({ status, updatedAt: new Date() })
       .where(eq(wholesaleOrders.id, id))
       .returning();
     return result[0];
@@ -1730,7 +1730,7 @@ export class PostgresStorage implements IStorage {
   async updateWholesaleOrderDeliveryDate(id: string, deliveryDate: Date | null): Promise<WholesaleOrder | undefined> {
     const result = await db
       .update(wholesaleOrders)
-      .set({ deliveryDate })
+      .set({ deliveryDate, updatedAt: new Date() })
       .where(eq(wholesaleOrders.id, id))
       .returning();
     return result[0];
@@ -1956,11 +1956,11 @@ export class PostgresStorage implements IStorage {
 
   async deleteWholesaleOrder(id: string): Promise<void> {
     // Soft delete - set deletedAt timestamp instead of removing the row
-    await db.update(wholesaleOrders).set({ deletedAt: new Date() }).where(eq(wholesaleOrders.id, id));
+    await db.update(wholesaleOrders).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(wholesaleOrders.id, id));
   }
 
-  async updateWholesaleOrder(id: string, updates: { 
-    totalAmount?: string; 
+  async updateWholesaleOrder(id: string, updates: {
+    totalAmount?: string;
     notes?: string | null;
     dueDate?: Date | null;
     paidAt?: Date | null;
@@ -1970,7 +1970,7 @@ export class PostgresStorage implements IStorage {
   }): Promise<WholesaleOrder | undefined> {
     const result = await db
       .update(wholesaleOrders)
-      .set(updates)
+      .set({ ...updates, updatedAt: new Date() })
       .where(eq(wholesaleOrders.id, id))
       .returning();
     return result[0];
