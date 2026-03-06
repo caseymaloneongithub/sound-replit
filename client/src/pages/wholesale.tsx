@@ -11,10 +11,11 @@ import { useAuth } from "@/hooks/use-auth";
 
 export default function Wholesale() {
   const { user } = useAuth();
-  const { data: orders } = useQuery<WholesaleOrder[]>({
+  const { data: ordersData } = useQuery<{ orders: WholesaleOrder[]; total: number }>({
     queryKey: ["/api/wholesale/orders"],
   });
-  
+  const orders = ordersData?.orders;
+
   const { data: customers } = useQuery<WholesaleCustomer[]>({
     queryKey: ["/api/wholesale/customers"],
   });

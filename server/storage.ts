@@ -80,7 +80,7 @@ import {
   type WholesalePricing, type InsertWholesalePricing,
   type InventoryAdjustment, type InsertInventoryAdjustment,
 } from "@shared/schema";
-import { eq, and, or, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, or, desc, sql, inArray, isNull } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import session from "express-session";
@@ -210,7 +210,7 @@ export interface IStorage {
   updateWholesaleLocation(id: string, updates: Partial<InsertWholesaleLocation>): Promise<WholesaleLocation | undefined>;
   deleteWholesaleLocation(id: string): Promise<void>;
   
-  getWholesaleOrders(): Promise<WholesaleOrder[]>;
+  getWholesaleOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: WholesaleOrder[]; total: number }>;
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
   getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
   getWholesaleOrdersByDeliveryDateRange(startDate: Date, endDate: Date): Promise<WholesaleOrder[]>;
@@ -1687,12 +1687,29 @@ export class PostgresStorage implements IStorage {
     await db.delete(wholesaleLocations).where(eq(wholesaleLocations.id, id));
   }
 
-  async getWholesaleOrders(): Promise<WholesaleOrder[]> {
-    return await db.select().from(wholesaleOrders);
+  async getWholesaleOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: WholesaleOrder[]; total: number }> {
+    const whereClause = isNull(wholesaleOrders.deletedAt);
+
+    const [countResult] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(wholesaleOrders)
+      .where(whereClause);
+
+    let query = db.select().from(wholesaleOrders).where(whereClause).orderBy(desc(wholesaleOrders.orderDate)).$dynamic();
+
+    if (options?.limit !== undefined) {
+      query = query.limit(options.limit);
+    }
+    if (options?.offset !== undefined) {
+      query = query.offset(options.offset);
+    }
+
+    const orders = await query;
+    return { orders, total: countResult.count };
   }
 
   async getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined> {
-    const result = await db.select().from(wholesaleOrders).where(eq(wholesaleOrders.id, id));
+    const result = await db.select().from(wholesaleOrders).where(and(eq(wholesaleOrders.id, id), isNull(wholesaleOrders.deletedAt)));
     return result[0];
   }
 
@@ -1731,7 +1748,8 @@ export class PostgresStorage implements IStorage {
       .where(
         and(
           sql`${wholesaleOrders.deliveryDate} >= ${startOfDay}`,
-          sql`${wholesaleOrders.deliveryDate} <= ${endOfDay}`
+          sql`${wholesaleOrders.deliveryDate} <= ${endOfDay}`,
+          isNull(wholesaleOrders.deletedAt)
         )
       )
       .orderBy(wholesaleOrders.deliveryDate);
@@ -1748,7 +1766,8 @@ export class PostgresStorage implements IStorage {
       .where(
         and(
           sql`${wholesaleOrders.deliveryDate} >= ${startDate}`,
-          sql`${wholesaleOrders.deliveryDate} < ${endDate}`
+          sql`${wholesaleOrders.deliveryDate} < ${endDate}`,
+          isNull(wholesaleOrders.deletedAt)
         )
       )
       .orderBy(wholesaleOrders.deliveryDate);
@@ -1763,16 +1782,14 @@ export class PostgresStorage implements IStorage {
       })
       .from(wholesaleOrders)
       .leftJoin(wholesaleLocations, eq(wholesaleOrders.locationId, wholesaleLocations.id))
-      .where(eq(wholesaleOrders.customerId, customerId))
+      .where(and(eq(wholesaleOrders.customerId, customerId), isNull(wholesaleOrders.deletedAt)))
       .orderBy(desc(wholesaleOrders.orderDate));
 
-    // Get items for each order
-    const ordersWithItems = await Promise.all(
-      result.map(async (row) => {
-        const order = row.order;
-        const location = row.location;
-        
-        const items = await db
+    const orderIds = result.map(row => row.order.id);
+
+    // Batch-fetch all items for all orders in a single query (avoids N+1)
+    const allItems = orderIds.length > 0
+      ? await db
           .select({
             id: wholesaleOrderItems.id,
             orderId: wholesaleOrderItems.orderId,
@@ -1783,26 +1800,39 @@ export class PostgresStorage implements IStorage {
           })
           .from(wholesaleOrderItems)
           .leftJoin(products, eq(wholesaleOrderItems.productId, products.id))
-          .where(eq(wholesaleOrderItems.orderId, order.id));
+          .where(inArray(wholesaleOrderItems.orderId, orderIds))
+      : [];
 
-        return {
-          ...order,
-          location: location ? {
-            locationName: location.locationName,
-            address: location.address,
-            city: location.city,
-            state: location.state,
-            zipCode: location.zipCode,
-            contactName: location.contactName || undefined,
-            contactPhone: location.contactPhone || undefined,
-          } : undefined,
-          items: items.map((item) => ({
-            ...item,
-            productName: item.productName || 'Unknown Product',
-          })),
-        };
-      })
-    );
+    // Group items by orderId
+    const itemsByOrderId = new Map<string, typeof allItems>();
+    for (const item of allItems) {
+      const existing = itemsByOrderId.get(item.orderId) || [];
+      existing.push(item);
+      itemsByOrderId.set(item.orderId, existing);
+    }
+
+    const ordersWithItems = result.map((row) => {
+      const order = row.order;
+      const location = row.location;
+      const items = itemsByOrderId.get(order.id) || [];
+
+      return {
+        ...order,
+        location: location ? {
+          locationName: location.locationName,
+          address: location.address,
+          city: location.city,
+          state: location.state,
+          zipCode: location.zipCode,
+          contactName: location.contactName || undefined,
+          contactPhone: location.contactPhone || undefined,
+        } : undefined,
+        items: items.map((item) => ({
+          ...item,
+          productName: item.productName || 'Unknown Product',
+        })),
+      };
+    });
 
     return ordersWithItems;
   }
@@ -1880,20 +1910,31 @@ export class PostgresStorage implements IStorage {
 
   async generateNextInvoiceNumber(): Promise<string> {
     const currentYear = new Date().getFullYear();
-    const result = await db
-      .select()
-      .from(wholesaleOrders)
-      .where(sql`EXTRACT(YEAR FROM ${wholesaleOrders.orderDate}) = ${currentYear}`)
-      .orderBy(desc(wholesaleOrders.invoiceNumber));
-    
-    if (result.length === 0) {
-      return `INV-${currentYear}-0001`;
-    }
-    
-    const lastInvoice = result[0].invoiceNumber;
-    const match = lastInvoice.match(/INV-\d{4}-(\d{4})/);
-    const nextNumber = match ? parseInt(match[1]) + 1 : 1;
-    return `INV-${currentYear}-${String(nextNumber).padStart(4, '0')}`;
+    const prefix = `INV-${currentYear}-`;
+
+    // Use a transaction with advisory lock to prevent race conditions
+    const result = await db.transaction(async (tx) => {
+      // Advisory lock keyed on current year to serialize invoice number generation
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${currentYear})`);
+
+      const rows = await tx
+        .select({ invoiceNumber: wholesaleOrders.invoiceNumber })
+        .from(wholesaleOrders)
+        .where(sql`${wholesaleOrders.invoiceNumber} LIKE ${prefix + '%'}`)
+        .orderBy(desc(wholesaleOrders.invoiceNumber))
+        .limit(1);
+
+      if (rows.length === 0) {
+        return `${prefix}0001`;
+      }
+
+      const lastInvoice = rows[0].invoiceNumber;
+      const match = lastInvoice.match(/INV-\d{4}-(\d{4})/);
+      const nextNumber = match ? parseInt(match[1]) + 1 : 1;
+      return `${prefix}${String(nextNumber).padStart(4, '0')}`;
+    });
+
+    return result;
   }
 
   async getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]> {
@@ -1914,10 +1955,8 @@ export class PostgresStorage implements IStorage {
   }
 
   async deleteWholesaleOrder(id: string): Promise<void> {
-    // First delete all order items
-    await db.delete(wholesaleOrderItems).where(eq(wholesaleOrderItems.orderId, id));
-    // Then delete the order
-    await db.delete(wholesaleOrders).where(eq(wholesaleOrders.id, id));
+    // Soft delete - set deletedAt timestamp instead of removing the row
+    await db.update(wholesaleOrders).set({ deletedAt: new Date() }).where(eq(wholesaleOrders.id, id));
   }
 
   async updateWholesaleOrder(id: string, updates: { 
