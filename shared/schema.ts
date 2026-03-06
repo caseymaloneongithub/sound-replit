@@ -29,6 +29,7 @@ export const users = pgTable("users", {
   isAdmin: boolean("is_admin").notNull().default(false),
   stripeCustomerId: text("stripe_customer_id"),
   wholesaleCustomerId: varchar("wholesale_customer_id"), // Links wholesale users to their business
+  profileImageUrl: text("profile_image_url"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   deletedAt: timestamp("deleted_at"),
