@@ -2198,3 +2198,111 @@ Automated System Notification
     console.error('[EMAIL] Failed to send data retention notification:', error);
   }
 }
+
+interface WholesaleWelcomeParams {
+  email: string;
+  businessName: string;
+  contactName: string;
+  /** Durable login-page URL — deliberately NOT a magic link, which would be dead in 15 minutes. */
+  loginUrl: string;
+  /** True when the applicant already had an account: same email, different framing. */
+  alreadyExisted: boolean;
+}
+
+/**
+ * Sent when a wholesale application is auto-provisioned into an account (or when the
+ * applicant already had one). This closes the loop that used to dead-end: applications
+ * previously sat as CRM leads until someone manually created the account AND manually
+ * told the customer — now the account exists immediately and this email says so.
+ *
+ * Links to the login page rather than embedding a magic link: welcome emails get read
+ * hours or days later, and a one-shot 15-minute token would greet most readers with
+ * "link expired". From the login page a fresh link is one email-entry away.
+ */
+export async function sendWholesaleWelcomeEmail(params: WholesaleWelcomeParams): Promise<void> {
+  const transporter = createTransporter();
+
+  const heading = params.alreadyExisted ? 'You already have an account' : 'Your wholesale account is ready';
+  const intro = params.alreadyExisted
+    ? `Thanks for reaching out — good news: ${params.businessName} already has a wholesale account with us.`
+    : `Welcome aboard! Your wholesale account for ${params.businessName} is set up and ready to order.`;
+
+  if (!transporter) {
+    console.log('[EMAIL] Would send wholesale welcome email to:', params.email);
+    console.log('[EMAIL] Login URL:', params.loginUrl, params.alreadyExisted ? '(existing account)' : '(new account)');
+    return;
+  }
+
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.email,
+    subject: `${heading} - Puget Sound Kombucha Co.`,
+    text: `
+Hi ${params.contactName},
+
+${intro}
+
+Sign in with just your email — no password to remember:
+${params.loginUrl}
+
+How ordering works:
+- Enter your email on that page and we'll send you a sign-in link.
+- Place your order online; reorder your usual in a couple of clicks after the first one.
+- Choose delivery to your address or pickup at the brewery.
+- Invoices are net-30, payable online by bank transfer.
+
+Questions? Just reply to this email or call ${'(206) 789-5219'}.
+
+Thank you,
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader(heading)}
+
+  <div style="padding: 32px 24px;">
+    <p style="color: ${BRAND_COLORS.black}; font-size: 16px;">Hi ${params.contactName},</p>
+    <p style="color: ${BRAND_COLORS.black}; font-size: 16px;">${intro}</p>
+
+    <div style="text-align: center; margin: 28px 0;">
+      <a href="${params.loginUrl}"
+         style="display: inline-block;
+                background-color: ${BRAND_COLORS.black};
+                color: ${BRAND_COLORS.white};
+                padding: 16px 32px;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: bold;
+                text-decoration: none;">
+        Sign in &amp; place an order
+      </a>
+    </div>
+
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; text-align: center;">
+      No password needed — enter your email on that page and we'll send you a sign-in link.
+    </p>
+
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 8px; margin-top: 24px;">
+      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.black}; font-weight: 600;">How ordering works</p>
+      <ul style="margin: 0; padding-left: 18px; color: ${BRAND_COLORS.darkGrey}; font-size: 14px; line-height: 1.7;">
+        <li>Order online any time; reorder your usual in a couple of clicks.</li>
+        <li>Delivery to your address, or pickup at the brewery (Mon&ndash;Thu).</li>
+        <li>Invoices are net-30, payable online by bank transfer.</li>
+      </ul>
+    </div>
+
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log('[EMAIL] Wholesale welcome email sent to:', params.email);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send wholesale welcome email:', error);
+    throw error;
+  }
+}

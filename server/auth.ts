@@ -69,7 +69,11 @@ export function setupAuth(app: Express) {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax', // blocks cross-site POSTs from riding the session cookie (CSRF)
       httpOnly: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      // 30 days, not 7: wholesale customers order WEEKLY, and a 7-day cookie expires at
+      // exactly that cadence — the session from last Monday's order died just as they
+      // returned this Monday, forcing a login round-trip every single week. A month keeps
+      // the common case at zero logins: open bookmark, Reorder, done.
+      maxAge: 30 * 24 * 60 * 60 * 1000,
     },
   };
 

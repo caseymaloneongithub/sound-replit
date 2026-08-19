@@ -12,7 +12,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesalePaymentReceipt, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesalePaymentReceipt, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendWholesaleWelcomeEmail } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, getPresignedUploadUrl } from "./s3-storage";
@@ -5111,6 +5111,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const customer = insertWholesaleCustomerSchema.parse(req.body);
       const created = await storage.createWholesaleCustomer(customer);
+
+      // Tell the customer their account exists. Creating an account used to be a dead
+      // end: the application sat approved but nobody told the applicant, so someone had
+      // to remember to email them by hand. Background + non-fatal — the account is
+      // created regardless. (The CSV bulk-import path deliberately does NOT send these.)
+      sendWholesaleWelcomeEmail({
+        email: created.email,
+        businessName: created.businessName,
+        contactName: created.contactName,
+        loginUrl: `${getBaseUrl()}/wholesale/login`,
+        alreadyExisted: false,
+      }).catch((emailError: any) => {
+        console.error(`[WHOLESALE] Customer ${created.id} created but welcome email failed:`, emailError.message);
+      });
+
       res.json(created);
     } catch (error: any) {
       res.status(400).json({ message: "Error creating customer: " + error.message });
