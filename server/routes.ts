@@ -24,7 +24,9 @@ import {
 } from "@shared/subscription-frequency";
 import { getObjectAclPolicy } from "./objectAcl";
 import { createStripeCustomer } from "./stripeCustomer";
-import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange } from "@shared/pickup-policy";
+// frequencyToDays deliberately NOT imported from pickup-policy: the single source of
+// truth for frequency conversion is @shared/subscription-frequency (imported above).
+import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange, nextPickupDateFromScheduled } from "@shared/pickup-policy";
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
 import { insertDeliveryStopSchema } from "@shared/schema";
 
@@ -3188,11 +3190,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const totalAmount = subtotal + taxAmount;
           const amountInCents = Math.round(totalAmount * 100);
 
-          // Calculate next charge date (for 2nd order)
-          const daysUntilNext = frequencyToDays(item.subscriptionFrequency || 'weekly');
-          const nextChargeDate = new Date();
-          nextChargeDate.setDate(nextChargeDate.getDate() + daysUntilNext);
-          const normalizedNextPickupDate = normalizeToAllowedPickupDay(nextChargeDate);
+          // Calculate next charge date (for 2nd order) — advance from now for initial setup
+          const normalizedNextPickupDate = normalizeToAllowedPickupDay(
+            addDays(new Date(), frequencyToDays(item.subscriptionFrequency || 'weekly'))
+          );
           // Billing happens on Monday of the pickup week
           const nextBillingDate = getBillingDateForPickup(normalizedNextPickupDate);
 
@@ -3568,11 +3569,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             // Calculate next pickup date
             const frequency = session.metadata.subscriptionFrequency || 'weekly';
-            const daysUntilNext = frequencyToDays(frequency);
-            
-            const tentativeNextDate = new Date();
-            tentativeNextDate.setDate(tentativeNextDate.getDate() + daysUntilNext);
-            const nextPickupDate = normalizeToAllowedPickupDay(tentativeNextDate);
+            const nextPickupDate = normalizeToAllowedPickupDay(
+              addDays(new Date(), frequencyToDays(frequency))
+            );
             
             // Create retail subscription record
             const retailSubscriptionData: any = {
@@ -3755,11 +3754,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   });
                 }
                 
-                // Update subscription's next delivery date
-                const daysUntilNext = frequencyToDays(retailSubscription.subscriptionFrequency);
-                
-                const nextDate = new Date();
-                nextDate.setDate(nextDate.getDate() + daysUntilNext);
+                // Update subscription's next delivery date — advance from scheduled date to avoid drift
+                const nextDate = nextPickupDateFromScheduled(
+                  retailSubscription.nextDeliveryDate || new Date(),
+                  retailSubscription.subscriptionFrequency
+                );
                 
                 await tx
                   .update(retailSubscriptions)

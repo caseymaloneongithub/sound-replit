@@ -1,5 +1,6 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { usePlaidLink } from "react-plaid-link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,11 +33,20 @@ interface PlaidStatusResponse {
   environment: string;
 }
 
+function PlaidLinkLauncher({ token, onSuccess, onExit }: {
+  token: string;
+  onSuccess: (publicToken: string) => void;
+  onExit: (err: any) => void;
+}) {
+  const { open, ready } = usePlaidLink({ token, onSuccess, onExit });
+  useEffect(() => { if (ready) open(); }, [ready, open]);
+  return null;
+}
+
 export default function AccountingBanks() {
   const { toast } = useToast();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<PlaidItem | null>(null);
-  const [plaidReady, setPlaidReady] = useState(false);
   const [linkToken, setLinkToken] = useState<string | null>(null);
 
   const { data: plaidStatus } = useQuery<PlaidStatusResponse>({
@@ -60,7 +70,6 @@ export default function AccountingBanks() {
     },
     onSuccess: (data) => {
       setLinkToken(data.link_token);
-      openPlaidLink(data.link_token);
     },
     onError: (error: Error) => {
       toast({ 
@@ -147,40 +156,8 @@ export default function AccountingBanks() {
     }
   });
 
-  const openPlaidLink = useCallback((token: string) => {
-    if (typeof window !== 'undefined' && (window as any).Plaid) {
-      const plaid = (window as any).Plaid;
-      
-      const handler = plaid.create({
-        token,
-        onSuccess: (publicToken: string, metadata: any) => {
-          exchangeTokenMutation.mutate(publicToken);
-        },
-        onExit: (err: any, metadata: any) => {
-          if (err) {
-            toast({ 
-              title: "Connection cancelled", 
-              description: err.display_message || "Bank connection was not completed",
-              variant: "destructive"
-            });
-          }
-        },
-        onEvent: (eventName: string, metadata: any) => {
-          console.log('[Plaid Event]', eventName, metadata);
-        },
-      });
-      
-      handler.open();
-    } else {
-      toast({ 
-        title: "Plaid not available", 
-        description: "Please refresh the page and try again",
-        variant: "destructive"
-      });
-    }
-  }, [exchangeTokenMutation, toast]);
-
   const handleConnectBank = () => {
+    setLinkToken(null);
     linkTokenMutation.mutate();
   };
 
@@ -226,6 +203,25 @@ export default function AccountingBanks() {
 
   return (
     <StaffLayout>
+      {linkToken && (
+        <PlaidLinkLauncher
+          token={linkToken}
+          onSuccess={(publicToken) => {
+            setLinkToken(null);
+            exchangeTokenMutation.mutate(publicToken);
+          }}
+          onExit={(err) => {
+            setLinkToken(null);
+            if (err) {
+              toast({
+                title: "Connection cancelled",
+                description: err.display_message || "Bank connection was not completed",
+                variant: "destructive",
+              });
+            }
+          }}
+        />
+      )}
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>

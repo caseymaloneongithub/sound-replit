@@ -403,7 +403,8 @@ export class PostgresStorage implements IStorage {
 
   constructor() {
     this.sessionStore = new PostgresSessionStore({ 
-      pool, 
+      pool,
+      tableName: "sessions",
       createTableIfMissing: true
     });
   }

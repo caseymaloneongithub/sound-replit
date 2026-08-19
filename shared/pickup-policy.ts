@@ -1,5 +1,6 @@
 import { addDays } from 'date-fns';
 import { toZonedTime, formatInTimeZone, fromZonedTime } from 'date-fns-tz';
+import { frequencyToDays } from './subscription-frequency';
 
 export const PICKUP_POLICY = {
   allowedWeekdays: [1, 2, 3, 4] as number[], // Monday through Thursday (0 = Sunday, 1 = Monday, etc.)
@@ -20,32 +21,25 @@ export const PICKUP_POLICY = {
  * @returns A new Date object set to midnight Pacific time on an allowed pickup day
  */
 export function normalizeToAllowedPickupDay(date: Date): Date {
-  const pacificDate = toZonedTime(date, PICKUP_POLICY.timezone);
-  const dayOfWeek = pacificDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
-  
-  // If already Monday-Thursday (1-4), keep it
-  if (PICKUP_POLICY.allowedWeekdays.includes(dayOfWeek)) {
-    // Return midnight Pacific time using timezone-aware conversion
-    const dateStr = formatInTimeZone(pacificDate, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
-    return fromZonedTime(`${dateStr}T00:00:00`, PICKUP_POLICY.timezone);
-  }
-  
-  // Calculate days to advance to next Monday
-  let daysToAdd: number;
-  if (dayOfWeek === 0) { // Sunday
-    daysToAdd = 1; // Move to Monday
-  } else if (dayOfWeek === 5) { // Friday
-    daysToAdd = 3; // Move to Monday
-  } else if (dayOfWeek === 6) { // Saturday
-    daysToAdd = 2; // Move to Monday
-  } else {
-    daysToAdd = 0; // Should never happen if allowedWeekdays is correct
-  }
-  
-  const adjustedDate = addDays(pacificDate, daysToAdd);
-  const dateStr = formatInTimeZone(adjustedDate, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
-  // Use timezone-aware conversion to handle DST correctly
-  return fromZonedTime(`${dateStr}T00:00:00`, PICKUP_POLICY.timezone);
+  // Get the Pacific date string directly from the original timestamp — this is always correct
+  // regardless of what time-of-day the input is (avoids toZonedTime+addDays+formatInTimeZone drift).
+  const dateStr = formatInTimeZone(date, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
+  const [y, m, d] = dateStr.split('-').map(Number);
+
+  // Use a noon-UTC anchor for the day-of-week lookup so the UTC day matches the Pacific day
+  const noonUTC = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const dayOfWeek = noonUTC.getUTCDay(); // 0 = Sunday, 1 = Monday, …, 6 = Saturday
+
+  // Days to advance to the next allowed pickup day (Monday)
+  const daysToAdd =
+    dayOfWeek === 0 ? 1 : // Sunday  → Monday
+    dayOfWeek === 5 ? 3 : // Friday  → Monday
+    dayOfWeek === 6 ? 2 : // Saturday → Monday
+    0;                     // Mon–Thu already allowed
+
+  const targetNoon = new Date(Date.UTC(y, m - 1, d + daysToAdd, 12, 0, 0));
+  const targetStr = formatInTimeZone(targetNoon, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
+  return fromZonedTime(`${targetStr}T00:00:00`, PICKUP_POLICY.timezone);
 }
 
 /**
@@ -76,25 +70,46 @@ export function getDayName(date: Date): string {
  * `offsetWeeks` shifts by whole weeks from the current week (0 = this week, -1 = last,
  * +1 = next). The range is [Monday 00:00 Pacific, next Monday 00:00 Pacific), which is the
  * same week definition billing and pickups already use, so the orders board lines up with
- * the rest of the app. Computed in Pacific regardless of where the caller's clock is, so a
- * tablet in any timezone (or a server in UTC) buckets orders identically.
+ * the rest of the app.
+ *
+ * All day arithmetic happens on noon-UTC anchors of the current PACIFIC calendar date —
+ * the same technique as normalizeToAllowedPickupDay above. An earlier version ran the
+ * clock through timezone conversion twice (toZonedTime, then formatInTimeZone), which
+ * shifted the anchor a second time on any server not already in Pacific: on a UTC deploy
+ * the "Monday" landed on Sunday for the first 7-8 hours of every Pacific day.
  */
 export function getPacificWeekRange(offsetWeeks = 0): { start: Date; end: Date; mondayISO: string } {
-  const pacificNow = toZonedTime(new Date(), PICKUP_POLICY.timezone);
-  const dayOfWeek = pacificNow.getDay(); // 0 = Sunday .. 6 = Saturday
-  const daysSinceMonday = (dayOfWeek + 6) % 7; // Monday -> 0, Sunday -> 6
+  const todayStr = formatInTimeZone(new Date(), PICKUP_POLICY.timezone, 'yyyy-MM-dd');
+  const [y, m, d] = todayStr.split('-').map(Number);
+  const todayNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const daysSinceMonday = (todayNoon.getUTCDay() + 6) % 7; // Monday -> 0 ... Sunday -> 6
 
-  const monday = addDays(pacificNow, -daysSinceMonday + offsetWeeks * 7);
-  const nextMonday = addDays(monday, 7);
+  const mondayNoon = new Date(Date.UTC(y, m - 1, d - daysSinceMonday + offsetWeeks * 7, 12, 0, 0));
+  const nextMondayNoon = new Date(Date.UTC(y, m - 1, d - daysSinceMonday + (offsetWeeks + 1) * 7, 12, 0, 0));
 
-  const mondayStr = formatInTimeZone(monday, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
-  const nextMondayStr = formatInTimeZone(nextMonday, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
+  // A noon-UTC anchor carries its calendar date in the UTC fields directly.
+  const mondayStr = mondayNoon.toISOString().slice(0, 10);
+  const nextMondayStr = nextMondayNoon.toISOString().slice(0, 10);
 
   return {
     start: fromZonedTime(`${mondayStr}T00:00:00`, PICKUP_POLICY.timezone),
     end: fromZonedTime(`${nextMondayStr}T00:00:00`, PICKUP_POLICY.timezone),
     mondayISO: mondayStr,
   };
+}
+
+/**
+ * Advances a pickup date by one subscription interval, then normalizes to an
+ * allowed pickup day. Always advances from the *scheduled* date, not from now,
+ * so dates never drift even if billing fires late.
+ *
+ * Frequency conversion lives in shared/subscription-frequency (the single source of
+ * truth, with alias handling and validation). A duplicate implementation that briefly
+ * lived here silently defaulted unknown values to WEEKLY — which would bill 4x too
+ * often on bad data — and was removed in favor of the shared module, which throws.
+ */
+export function nextPickupDateFromScheduled(currentPickupDate: Date, frequency: string): Date {
+  return normalizeToAllowedPickupDay(addDays(currentPickupDate, frequencyToDays(frequency)));
 }
 
 /**
@@ -107,32 +122,24 @@ export function getPacificWeekRange(offsetWeeks = 0): { start: Date; end: Date; 
  * @returns A new Date object set to 4 AM Pacific time on the Monday of the pickup week
  */
 export function getBillingDateForPickup(pickupDate: Date): Date {
-  const pacificDate = toZonedTime(pickupDate, PICKUP_POLICY.timezone);
-  const dayOfWeek = pacificDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
-  
-  // Calculate days to go back to Monday
-  let daysToSubtract: number;
-  switch (dayOfWeek) {
-    case 1: // Monday
-      daysToSubtract = 0;
-      break;
-    case 2: // Tuesday
-      daysToSubtract = 1;
-      break;
-    case 3: // Wednesday
-      daysToSubtract = 2;
-      break;
-    case 4: // Thursday
-      daysToSubtract = 3;
-      break;
-    default:
-      // For Fri/Sat/Sun (shouldn't happen with normalized pickup dates), 
-      // just use the date as-is
-      daysToSubtract = 0;
-  }
-  
-  const mondayDate = addDays(pacificDate, -daysToSubtract);
-  const dateStr = formatInTimeZone(mondayDate, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
-  // Billing runs at 4 AM Pacific time
-  return fromZonedTime(`${dateStr}T04:00:00`, PICKUP_POLICY.timezone);
+  // Get the Pacific date string directly — avoids toZonedTime+addDays+formatInTimeZone drift
+  // that occurs when the input is exactly midnight Pacific (07:00 UTC in PDT).
+  const pickupStr = formatInTimeZone(pickupDate, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
+  const [y, m, d] = pickupStr.split('-').map(Number);
+
+  // Noon-UTC anchor: unambiguous day-of-week lookup (Pacific is at most UTC-8)
+  const noonUTC = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const dayOfWeek = noonUTC.getUTCDay(); // 0 = Sunday, 1 = Monday, …
+
+  // Days to go back to the Monday of the pickup week
+  const daysToSubtract =
+    dayOfWeek === 2 ? 1 : // Tuesday  → Monday
+    dayOfWeek === 3 ? 2 : // Wednesday → Monday
+    dayOfWeek === 4 ? 3 : // Thursday  → Monday
+    0;                     // Monday (or unexpected) — use as-is
+
+  const mondayNoon = new Date(Date.UTC(y, m - 1, d - daysToSubtract, 12, 0, 0));
+  const mondayStr = formatInTimeZone(mondayNoon, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
+  // Billing runs at 4 AM Pacific time on Monday
+  return fromZonedTime(`${mondayStr}T04:00:00`, PICKUP_POLICY.timezone);
 }

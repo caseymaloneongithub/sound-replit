@@ -114,11 +114,27 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
     const taxAmount = parseFloat(paymentIntent.metadata.taxAmount || '0');
     const totalAmount = parseFloat(paymentIntent.metadata.totalAmount || '0');
 
-    // Calculate the next charge/pickup dates before opening the transaction
-    const daysUntilNext = frequencyToDays(sub.subscriptionFrequency);
-    const nextDate = new Date();
-    nextDate.setDate(nextDate.getDate() + daysUntilNext);
-    const normalizedNextPickupDate = normalizeToAllowedPickupDay(nextDate);
+    // Calculate the next charge/pickup dates before opening the transaction.
+    //
+    // Advance from the SCHEDULED pickup, not from now — a billing run that fires late
+    // must not push every subsequent pickup later. (Semantics adopted from the parallel
+    // date-drift fix on main.)
+    //
+    // frequencyToDays throws on non-canonical values, and at this point the customer's
+    // card is ALREADY CHARGED — throwing here would strand a paid charge with no order,
+    // permanently, since every retry hits the same throw. Fall back to 28 days and log
+    // loudly instead: a wrong cadence is staff-recoverable; a charge with no order is
+    // the exact failure state this function exists to prevent.
+    let daysUntilNext: number;
+    try {
+      daysUntilNext = frequencyToDays(sub.subscriptionFrequency);
+    } catch {
+      console.error(`🚨 [BILLING] Subscription ${sub.id} has unrecognized frequency "${sub.subscriptionFrequency}" — falling back to 28 days. Fix the subscription row.`);
+      daysUntilNext = 28;
+    }
+    const normalizedNextPickupDate = normalizeToAllowedPickupDay(
+      addDays(sub.nextDeliveryDate || new Date(), daysUntilNext)
+    );
     // Billing happens on Monday of the pickup week
     const nextBillingDate = getBillingDateForPickup(normalizedNextPickupDate);
 
@@ -139,15 +155,17 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
       // Serialize order-number generation for the duration of this transaction
       await orderClient.query('SELECT pg_advisory_xact_lock($1)', [123456789]);
 
+      // Numbering considers ALL rows, soft-deleted included: order_number is globally
+      // unique, so a soft-deleted order keeps its number reserved. Filtering deleted_at
+      // here meant that whenever the highest-numbered order was soft-deleted, the next
+      // billing run re-minted its number and the INSERT below failed — after the charge.
+      // MAX over the numeric part (not lexicographic ORDER BY) so RO-1000000 sorts right.
       const lastNumber = await orderClient.query(
-        `SELECT order_number FROM retail_orders
-         WHERE order_number ~ '^RO-[0-9]+$' AND deleted_at IS NULL
-         ORDER BY order_number DESC
-         LIMIT 1`
+        `SELECT MAX(CAST(SUBSTRING(order_number FROM 4) AS bigint)) AS last_seq
+         FROM retail_orders
+         WHERE order_number ~ '^RO-[0-9]+$'`
       );
-      const lastSeq = lastNumber.rows.length
-        ? parseInt(String(lastNumber.rows[0].order_number).replace('RO-', ''), 10)
-        : 0;
+      const lastSeq = Number(lastNumber.rows[0]?.last_seq ?? 0);
       orderNumber = `RO-${String(lastSeq + 1).padStart(6, '0')}`;
 
       const inserted = await orderClient.query(
