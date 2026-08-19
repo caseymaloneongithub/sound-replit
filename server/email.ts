@@ -265,6 +265,13 @@ interface EmailVerificationCodeParams {
    * single-use credential.
    */
   magicLink?: string;
+  /**
+   * How long the code/link is valid, in minutes. MUST match the expiresAt the caller
+   * stored. Defaults to 5 (retail/staff 2FA); wholesale login passes 15. This template is
+   * shared — hardcoding one flow's expiry here once told 2FA users they had 15 minutes
+   * when their code died at 5.
+   */
+  expiresMinutes?: number;
 }
 
 export async function sendEmailVerificationCode(params: EmailVerificationCodeParams): Promise<void> {
@@ -284,7 +291,7 @@ export async function sendEmailVerificationCode(params: EmailVerificationCodePar
     text: `
 ${params.magicLink ? `Sign in here:\n${params.magicLink}\n\nOr enter this code: ${params.code}` : `Your verification code is: ${params.code}`}
 
-This ${params.magicLink ? 'link and code expire' : 'code will expire'} in 15 minutes and can only be used once.
+This ${params.magicLink ? 'link and code expire' : 'code will expire'} in ${params.expiresMinutes ?? 5} minutes and can only be used once.
 
 If you didn't request this, you can safely ignore this email.
 
@@ -330,7 +337,7 @@ Puget Sound Kombucha Co.
     </div>
 
     <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; margin-top: 30px; text-align: center;">
-      This ${params.magicLink ? 'link and code expire' : 'code will expire'} in 15 minutes and can only be used once.
+      This ${params.magicLink ? 'link and code expire' : 'code will expire'} in ${params.expiresMinutes ?? 5} minutes and can only be used once.
     </p>
 
     <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; text-align: center;">

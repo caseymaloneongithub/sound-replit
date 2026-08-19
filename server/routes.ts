@@ -776,7 +776,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const magicLink = `${getBaseUrl()}/wholesale/login?token=${loginToken}`;
 
           try {
-            await sendEmailVerificationCode({ email, code, magicLink });
+            await sendEmailVerificationCode({ email, code, magicLink, expiresMinutes: 15 });
             console.log(`[WHOLESALE AUTH] Login email sent to ${email} for customer ${wholesaleCustomer.id}`);
           } catch (emailError: any) {
             console.warn(`[WHOLESALE AUTH] Failed to send login email to ${email}:`, emailError.message);
@@ -2547,10 +2547,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const casePrice = getCasePriceCents(item.isSubscription);
 
           if (item.isSubscription) {
-            const frequencyLabel = 
-              item.subscriptionFrequency === 'weekly' ? 'Weekly' :
-              item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
-              'Every 4 Weeks';
+            // Shared label, not a local ternary: the old copy said 'Every 4 Weeks' for
+            // 6- and 8-week cadences, so the Stripe receipt described a cadence the
+            // customer isn't actually on.
+            const cadenceLabel = frequencyLabel(item.subscriptionFrequency);
             
             const intervalCount = frequencyToStripeInterval(item.subscriptionFrequency).interval_count;
 
@@ -2559,7 +2559,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 currency: 'usd',
                 product_data: {
                   name: `${product.name} - Case of 12 (${item.subscriptionFrequency})`,
-                  description: `${frequencyLabel} subscription`,
+                  description: `${cadenceLabel} subscription`,
                   images: imageUrl.startsWith('http') ? [imageUrl] : [],
                 },
                 unit_amount: casePrice,
@@ -2615,10 +2615,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const casePriceCents = Math.round(finalPrice * 100);
 
           if (item.isSubscription) {
-            const frequencyLabel = 
-              item.subscriptionFrequency === 'weekly' ? 'Weekly' :
-              item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
-              'Every 4 Weeks';
+            // Shared label, not a local ternary: the old copy said 'Every 4 Weeks' for
+            // 6- and 8-week cadences, so the Stripe receipt described a cadence the
+            // customer isn't actually on.
+            const cadenceLabel = frequencyLabel(item.subscriptionFrequency);
             
             const intervalCount = frequencyToStripeInterval(item.subscriptionFrequency).interval_count;
 
@@ -2627,7 +2627,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 currency: 'usd',
                 product_data: {
                   name: `${lineName} (${item.subscriptionFrequency})`,
-                  description: `${frequencyLabel} subscription`,
+                  description: `${cadenceLabel} subscription`,
                   images: imageUrl ? [imageUrl] : [],
                 },
                 unit_amount: casePriceCents,
@@ -5042,7 +5042,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const session = await stripe.billingPortal.sessions.create({
         customer: user.stripeCustomerId,
         // /my-subscriptions only redirects to /my-account — send them straight there
-        return_url: `${req.headers.origin || 'http://localhost:5000'}/my-account`,
+        return_url: `${getBaseUrl()}/my-account` // Origin is client-supplied and proxies may strip it,
       });
 
       res.json({ url: session.url });

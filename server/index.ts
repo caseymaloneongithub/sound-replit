@@ -68,6 +68,10 @@ app.use((req, res, next) => {
   // Explicit check: an unset NODE_ENV should mean "production" for a built artifact
   // (app.get("env") defaults to "development", which would try to boot Vite in prod).
   if (process.env.NODE_ENV === "development") {
+    // Development mode relaxes real security controls, so say so loudly: if this line
+    // ever shows up in logs on an internet-reachable host, the deploy is misconfigured
+    // (most likely a copied .env that still says NODE_ENV=development).
+    console.warn("⚠️  NODE_ENV=development: staff/admin login 2FA is DISABLED and cookies are not secure-only. Never run production this way.");
     await setupVite(app, server);
   } else {
     serveStatic(app);

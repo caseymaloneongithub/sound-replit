@@ -2,27 +2,14 @@
 // Shared by routes.ts (wholesale email login) and auth.ts (retail/staff 2FA) so a
 // single attacker can't email-bomb an account or brute-force a 6-digit code.
 
-const emailCodeRateLimiter = new Map<string, { count: number; resetAt: number }>();
-const EMAIL_CODE_RATE_LIMIT = 5;
-const EMAIL_CODE_RATE_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-
-/** Returns false when the caller has exceeded the send limit for this email. */
+/**
+ * Returns false when the caller has exceeded the send limit for this email
+ * (5 codes per 15 minutes). Delegates to the generic bucket limiter below so there is
+ * one fixed-window implementation — a separate copy here had no size sweep, so its Map
+ * grew without bound on a long-lived process.
+ */
 export function checkEmailCodeRateLimit(email: string): boolean {
-  const key = email.toLowerCase();
-  const now = Date.now();
-  const entry = emailCodeRateLimiter.get(key);
-
-  if (!entry || now >= entry.resetAt) {
-    emailCodeRateLimiter.set(key, { count: 1, resetAt: now + EMAIL_CODE_RATE_WINDOW_MS });
-    return true;
-  }
-
-  if (entry.count >= EMAIL_CODE_RATE_LIMIT) {
-    return false;
-  }
-
-  entry.count++;
-  return true;
+  return checkSubmissionRateLimit(`email-code:${email.toLowerCase()}`, 5, 15 * 60 * 1000);
 }
 
 /** Max wrong guesses allowed against a single issued code before it's refused. */
