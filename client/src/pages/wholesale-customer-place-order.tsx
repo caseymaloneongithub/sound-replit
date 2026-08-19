@@ -5,15 +5,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Plus, Minus, Trash2, ShoppingCart, MapPin, AlertCircle } from "lucide-react";
+import { Plus, Minus, Trash2, MapPin } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { WholesaleCustomerLayout } from "@/components/wholesale/wholesale-customer-layout";
+import { loadWholesaleCart, saveWholesaleCart, clearWholesaleCart } from "@/lib/wholesale-cart";
+import type { WholesaleCustomer } from "@shared/schema";
+import { PICKUP_POLICY } from "@shared/pickup-policy";
 
 interface CartItem {
   unitTypeId: string;
@@ -25,24 +27,40 @@ export default function WholesaleCustomerPlaceOrder() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState<string>("");
+  // Delivery or collect from the brewery. Pickup carries no address, so it's also the way
+  // a customer with no location on file can still place an order.
+  const [fulfillmentMethod, setFulfillmentMethod] = useState<"delivery" | "pickup">("delivery");
   const [selectedUnitTypeId, setSelectedUnitTypeId] = useState<string>("");
   const [selectedFlavorId, setSelectedFlavorId] = useState<string>("");
   const [quantity, setQuantity] = useState<string>("1");
+  const [cartHydrated, setCartHydrated] = useState(false);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
-  const { data: unitTypes = [] } = useQuery<(WholesaleUnitType & { flavors?: Flavor[] })[]>({
-    queryKey: ["/api/wholesale-unit-types"],
-    queryFn: async () => apiRequest('GET', '/api/wholesale-unit-types?includeFlavors=true'),
+  const { data: customer } = useQuery<WholesaleCustomer>({
+    queryKey: ["/api/wholesale-customer"],
   });
 
-  // Fetch customer-specific pricing for the logged-in wholesale customer
+  // Used only to tell a brand-new account from a returning one, so the page can welcome
+  // the first and get out of the way of the second.
+  const { data: pastOrders = [], isLoading: ordersLoading } = useQuery<Array<{ id: string }>>({
+    queryKey: ["/api/wholesale-customer/orders"],
+  });
+
+  const { data: unitTypes = [] } = useQuery<(WholesaleUnitType & { flavors?: Flavor[] })[]>({
+    queryKey: ["/api/wholesale/customer/unit-types"],
+  });
+
+  // Fetch customer-specific pricing for the logged-in wholesale customer.
+  // NOTE: this key was "/api/wholesale/customer/unit-pricing", which does not exist —
+  // it 404'd, pricing stayed empty, and every customer was shown list prices while the
+  // server correctly invoiced their negotiated rate. Displayed total != charged total.
   const { data: customerPricing = [] } = useQuery<WholesaleCustomerPricing[]>({
-    queryKey: ["/api/wholesale/customer/unit-pricing"],
+    queryKey: ["/api/wholesale/customer/pricing"],
   });
 
   // Fetch customer's delivery locations
-  const { data: locations = [] } = useQuery<WholesaleLocation[]>({
+  const { data: locations = [], isLoading: locationsLoading } = useQuery<WholesaleLocation[]>({
     queryKey: ["/api/wholesale-customer/locations"],
   });
 
@@ -58,6 +76,37 @@ export default function WholesaleCustomerPlaceOrder() {
       setSelectedLocationId(locations[0].id);
     }
   }, [locations, selectedLocationId]);
+
+  // Restore a saved or reordered cart once the catalogue is loaded, dropping anything
+  // no longer on offer. Validation happens here rather than at the Reorder click because
+  // this is the only page that holds the live catalogue.
+  useEffect(() => {
+    if (cartHydrated || !customer?.id || unitTypes.length === 0) return;
+
+    const saved = loadWholesaleCart(customer.id);
+    if (saved.length > 0) {
+      const isStillAvailable = (item: { unitTypeId: string; flavorId: string }) => {
+        const ut = unitTypes.find((u) => u.id === item.unitTypeId);
+        return !!ut?.flavors?.some((f) => f.id === item.flavorId);
+      };
+      const kept = saved.filter(isStillAvailable);
+      const dropped = saved.length - kept.length;
+      setCart(kept);
+      if (dropped > 0) {
+        toast({
+          title: dropped === saved.length ? "Those items are no longer available" : "Some items are no longer available",
+          description: `${dropped} ${dropped === 1 ? "item" : "items"} we no longer carry ${dropped === 1 ? "was" : "were"} left out. Everything else is in your cart.`,
+        });
+      }
+    }
+    setCartHydrated(true);
+  }, [customer?.id, unitTypes, cartHydrated, toast]);
+
+  // Persist after hydration only, so we never overwrite a saved cart with the empty
+  // initial state during the first render pass.
+  useEffect(() => {
+    if (cartHydrated && customer?.id) saveWholesaleCart(customer.id, cart);
+  }, [cart, cartHydrated, customer?.id]);
 
   // Get available flavors for selected unit type
   const availableFlavors = selectedUnitTypeId
@@ -77,7 +126,11 @@ export default function WholesaleCustomerPlaceOrder() {
 
       return await apiRequest("POST", "/api/wholesale/customer/orders", {
         notes: notes || undefined,
-        locationId: selectedLocationId && selectedLocationId !== "none" ? selectedLocationId : undefined,
+        fulfillmentMethod,
+        locationId:
+          fulfillmentMethod === "delivery" && selectedLocationId && selectedLocationId !== "none"
+            ? selectedLocationId
+            : undefined,
         items: cart,
       });
     },
@@ -87,6 +140,7 @@ export default function WholesaleCustomerPlaceOrder() {
         description: "Your wholesale order has been placed successfully",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale-customer/orders"] });
+      clearWholesaleCart(customer?.id);
       setCart([]);
       setNotes("");
       setSelectedLocationId("");
@@ -150,12 +204,26 @@ export default function WholesaleCustomerPlaceOrder() {
     if (newQuantity <= 0) {
       removeFromCart(unitTypeId, flavorId);
     } else {
-      setCart(cart.map(item => 
+      setCart(cart.map(item =>
         item.unitTypeId === unitTypeId && item.flavorId === flavorId
           ? { ...item, quantity: newQuantity }
           : item
       ));
     }
+  };
+
+  // Typing into the quantity field. Unlike the +/- buttons, this must let the box go
+  // EMPTY mid-edit (stored as 0) so you can backspace and retype a fresh number — the old
+  // handler coerced empty to 0 and removed the line on every keystroke. Removal stays on
+  // the minus button; a field left empty snaps back to 1 on blur.
+  const setCartQuantity = (unitTypeId: string, flavorId: string, raw: string) => {
+    const digits = raw.replace(/[^0-9]/g, "");
+    const n = digits === "" ? 0 : parseInt(digits, 10);
+    setCart(cart.map(item =>
+      item.unitTypeId === unitTypeId && item.flavorId === flavorId
+        ? { ...item, quantity: n }
+        : item
+    ));
   };
 
   const removeFromCart = (unitTypeId: string, flavorId: string) => {
@@ -173,6 +241,10 @@ export default function WholesaleCustomerPlaceOrder() {
     return unitTypes.find(ut => ut.id === unitTypeId)?.name || "";
   };
 
+  // Treated as first-run until they've actually placed something. Requires the query to
+  // have settled, so a returning customer isn't greeted as a newcomer mid-load.
+  const isFirstOrder = !ordersLoading && !!customer && pastOrders.length === 0;
+
   const getFlavorName = (flavorId: string): string => {
     // Find flavor from all unit types since we don't have a separate flavors query
     for (const unitType of unitTypes) {
@@ -184,13 +256,100 @@ export default function WholesaleCustomerPlaceOrder() {
 
   return (
     <WholesaleCustomerLayout>
-      <div className="container mx-auto py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Place Order</h1>
+      <div className="py-8">
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold mb-2">
+            {isFirstOrder ? `Welcome, ${customer?.businessName ?? "there"}` : "Place Order"}
+          </h1>
           <p className="text-muted-foreground">
-            Select unit types, flavors, and place your wholesale order
+            {isFirstOrder
+              ? "You're all set up. Here's everything you need to place your first order."
+              : "Select unit types, flavors, and place your wholesale order"}
           </p>
         </div>
+
+        {!isFirstOrder && pastOrders.length > 0 && (
+          <Alert className="mb-6">
+            <AlertDescription className="flex items-center justify-between gap-4 flex-wrap">
+              <span>Ordering the same as last time? Copy a past order instead of rebuilding it.</span>
+              <Button variant="outline" size="sm" onClick={() => setLocation("/wholesale-customer/orders")} data-testid="button-go-reorder">
+                View past orders
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-lg">Your account</CardTitle>
+            <CardDescription>
+              Prices, minimum order, and delivery details for{" "}
+              {customer?.businessName ?? "your business"}.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-6 sm:grid-cols-3">
+            <div>
+              {/* Just "Pricing", and no badge marking which lines are account-specific.
+                  Flagging a price as personalised invites the customer to wonder what
+                  everyone else pays; the number shown is simply the price. getPrice()
+                  still applies any agreed rate — this only changes how it's presented. */}
+              <p className="text-sm font-medium mb-2">Pricing</p>
+              {unitTypes.length === 0 && (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              )}
+              <ul className="space-y-1 text-sm text-muted-foreground">
+                {unitTypes
+                  .filter(ut => ut.isActive)
+                  .sort((a, b) => a.displayOrder - b.displayOrder)
+                  .map(ut => (
+                    <li key={ut.id} className="flex items-center gap-2">
+                      <span>{ut.name}</span>
+                      <span className="text-foreground font-medium">${getPrice(ut.id).toFixed(2)}</span>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium mb-2">Minimum order</p>
+              <p className="text-sm text-muted-foreground">
+                {minimumOrderAmount > 0
+                  ? `$${minimumOrderAmount.toFixed(2)} per order`
+                  : "No minimum — order any quantity."}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium mb-2">
+                {fulfillmentMethod === "pickup" ? "Picking up from" : "Delivering to"}
+              </p>
+              {fulfillmentMethod === "pickup" ? (
+                <p className="text-sm text-muted-foreground">
+                  {PICKUP_POLICY.address} &mdash; Mon&ndash;Thu, {PICKUP_POLICY.timeWindow}
+                </p>
+              ) : locationsLoading ? (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              ) : locations.length === 0 ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-destructive">
+                    No delivery address on file — add one, or choose pickup in your cart.
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => setLocation("/wholesale-customer/locations")} data-testid="button-add-location-prompt">
+                    Add a delivery address
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {(() => {
+                    const active = locations.find(l => l.id === selectedLocationId) ?? locations[0];
+                    return `${active.locationName} — ${active.address}, ${active.city}`;
+                  })()}
+                  {locations.length > 1 && " (change it in the cart)"}
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="grid lg:grid-cols-2 gap-6">
           <Card>
@@ -218,8 +377,7 @@ export default function WholesaleCustomerPlaceOrder() {
                           .sort((a, b) => a.displayOrder - b.displayOrder)
                           .map((unitType) => {
                             const price = getPrice(unitType.id);
-                            const hasCustomPrice = customerPricing.some(p => p.unitTypeId === unitType.id);
-                            
+
                             return (
                               <SelectItem key={unitType.id} value={unitType.id}>
                                 <div className="flex items-center gap-2">
@@ -227,11 +385,6 @@ export default function WholesaleCustomerPlaceOrder() {
                                   <span className="text-muted-foreground">
                                     (${price.toFixed(2)})
                                   </span>
-                                  {hasCustomPrice && (
-                                    <Badge variant="secondary" className="text-xs ml-1">
-                                      Custom Price
-                                    </Badge>
-                                  )}
                                 </div>
                               </SelectItem>
                             );
@@ -268,7 +421,7 @@ export default function WholesaleCustomerPlaceOrder() {
                       {selectedFlavorId && (
                         <>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium">Quantity (cases)</label>
+                            <label className="text-sm font-medium">Quantity</label>
                             <Input
                               type="number"
                               value={quantity}
@@ -310,7 +463,6 @@ export default function WholesaleCustomerPlaceOrder() {
               <CardContent>
                 {cart.length === 0 ? (
                   <div className="text-center py-8">
-                    <ShoppingCart className="w-12 h-12 mx-auto mb-3 text-muted-foreground opacity-50" />
                     <p className="text-muted-foreground">Cart is empty</p>
                   </div>
                 ) : (
@@ -346,11 +498,12 @@ export default function WholesaleCustomerPlaceOrder() {
                               <Minus className="w-4 h-4" />
                             </Button>
                             <Input
-                              type="number"
-                              value={item.quantity}
-                              onChange={(e) => updateQuantity(item.unitTypeId, item.flavorId, parseInt(e.target.value) || 0)}
+                              type="text"
+                              inputMode="numeric"
+                              value={item.quantity === 0 ? "" : item.quantity}
+                              onChange={(e) => setCartQuantity(item.unitTypeId, item.flavorId, e.target.value)}
+                              onBlur={() => { if (item.quantity < 1) updateQuantity(item.unitTypeId, item.flavorId, 1); }}
                               className="w-16 text-center"
-                              min="0"
                               data-testid={`input-cart-quantity-${index}`}
                             />
                             <Button
@@ -380,13 +533,54 @@ export default function WholesaleCustomerPlaceOrder() {
 
             {cart.length > 0 && (
               <>
-                {locations.length > 1 && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Delivery Location</CardTitle>
-                      <CardDescription>Select the delivery location for this order</CardDescription>
-                    </CardHeader>
-                    <CardContent>
+                {/* Always shown, unlike the old delivery-only card that appeared just when a
+                    customer had 2+ addresses — pickup has to be reachable by everyone,
+                    including customers with no address on file at all. */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>How would you like this order?</CardTitle>
+                    <CardDescription>Delivered to one of your locations, or collect it from the brewery</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button
+                        type="button"
+                        variant={fulfillmentMethod === "delivery" ? "default" : "outline"}
+                        className="h-auto py-3"
+                        onClick={() => setFulfillmentMethod("delivery")}
+                        data-testid="button-method-delivery"
+                      >
+                        Deliver to us
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={fulfillmentMethod === "pickup" ? "default" : "outline"}
+                        className="h-auto py-3"
+                        onClick={() => setFulfillmentMethod("pickup")}
+                        data-testid="button-method-pickup"
+                      >
+                        We'll pick up
+                      </Button>
+                    </div>
+
+                    {fulfillmentMethod === "pickup" ? (
+                      <div className="text-sm text-muted-foreground p-3 bg-muted rounded-md" data-testid="text-pickup-details">
+                        <p className="font-medium text-foreground">Collect from the brewery</p>
+                        <p className="mt-1">{PICKUP_POLICY.address}</p>
+                        <p>{PICKUP_POLICY.instructions}</p>
+                        <p className="mt-1">Monday&ndash;Thursday, {PICKUP_POLICY.timeWindow}</p>
+                        <p className="mt-1">{PICKUP_POLICY.callInstructions} &mdash; {PICKUP_POLICY.phoneFormatted}</p>
+                      </div>
+                    ) : locations.length === 0 ? (
+                      <div className="space-y-2">
+                        <p className="text-sm text-destructive">
+                          No delivery address on file. Add one, or choose pickup above.
+                        </p>
+                        <Button variant="outline" size="sm" onClick={() => setLocation("/wholesale-customer/locations")} data-testid="button-add-location-cart">
+                          Add a delivery address
+                        </Button>
+                      </div>
+                    ) : (
                       <div className="space-y-2">
                         <Label htmlFor="location-select">Location <span className="text-destructive">*</span></Label>
                         <Select
@@ -439,9 +633,9 @@ export default function WholesaleCustomerPlaceOrder() {
                           <p className="text-sm text-destructive">Please select a delivery location</p>
                         )}
                       </div>
-                    </CardContent>
-                  </Card>
-                )}
+                    )}
+                  </CardContent>
+                </Card>
 
                 <Card>
                   <CardHeader>
@@ -478,7 +672,6 @@ export default function WholesaleCustomerPlaceOrder() {
                     </div>
                     {minimumOrderAmount > 0 && getCartTotal() < minimumOrderAmount && (
                       <Alert variant="destructive" className="mt-4">
-                        <AlertCircle className="h-4 w-4" />
                         <AlertDescription>
                           Your order total of ${getCartTotal().toFixed(2)} does not meet the minimum order amount of ${minimumOrderAmount.toFixed(2)}. Please add more items to your order.
                         </AlertDescription>
@@ -488,9 +681,10 @@ export default function WholesaleCustomerPlaceOrder() {
                       className="w-full mt-4"
                       onClick={() => createOrderMutation.mutate()}
                       disabled={
-                        createOrderMutation.isPending || 
-                        cart.length === 0 || 
-                        (locations.length > 1 && !selectedLocationId) ||
+                        createOrderMutation.isPending ||
+                        cart.length === 0 ||
+                        // Delivery needs somewhere to go; pickup needs nothing.
+                        (fulfillmentMethod === "delivery" && !selectedLocationId) ||
                         (minimumOrderAmount > 0 && getCartTotal() < minimumOrderAmount)
                       }
                       data-testid="button-place-order"

@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Users, Loader2, Package, Search } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 interface RetailCustomer {
   id: string;
@@ -44,7 +44,6 @@ export default function RetailCustomers() {
 
         <div className="mb-6">
           <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Search by name, email, or phone..."
               value={searchQuery}
@@ -99,7 +98,6 @@ export default function RetailCustomers() {
                               className="text-xs"
                               data-testid={`badge-subscriptions-${customer.id}`}
                             >
-                              <Package className="w-3 h-3 mr-1" />
                               {customer.subscriptionCount}
                             </Badge>
                             {customer.activeSubscriptionCount > 0 && (
@@ -120,7 +118,6 @@ export default function RetailCustomers() {
               </div>
             ) : (
               <div className="text-center py-12">
-                <Users className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
                 <p className="text-muted-foreground mb-1">
                   {searchQuery ? 'No customers match your search' : 'No retail customers yet'}
                 </p>

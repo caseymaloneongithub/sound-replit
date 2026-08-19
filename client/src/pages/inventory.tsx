@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Loader2, Package, AlertTriangle, TrendingDown, Check } from "lucide-react";
+import { Loader2, Check } from "lucide-react";
 import type { Product } from "@shared/schema";
 
 export default function Inventory() {
@@ -101,7 +101,6 @@ export default function Inventory() {
           <Card data-testid="card-total-products">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Package className="w-5 h-5" />
                 Total Products
               </CardTitle>
             </CardHeader>
@@ -116,7 +115,6 @@ export default function Inventory() {
           <Card data-testid="card-low-stock">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <TrendingDown className="w-5 h-5 text-yellow-600" />
                 Low Stock Alerts
               </CardTitle>
             </CardHeader>
@@ -131,7 +129,6 @@ export default function Inventory() {
           <Card data-testid="card-out-of-stock">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-destructive" />
                 Out of Stock
               </CardTitle>
             </CardHeader>
@@ -148,7 +145,6 @@ export default function Inventory() {
           <Card className="mb-8 border-yellow-600/50">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-yellow-600" />
                 Low Stock Alert
               </CardTitle>
               <CardDescription>

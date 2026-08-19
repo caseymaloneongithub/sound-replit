@@ -9,7 +9,6 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { CheckCircle2 } from "lucide-react";
 
 const resetPasswordSchema = z.object({
   newPassword: z.string().min(8, "Password must be at least 8 characters"),
@@ -174,9 +173,6 @@ export default function ResetPassword() {
             </Form>
           ) : (
             <div className="space-y-4 text-center">
-              <div className="flex justify-center">
-                <CheckCircle2 className="w-16 h-16 text-green-600 dark:text-green-400" />
-              </div>
               <div className="text-green-600 dark:text-green-400 text-lg font-medium">
                 Password Reset Successful
               </div>

@@ -79,8 +79,17 @@ import {
   type ProductType, type InsertProductType,
   type WholesalePricing, type InsertWholesalePricing,
   type InventoryAdjustment, type InsertInventoryAdjustment,
+  // Materials inventory module
+  suppliers, materials, processes, processMaterials, productions, materialOrders, orderMaterials,
+  type Supplier, type InsertSupplier,
+  type Material, type InsertMaterial,
+  type Process, type InsertProcess,
+  type ProcessMaterial, type InsertProcessMaterial,
+  type Production, type InsertProduction,
+  type MaterialOrder, type InsertMaterialOrder,
+  type OrderMaterial,
 } from "@shared/schema";
-import { eq, and, or, desc, sql, inArray, isNull } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, inArray, isNull, gte, lt } from "drizzle-orm";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import session from "express-session";
@@ -89,7 +98,9 @@ import { db } from "./db";
 
 neonConfig.webSocketConstructor = ws;
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// Exported so other modules (e.g. billing-cron) can run true interactive
+// transactions with advisory locks — the neon-http `db` client cannot.
+export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const PostgresSessionStore = connectPg(session);
 
@@ -122,6 +133,7 @@ export interface IStorage {
   
   createEmailVerificationCode(code: InsertEmailVerificationCode): Promise<EmailVerificationCode>;
   getLatestEmailVerificationCode(email: string): Promise<EmailVerificationCode | undefined>;
+  getEmailVerificationCodeByToken(token: string): Promise<EmailVerificationCode | undefined>;
   getLatestEmailVerificationCodeByPurpose(email: string, purpose: 'registration' | 'login' | 'retail_2fa'): Promise<EmailVerificationCode | undefined>;
   markEmailVerificationCodeAsVerified(id: string): Promise<void>;
   markEmailVerificationCodeAsConsumed(id: string): Promise<void>;
@@ -214,7 +226,11 @@ export interface IStorage {
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
   getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
   getWholesaleOrdersByDeliveryDateRange(startDate: Date, endDate: Date): Promise<WholesaleOrder[]>;
-  getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string }> }>>;
+  getWeeklyBoardOrders(start: Date, end: Date): Promise<{
+    retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; items: Array<{ flavorName: string; unitDescription: string; quantity: number }> }>;
+    wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
+  }>;
+  getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string | null; unitTypeName: string | null; flavorName: string | null }> }>>;
   getWholesaleOrderWithDetails(id: string): Promise<{
     order: WholesaleOrder;
     customer: WholesaleCustomer;
@@ -236,6 +252,9 @@ export interface IStorage {
     dueDate?: Date | null;
     paidAt?: Date | null;
     paidByUserId?: string | null;
+    // ACH is asynchronous: initiated = debit authorised, paidAt = funds actually received.
+    paymentInitiatedAt?: Date | null;
+    paymentFailedAt?: Date | null;
     stripePaymentIntentId?: string | null;
     invoiceSentAt?: Date | null;
   }): Promise<WholesaleOrder | undefined>;
@@ -624,6 +643,23 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
+  /**
+   * Look up an unconsumed magic-link token. Matches on the token alone — it carries its
+   * own entropy, so the caller does not supply an email that could be probed.
+   */
+  async getEmailVerificationCodeByToken(token: string): Promise<EmailVerificationCode | undefined> {
+    if (!token) return undefined;
+    const result = await db
+      .select()
+      .from(emailVerificationCodes)
+      .where(and(
+        eq(emailVerificationCodes.loginToken, token),
+        eq(emailVerificationCodes.verified, false),
+      ))
+      .limit(1);
+    return result[0];
+  }
+
   async getLatestEmailVerificationCodeByPurpose(email: string, purpose: 'registration' | 'login' | 'retail_2fa'): Promise<EmailVerificationCode | undefined> {
     const result = await db
       .select()
@@ -848,6 +884,512 @@ export class PostgresStorage implements IStorage {
 
   async deleteFlavor(id: string): Promise<void> {
     await db.delete(flavors).where(eq(flavors.id, id));
+  }
+
+  // Retail orders scheduled for pickup on a given day (UTC day window).
+  // Backs GET /api/retail/pickup-report.
+  async getRetailOrdersByPickupDate(date: Date): Promise<RetailOrder[]> {
+    const start = new Date(date);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 1);
+
+    return await db
+      .select()
+      .from(retailOrders)
+      .where(
+        and(
+          isNull(retailOrders.deletedAt),
+          gte(retailOrders.pickupDate, start),
+          lt(retailOrders.pickupDate, end)
+        )
+      )
+      .orderBy(asc(retailOrders.pickupDate));
+  }
+
+  // ===== Materials inventory module =====
+
+  // Suppliers (excludes soft-deleted)
+  async getSuppliers(): Promise<Supplier[]> {
+    return await db
+      .select()
+      .from(suppliers)
+      .where(isNull(suppliers.deletedAt))
+      .orderBy(asc(suppliers.name));
+  }
+
+  async createSupplier(data: InsertSupplier): Promise<Supplier> {
+    const result = await db.insert(suppliers).values(data).returning();
+    return result[0];
+  }
+
+  async updateSupplier(id: string, updates: Partial<InsertSupplier>): Promise<Supplier | undefined> {
+    const result = await db.update(suppliers).set(updates).where(eq(suppliers.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteSupplier(id: string): Promise<void> {
+    await db.update(suppliers).set({ deletedAt: new Date() }).where(eq(suppliers.id, id));
+  }
+
+  // Materials, enriched with supplier name + lead time for display
+  async getMaterials(): Promise<(Material & { supplierName: string | null; supplierLeadTimeDays: number | null })[]> {
+    const rows = await db
+      .select({
+        material: materials,
+        supplierName: suppliers.name,
+        supplierLeadTimeDays: suppliers.leadTimeDays,
+      })
+      .from(materials)
+      .leftJoin(suppliers, eq(materials.supplierId, suppliers.id))
+      .where(isNull(materials.deletedAt))
+      .orderBy(asc(materials.title));
+    return rows.map((r) => ({
+      ...r.material,
+      supplierName: r.supplierName ?? null,
+      supplierLeadTimeDays: r.supplierLeadTimeDays ?? null,
+    }));
+  }
+
+  async getMaterial(id: string): Promise<Material | undefined> {
+    const result = await db.select().from(materials).where(eq(materials.id, id));
+    return result[0];
+  }
+
+  async createMaterial(data: InsertMaterial): Promise<Material> {
+    const result = await db.insert(materials).values(data).returning();
+    return result[0];
+  }
+
+  async updateMaterial(id: string, updates: Partial<InsertMaterial>): Promise<Material | undefined> {
+    const result = await db.update(materials).set(updates).where(eq(materials.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteMaterial(id: string): Promise<void> {
+    await db.update(materials).set({ deletedAt: new Date() }).where(eq(materials.id, id));
+  }
+
+  // Recipes (processes) enriched with flavor name and their bill-of-materials
+  async getProcesses(): Promise<(Process & {
+    flavorName: string | null;
+    finishedProductName: string | null;
+    materials: { id: string; materialId: string; units: string; materialTitle: string; materialUnit: string; materialCost: string }[];
+  })[]> {
+    const procRows = await db
+      .select({ process: processes, flavorName: flavors.name, finishedProductName: products.name })
+      .from(processes)
+      .leftJoin(flavors, eq(processes.flavorId, flavors.id))
+      .leftJoin(products, eq(processes.finishedProductId, products.id))
+      .where(isNull(processes.deletedAt))
+      .orderBy(asc(processes.title));
+
+    const bomRows = await db
+      .select({
+        id: processMaterials.id,
+        processId: processMaterials.processId,
+        materialId: processMaterials.materialId,
+        units: processMaterials.units,
+        materialTitle: materials.title,
+        materialUnit: materials.unit,
+        materialCost: materials.cost,
+      })
+      .from(processMaterials)
+      .innerJoin(materials, eq(processMaterials.materialId, materials.id));
+
+    return procRows.map((p) => ({
+      ...p.process,
+      flavorName: p.flavorName ?? null,
+      finishedProductName: p.finishedProductName ?? null,
+      materials: bomRows
+        .filter((b) => b.processId === p.process.id)
+        .map((b) => ({
+          id: b.id,
+          materialId: b.materialId,
+          units: b.units,
+          materialTitle: b.materialTitle,
+          materialUnit: b.materialUnit,
+          materialCost: b.materialCost,
+        })),
+    }));
+  }
+
+  async createProcess(data: InsertProcess): Promise<Process> {
+    const result = await db.insert(processes).values(data).returning();
+    return result[0];
+  }
+
+  async updateProcess(id: string, updates: Partial<InsertProcess>): Promise<Process | undefined> {
+    const result = await db.update(processes).set(updates).where(eq(processes.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteProcess(id: string): Promise<void> {
+    await db.update(processes).set({ deletedAt: new Date() }).where(eq(processes.id, id));
+  }
+
+  // Bill-of-materials lines for a recipe. Changing these only affects FUTURE
+  // productions — stock already drawn by past batches is deliberately untouched.
+  async addProcessMaterial(data: InsertProcessMaterial): Promise<ProcessMaterial> {
+    const result = await db.insert(processMaterials).values(data).returning();
+    return result[0];
+  }
+
+  async updateProcessMaterial(id: string, units: string): Promise<ProcessMaterial | undefined> {
+    const result = await db
+      .update(processMaterials)
+      .set({ units })
+      .where(eq(processMaterials.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteProcessMaterial(id: string): Promise<void> {
+    await db.delete(processMaterials).where(eq(processMaterials.id, id));
+  }
+
+  // Productions, enriched with recipe title + flavor, most recent first
+  async getProductions(limit = 200): Promise<(Production & { processTitle: string; flavorName: string | null })[]> {
+    const rows = await db
+      .select({ production: productions, processTitle: processes.title, flavorName: flavors.name })
+      .from(productions)
+      .innerJoin(processes, eq(productions.processId, processes.id))
+      .leftJoin(flavors, eq(processes.flavorId, flavors.id))
+      .orderBy(desc(productions.date))
+      .limit(limit);
+    return rows.map((r) => ({
+      ...r.production,
+      processTitle: r.processTitle,
+      flavorName: r.flavorName ?? null,
+    }));
+  }
+
+  // Apply (sign = -1 to consume, +1 to restore) a production's material draw to stock, per the recipe BOM
+  private async applyProductionStock(processId: string, units: number, sign: 1 | -1): Promise<void> {
+    const bom = await db.select().from(processMaterials).where(eq(processMaterials.processId, processId));
+    for (const b of bom) {
+      const delta = sign * units * Number(b.units);
+      await db
+        .update(materials)
+        .set({ stock: sql`${materials.stock} + ${delta}` })
+        .where(eq(materials.id, b.materialId));
+    }
+  }
+
+  async createProduction(data: InsertProduction): Promise<Production> {
+    const result = await db.insert(productions).values(data).returning();
+    const created = result[0];
+    // Draw down raw materials consumed by this batch
+    await this.applyProductionStock(created.processId, Number(created.units), -1);
+    // If this recipe yields a finished-goods product, add the output to sellable stock
+    const proc = (await db.select().from(processes).where(eq(processes.id, created.processId)))[0];
+    if (proc?.finishedProductId) {
+      const qty = Math.round(Number(created.units));
+      if (qty !== 0) {
+        // Records an auditable adjustment AND updates products.stock_quantity
+        await this.createInventoryAdjustment({
+          productId: proc.finishedProductId,
+          quantity: qty,
+          reason: 'production',
+          batchMetadata: JSON.stringify({ productionId: created.id, processTitle: proc.title }),
+          notes: `Production logged: ${proc.title}`,
+        });
+      }
+    }
+    return created;
+  }
+
+  async deleteProduction(id: string): Promise<void> {
+    const existing = await db.select().from(productions).where(eq(productions.id, id));
+    const prod = existing[0];
+    if (!prod) return;
+    // Restore the materials this batch had consumed
+    await this.applyProductionStock(prod.processId, Number(prod.units), 1);
+    // Reverse any finished-goods stock this batch had added
+    const proc = (await db.select().from(processes).where(eq(processes.id, prod.processId)))[0];
+    if (proc?.finishedProductId) {
+      const qty = Math.round(Number(prod.units));
+      if (qty !== 0) {
+        await this.createInventoryAdjustment({
+          productId: proc.finishedProductId,
+          quantity: -qty,
+          reason: 'correction',
+          batchMetadata: JSON.stringify({ reversedProductionId: prod.id }),
+          notes: `Reversal of deleted production: ${proc.title}`,
+        });
+      }
+    }
+    await db.delete(productions).where(eq(productions.id, id));
+  }
+
+  // Purchase orders (replenishment). Marking a line delivered adds its units to material stock.
+  async getMaterialOrders(): Promise<(MaterialOrder & {
+    supplierName: string | null;
+    lines: (OrderMaterial & { materialTitle: string; materialUnit: string })[];
+  })[]> {
+    const orderRows = await db
+      .select({ order: materialOrders, supplierName: suppliers.name })
+      .from(materialOrders)
+      .leftJoin(suppliers, eq(materialOrders.supplierId, suppliers.id))
+      .orderBy(desc(materialOrders.dateOrdered));
+
+    const lineRows = await db
+      .select({ line: orderMaterials, materialTitle: materials.title, materialUnit: materials.unit })
+      .from(orderMaterials)
+      .innerJoin(materials, eq(orderMaterials.materialId, materials.id));
+
+    return orderRows.map((o) => ({
+      ...o.order,
+      supplierName: o.supplierName ?? null,
+      lines: lineRows
+        .filter((l) => l.line.orderId === o.order.id)
+        .map((l) => ({ ...l.line, materialTitle: l.materialTitle, materialUnit: l.materialUnit })),
+    }));
+  }
+
+  async createMaterialOrder(
+    order: InsertMaterialOrder,
+    lines: { materialId: string; units: string }[]
+  ): Promise<MaterialOrder> {
+    const result = await db.insert(materialOrders).values(order).returning();
+    const created = result[0];
+    if (lines.length > 0) {
+      await db.insert(orderMaterials).values(
+        lines.map((l) => ({
+          orderId: created.id,
+          materialId: l.materialId,
+          units: l.units,
+          delivered: false,
+        }))
+      );
+    }
+    return created;
+  }
+
+  // Toggle a PO line's delivered flag and move stock accordingly (+units in, -units if reversed)
+  async setOrderMaterialDelivered(lineId: string, delivered: boolean): Promise<void> {
+    const existing = await db.select().from(orderMaterials).where(eq(orderMaterials.id, lineId));
+    const line = existing[0];
+    if (!line) return;
+
+    if (line.delivered !== delivered) {
+      const signed = delivered ? Number(line.units) : -Number(line.units);
+      await db
+        .update(materials)
+        .set({ stock: sql`${materials.stock} + ${signed}` })
+        .where(eq(materials.id, line.materialId));
+      await db.update(orderMaterials).set({ delivered }).where(eq(orderMaterials.id, lineId));
+    }
+
+    // Reflect overall delivery on the order: fully delivered => stamp dateDelivered, else clear it
+    const siblings = await db.select().from(orderMaterials).where(eq(orderMaterials.orderId, line.orderId));
+    const allDelivered = siblings.length > 0 && siblings.every((s) => s.delivered);
+    await db
+      .update(materialOrders)
+      .set({ dateDelivered: allDelivered ? new Date() : null })
+      .where(eq(materialOrders.id, line.orderId));
+  }
+
+  async deleteMaterialOrder(id: string): Promise<void> {
+    const lines = await db.select().from(orderMaterials).where(eq(orderMaterials.orderId, id));
+    // Reverse stock for any lines that had been received
+    for (const l of lines) {
+      if (l.delivered) {
+        await db
+          .update(materials)
+          .set({ stock: sql`${materials.stock} - ${Number(l.units)}` })
+          .where(eq(materials.id, l.materialId));
+      }
+    }
+    await db.delete(orderMaterials).where(eq(orderMaterials.orderId, id));
+    await db.delete(materialOrders).where(eq(materialOrders.id, id));
+  }
+
+  // ===== Analytics: smart reorder + dashboard =====
+
+  // Estimate each material's consumption rate from production history, then flag
+  // what will run out before a replenishment order could arrive (usage × lead time).
+  async getReorderReport(windowDays = 90): Promise<{
+    id: string; title: string; unit: string; stock: number; supplierName: string | null;
+    dailyUsage: number; daysOfCover: number | null; leadTimeDays: number;
+    reorderPoint: number; suggestedQty: number; status: 'order-now' | 'watch' | 'ok';
+  }[]> {
+    const mats = await this.getMaterials();
+    const bom = await db.select().from(processMaterials);
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - windowDays);
+    const prods = await db.select().from(productions).where(gte(productions.date, cutoff));
+
+    // Total output units per process in the window
+    const producedByProcess = new Map<string, number>();
+    for (const p of prods) {
+      producedByProcess.set(p.processId, (producedByProcess.get(p.processId) ?? 0) + Number(p.units));
+    }
+    // Material consumption = Σ (process output × per-unit BOM amount)
+    const consumption = new Map<string, number>();
+    for (const b of bom) {
+      const produced = producedByProcess.get(b.processId) ?? 0;
+      if (produced > 0) {
+        consumption.set(b.materialId, (consumption.get(b.materialId) ?? 0) + produced * Number(b.units));
+      }
+    }
+
+    return mats.map((m) => {
+      const stock = Number(m.stock);
+      const dailyUsage = (consumption.get(m.id) ?? 0) / windowDays;
+      const leadTimeDays = m.supplierLeadTimeDays ?? 14;
+      const daysOfCover = dailyUsage > 0 ? stock / dailyUsage : null;
+      const reorderPoint = dailyUsage * leadTimeDays * 1.2; // 20% safety buffer
+      const orderSize = Number(m.orderSize);
+      const suggestedQty = orderSize > 0 ? orderSize : Math.ceil(dailyUsage * 30);
+      let status: 'order-now' | 'watch' | 'ok';
+      if (dailyUsage <= 0) status = 'ok';
+      else if (stock <= reorderPoint) status = 'order-now';
+      else if (stock <= reorderPoint * 1.5) status = 'watch';
+      else status = 'ok';
+      return {
+        id: m.id, title: m.title, unit: m.unit, stock, supplierName: m.supplierName,
+        dailyUsage, daysOfCover, leadTimeDays, reorderPoint, suggestedQty, status,
+      };
+    });
+  }
+
+  // Cost of goods PRODUCED over a window: material cost actually consumed by batches,
+  // derived from each recipe's BOM × units produced × material unit cost.
+  //
+  // NOTE: this is reporting only — it deliberately does NOT post transactions into the
+  // accounting ledger. Supplier payments already land there (via Plaid/manual import),
+  // so booking production cost as a second expense would double-count. Use this to see
+  // true production cost and margin alongside revenue.
+  async getCogsReport(windowDays = 90): Promise<{
+    windowDays: number;
+    totalMaterialCost: number;
+    byRecipe: { processId: string; title: string; flavorName: string | null; units: number; materialCost: number }[];
+  }> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - windowDays);
+
+    const prods = await db
+      .select({
+        processId: productions.processId,
+        units: productions.units,
+        title: processes.title,
+        flavorName: flavors.name,
+      })
+      .from(productions)
+      .innerJoin(processes, eq(productions.processId, processes.id))
+      .leftJoin(flavors, eq(processes.flavorId, flavors.id))
+      .where(gte(productions.date, cutoff));
+
+    // Per-unit material cost for each recipe
+    const bom = await db
+      .select({
+        processId: processMaterials.processId,
+        units: processMaterials.units,
+        cost: materials.cost,
+      })
+      .from(processMaterials)
+      .innerJoin(materials, eq(processMaterials.materialId, materials.id));
+
+    const costPerUnit = new Map<string, number>();
+    for (const b of bom) {
+      costPerUnit.set(
+        b.processId,
+        (costPerUnit.get(b.processId) ?? 0) + Number(b.units) * Number(b.cost)
+      );
+    }
+
+    const agg = new Map<string, { title: string; flavorName: string | null; units: number; materialCost: number }>();
+    for (const p of prods) {
+      const cpu = costPerUnit.get(p.processId) ?? 0;
+      const entry = agg.get(p.processId) ?? {
+        title: p.title, flavorName: p.flavorName ?? null, units: 0, materialCost: 0,
+      };
+      entry.units += Number(p.units);
+      entry.materialCost += Number(p.units) * cpu;
+      agg.set(p.processId, entry);
+    }
+
+    const byRecipe = Array.from(agg.entries())
+      .map(([processId, v]) => ({
+        processId,
+        title: v.title,
+        flavorName: v.flavorName,
+        units: Math.round(v.units * 100) / 100,
+        materialCost: Math.round(v.materialCost * 100) / 100,
+      }))
+      .sort((a, b) => b.materialCost - a.materialCost);
+
+    return {
+      windowDays,
+      totalMaterialCost: Math.round(byRecipe.reduce((s, r) => s + r.materialCost, 0) * 100) / 100,
+      byRecipe,
+    };
+  }
+
+  async getInventoryDashboard(): Promise<{
+    inventoryValue: number; totalMaterials: number; batchesLast30: number; casesLast30: number;
+    flavorMix: { flavor: string; cases: number }[];
+    monthly: { month: string; cases: number }[];
+  }> {
+    const mats = await this.getMaterials();
+    const inventoryValue = mats.reduce((s, m) => s + Number(m.stock) * Number(m.cost), 0);
+
+    const rows = await db
+      .select({
+        flavorName: flavors.name, title: processes.title,
+        units: productions.units, date: productions.date,
+      })
+      .from(productions)
+      .innerJoin(processes, eq(productions.processId, processes.id))
+      .leftJoin(flavors, eq(processes.flavorId, flavors.id));
+
+    const now = new Date();
+    const cutoff30 = new Date();
+    cutoff30.setDate(cutoff30.getDate() - 30);
+
+    // 12-month buckets (cases = "Bottle:" processes)
+    const monthly: { key: string; month: string; cases: number }[] = [];
+    const monthIdx = new Map<string, number>();
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      monthIdx.set(key, monthly.length);
+      monthly.push({ key, month: d.toLocaleString('en-US', { month: 'short' }), cases: 0 });
+    }
+
+    const flavorMixMap = new Map<string, number>();
+    let batchesLast30 = 0;
+    let casesLast30 = 0;
+
+    for (const r of rows) {
+      const isBottle = r.title.startsWith('Bottle:');
+      const d = new Date(r.date);
+      const units = Number(r.units);
+      if (d >= cutoff30) {
+        batchesLast30 += 1;
+        if (isBottle) casesLast30 += units;
+      }
+      if (!isBottle) continue;
+      flavorMixMap.set(r.flavorName ?? 'Unknown', (flavorMixMap.get(r.flavorName ?? 'Unknown') ?? 0) + units);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const mi = monthIdx.get(key);
+      if (mi !== undefined) monthly[mi].cases += units;
+    }
+
+    const flavorMix = Array.from(flavorMixMap.entries())
+      .map(([flavor, cases]) => ({ flavor, cases: Math.round(cases) }))
+      .sort((a, b) => b.cases - a.cases);
+
+    return {
+      inventoryValue,
+      totalMaterials: mats.length,
+      batchesLast30,
+      casesLast30: Math.round(casesLast30),
+      flavorMix,
+      monthly: monthly.map((m) => ({ month: m.month, cases: Math.round(m.cases) })),
+    };
   }
 
   // Helper function to attach multi-flavor data to retail products
@@ -1539,7 +2081,12 @@ export class PostgresStorage implements IStorage {
           email: primaryEmail,
           emails: emails,
           phone: this.normalizePhone(primaryRow.phone),
-          allowOnlinePayment: primaryRow.allowOnlinePayment === 'true' || primaryRow.allowOnlinePayment === true,
+          // Opt-OUT, not opt-in: ACH is how wholesale pays, so an imported customer can pay
+          // unless the CSV explicitly says "false". Previously a blank column silently
+          // produced an account that could not pay its invoices online.
+          allowOnlinePayment: !(
+            primaryRow.allowOnlinePayment === 'false' || primaryRow.allowOnlinePayment === false
+          ),
         };
 
         const newCustomer = await this.createWholesaleCustomer(customerData);
@@ -1750,6 +2297,9 @@ export class PostgresStorage implements IStorage {
         and(
           sql`${wholesaleOrders.deliveryDate} >= ${startOfDay}`,
           sql`${wholesaleOrders.deliveryDate} <= ${endOfDay}`,
+          // Pickups are collected at the brewery — they are not deliveries and must never
+          // appear on the delivery report or a driver's route.
+          sql`${wholesaleOrders.fulfillmentMethod} <> 'pickup'`,
           isNull(wholesaleOrders.deletedAt)
         )
       )
@@ -1768,6 +2318,9 @@ export class PostgresStorage implements IStorage {
         and(
           sql`${wholesaleOrders.deliveryDate} >= ${startDate}`,
           sql`${wholesaleOrders.deliveryDate} < ${endDate}`,
+          // Pickups are collected at the brewery — not deliveries, so they stay off the
+          // delivery report and out of route planning.
+          sql`${wholesaleOrders.fulfillmentMethod} <> 'pickup'`,
           isNull(wholesaleOrders.deletedAt)
         )
       )
@@ -1775,7 +2328,7 @@ export class PostgresStorage implements IStorage {
     return result;
   }
 
-  async getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string }> }>> {
+  async getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string | null; unitTypeName: string | null; flavorName: string | null }> }>> {
     const result = await db
       .select({
         order: wholesaleOrders,
@@ -1795,12 +2348,21 @@ export class PostgresStorage implements IStorage {
             id: wholesaleOrderItems.id,
             orderId: wholesaleOrderItems.orderId,
             productId: wholesaleOrderItems.productId,
+            // Orders are placed as unit type + flavor; productId is the legacy nullable
+            // column. Without these two the customer can't be shown what they actually
+            // bought, and "Reorder" has nothing to rebuild a cart from.
+            unitTypeId: wholesaleOrderItems.unitTypeId,
+            flavorId: wholesaleOrderItems.flavorId,
+            unitTypeName: wholesaleUnitTypes.name,
+            flavorName: flavors.name,
             quantity: wholesaleOrderItems.quantity,
             unitPrice: wholesaleOrderItems.unitPrice,
             productName: products.name,
           })
           .from(wholesaleOrderItems)
           .leftJoin(products, eq(wholesaleOrderItems.productId, products.id))
+          .leftJoin(wholesaleUnitTypes, eq(wholesaleOrderItems.unitTypeId, wholesaleUnitTypes.id))
+          .leftJoin(flavors, eq(wholesaleOrderItems.flavorId, flavors.id))
           .where(inArray(wholesaleOrderItems.orderId, orderIds))
       : [];
 
@@ -1836,6 +2398,113 @@ export class PostgresStorage implements IStorage {
     });
 
     return ordersWithItems;
+  }
+
+  /**
+   * Orders scheduled within [start, end) for the weekly brewery board, both channels.
+   * Retail buckets by pickupDate, wholesale by deliveryDate — the field each is actually
+   * scheduled on. Items carry human names so the board can show and total them. Cancelled
+   * retail orders are excluded (nothing to prepare); soft-deleted rows are always excluded.
+   */
+  async getWeeklyBoardOrders(start: Date, end: Date): Promise<{
+    retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; items: Array<{ flavorName: string; unitDescription: string; quantity: number }> }>;
+    wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
+  }> {
+    // --- Retail (by pickupDate) ---
+    const retailRows = await db
+      .select()
+      .from(retailOrders)
+      .where(and(
+        isNull(retailOrders.deletedAt),
+        sql`${retailOrders.status} <> 'cancelled'`,
+        gte(retailOrders.pickupDate, start),
+        lt(retailOrders.pickupDate, end),
+      ))
+      .orderBy(asc(retailOrders.pickupDate));
+
+    const retailIds = retailRows.map(o => o.id);
+    const retailItems = retailIds.length > 0
+      ? await db
+          .select({
+            orderId: retailOrderItemsV2.orderId,
+            quantity: retailOrderItemsV2.quantity,
+            flavorName: flavors.name,
+            unitDescription: retailProducts.unitDescription,
+          })
+          .from(retailOrderItemsV2)
+          .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
+          .leftJoin(flavors, eq(flavors.id, sql`COALESCE(${retailOrderItemsV2.selectedFlavorId}, ${retailProducts.flavorId})`))
+          .where(inArray(retailOrderItemsV2.orderId, retailIds))
+      : [];
+
+    const retailItemsByOrder = new Map<string, Array<{ flavorName: string; unitDescription: string; quantity: number }>>();
+    for (const it of retailItems) {
+      const arr = retailItemsByOrder.get(it.orderId) || [];
+      arr.push({ flavorName: it.flavorName || 'Unknown', unitDescription: it.unitDescription || '', quantity: it.quantity });
+      retailItemsByOrder.set(it.orderId, arr);
+    }
+
+    const retail = retailRows.map(o => ({
+      id: o.id,
+      orderNumber: o.orderNumber,
+      customerName: o.customerName,
+      pickupDate: o.pickupDate,
+      orderDate: o.orderDate,
+      status: o.status,
+      isSubscriptionOrder: o.isSubscriptionOrder,
+      totalAmount: o.totalAmount,
+      items: retailItemsByOrder.get(o.id) || [],
+    }));
+
+    // --- Wholesale (by deliveryDate) ---
+    const wholesaleRows = await db
+      .select({ order: wholesaleOrders, businessName: wholesaleCustomers.businessName, city: wholesaleLocations.city })
+      .from(wholesaleOrders)
+      .leftJoin(wholesaleCustomers, eq(wholesaleOrders.customerId, wholesaleCustomers.id))
+      .leftJoin(wholesaleLocations, eq(wholesaleOrders.locationId, wholesaleLocations.id))
+      .where(and(
+        isNull(wholesaleOrders.deletedAt),
+        gte(wholesaleOrders.deliveryDate, start),
+        lt(wholesaleOrders.deliveryDate, end),
+      ))
+      .orderBy(asc(wholesaleOrders.deliveryDate));
+
+    const wsIds = wholesaleRows.map(r => r.order.id);
+    const wsItems = wsIds.length > 0
+      ? await db
+          .select({
+            orderId: wholesaleOrderItems.orderId,
+            quantity: wholesaleOrderItems.quantity,
+            unitTypeName: wholesaleUnitTypes.name,
+            flavorName: flavors.name,
+          })
+          .from(wholesaleOrderItems)
+          .leftJoin(wholesaleUnitTypes, eq(wholesaleOrderItems.unitTypeId, wholesaleUnitTypes.id))
+          .leftJoin(flavors, eq(wholesaleOrderItems.flavorId, flavors.id))
+          .where(inArray(wholesaleOrderItems.orderId, wsIds))
+      : [];
+
+    const wsItemsByOrder = new Map<string, Array<{ unitTypeName: string; flavorName: string; quantity: number }>>();
+    for (const it of wsItems) {
+      const arr = wsItemsByOrder.get(it.orderId) || [];
+      arr.push({ unitTypeName: it.unitTypeName || 'Item', flavorName: it.flavorName || 'Unknown', quantity: it.quantity });
+      wsItemsByOrder.set(it.orderId, arr);
+    }
+
+    const wholesale = wholesaleRows.map(r => ({
+      id: r.order.id,
+      invoiceNumber: r.order.invoiceNumber,
+      businessName: r.businessName || 'Unknown',
+      city: r.city,
+      fulfillmentMethod: r.order.fulfillmentMethod,
+      deliveryDate: r.order.deliveryDate,
+      orderDate: r.order.orderDate,
+      status: r.order.status,
+      totalAmount: r.order.totalAmount,
+      items: wsItemsByOrder.get(r.order.id) || [],
+    }));
+
+    return { retail, wholesale };
   }
 
   async getWholesaleOrderWithDetails(id: string): Promise<{
@@ -1913,29 +2582,39 @@ export class PostgresStorage implements IStorage {
     const currentYear = new Date().getFullYear();
     const prefix = `INV-${currentYear}-`;
 
-    // Use a transaction with advisory lock to prevent race conditions
-    const result = await db.transaction(async (tx) => {
-      // Advisory lock keyed on current year to serialize invoice number generation
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(${currentYear})`);
+    // Uses the WebSocket `pool`, not `db`: the neon-http driver has no transaction
+    // support, so this threw "No transactions support in neon-http driver" on EVERY
+    // call — which meant no wholesale order, customer- or staff-created, could be
+    // saved at all.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Advisory lock keyed on current year to serialize invoice number generation.
+      await client.query('SELECT pg_advisory_xact_lock($1)', [currentYear]);
 
-      const rows = await tx
-        .select({ invoiceNumber: wholesaleOrders.invoiceNumber })
-        .from(wholesaleOrders)
-        .where(sql`${wholesaleOrders.invoiceNumber} LIKE ${prefix + '%'}`)
-        .orderBy(desc(wholesaleOrders.invoiceNumber))
-        .limit(1);
+      const { rows } = await client.query(
+        `SELECT invoice_number FROM wholesale_orders
+          WHERE invoice_number LIKE $1
+          ORDER BY invoice_number DESC
+          LIMIT 1`,
+        [prefix + '%'],
+      );
+
+      await client.query('COMMIT');
 
       if (rows.length === 0) {
         return `${prefix}0001`;
       }
 
-      const lastInvoice = rows[0].invoiceNumber;
-      const match = lastInvoice.match(/INV-\d{4}-(\d{4})/);
+      const match = String(rows[0].invoice_number).match(/INV-\d{4}-(\d{4})/);
       const nextNumber = match ? parseInt(match[1]) + 1 : 1;
       return `${prefix}${String(nextNumber).padStart(4, '0')}`;
-    });
-
-    return result;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getWholesaleOrderItems(orderId: string): Promise<WholesaleOrderItem[]> {
@@ -1966,6 +2645,8 @@ export class PostgresStorage implements IStorage {
     dueDate?: Date | null;
     paidAt?: Date | null;
     paidByUserId?: string | null;
+    paymentInitiatedAt?: Date | null;
+    paymentFailedAt?: Date | null;
     stripePaymentIntentId?: string | null;
     invoiceSentAt?: Date | null;
   }): Promise<WholesaleOrder | undefined> {
@@ -2055,7 +2736,7 @@ export class PostgresStorage implements IStorage {
 
   async updatePlaidItemCursor(id: string, cursor: string): Promise<void> {
     await db.update(plaidItems)
-      .set({ cursor, lastSyncedAt: new Date(), updatedAt: new Date() })
+      .set({ cursor, lastSynced: new Date(), updatedAt: new Date() })
       .where(eq(plaidItems.id, id));
   }
 
@@ -2844,6 +3525,58 @@ export class PostgresStorage implements IStorage {
           }
         }
 
+        // v2 order items (everything the current shop and all subscriptions create).
+        // These reference retail_products, which link to a finished-goods product via
+        // finished_product_id. Items with no link (e.g. kegs) intentionally decrement
+        // nothing. Without this block, NO modern order ever moved stock on fulfilment.
+        const v2Result = await client.query(
+          `SELECT oi.retail_product_id, oi.quantity, rp.finished_product_id
+           FROM retail_order_items_v2 oi
+           JOIN retail_products rp ON rp.id = oi.retail_product_id
+           WHERE oi.order_id = $1 AND rp.finished_product_id IS NOT NULL`,
+          [id]
+        );
+
+        if (v2Result.rows.length > 0) {
+          const v2ProductIds = Array.from(new Set(v2Result.rows.map((r: any) => r.finished_product_id)));
+          const v2Stock = await client.query(
+            'SELECT id, stock_quantity FROM products WHERE id = ANY($1::text[]) FOR UPDATE',
+            [v2ProductIds]
+          );
+          const v2StockMap = new Map(v2Stock.rows.map((r: any) => [r.id, r.stock_quantity]));
+
+          // Aggregate first: an order can contain several lines backed by the same
+          // finished-goods product, and validating each in isolation would let the
+          // combined quantity overdraw stock.
+          const needed = new Map<string, number>();
+          for (const row of v2Result.rows) {
+            needed.set(row.finished_product_id, (needed.get(row.finished_product_id) ?? 0) + row.quantity);
+          }
+
+          for (const [productId, quantity] of Array.from(needed.entries())) {
+            const currentStock = v2StockMap.get(productId);
+            if (currentStock === undefined) {
+              throw new Error(`Finished-goods product not found: ${productId}`);
+            }
+            const newStock = currentStock - quantity;
+            if (newStock < 0) {
+              throw new Error(`Insufficient stock for product ${productId}. Required: ${quantity}, Available: ${currentStock}`);
+            }
+
+            await client.query(
+              'UPDATE products SET stock_quantity = $1, in_stock = $2 WHERE id = $3',
+              [newStock, newStock > 0, productId]
+            );
+
+            await client.query(
+              `INSERT INTO inventory_adjustments
+              (product_id, quantity, reason, staff_user_id, order_id, order_type)
+              VALUES ($1, $2, $3, $4, $5, $6)`,
+              [productId, -quantity, 'fulfillment', userId, id, 'retail']
+            );
+          }
+        }
+
         await client.query(
           'UPDATE retail_orders SET status = $1, fulfilled_at = $2, fulfilled_by_user_id = $3, updated_at = $4 WHERE id = $5 AND deleted_at IS NULL',
           [status, new Date(), userId, new Date(), id]
@@ -2894,12 +3627,48 @@ export class PostgresStorage implements IStorage {
 
         // Update product stock
         await client.query(
-          `UPDATE products 
+          `UPDATE products
            SET stock_quantity = stock_quantity + $1,
                in_stock = CASE WHEN stock_quantity + $1 > 0 THEN true ELSE in_stock END
            WHERE id = $2`,
           [item.quantity, item.product_id]
         );
+      }
+
+      // Mirror of the v2 fulfilment decrement — restore stock for v2 lines too, so a
+      // cancelled order gives back exactly what fulfilment took. Only orders that were
+      // actually fulfilled consumed stock, so only those are restored.
+      const wasFulfilled = await client.query(
+        `SELECT 1 FROM inventory_adjustments WHERE order_id = $1 AND reason = 'fulfillment' LIMIT 1`,
+        [id]
+      );
+
+      if (wasFulfilled.rows.length > 0) {
+        const v2Items = await client.query(
+          `SELECT rp.finished_product_id, SUM(oi.quantity)::int AS quantity
+           FROM retail_order_items_v2 oi
+           JOIN retail_products rp ON rp.id = oi.retail_product_id
+           WHERE oi.order_id = $1 AND rp.finished_product_id IS NOT NULL
+           GROUP BY rp.finished_product_id`,
+          [id]
+        );
+
+        for (const item of v2Items.rows) {
+          await client.query(
+            `INSERT INTO inventory_adjustments
+            (product_id, quantity, reason, staff_user_id, order_id, order_type)
+            VALUES ($1, $2, $3, $4, $5, $6)`,
+            [item.finished_product_id, item.quantity, reason, staffUserId, id, 'retail']
+          );
+
+          await client.query(
+            `UPDATE products
+             SET stock_quantity = stock_quantity + $1,
+                 in_stock = CASE WHEN stock_quantity + $1 > 0 THEN true ELSE in_stock END
+             WHERE id = $2`,
+            [item.quantity, item.finished_product_id]
+          );
+        }
       }
 
       // Update order status to cancelled

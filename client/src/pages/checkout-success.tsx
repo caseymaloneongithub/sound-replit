@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2 } from "lucide-react";
 import { queryClient } from "@/lib/queryClient";
 
 export default function CheckoutSuccess() {
@@ -30,9 +29,6 @@ export default function CheckoutSuccess() {
     <div className="min-h-screen flex items-center justify-center px-4 bg-background">
       <Card className="max-w-md w-full" data-testid="card-success">
         <CardHeader className="text-center">
-          <div className="flex justify-center mb-4">
-            <CheckCircle2 className="w-16 h-16 text-green-500" data-testid="icon-success" />
-          </div>
           <CardTitle className="text-2xl" data-testid="text-success-title">
             {isSubscription ? "Subscription Activated!" : "Order Confirmed!"}
           </CardTitle>

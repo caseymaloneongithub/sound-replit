@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, Box, DollarSign, X, Settings } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import type { WholesaleUnitType, Flavor, WholesaleCustomer, WholesaleCustomerPricing } from "@shared/schema";
 
@@ -227,7 +227,6 @@ export default function AdminWholesaleUnits() {
           <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Settings className="w-5 h-5" />
                 Wholesale Order Settings
               </CardTitle>
               <CardDescription>Configure global settings for wholesale orders</CardDescription>
@@ -273,7 +272,6 @@ export default function AdminWholesaleUnits() {
           <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Box className="w-5 h-5" />
                 Wholesale Packaging Types
               </CardTitle>
               <CardDescription>Define wholesale unit types with default pricing and which flavors are available for each unit</CardDescription>
@@ -524,7 +522,6 @@ export default function AdminWholesaleUnits() {
 
                         <div>
                           <div className="flex items-center gap-2 mb-3">
-                            <DollarSign className="w-4 h-4 text-primary" />
                             <Label className="text-base font-semibold">Customer-Specific Pricing</Label>
                           </div>
                           <p className="text-sm text-muted-foreground mb-3">

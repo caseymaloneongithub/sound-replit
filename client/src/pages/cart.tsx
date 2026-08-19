@@ -1,10 +1,11 @@
 import { useLocation } from "wouter";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ShoppingCart, ArrowRight, Trash2, Plus, Minus } from "lucide-react";
+import { ArrowRight, Trash2, Plus, Minus } from "lucide-react";
 import { useUnifiedCart } from "@/hooks/use-unified-cart";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { frequencyLabel as getFrequencyLabel } from "@shared/subscription-frequency";
 
 export default function Cart() {
   const [, setLocation] = useLocation();
@@ -119,7 +120,6 @@ export default function Cart() {
           <h1 className="text-3xl font-bold mb-8">Shopping Cart</h1>
           <Card>
             <CardContent className="py-12 text-center">
-              <ShoppingCart className="mx-auto h-16 w-16 text-muted-foreground mb-4" />
               <h2 className="text-xl font-semibold mb-2">Your cart is empty</h2>
               <p className="text-muted-foreground mb-6">
                 Add some products to get started
@@ -138,7 +138,33 @@ export default function Cart() {
     <div className="container mx-auto py-12 px-4">
       <div className="max-w-4xl mx-auto">
         <h1 className="text-3xl font-bold mb-8">Shopping Cart</h1>
-        
+
+        {/* State the subscription/one-time rule up front. It was previously only
+            revealed by a destructive toast AFTER a blocked click, and the cart never
+            mentioned it at all — so the constraint looked like a bug. */}
+        {(() => {
+          const hasSubscription = items.some((c: any) => c.item?.isSubscription);
+          const hasOneTime = items.some((c: any) => c.item && !c.item.isSubscription);
+          if (!hasSubscription && !hasOneTime) return null;
+          return (
+            <div
+              className="mb-6 rounded-md border bg-muted/40 p-4 text-sm flex items-start gap-3"
+              data-testid="banner-cart-mode"
+            >
+              <div>
+                <span className="font-medium">
+                  {hasSubscription ? "This is a subscription order." : "This is a one-time order."}
+                </span>{" "}
+                <span className="text-muted-foreground">
+                  Subscriptions and one-time items are checked out separately, so this cart
+                  only accepts {hasSubscription ? "subscription" : "one-time"} items. Finish
+                  this order and the other type can go in your next one.
+                </span>
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="space-y-6">
           {/* Cart Items */}
           <Card>
@@ -151,10 +177,7 @@ export default function Cart() {
                   const item = cartItem.item;
                   const basePrice = item.isSubscription ? 54.00 : 60.00;
                   const itemTotal = basePrice * item.quantity;
-                  const frequencyLabel = item.subscriptionFrequency === 'weekly' ? 'Weekly' :
-                    item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
-                    item.subscriptionFrequency === 'every-4-weeks' ? 'Every 4 Weeks' :
-                    item.subscriptionFrequency === 'every-6-weeks' ? 'Every 6 Weeks' : 'Every 8 Weeks';
+                  const frequencyLabel = getFrequencyLabel(item.subscriptionFrequency);
 
                   return (
                     <div key={item.id} className="flex items-center justify-between py-4 border-b last:border-0" data-testid={`cart-item-${item.id}`}>
@@ -176,7 +199,7 @@ export default function Cart() {
                               className="h-7 w-7"
                               onClick={() => handleUpdateQuantity(item.id, item.quantity - 1, false)}
                               disabled={item.quantity <= 1}
-                              data-testid={`button-decrease-quantity-${item.id}`}
+                              aria-label="Decrease quantity" data-testid={`button-decrease-quantity-${item.id}`}
                             >
                               <Minus className="h-3 w-3" />
                             </Button>
@@ -188,7 +211,7 @@ export default function Cart() {
                               size="icon"
                               className="h-7 w-7"
                               onClick={() => handleUpdateQuantity(item.id, item.quantity + 1, false)}
-                              data-testid={`button-increase-quantity-${item.id}`}
+                              aria-label="Increase quantity" data-testid={`button-increase-quantity-${item.id}`}
                             >
                               <Plus className="h-3 w-3" />
                             </Button>
@@ -203,7 +226,7 @@ export default function Cart() {
                           variant="ghost"
                           size="icon"
                           onClick={() => handleRemoveItem(item.id, false)}
-                          data-testid={`button-remove-${item.id}`}
+                          aria-label="Remove item from cart" data-testid={`button-remove-${item.id}`}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -220,10 +243,7 @@ export default function Cart() {
                     ? basePrice * (1 - discountPercentage / 100)
                     : basePrice;
                   const itemTotal = finalPrice * item.quantity;
-                  const frequencyLabel = item.subscriptionFrequency === 'weekly' ? 'Weekly' :
-                    item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
-                    item.subscriptionFrequency === 'every-4-weeks' ? 'Every 4 Weeks' :
-                    item.subscriptionFrequency === 'every-6-weeks' ? 'Every 6 Weeks' : 'Every 8 Weeks';
+                  const frequencyLabel = getFrequencyLabel(item.subscriptionFrequency);
 
                   // For multi-flavor products, find the selected flavor from the flavors array
                   const displayFlavor = item.retailProduct.productType === 'multi-flavor' && item.selectedFlavorId
@@ -267,7 +287,7 @@ export default function Cart() {
                               className="h-7 w-7"
                               onClick={() => handleUpdateQuantity(item.id, item.quantity - 1, true)}
                               disabled={item.quantity <= 1}
-                              data-testid={`button-decrease-quantity-${item.id}`}
+                              aria-label="Decrease quantity" data-testid={`button-decrease-quantity-${item.id}`}
                             >
                               <Minus className="h-3 w-3" />
                             </Button>
@@ -279,7 +299,7 @@ export default function Cart() {
                               size="icon"
                               className="h-7 w-7"
                               onClick={() => handleUpdateQuantity(item.id, item.quantity + 1, true)}
-                              data-testid={`button-increase-quantity-${item.id}`}
+                              aria-label="Increase quantity" data-testid={`button-increase-quantity-${item.id}`}
                             >
                               <Plus className="h-3 w-3" />
                             </Button>
@@ -294,7 +314,7 @@ export default function Cart() {
                           variant="ghost"
                           size="icon"
                           onClick={() => handleRemoveItem(item.id, true)}
-                          data-testid={`button-remove-${item.id}`}
+                          aria-label="Remove item from cart" data-testid={`button-remove-${item.id}`}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

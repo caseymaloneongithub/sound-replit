@@ -71,6 +71,33 @@ export function getDayName(date: Date): string {
 }
 
 /**
+ * Returns the half-open date range for a Monday-anchored week in Pacific time.
+ *
+ * `offsetWeeks` shifts by whole weeks from the current week (0 = this week, -1 = last,
+ * +1 = next). The range is [Monday 00:00 Pacific, next Monday 00:00 Pacific), which is the
+ * same week definition billing and pickups already use, so the orders board lines up with
+ * the rest of the app. Computed in Pacific regardless of where the caller's clock is, so a
+ * tablet in any timezone (or a server in UTC) buckets orders identically.
+ */
+export function getPacificWeekRange(offsetWeeks = 0): { start: Date; end: Date; mondayISO: string } {
+  const pacificNow = toZonedTime(new Date(), PICKUP_POLICY.timezone);
+  const dayOfWeek = pacificNow.getDay(); // 0 = Sunday .. 6 = Saturday
+  const daysSinceMonday = (dayOfWeek + 6) % 7; // Monday -> 0, Sunday -> 6
+
+  const monday = addDays(pacificNow, -daysSinceMonday + offsetWeeks * 7);
+  const nextMonday = addDays(monday, 7);
+
+  const mondayStr = formatInTimeZone(monday, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
+  const nextMondayStr = formatInTimeZone(nextMonday, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
+
+  return {
+    start: fromZonedTime(`${mondayStr}T00:00:00`, PICKUP_POLICY.timezone),
+    end: fromZonedTime(`${nextMondayStr}T00:00:00`, PICKUP_POLICY.timezone),
+    mondayISO: mondayStr,
+  };
+}
+
+/**
  * Calculates the billing date (Monday morning) for a given pickup date.
  * Billing always happens on the Monday of the pickup week:
  * - If pickup is Monday, billing is that Monday

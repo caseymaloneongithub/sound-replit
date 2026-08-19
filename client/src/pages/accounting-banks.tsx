@@ -6,18 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import { 
-  Landmark,
+import {
   Plus,
   RefreshCw,
   Trash2,
-  CheckCircle,
-  AlertCircle,
-  XCircle,
-  Loader2,
-  CreditCard,
-  Building,
-  Calendar
+  Loader2
 } from "lucide-react";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -211,35 +204,21 @@ export default function AccountingBanks() {
       case 'good':
         return (
           <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-            <CheckCircle className="w-3 h-3 mr-1" />
             Connected
           </Badge>
         );
       case 'error':
         return (
           <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
-            <XCircle className="w-3 h-3 mr-1" />
             Error
           </Badge>
         );
       default:
         return (
           <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
-            <AlertCircle className="w-3 h-3 mr-1" />
             Pending
           </Badge>
         );
-    }
-  };
-
-  const getAccountTypeIcon = (type: string | null) => {
-    switch (type?.toLowerCase()) {
-      case 'credit':
-        return <CreditCard className="w-4 h-4" />;
-      case 'depository':
-        return <Building className="w-4 h-4" />;
-      default:
-        return <Landmark className="w-4 h-4" />;
     }
   };
 
@@ -275,9 +254,6 @@ export default function AccountingBanks() {
           <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20">
             <CardContent className="py-4">
               <div className="flex items-start gap-4">
-                <div className="p-2 bg-amber-100 rounded-lg dark:bg-amber-900">
-                  <AlertCircle className="w-5 h-5 text-amber-600" />
-                </div>
                 <div>
                   <h3 className="font-medium text-amber-800 dark:text-amber-200">Plaid Not Configured</h3>
                   <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
@@ -295,9 +271,6 @@ export default function AccountingBanks() {
           <Card className="border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/20">
             <CardContent className="py-4">
               <div className="flex items-start gap-4">
-                <div className="p-2 bg-blue-100 rounded-lg dark:bg-blue-900">
-                  <Landmark className="w-5 h-5 text-blue-600" />
-                </div>
                 <div>
                   <h3 className="font-medium">Secure Bank Integration</h3>
                   <p className="text-sm text-muted-foreground mt-1">
@@ -328,7 +301,6 @@ export default function AccountingBanks() {
         ) : !plaidStatus?.configured ? (
           <Card>
             <CardContent className="py-12 text-center">
-              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-amber-500" />
               <h3 className="text-lg font-medium mb-2">Bank Integration Not Available</h3>
               <p className="text-muted-foreground mb-6 max-w-md mx-auto">
                 Plaid API credentials need to be configured to enable bank account connections.
@@ -339,7 +311,6 @@ export default function AccountingBanks() {
         ) : plaidItems.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
-              <Landmark className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
               <h3 className="text-lg font-medium mb-2">No Bank Accounts Connected</h3>
               <p className="text-muted-foreground mb-6 max-w-md mx-auto">
                 Connect your business bank accounts to automatically import transactions 
@@ -368,13 +339,9 @@ export default function AccountingBanks() {
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="p-2 bg-muted rounded-lg">
-                          <Building className="w-5 h-5" />
-                        </div>
                         <div>
                           <CardTitle className="text-lg">{item.institutionName}</CardTitle>
                           <CardDescription className="flex items-center gap-2 mt-1">
-                            <Calendar className="w-3 h-3" />
                             Last synced: {formatDate(item.lastSynced)}
                           </CardDescription>
                         </div>
@@ -393,7 +360,6 @@ export default function AccountingBanks() {
                               key={account.id}
                               className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg"
                             >
-                              {getAccountTypeIcon(account.accountType)}
                               <div className="flex-1 min-w-0">
                                 <div className="font-medium text-sm truncate">
                                   {account.officialName || account.name}

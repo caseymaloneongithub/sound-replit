@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
-import { ShoppingCart, Loader2, Package, XCircle, ArrowUpDown, DollarSign, ChevronDown, ChevronRight } from "lucide-react";
+import { Loader2, XCircle, ArrowUpDown, DollarSign, ChevronDown, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { RetailOrder } from "@shared/schema";
@@ -257,7 +257,6 @@ export default function RetailOrders() {
       return (
         <Card>
           <CardContent className="py-12 text-center">
-            <ShoppingCart className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
             <p className="text-muted-foreground">No {getStatusLabel(status).toLowerCase()} orders found</p>
           </CardContent>
         </Card>
@@ -293,7 +292,6 @@ export default function RetailOrders() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
                 <h3 className="font-semibold text-lg flex items-center gap-2">
-                  <Package className="w-5 h-5" />
                   {summaryTitle}
                   {totalPages > 1 && (
                     <span className="text-sm font-normal text-muted-foreground">(this page)</span>
@@ -497,8 +495,7 @@ export default function RetailOrders() {
                               <div className="px-6 py-4">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   <div>
-                                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                                      <Package className="w-4 h-4" />
+                                    <h4 className="text-sm font-medium mb-2">
                                       Order Items
                                     </h4>
                                     {order.items && order.items.length > 0 ? (

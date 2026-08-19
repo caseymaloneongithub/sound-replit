@@ -65,6 +65,10 @@ export const emailVerificationCodes = pgTable("email_verification_codes", {
   code: varchar("code", { length: 6 }).notNull(),
   purpose: text("purpose").notNull().default('login'), // 'login' | 'registration'  
   wholesaleCustomerId: varchar("wholesale_customer_id"), // Link to wholesale customer for wholesale auth
+  // Magic-link token: a high-entropy alternative to typing the 6-digit code. Same row,
+  // same expiry, same single-use consumption — the link and the code are two ways to
+  // redeem one issued credential, so redeeming either retires both.
+  loginToken: varchar("login_token"),
   expiresAt: timestamp("expires_at").notNull(),
   verified: boolean("verified").notNull().default(false),
   consumedAt: timestamp("consumed_at"),
@@ -149,6 +153,10 @@ export const retailProducts = pgTable("retail_products", {
   productImageUrl: text("product_image_url"), // For multi-flavor products (uploaded via object storage)
   isActive: boolean("is_active").notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
+  // Finished-goods product whose stock this draws down when an order is fulfilled.
+  // Nullable on purpose: kegs have no finished-goods counterpart, so they decrement
+  // nothing. Without this link, v2 orders never touched stock at all.
+  finishedProductId: varchar("finished_product_id").references(() => products.id),
 });
 
 // Retail Product Flavors - Junction table for multi-flavor products
@@ -232,6 +240,10 @@ export const retailSubscriptions = pgTable("retail_subscriptions", {
   lastRefundId: text("last_refund_id"),
   lastRefundedAt: timestamp("last_refunded_at"),
   processingLock: boolean("processing_lock").notNull().default(false),
+  // When the lock was taken. Lets billing tell a genuinely in-flight charge from one
+  // stranded by a crash, so stale locks are reclaimed instead of silently excluding
+  // the subscription from billing forever.
+  processingLockedAt: timestamp("processing_locked_at"),
   startDate: timestamp("start_date").notNull().defaultNow(),
   nextDeliveryDate: timestamp("next_delivery_date"),
   cancelledAt: timestamp("cancelled_at"),
@@ -245,6 +257,11 @@ export const retailSubscriptionItems = pgTable("retail_subscription_items", {
   retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id),
   selectedFlavorId: varchar("selected_flavor_id").references(() => flavors.id), // For multi-flavor products, tracks which flavor customer selected
   quantity: integer("quantity").notNull().default(1),
+  // Price (already discounted) agreed at signup. Renewals bill THIS, not the current
+  // catalogue price — otherwise an admin editing a product silently re-prices every
+  // existing subscriber's next charge with no notice. Nullable for rows created
+  // before this column existed; billing falls back to the live price when null.
+  unitPriceAtSignup: decimal("unit_price_at_signup", { precision: 10, scale: 2 }),
 });
 
 export const subscriptionPlans = pgTable("subscription_plans", {
@@ -309,7 +326,11 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   email: text("email").notNull().unique(), // Primary contact email (kept for backwards compatibility)
   emails: text("emails").array().notNull().default(sql`ARRAY[]::text[]`), // All authorized email addresses
   phone: text("phone").notNull(),
-  allowOnlinePayment: boolean("allow_online_payment").notNull().default(false),
+  // Online payment = ACH bank transfer (wholesale does not pay by card). Defaults ON:
+  // ACH is the standard way wholesale pays, so a new account must be able to pay without
+  // someone remembering to flip a switch. Turn it off per-customer for invoice-only terms
+  // or a credit hold.
+  allowOnlinePayment: boolean("allow_online_payment").notNull().default(true),
 });
 
 export const wholesaleLocations = pgTable("wholesale_locations", {
@@ -427,6 +448,10 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   invoiceNumber: text("invoice_number").notNull().unique(),
   customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id),
   locationId: varchar("location_id").references(() => wholesaleLocations.id), // Delivery location for this order
+  // 'delivery' | 'pickup'. Explicit rather than inferring pickup from a null locationId —
+  // null is already ambiguous (it also means "no address on file"), and the delivery report
+  // and route optimizer must be able to exclude pickups so they never hit a driver's route.
+  fulfillmentMethod: text("fulfillment_method").notNull().default('delivery'),
   orderDate: timestamp("order_date").notNull().defaultNow(),
   deliveryDate: timestamp("delivery_date"),
   status: text("status").notNull().default('pending'), // 'pending', 'packaged', 'delivered'
@@ -436,8 +461,13 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   notes: text("notes"),
   // Invoice payment tracking
   dueDate: timestamp("due_date"), // Payment due date (default 30 days from order)
-  paidAt: timestamp("paid_at"), // When payment was received
+  paidAt: timestamp("paid_at"), // When payment SETTLED (money actually received)
   paidByUserId: varchar("paid_by_user_id").references(() => users.id), // Who marked it as paid (for manual marking)
+  // ACH is not instant. The customer authorises a bank debit and the funds arrive ~4-5
+  // business days later — and can still fail after that. This records the authorisation;
+  // `paidAt` stays null until Stripe confirms settlement. Never treat this as paid.
+  paymentInitiatedAt: timestamp("payment_initiated_at"),
+  paymentFailedAt: timestamp("payment_failed_at"), // ACH debit returned (e.g. insufficient funds)
   stripePaymentIntentId: text("stripe_payment_intent_id"), // Links to Stripe payment
   invoiceSentAt: timestamp("invoice_sent_at"), // When invoice was emailed
   updatedAt: timestamp("updated_at").defaultNow().$onUpdateFn(() => new Date()),
@@ -510,7 +540,7 @@ export const plaidItems = pgTable("plaid_items", {
   institutionName: text("institution_name"),
   status: text("status").default('good'), // 'good', 'error', 'pending'
   cursor: text("cursor"), // For cursor-based transaction sync
-  lastSynced: timestamp("last_synced"), // Last successful sync
+  lastSynced: timestamp("last_synced_at"), // Last successful sync (DB column is last_synced_at)
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -768,3 +798,114 @@ export type AdminTaskCompletion = typeof adminTaskCompletions.$inferSelect;
 
 // Select types - SITE SETTINGS
 export type SiteSetting = typeof siteSettings.$inferSelect;
+
+// ============================================================
+// SUPPLY / MATERIALS INVENTORY MODULE
+// Ported from the legacy Laravel inventory app. Tracks raw process
+// inputs distinct from the finished-goods stock on `products`:
+//   suppliers -> materials -> recipes (processes + BOM)
+//   productions consume materials; purchase orders replenish them.
+// ============================================================
+
+// Suppliers - vendors that materials are ordered from
+export const suppliers = pgTable("suppliers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  website: text("website"),
+  email: varchar("email"),
+  leadTimeDays: integer("lead_time_days").notNull().default(14), // days from order to delivery
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+// Materials - raw process inputs (tea, sugar, cultures, bottles, ...)
+export const materials = pgTable("materials", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  unit: text("unit").notNull(), // e.g. 'lb', 'gal', 'each'
+  cost: decimal("cost", { precision: 12, scale: 4 }).notNull().default('0'), // cost per unit
+  supplierId: varchar("supplier_id").references(() => suppliers.id),
+  orderSize: decimal("order_size", { precision: 14, scale: 4 }).notNull().default('0'), // default reorder quantity
+  stock: decimal("stock", { precision: 14, scale: 4 }).notNull().default('0'), // current on-hand
+  createdAt: timestamp("created_at").defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+// Processes - recipes that consume materials to produce output (a brew or a bottling run)
+export const processes = pgTable("processes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(), // e.g. "Brew — Sunbreak", "Bottle — Mist"
+  unit: text("unit").notNull(), // output unit e.g. 'gal', 'case'
+  standardBatch: decimal("standard_batch", { precision: 14, scale: 4 }).notNull().default('0'),
+  flavorId: varchar("flavor_id").references(() => flavors.id), // optional link to a flavor (for unified production / dashboards)
+  // When set, logging a production of this recipe adds its output to this finished-goods product's stock
+  finishedProductId: varchar("finished_product_id").references(() => products.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+// Process ⇄ Material bill of materials: units of each material per unit of process output
+export const processMaterials = pgTable("process_materials", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  processId: varchar("process_id").notNull().references(() => processes.id),
+  materialId: varchar("material_id").notNull().references(() => materials.id),
+  units: decimal("units", { precision: 16, scale: 6 }).notNull(),
+});
+
+// Productions - logged batches; recording one decrements material stock via the recipe
+export const productions = pgTable("productions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  processId: varchar("process_id").notNull().references(() => processes.id),
+  units: decimal("units", { precision: 14, scale: 4 }).notNull(), // amount produced
+  date: timestamp("date").notNull().defaultNow(),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Material purchase orders to suppliers (renamed from legacy `orders` to avoid clashing with retail/wholesale orders)
+export const materialOrders = pgTable("material_orders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  supplierId: varchar("supplier_id").notNull().references(() => suppliers.id),
+  dateOrdered: timestamp("date_ordered").notNull().defaultNow(),
+  dateDelivered: timestamp("date_delivered"),
+  cost: decimal("cost", { precision: 12, scale: 2 }).notNull().default('0'),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Purchase-order line items; marking a line delivered increments material stock
+export const orderMaterials = pgTable("order_materials", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => materialOrders.id),
+  materialId: varchar("material_id").notNull().references(() => materials.id),
+  units: decimal("units", { precision: 16, scale: 6 }).notNull(),
+  delivered: boolean("delivered").notNull().default(false),
+});
+
+// Insert schemas - MATERIALS INVENTORY MODULE
+export const insertSupplierSchema = createInsertSchema(suppliers).omit({ id: true, createdAt: true, deletedAt: true });
+export const insertMaterialSchema = createInsertSchema(materials).omit({ id: true, createdAt: true, deletedAt: true });
+export const insertProcessSchema = createInsertSchema(processes).omit({ id: true, createdAt: true, deletedAt: true });
+export const insertProcessMaterialSchema = createInsertSchema(processMaterials).omit({ id: true });
+export const insertProductionSchema = createInsertSchema(productions).omit({ id: true, createdAt: true });
+export const insertMaterialOrderSchema = createInsertSchema(materialOrders).omit({ id: true, createdAt: true });
+export const insertOrderMaterialSchema = createInsertSchema(orderMaterials).omit({ id: true });
+
+// Insert types - MATERIALS INVENTORY MODULE
+export type InsertSupplier = z.infer<typeof insertSupplierSchema>;
+export type InsertMaterial = z.infer<typeof insertMaterialSchema>;
+export type InsertProcess = z.infer<typeof insertProcessSchema>;
+export type InsertProcessMaterial = z.infer<typeof insertProcessMaterialSchema>;
+export type InsertProduction = z.infer<typeof insertProductionSchema>;
+export type InsertMaterialOrder = z.infer<typeof insertMaterialOrderSchema>;
+export type InsertOrderMaterial = z.infer<typeof insertOrderMaterialSchema>;
+
+// Select types - MATERIALS INVENTORY MODULE
+export type Supplier = typeof suppliers.$inferSelect;
+export type Material = typeof materials.$inferSelect;
+export type Process = typeof processes.$inferSelect;
+export type ProcessMaterial = typeof processMaterials.$inferSelect;
+export type Production = typeof productions.$inferSelect;
+export type MaterialOrder = typeof materialOrders.$inferSelect;
+export type OrderMaterial = typeof orderMaterials.$inferSelect;

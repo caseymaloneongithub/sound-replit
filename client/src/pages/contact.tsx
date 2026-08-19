@@ -3,12 +3,13 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { Link } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Phone, MapPin, Send, Check } from "lucide-react";
+import { Send } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 
 const contactFormSchema = z.object({
@@ -99,9 +100,6 @@ export default function Contact() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
-                    <Mail className="w-5 h-5 text-primary" />
-                  </div>
                   <div>
                     <p className="font-medium">Email</p>
                     <a href="mailto:emily@soundkombucha.com" className="text-muted-foreground hover:text-primary transition-colors">
@@ -111,9 +109,6 @@ export default function Contact() {
                 </div>
 
                 <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
-                    <Phone className="w-5 h-5 text-primary" />
-                  </div>
                   <div>
                     <p className="font-medium">Phone</p>
                     <a href="tel:+12067895219" className="text-muted-foreground hover:text-primary transition-colors">
@@ -123,9 +118,6 @@ export default function Contact() {
                 </div>
 
                 <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
-                    <MapPin className="w-5 h-5 text-primary" />
-                  </div>
                   <div>
                     <p className="font-medium">Brewery Location</p>
                     <p className="text-muted-foreground">
@@ -146,23 +138,27 @@ export default function Contact() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground mb-4">
-                  We partner with retailers, restaurants, and distributors throughout the Pacific Northwest. 
-                  Fill out the form to learn about our wholesale pricing and minimum order requirements.
+                  We partner with retailers, restaurants, and distributors throughout the Pacific Northwest.
+                  Tell us about your business and we'll set you up with wholesale pricing and a delivery
+                  schedule.
                 </p>
                 <ul className="space-y-2 text-sm text-muted-foreground">
                   <li className="flex items-center gap-2">
-                    <Check className="w-4 h-4 text-primary flex-shrink-0" />
                     <span>Competitive wholesale pricing</span>
                   </li>
                   <li className="flex items-center gap-2">
-                    <Check className="w-4 h-4 text-primary flex-shrink-0" />
                     <span>Fast delivery lead times</span>
                   </li>
                   <li className="flex items-center gap-2">
-                    <Check className="w-4 h-4 text-primary flex-shrink-0" />
                     <span>Dedicated account support</span>
                   </li>
                 </ul>
+                {/* The generic contact form buries wholesale enquiries in an inbox; the
+                    application form captures the details we actually need and files it
+                    as a lead. */}
+                <Button asChild className="w-full mt-4" data-testid="button-wholesale-apply">
+                  <Link href="/wholesale/apply">Apply for a wholesale account</Link>
+                </Button>
               </CardContent>
             </Card>
           </div>
@@ -187,12 +183,6 @@ export default function Contact() {
                   tabIndex={-1}
                   data-testid="success-panel"
                 >
-                  <div className="flex items-center justify-center py-6">
-                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
-                      <Check className="w-8 h-8 text-primary" />
-                    </div>
-                  </div>
-                  
                   <div className="space-y-4 border-t pt-6">
                     <h3 className="font-semibold text-sm text-muted-foreground">Your Message Details:</h3>
                     

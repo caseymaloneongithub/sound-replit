@@ -200,7 +200,6 @@ export function AddressAutofillFields({
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <MapPin className="h-3 w-3" />
           <span>Enter address manually</span>
         </div>
         <FormItem>
@@ -263,7 +262,6 @@ export function AddressAutofillFields({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <MapPin className="h-3 w-3" />
         <span>Start typing to search addresses</span>
       </div>
       <FormItem>

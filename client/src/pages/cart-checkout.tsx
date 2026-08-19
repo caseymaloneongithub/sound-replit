@@ -10,7 +10,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Loader2, LogIn, UserPlus } from "lucide-react";
+import { ArrowLeft, Loader2, LogIn } from "lucide-react";
+import { frequencyLabel } from "@shared/subscription-frequency";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -373,7 +374,6 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
             )}
             {!isLoggedIn && emailExists && (
               <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-md p-3 flex items-start gap-2">
-                <LogIn className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-amber-800 dark:text-amber-200">
                     An account with this email already exists.{' '}
@@ -480,7 +480,6 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
           {!isLoggedIn && (
             <div className="border-t pt-4 mt-4">
               <div className="flex items-center gap-2 mb-4">
-                <UserPlus className="w-4 h-4" />
                 <h3 className="font-medium">Create Your Account (Required)</h3>
               </div>
               <p className="text-sm text-muted-foreground mb-4">
@@ -922,10 +921,38 @@ export default function CartCheckout() {
                   <span>Free</span>
                 </div>
                 <div className="flex justify-between text-lg font-bold pt-2 border-t">
-                  <span>Total</span>
+                  <span>{hasSubscriptions ? "Total today" : "Total"}</span>
                   <span data-testid="text-summary-total">${paymentInfo.total.toFixed(2)}</span>
                 </div>
               </div>
+
+              {/* You're authorising a RECURRING charge — the summary previously showed
+                  only a one-off total and never stated the cadence, so customers
+                  approved a subscription without seeing how often it repeats. */}
+              {hasSubscriptions && (
+                <div className="mt-4 rounded-md border border-primary/30 bg-primary/5 p-4 space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    This is a recurring subscription
+                  </div>
+                  <ul className="text-sm text-muted-foreground space-y-1">
+                    {Array.from(
+                      new Set(
+                        unifiedCart
+                          .filter((c: any) => c.item?.isSubscription)
+                          .map((c: any) => c.item.subscriptionFrequency)
+                          .filter(Boolean)
+                      )
+                    ).map((freq: any) => (
+                      <li key={freq}>
+                        • You'll be charged <strong className="text-foreground">${paymentInfo.total.toFixed(2)}</strong>{" "}
+                        <strong className="text-foreground">{frequencyLabel(freq).toLowerCase()}</strong> until you cancel.
+                      </li>
+                    ))}
+                    <li>• Your card is charged on the Monday of each pickup week.</li>
+                    <li>• Skip a delivery, pause, change flavours or cancel anytime from your account.</li>
+                  </ul>
+                </div>
+              )}
             </CardContent>
           </Card>
 

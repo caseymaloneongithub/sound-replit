@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/form";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { Lock } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const loginSchema = z.object({
@@ -177,7 +176,12 @@ export default function StaffLogin() {
         return;
       }
 
-      // Invalidate queries to ensure auth state updates
+      // Populate the auth cache SYNCHRONOUSLY before redirecting. Invalidate alone only
+      // kicks off a background refetch, so the StaffProtectedRoute guard could mount with
+      // user still null (isLoading false) and bounce straight back to /staff/login — which
+      // looked like "logged in but didn't go anywhere". The email and 2FA paths already do
+      // this; the password path didn't.
+      queryClient.setQueryData(["/api/user"], response);
       queryClient.invalidateQueries({ queryKey: ["/api/user"] });
       
       toast({
@@ -279,9 +283,6 @@ export default function StaffLogin() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/20 p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
-            <Lock className="w-8 h-8 text-primary" />
-          </div>
           <h1 className="text-3xl font-bold mb-2">Staff Portal</h1>
           <p className="text-muted-foreground">
             Sign in to access the staff management system

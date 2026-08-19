@@ -8,11 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import { 
-  FileText,
-  TrendingUp, 
-  TrendingDown,
-  DollarSign,
+import {
   Calendar as CalendarIcon,
   ChevronRight
 } from "lucide-react";
@@ -96,7 +92,6 @@ export default function AccountingIncomeStatement() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              <CalendarIcon className="h-5 w-5" />
               Date Range
             </CardTitle>
           </CardHeader>
@@ -161,7 +156,6 @@ export default function AccountingIncomeStatement() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-                <TrendingUp className="h-4 w-4 text-green-600" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-green-600" data-testid="text-total-revenue">
@@ -173,7 +167,6 @@ export default function AccountingIncomeStatement() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Total Expenses</CardTitle>
-                <TrendingDown className="h-4 w-4 text-red-600" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-red-600" data-testid="text-total-expenses">
@@ -185,7 +178,6 @@ export default function AccountingIncomeStatement() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Net Income</CardTitle>
-                <DollarSign className="h-4 w-4" />
               </CardHeader>
               <CardContent>
                 <div className={cn(
@@ -203,7 +195,6 @@ export default function AccountingIncomeStatement() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-green-600" />
                 Revenue
               </CardTitle>
               <CardDescription>Income by category</CardDescription>
@@ -252,7 +243,6 @@ export default function AccountingIncomeStatement() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <TrendingDown className="h-5 w-5 text-red-600" />
                 Expenses
               </CardTitle>
               <CardDescription>Expenses by category</CardDescription>
@@ -302,7 +292,6 @@ export default function AccountingIncomeStatement() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              <FileText className="h-5 w-5" />
               Summary
             </CardTitle>
           </CardHeader>

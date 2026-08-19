@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, CheckCircle2, AlertCircle } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -218,7 +218,6 @@ export default function Checkout() {
           <Card className="border-destructive">
             <CardHeader>
               <div className="flex items-center gap-3 mb-2">
-                <AlertCircle className="w-6 h-6 text-destructive" />
                 <CardTitle className="text-destructive">Payment System Not Configured</CardTitle>
               </div>
               <CardDescription>

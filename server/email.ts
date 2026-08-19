@@ -259,6 +259,12 @@ interface EmailVerificationCodeParams {
   email: string;
   code: string;
   name?: string;
+  /**
+   * One-click sign-in URL. When present the email leads with a button and offers the code
+   * as a fallback, since some mail clients rewrite or strip links. Both redeem the same
+   * single-use credential.
+   */
+  magicLink?: string;
 }
 
 export async function sendEmailVerificationCode(params: EmailVerificationCodeParams): Promise<void> {
@@ -267,6 +273,7 @@ export async function sendEmailVerificationCode(params: EmailVerificationCodePar
   if (!transporter) {
     console.log('[EMAIL] Would send verification code email to:', params.email);
     console.log('[EMAIL] Verification code:', params.code);
+    if (params.magicLink) console.log('[EMAIL] Magic link:', params.magicLink);
     return;
   }
 
@@ -275,11 +282,11 @@ export async function sendEmailVerificationCode(params: EmailVerificationCodePar
     to: params.email,
     subject: `${params.code} - Your Verification Code - Puget Sound Kombucha Co.`,
     text: `
-Your verification code is: ${params.code}
+${params.magicLink ? `Sign in here:\n${params.magicLink}\n\nOr enter this code: ${params.code}` : `Your verification code is: ${params.code}`}
 
-This code will expire in 5 minutes.
+This ${params.magicLink ? 'link and code expire' : 'code will expire'} in 15 minutes and can only be used once.
 
-If you didn't request this code, you can safely ignore this email.
+If you didn't request this, you can safely ignore this email.
 
 Thank you,
 Puget Sound Kombucha Co.
@@ -289,25 +296,45 @@ Puget Sound Kombucha Co.
   ${getEmailHeader('Your Verification Code')}
   
   <div style="padding: 32px 24px;">
+    ${params.magicLink ? `
     <div style="text-align: center; margin: 30px 0;">
-      <div style="background-color: ${BRAND_COLORS.backgroundGrey}; 
-                  padding: 24px; 
-                  border-radius: 8px; 
+      <a href="${params.magicLink}"
+         style="display: inline-block;
+                background-color: ${BRAND_COLORS.black};
+                color: ${BRAND_COLORS.white};
+                padding: 16px 32px;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: bold;
+                text-decoration: none;">
+        Sign in to your account
+      </a>
+    </div>
+
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; text-align: center; margin-top: 24px;">
+      Or enter this code instead:
+    </p>
+    ` : ''}
+
+    <div style="text-align: center; margin: ${params.magicLink ? '12px' : '30px'} 0;">
+      <div style="background-color: ${BRAND_COLORS.backgroundGrey};
+                  padding: ${params.magicLink ? '16px' : '24px'};
+                  border-radius: 8px;
                   border: 2px solid ${BRAND_COLORS.black};
-                  font-size: 36px; 
-                  font-weight: bold; 
-                  letter-spacing: 10px; 
+                  font-size: ${params.magicLink ? '28px' : '36px'};
+                  font-weight: bold;
+                  letter-spacing: 10px;
                   color: ${BRAND_COLORS.black};">
         ${params.code}
       </div>
     </div>
-    
+
     <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; margin-top: 30px; text-align: center;">
-      This code will expire in 5 minutes.
+      This ${params.magicLink ? 'link and code expire' : 'code will expire'} in 15 minutes and can only be used once.
     </p>
-    
+
     <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; text-align: center;">
-      If you didn't request this code, you can safely ignore this email.
+      If you didn't request this, you can safely ignore this email.
     </p>
     
     ${getEmailFooter()}
@@ -1912,11 +1939,14 @@ export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailPar
                 display: inline-block;
                 font-weight: 600;
                 font-size: 16px;">
-        Pay Invoice Online
+        Pay by Bank Transfer
       </a>
     </div>
     <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; text-align: center; margin: 0;">
       Or copy this link: <a href="${params.paymentUrl}" style="color: ${BRAND_COLORS.darkGrey};">${params.paymentUrl}</a>
+    </p>
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 13px; text-align: center; margin: 12px 0 0 0;">
+      Bank transfers take 4&ndash;5 business days to clear.
     </p>
   ` : `
     <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin: 24px 0;">
@@ -1927,7 +1957,7 @@ export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailPar
   const paymentText = params.paidAt 
     ? `\nPAID - ${paidDateFormatted}\nThank you for your payment!\n`
     : params.allowOnlinePayment && params.paymentUrl 
-      ? `\nPay online: ${params.paymentUrl}\n`
+      ? `\nPay by bank transfer: ${params.paymentUrl}\n(Bank transfers take 4-5 business days to clear.)\n`
       : '\nPayment Terms: Net 30\n';
 
   // Delivery location section

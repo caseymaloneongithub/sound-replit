@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +21,6 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { Building2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const emailLoginSchema = z.object({
@@ -35,6 +34,7 @@ export default function WholesaleLogin() {
   const [emailLoginCodeSent, setEmailLoginCodeSent] = useState(false);
   const [sendingEmailLoginCode, setSendingEmailLoginCode] = useState(false);
   const [verifyingEmailLoginCode, setVerifyingEmailLoginCode] = useState(false);
+  const [redeemingToken, setRedeemingToken] = useState(false);
 
   const emailLoginForm = useForm<z.infer<typeof emailLoginSchema>>({
     resolver: zodResolver(emailLoginSchema),
@@ -43,6 +43,39 @@ export default function WholesaleLogin() {
       verificationCode: "",
     },
   });
+
+  /**
+   * Redeem a magic link on arrival. The email leads with a sign-in button, so most
+   * customers land here with ?token=… and never type anything.
+   */
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("token");
+    if (!token || redeemingToken) return;
+
+    setRedeemingToken(true);
+    (async () => {
+      try {
+        const data = await apiRequest("POST", "/api/wholesale/verify-magic-link", { token });
+        queryClient.setQueryData(["/api/user"], data.user);
+        await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+        toast({ title: "Welcome back!", description: "You're signed in." });
+        setLocation("/wholesale-customer/place-order");
+      } catch (error: any) {
+        // Strip the spent token from the URL so a refresh doesn't retry it and re-toast.
+        window.history.replaceState({}, "", "/wholesale/login");
+        setRedeemingToken(false);
+        // Fixed copy rather than error.message: apiRequest surfaces raw `400: {"message":…}`
+        // JSON, and every failure here means the same thing to the customer anyway.
+        toast({
+          title: "That sign-in link has expired",
+          description: "Links are good for 15 minutes and one use. Enter your email below for a fresh one.",
+          variant: "destructive",
+        });
+      }
+    })();
+    // Runs once on mount; the token is read from the URL, not from React state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const sendEmailLoginCode = async () => {
     const email = emailLoginForm.getValues("email");
@@ -58,11 +91,13 @@ export default function WholesaleLogin() {
 
     setSendingEmailLoginCode(true);
     try {
-      await apiRequest("POST", "/api/wholesale/send-email-code", { email });
+      const data = await apiRequest("POST", "/api/wholesale/send-email-code", { email });
       setEmailLoginCodeSent(true);
       toast({
-        title: "Code Sent",
-        description: "Verification code sent to your email",
+        title: "Check your email",
+        // The server replies the same way whether or not the account exists, so the wording
+        // here must not promise a code was actually issued.
+        description: data?.message || "If that email is on a wholesale account, we've sent a sign-in link and code to it.",
       });
     } catch (error: any) {
       toast({
@@ -120,13 +155,23 @@ export default function WholesaleLogin() {
     }
   };
 
+  // Arriving from a magic link: show progress rather than flashing the login form at
+  // someone who is already being signed in.
+  if (redeemingToken) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/20 p-4">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+          <p className="text-muted-foreground" data-testid="text-signing-in">Signing you in…</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/20 p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
-            <Building2 className="w-8 h-8 text-primary" />
-          </div>
           <h1 className="text-3xl font-bold mb-2">Wholesale Portal</h1>
           <p className="text-muted-foreground">
             Sign in to access your wholesale account
@@ -137,7 +182,7 @@ export default function WholesaleLogin() {
           <CardHeader>
             <CardTitle>Wholesale Login</CardTitle>
             <CardDescription>
-              Enter your email to receive a verification code
+              Enter your email and we'll send you a sign-in link
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -227,7 +272,15 @@ export default function WholesaleLogin() {
           </CardContent>
         </Card>
 
-        <div className="text-center mt-6">
+        {/* A prospective retailer landing here previously had nowhere to go — the page
+            could only reject an unrecognised email. */}
+        <div className="text-center mt-6 space-y-2">
+          <p className="text-sm text-muted-foreground">
+            Want to carry our kombucha?{" "}
+            <Link href="/wholesale/apply" className="text-primary hover:underline" data-testid="link-to-wholesale-apply">
+              Apply for a wholesale account
+            </Link>
+          </p>
           <p className="text-sm text-muted-foreground">
             Looking for retail shopping?{" "}
             <Link href="/auth" className="text-primary hover:underline" data-testid="link-to-retail-login">

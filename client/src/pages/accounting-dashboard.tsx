@@ -1,19 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import { 
-  Receipt, 
-  Tags, 
-  Landmark, 
-  TrendingUp, 
-  TrendingDown,
-  AlertCircle,
+import {
+  Receipt,
   ArrowRight,
-  DollarSign,
   PieChart
 } from "lucide-react";
 import type { AccountingCategory, AccountingTransaction, PlaidAccount } from "@shared/schema";
@@ -35,18 +30,16 @@ function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
-function SummaryCard({ 
-  title, 
-  value, 
-  description, 
-  icon: Icon, 
+function SummaryCard({
+  title,
+  value,
+  description,
   trend,
-  className = "" 
-}: { 
-  title: string; 
-  value: string; 
+  className = ""
+}: {
+  title: string;
+  value: string;
   description?: string;
-  icon: React.ComponentType<{ className?: string }>;
   trend?: 'positive' | 'negative' | 'neutral';
   className?: string;
 }) {
@@ -56,7 +49,6 @@ function SummaryCard({
     <Card className={className}>
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
         <div className={`text-2xl font-bold ${trendColor}`}>{value}</div>
@@ -69,10 +61,16 @@ function SummaryCard({
 }
 
 export default function AccountingDashboard() {
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  
+  // The summary endpoint filters by startDate/endDate query params, so build the
+  // current month's range explicitly (a bare key segment would hit /summary/2026-07).
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+
   const { data: summary, isLoading: summaryLoading } = useQuery<FinancialSummary>({
-    queryKey: ['/api/accounting/summary', currentMonth],
+    queryKey: ['/api/accounting/summary', monthStart, monthEnd],
+    queryFn: () =>
+      apiRequest('GET', `/api/accounting/summary?startDate=${monthStart}&endDate=${monthEnd}`),
   });
 
   const { data: categories = [], isLoading: categoriesLoading } = useQuery<AccountingCategory[]>({
@@ -84,7 +82,8 @@ export default function AccountingDashboard() {
   });
 
   const { data: recentTransactions = [], isLoading: transactionsLoading } = useQuery<AccountingTransaction[]>({
-    queryKey: ['/api/accounting/transactions', { limit: 10 }],
+    queryKey: ['/api/accounting/transactions', 'recent'],
+    queryFn: () => apiRequest('GET', '/api/accounting/transactions?limit=10'),
   });
 
   const isLoading = summaryLoading || categoriesLoading || accountsLoading || transactionsLoading;
@@ -129,26 +128,22 @@ export default function AccountingDashboard() {
             <SummaryCard
               title="Total Income"
               value={formatCurrency(summary?.totalIncome || 0)}
-              icon={TrendingUp}
               trend="positive"
             />
             <SummaryCard
               title="Total Expenses"
               value={formatCurrency(summary?.totalExpenses || 0)}
-              icon={TrendingDown}
               trend="negative"
             />
             <SummaryCard
               title="Net Income"
               value={formatCurrency(summary?.netIncome || 0)}
-              icon={DollarSign}
               trend={(summary?.netIncome || 0) >= 0 ? 'positive' : 'negative'}
             />
             <SummaryCard
               title="Unallocated"
               value={String(summary?.unallocatedCount || 0)}
               description={`${formatCurrency(summary?.unallocatedAmount || 0)} needs review`}
-              icon={AlertCircle}
               trend="neutral"
             />
           </div>
@@ -158,7 +153,6 @@ export default function AccountingDashboard() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-green-600" />
                 Income by Category
               </CardTitle>
               <CardDescription>Revenue breakdown for the current month</CardDescription>
@@ -190,7 +184,6 @@ export default function AccountingDashboard() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <TrendingDown className="h-5 w-5 text-red-600" />
                 Expenses by Category
               </CardTitle>
               <CardDescription>Spending breakdown for the current month</CardDescription>
@@ -224,7 +217,6 @@ export default function AccountingDashboard() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <Tags className="h-5 w-5" />
                 Categories
               </CardTitle>
             </CardHeader>
@@ -245,7 +237,6 @@ export default function AccountingDashboard() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <Landmark className="h-5 w-5" />
                 Connected Accounts
               </CardTitle>
             </CardHeader>
@@ -266,7 +257,6 @@ export default function AccountingDashboard() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <Receipt className="h-5 w-5" />
                 Recent Activity
               </CardTitle>
             </CardHeader>
@@ -301,7 +291,6 @@ export default function AccountingDashboard() {
           <Card className="border-orange-200 bg-orange-50 dark:border-orange-900 dark:bg-orange-950/20">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <AlertCircle className="h-5 w-5 text-orange-600" />
                 Action Required
               </CardTitle>
             </CardHeader>

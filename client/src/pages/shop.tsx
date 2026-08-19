@@ -4,7 +4,7 @@ import { Product } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ShoppingCart, Plus, Check, Repeat, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Check, Repeat, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -321,7 +321,6 @@ export default function Shop() {
 
         {!isLoading && products?.length === 0 && (
           <div className="text-center py-20">
-            <ShoppingCart className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
             <h3 className="text-2xl font-semibold mb-2">No products available</h3>
             <p className="text-muted-foreground">Check back soon for new flavors</p>
           </div>

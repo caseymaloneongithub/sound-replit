@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Palette, Upload, X, Image as ImageIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import { Loader2, Upload, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import type { Flavor } from "@shared/schema";
@@ -26,7 +26,6 @@ function FlavorImageCarousel({ flavor }: { flavor: Flavor }) {
   if (images.length === 0) {
     return (
       <div className="w-full h-64 bg-muted flex items-center justify-center">
-        <ImageIcon className="w-16 h-16 text-muted-foreground" />
       </div>
     );
   }
@@ -145,19 +144,36 @@ function FlavorForm({
     },
   });
 
-  const handleGetUploadUrl = async (isSecondary = false) => {
-    const filename = `flavor-${Date.now()}-${isSecondary ? 'secondary' : 'primary'}.jpg`;
+  // Remembers the public URL the server hands back for an S3/R2 upload, so we don't
+  // have to reverse-engineer it from the presigned URL.
+  const [pendingPublicUrl, setPendingPublicUrl] = useState<Record<string, string>>({});
+
+  const handleGetUploadUrl = async (
+    isSecondary = false,
+    file?: { name?: string; type?: string }
+  ) => {
+    // Use the file's real extension/MIME type — hardcoding jpeg breaks signature
+    // validation on stricter S3 backends when someone uploads a PNG.
+    const ext = file?.name?.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const filename = `flavor-${Date.now()}-${isSecondary ? 'secondary' : 'primary'}.${ext}`;
     const response = await fetch('/api/object-storage/upload-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename, directory: 'public' }),
+      body: JSON.stringify({
+        filename,
+        directory: 'public',
+        contentType: file?.type || 'image/jpeg',
+      }),
     });
-    
+
     if (!response.ok) {
       throw new Error('Failed to get upload URL');
     }
-    
+
     const data = await response.json();
+    if (data.publicUrl) {
+      setPendingPublicUrl((prev) => ({ ...prev, [isSecondary ? 'secondary' : 'primary']: data.publicUrl }));
+    }
     return {
       method: 'PUT' as const,
       url: data.uploadUrl,
@@ -167,25 +183,33 @@ function FlavorForm({
   const handleUploadComplete = async (result: UploadResult, isSecondary = false) => {
     if (result.successful.length > 0) {
       const uploadedFile = result.successful[0];
-      const gcsUrl = uploadedFile.uploadURL?.split('?')[0] || '';
-      
-      // Make the file publicly readable (sets ACL policy)
-      try {
-        await fetch('/api/object-storage/make-public', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileUrl: gcsUrl }),
-        });
-      } catch (error) {
-        console.error('Error making file public:', error);
+      const rawUrl = uploadedFile.uploadURL?.split('?')[0] || '';
+
+      // S3/R2: the server already told us the final CDN URL. Legacy/GCS: derive it
+      // and set the per-object ACL.
+      const s3PublicUrl = pendingPublicUrl[isSecondary ? 'secondary' : 'primary'];
+      let publicUrl: string;
+
+      if (s3PublicUrl) {
+        publicUrl = s3PublicUrl;
+      } else {
+        try {
+          await fetch('/api/object-storage/make-public', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileUrl: rawUrl }),
+          });
+        } catch (error) {
+          console.error('Error making file public:', error);
+        }
+
+        // Convert GCS URL to our server's public endpoint
+        // From: https://storage.googleapis.com/bucket/public/filename.jpg
+        // To: /public/filename.jpg
+        const urlParts = rawUrl.split('/public/');
+        publicUrl = urlParts.length > 1 ? `/public/${urlParts[1]}` : rawUrl;
       }
-      
-      // Convert GCS URL to our server's public endpoint
-      // From: https://storage.googleapis.com/bucket/public/filename.jpg
-      // To: /public/filename.jpg
-      const urlParts = gcsUrl.split('/public/');
-      const publicUrl = urlParts.length > 1 ? `/public/${urlParts[1]}` : gcsUrl;
-      
+
       if (isSecondary) {
         setSecondaryImageUrl(publicUrl);
         form.setValue('secondaryImageUrl', publicUrl);
@@ -331,7 +355,7 @@ function FlavorForm({
           ) : (
             <ObjectUploader
               maxNumberOfFiles={1}
-              onGetUploadParameters={() => handleGetUploadUrl(false)}
+              onGetUploadParameters={(file) => handleGetUploadUrl(false, file)}
               onComplete={(result) => handleUploadComplete(result, false)}
             >
               <Upload className="w-4 h-4 mr-2" />
@@ -365,7 +389,7 @@ function FlavorForm({
           ) : (
             <ObjectUploader
               maxNumberOfFiles={1}
-              onGetUploadParameters={() => handleGetUploadUrl(true)}
+              onGetUploadParameters={(file) => handleGetUploadUrl(true, file)}
               onComplete={(result) => handleUploadComplete(result, true)}
             >
               <Upload className="w-4 h-4 mr-2" />
@@ -485,7 +509,6 @@ export default function AdminFlavors() {
           <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Palette className="w-5 h-5 text-primary" />
                 Flavor Library
               </CardTitle>
               <CardDescription>Central repository of kombucha flavors used across retail and wholesale products</CardDescription>

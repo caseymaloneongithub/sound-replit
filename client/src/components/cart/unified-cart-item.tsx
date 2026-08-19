@@ -1,8 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, Minus, Repeat } from "lucide-react";
+import { Trash2, Plus, Minus } from "lucide-react";
 import { formatCaseQuantity } from "@shared/pricing";
 import type { UnifiedCartItem } from "@/hooks/use-unified-cart";
+import { frequencyLabel } from "@shared/subscription-frequency";
 
 interface UnifiedCartItemProps {
   unifiedItem: UnifiedCartItem;
@@ -83,12 +84,7 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
           )}
           {isSubscription && (
             <Badge variant="secondary" className="gap-1 text-xs">
-              <Repeat className="w-3 h-3" />
-              {subscriptionFrequency === 'weekly' ? 'Weekly' :
-               subscriptionFrequency === 'bi-weekly' ? 'Bi-Weekly' :
-               subscriptionFrequency === 'every-4-weeks' ? 'Every 4 Weeks' :
-               subscriptionFrequency === 'every-6-weeks' ? 'Every 6 Weeks' :
-               'Every 8 Weeks'}
+              {frequencyLabel(subscriptionFrequency)}
             </Badge>
           )}
         </div>

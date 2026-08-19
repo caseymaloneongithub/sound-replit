@@ -1,10 +1,41 @@
 import cron from 'node-cron';
 import Stripe from 'stripe';
 import { db } from './db';
+import { pool } from './storage';
 import { retailOrders, retailOrderItemsV2, retailSubscriptions, retailSubscriptionItems, retailProducts, flavors } from '../shared/schema';
-import { eq, and, lte, sql, gte, lt } from 'drizzle-orm';
-import { normalizeToAllowedPickupDay, getBillingDateForPickup } from '../shared/pickup-policy';
-import { sendBillingReminderEmail, sendSubscriptionChargeConfirmationEmail } from './email';
+import { eq, and, lte, sql, gte, lt, or, isNull } from 'drizzle-orm';
+import { normalizeToAllowedPickupDay, getBillingDateForPickup, PICKUP_POLICY } from '../shared/pickup-policy';
+import { frequencyToDays } from '../shared/subscription-frequency';
+
+/** A processing lock older than this is treated as stranded and reclaimed. */
+const STALE_LOCK_MINUTES = 30;
+
+/**
+ * The price to charge for a subscription line.
+ *
+ * Prefers the price locked in at signup so a catalogue edit never silently
+ * re-prices an existing subscriber. Falls back to the current discounted price for
+ * rows created before unitPriceAtSignup existed.
+ */
+function resolveUnitPrice(item: {
+  unitPriceAtSignup?: string | null;
+  retailProduct: { price: string; subscriptionDiscount?: string | number | null } | null;
+}): number {
+  if (item.unitPriceAtSignup != null) {
+    const locked = parseFloat(String(item.unitPriceAtSignup));
+    if (Number.isFinite(locked)) return locked;
+  }
+  if (!item.retailProduct) return 0;
+  const basePrice = parseFloat(item.retailProduct.price);
+  const discount = item.retailProduct.subscriptionDiscount ? Number(item.retailProduct.subscriptionDiscount) : 0;
+  return basePrice * (1 - discount / 100);
+}
+import {
+  sendBillingReminderEmail,
+  sendSubscriptionChargeConfirmationEmail,
+  sendPaymentFailureEmail,
+  sendStaffPaymentFailureNotification,
+} from './email';
 import { addDays, startOfDay, endOfDay } from 'date-fns';
 
 const stripe = process.env.STRIPE_SECRET_KEY 
@@ -71,6 +102,7 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
         retailProductId: retailSubscriptionItems.retailProductId,
         selectedFlavorId: retailSubscriptionItems.selectedFlavorId,
         quantity: retailSubscriptionItems.quantity,
+        unitPriceAtSignup: retailSubscriptionItems.unitPriceAtSignup,
         retailProduct: retailProducts,
       })
       .from(retailSubscriptionItems)
@@ -82,65 +114,93 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
     const taxAmount = parseFloat(paymentIntent.metadata.taxAmount || '0');
     const totalAmount = parseFloat(paymentIntent.metadata.totalAmount || '0');
 
-    // Create order
-    const orderCount = await db.select({ count: sql<number>`count(*)` }).from(retailOrders);
-    const orderNumber = `RO-${String((orderCount[0].count as number) + 1).padStart(6, '0')}`;
-
-    const [newOrder] = await db.insert(retailOrders).values({
-      orderNumber,
-      customerName: sub.customerName,
-      customerEmail: sub.customerEmail,
-      customerPhone: sub.customerPhone,
-      status: 'pending',
-      subtotal: subtotal.toFixed(2),
-      taxAmount: taxAmount.toFixed(2),
-      totalAmount: totalAmount.toFixed(2),
-      stripePaymentIntentId: paymentIntentId,
-      isSubscriptionOrder: true,
-      userId: sub.userId,
-    }).returning();
-
-    // Create order items
-    for (const item of items) {
-      if (!item.retailProduct) continue;
-      
-      const basePrice = parseFloat(item.retailProduct.price);
-      const discount = item.retailProduct.subscriptionDiscount ? Number(item.retailProduct.subscriptionDiscount) : 0;
-      const unitPrice = basePrice * (1 - discount / 100);
-
-      await db.insert(retailOrderItemsV2).values({
-        orderId: newOrder.id,
-        retailProductId: item.retailProductId,
-        selectedFlavorId: item.selectedFlavorId,
-        quantity: item.quantity,
-        unitPrice: unitPrice.toFixed(2),
-      });
-    }
-
-    // Update subscription - calculate next charge date
-    const daysUntilNext = 
-      sub.subscriptionFrequency === 'weekly' ? 7 :
-      sub.subscriptionFrequency === 'bi-weekly' ? 14 :
-      28;
-
+    // Calculate the next charge/pickup dates before opening the transaction
+    const daysUntilNext = frequencyToDays(sub.subscriptionFrequency);
     const nextDate = new Date();
     nextDate.setDate(nextDate.getDate() + daysUntilNext);
     const normalizedNextPickupDate = normalizeToAllowedPickupDay(nextDate);
     // Billing happens on Monday of the pickup week
     const nextBillingDate = getBillingDateForPickup(normalizedNextPickupDate);
-    
-    await db
-      .update(retailSubscriptions)
-      .set({
-        nextChargeAt: nextBillingDate,
-        nextDeliveryDate: normalizedNextPickupDate,
-        billingStatus: 'active',
-        retryCount: 0,
-        lastPaymentIntentId: paymentIntentId,
-        lastRefundedAt: null,
-        processingLock: false,
-      })
-      .where(eq(retailSubscriptions.id, sub.id));
+
+    // The customer's card is ALREADY charged at this point, so the order, its line
+    // items and the subscription's date advance must all land together. Previously
+    // these were three separate statements: a crash between them left a charged
+    // customer with an empty order and a subscription that would bill again.
+    //
+    // Uses the WebSocket pool (not the neon-http `db`) because we need a real
+    // interactive transaction plus an advisory lock — the order number was
+    // previously derived from count(*) in two places with inconsistent deleted_at
+    // filtering, which could collide and throw AFTER the charge.
+    const orderClient = await pool.connect();
+    let orderNumber: string;
+    try {
+      await orderClient.query('BEGIN');
+
+      // Serialize order-number generation for the duration of this transaction
+      await orderClient.query('SELECT pg_advisory_xact_lock($1)', [123456789]);
+
+      const lastNumber = await orderClient.query(
+        `SELECT order_number FROM retail_orders
+         WHERE order_number ~ '^RO-[0-9]+$' AND deleted_at IS NULL
+         ORDER BY order_number DESC
+         LIMIT 1`
+      );
+      const lastSeq = lastNumber.rows.length
+        ? parseInt(String(lastNumber.rows[0].order_number).replace('RO-', ''), 10)
+        : 0;
+      orderNumber = `RO-${String(lastSeq + 1).padStart(6, '0')}`;
+
+      const inserted = await orderClient.query(
+        `INSERT INTO retail_orders
+           (order_number, customer_name, customer_email, customer_phone, status,
+            subtotal, tax_amount, total_amount, stripe_payment_intent_id,
+            is_subscription_order, user_id, pickup_date)
+         VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,true,$9,$10)
+         RETURNING id`,
+        [
+          orderNumber,
+          sub.customerName,
+          sub.customerEmail,
+          sub.customerPhone,
+          subtotal.toFixed(2),
+          taxAmount.toFixed(2),
+          totalAmount.toFixed(2),
+          paymentIntentId,
+          sub.userId,
+          sub.nextDeliveryDate, // the pickup this charge pays for
+        ]
+      );
+      const newOrderId = inserted.rows[0].id;
+
+      for (const item of items) {
+        if (!item.retailProduct) continue;
+
+        const unitPrice = resolveUnitPrice(item);
+
+        await orderClient.query(
+          `INSERT INTO retail_order_items_v2
+             (order_id, retail_product_id, selected_flavor_id, quantity, unit_price)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [newOrderId, item.retailProductId, item.selectedFlavorId, item.quantity, unitPrice.toFixed(2)]
+        );
+      }
+
+      await orderClient.query(
+        `UPDATE retail_subscriptions
+         SET next_charge_at = $1, next_delivery_date = $2, billing_status = 'active',
+             retry_count = 0, last_payment_intent_id = $3, last_refunded_at = NULL,
+             processing_lock = false, processing_locked_at = NULL
+         WHERE id = $4`,
+        [nextBillingDate, normalizedNextPickupDate, paymentIntentId, sub.id]
+      );
+
+      await orderClient.query('COMMIT');
+    } catch (txError) {
+      await orderClient.query('ROLLBACK').catch(() => {});
+      throw txError;
+    } finally {
+      orderClient.release();
+    }
 
     console.log(`[BILLING] ✅ Finalized retail subscription charge ${sub.id} - Order ${orderNumber} created`);
 
@@ -198,7 +258,16 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
 
     return true;
   } catch (error: any) {
-    console.error(`[BILLING] Error in finalizeRetailSubscriptionCharge:`, error.message);
+    // The card may already have been charged at this point, so this is the highest
+    // priority failure state in the whole system. The retry is safe: nextChargeAt was
+    // not advanced, the lock is released by the caller's finally, and the idempotency
+    // key makes Stripe return the SAME PaymentIntent rather than charging again.
+    console.error(
+      `[BILLING] 🚨 FAILED TO FINALIZE a charge for PaymentIntent ${paymentIntentId}. ` +
+        `The customer may have been charged WITHOUT an order being created. ` +
+        `It will be retried on the next billing run.`,
+      error
+    );
     return false;
   }
 }
@@ -218,16 +287,23 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
   
   for (const item of items) {
     if (!item.retailProduct) continue;
-    const basePrice = parseFloat(item.retailProduct.price);
-    const discount = item.retailProduct.subscriptionDiscount ? Number(item.retailProduct.subscriptionDiscount) : 0;
-    const unitPrice = basePrice * (1 - discount / 100);
-    subtotal += unitPrice * item.quantity;
+    subtotal += resolveUnitPrice(item) * item.quantity;
   }
 
   const taxAmount = subtotal * TAX_RATE;
   const totalAmount = subtotal + taxAmount;
   
   const amountInCents = Math.round(totalAmount * 100);
+
+  // Derived from the BILLING PERIOD, never from Date.now(): if the response to a
+  // charge is lost (timeout/5xx/process restart), the retry presents the same key
+  // and Stripe returns the original PaymentIntent instead of charging again.
+  // Note billing also runs on every server start, so restarts are a real retry path.
+  const idempotencyKey = `retailsub_${subscription.id}_${
+    subscription.nextChargeAt instanceof Date
+      ? subscription.nextChargeAt.toISOString()
+      : String(subscription.nextChargeAt)
+  }`;
 
   try {
     // Create PaymentIntent
@@ -245,7 +321,7 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
         taxAmount: taxAmount.toFixed(2),
         totalAmount: totalAmount.toFixed(2),
       },
-    });
+    }, { idempotencyKey });
 
     // Handle payment states
     if (paymentIntent.status === 'succeeded') {
@@ -287,21 +363,76 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
   } catch (error: any) {
     console.error(`[BILLING] Failed to charge retail subscription ${subscription.id}:`, error.message);
 
-    // Update retry count
     const newRetryCount = subscription.retryCount + 1;
+    const exhausted = newRetryCount >= MAX_RETRY_ATTEMPTS;
+
+    // A StripeCardError is a DEFINITIVE decline — Stripe processed the request and
+    // refused it, so no money moved. Anything else (timeout, connection reset, 5xx)
+    // is AMBIGUOUS: the charge may well have succeeded and we simply lost the reply.
+    const isDefiniteDecline = error?.type === 'StripeCardError';
+
+    // Only back off for definite declines. The idempotency key is derived from
+    // nextChargeAt, so moving that date mints a NEW key — which is correct for a
+    // fresh attempt after a decline, but would DOUBLE-CHARGE on an ambiguous
+    // failure. Leaving the date untouched makes the next run reuse the same key,
+    // and Stripe returns the original PaymentIntent instead of charging again.
+    let retryAt: Date | undefined;
+    if (isDefiniteDecline && !exhausted) {
+      const backoffDays = Math.min(2 ** newRetryCount, 7); // 2, 4, then 7 days
+      retryAt = new Date();
+      retryAt.setDate(retryAt.getDate() + backoffDays);
+      console.log(`[BILLING] Card declined for ${subscription.id} — retry ${newRetryCount}/${MAX_RETRY_ATTEMPTS} scheduled in ${backoffDays} day(s)`);
+    } else if (!isDefiniteDecline) {
+      console.warn(`[BILLING] ⚠️ Ambiguous failure for ${subscription.id} (${error?.type ?? 'unknown'}) — keeping nextChargeAt so the retry reuses the same idempotency key and cannot double-charge`);
+    }
+
     await db
       .update(retailSubscriptions)
       .set({
         retryCount: newRetryCount,
-        billingStatus: newRetryCount >= MAX_RETRY_ATTEMPTS ? 'retrying' : 'active',
+        billingStatus: exhausted ? 'retrying' : 'active',
         lastPaymentIntentId: error.payment_intent?.id || null,
         processingLock: false,
-        status: newRetryCount >= MAX_RETRY_ATTEMPTS ? 'paused' : subscription.status,
+        processingLockedAt: null,
+        status: exhausted ? 'paused' : subscription.status,
+        ...(retryAt ? { nextChargeAt: retryAt } : {}),
       })
       .where(eq(retailSubscriptions.id, subscription.id));
 
-    if (newRetryCount >= MAX_RETRY_ATTEMPTS) {
-      console.error(`[BILLING] Retail subscription ${subscription.id} paused after ${MAX_RETRY_ATTEMPTS} failed attempts`);
+    // Tell someone. These templates already existed but were never wired up, so a
+    // customer's card could fail three times and the subscription pause itself,
+    // with nobody — customer or owner — ever being told.
+    try {
+      const subscriptionItems = items
+        .filter((i) => i.retailProduct)
+        .map((i) => ({
+          productName: i.retailProduct!.productName || i.retailProduct!.unitDescription || 'Kombucha',
+          quantity: i.quantity,
+        }));
+
+      if (subscription.customerEmail) {
+        await sendPaymentFailureEmail({
+          customerEmail: subscription.customerEmail,
+          customerName: subscription.customerName || 'there',
+          subscriptionItems,
+          amount: totalAmount,
+          errorMessage: error?.message || 'Your card was declined.',
+        });
+      }
+
+      await sendStaffPaymentFailureNotification({
+        customerEmail: subscription.customerEmail || '(unknown)',
+        customerName: subscription.customerName || '(unknown)',
+        subscriptionItems,
+        amount: totalAmount,
+        errorMessage: `${error?.message || 'Payment failed'} (attempt ${newRetryCount}/${MAX_RETRY_ATTEMPTS}${exhausted ? ' — SUBSCRIPTION PAUSED' : ''})`,
+      });
+    } catch (emailError) {
+      console.error(`[BILLING] Failed to send payment-failure notification for ${subscription.id}:`, emailError);
+    }
+
+    if (exhausted) {
+      console.error(`[BILLING] 🚨 Retail subscription ${subscription.id} PAUSED after ${MAX_RETRY_ATTEMPTS} failed attempts — needs staff action to resume (POST /api/retail-subscriptions/:id/reset-billing)`);
     }
 
     return false;
@@ -313,6 +444,34 @@ export async function runDailyBilling() {
 
   try {
     const now = new Date();
+
+    // Reclaim stale locks BEFORE selecting work. A lock is only meant to last for the
+    // duration of one charge; anything older was stranded by a crash or a swallowed
+    // error. Because the due-query excludes locked rows, a stranded lock silently
+    // removes the subscription from billing forever — two were stuck this way for
+    // five months before this reaper existed.
+    const staleLockCutoff = new Date(now.getTime() - STALE_LOCK_MINUTES * 60 * 1000);
+    const reclaimed = await db
+      .update(retailSubscriptions)
+      .set({ processingLock: false, processingLockedAt: null })
+      .where(
+        and(
+          eq(retailSubscriptions.processingLock, true),
+          or(
+            isNull(retailSubscriptions.processingLockedAt),
+            lt(retailSubscriptions.processingLockedAt, staleLockCutoff)
+          )
+        )
+      )
+      .returning({ id: retailSubscriptions.id, lockedAt: retailSubscriptions.processingLockedAt });
+
+    if (reclaimed.length > 0) {
+      console.warn(
+        `[BILLING] ⚠️ Reclaimed ${reclaimed.length} stale processing lock(s) — these subscriptions were stuck and not billing: ${reclaimed
+          .map((r) => r.id)
+          .join(', ')}`
+      );
+    }
 
     // Find all retail subscriptions that are due for billing
     const dueRetailSubscriptions = await db
@@ -335,13 +494,20 @@ export async function runDailyBilling() {
       return;
     }
 
+    // Per-run tallies so a silent failure is visible in the summary below.
+    let succeeded = 0;
+    let failed = 0;
+    let skipped = 0;
+
     // Process each retail subscription
     for (const subscription of dueRetailSubscriptions) {
+      // Tracked so the `finally` only releases a lock this iteration actually took.
+      let lockAcquired = false;
       try {
         // Atomically acquire lock
         const lockResult = await db
           .update(retailSubscriptions)
-          .set({ processingLock: true })
+          .set({ processingLock: true, processingLockedAt: new Date() })
           .where(
             and(
               eq(retailSubscriptions.id, subscription.id),
@@ -355,8 +521,10 @@ export async function runDailyBilling() {
 
         if (lockResult.length === 0) {
           console.log(`[BILLING] Retail subscription ${subscription.id} already being processed, skipping`);
+          skipped++;
           continue;
         }
+        lockAcquired = true;
 
         // Get subscription items with retail products
         const items = await db
@@ -374,28 +542,50 @@ export async function runDailyBilling() {
 
         if (items.length === 0) {
           console.warn(`[BILLING] Retail subscription ${subscription.id} has no items, skipping`);
-          await db
-            .update(retailSubscriptions)
-            .set({ processingLock: false })
-            .where(eq(retailSubscriptions.id, subscription.id));
+          skipped++;
           continue;
         }
 
         // Process the billing
-        await processRetailSubscriptionBilling(subscription, items);
+        const ok = await processRetailSubscriptionBilling(subscription, items);
+        if (ok) succeeded++;
+        else failed++;
       } catch (error) {
+        failed++;
         console.error(`[BILLING] Error processing retail subscription ${subscription.id}:`, error);
-        // Release lock on error
-        await db
-          .update(retailSubscriptions)
-          .set({ processingLock: false })
-          .where(eq(retailSubscriptions.id, subscription.id));
+      } finally {
+        // ALWAYS release the lock. Previously a swallowed error inside
+        // finalizeRetailSubscriptionCharge left processingLock=true forever, and the
+        // due-subscription query excludes locked rows — so the subscription silently
+        // stopped billing with no alert. (Two live subscriptions were stranded this
+        // way since February.) Releasing is safe: the success path already sets it
+        // false, and re-setting false is a no-op.
+        if (lockAcquired) {
+          try {
+            await db
+              .update(retailSubscriptions)
+              .set({ processingLock: false, processingLockedAt: null })
+              .where(eq(retailSubscriptions.id, subscription.id));
+          } catch (releaseError) {
+            console.error(`[BILLING] ⚠️ FAILED TO RELEASE LOCK for ${subscription.id} — it will not bill again until cleared:`, releaseError);
+          }
+        }
       }
+    }
+
+    // Single summary line per run. Previously every outcome was buried in per-item
+    // logs, so a run where everything failed looked identical to a quiet one — the
+    // owner's only signal was noticing orders had stopped appearing.
+    const summary = `[BILLING] Run summary — due: ${dueRetailSubscriptions.length}, charged: ${succeeded}, failed: ${failed}, skipped: ${skipped}, stale locks reclaimed: ${reclaimed.length}`;
+    if (failed > 0 || reclaimed.length > 0) {
+      console.warn(`${summary}  ⚠️ NEEDS ATTENTION`);
+    } else {
+      console.log(summary);
     }
 
     console.log('[BILLING] Daily billing process completed');
   } catch (error) {
-    console.error('[BILLING] Fatal error in daily billing process:', error);
+    console.error('[BILLING] 🚨 Fatal error in daily billing process — NO subscriptions were billed this run:', error);
   }
 }
 
@@ -539,17 +729,19 @@ export function startBillingCron() {
   console.log('[BILLING] Scheduling daily billing cron job for 4:00 AM');
   console.log('[BILLING] Scheduling billing reminder cron job for 9:00 AM');
   
-  // Run billing at 4:00 AM every day
+  // Run billing at 4:00 AM Pacific. The timezone MUST be pinned: nextChargeAt is
+  // computed as Monday 04:00 Pacific, so an unpinned (UTC) schedule fires ~17h early
+  // and sees charges as not-yet-due.
   cron.schedule('0 4 * * *', async () => {
-    console.log('[BILLING] Cron triggered at 4:00 AM');
+    console.log('[BILLING] Cron triggered at 4:00 AM Pacific');
     await runDailyBilling();
-  });
+  }, { timezone: PICKUP_POLICY.timezone });
 
   // Run billing reminders at 9:00 AM every day (2 days before billing)
   cron.schedule('0 9 * * *', async () => {
-    console.log('[BILLING REMINDERS] Cron triggered at 9:00 AM');
+    console.log('[BILLING REMINDERS] Cron triggered at 9:00 AM Pacific');
     await sendBillingReminders();
-  });
+  }, { timezone: PICKUP_POLICY.timezone });
 
   // Also run on startup to catch any missed billings
   setTimeout(async () => {

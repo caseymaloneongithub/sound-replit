@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Package, Plus, Loader2, History } from "lucide-react";
+import { Package, Plus, Loader2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -199,7 +199,6 @@ export function InventoryTab({ products, isLoading }: InventoryTabProps) {
         <Card className="border-destructive">
           <CardHeader>
             <CardTitle className="text-destructive flex items-center gap-2">
-              <Package className="w-5 h-5" />
               Low Stock Alert
             </CardTitle>
             <CardDescription>
@@ -262,7 +261,6 @@ export function InventoryTab({ products, isLoading }: InventoryTabProps) {
 
       <div>
         <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-          <History className="w-5 h-5" />
           Inventory Adjustments
         </h3>
         {adjustmentsLoading ? (

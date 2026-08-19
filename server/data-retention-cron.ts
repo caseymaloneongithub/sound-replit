@@ -148,16 +148,19 @@ export async function runAllCleanupTasks(): Promise<void> {
 
 /**
  * Schedule data retention cleanup jobs
- * Runs every hour to clean up expired data
+ * Runs every 6 hours to clean up expired data. Hourly was far more often than
+ * the data needs — expired codes and tokens are checked at use time anyway —
+ * and each wake-up keeps the serverless Postgres compute alive for its full
+ * autosuspend window, which dominated idle compute usage.
  */
 export function scheduleDataRetentionJobs(): void {
-  // Run cleanup every hour at minute 30
-  cron.schedule('30 * * * *', async () => {
-    console.log('[DATA RETENTION] Hourly cleanup job started');
+  // Run cleanup every 6 hours at minute 30
+  cron.schedule('30 */6 * * *', async () => {
+    console.log('[DATA RETENTION] Cleanup job started');
     await runAllCleanupTasks();
   });
   
-  console.log('[DATA RETENTION] Scheduled hourly cleanup job (runs at :30 of every hour)');
+  console.log('[DATA RETENTION] Scheduled cleanup job (runs at :30 every 6 hours)');
   
   // Run initial cleanup on startup (after a short delay to let the app initialize)
   setTimeout(async () => {

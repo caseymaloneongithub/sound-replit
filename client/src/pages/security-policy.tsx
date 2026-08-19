@@ -1,5 +1,4 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Shield, Lock, Eye, Server, Mail, FileCheck, Clock } from "lucide-react";
 import { Link } from "wouter";
 import logo from "@assets/text-stacked-black_1762299663824.png";
 
@@ -25,7 +24,6 @@ export default function SecurityPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-primary" />
                 Our Commitment to Security
               </CardTitle>
             </CardHeader>
@@ -41,7 +39,6 @@ export default function SecurityPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Lock className="w-5 h-5 text-primary" />
                 Payment Security
               </CardTitle>
             </CardHeader>
@@ -58,7 +55,6 @@ export default function SecurityPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Server className="w-5 h-5 text-primary" />
                 Data Storage & Protection
               </CardTitle>
             </CardHeader>
@@ -75,7 +71,6 @@ export default function SecurityPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Eye className="w-5 h-5 text-primary" />
                 Data We Collect
               </CardTitle>
             </CardHeader>
@@ -93,7 +88,6 @@ export default function SecurityPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <FileCheck className="w-5 h-5 text-primary" />
                 How We Use Your Data
               </CardTitle>
             </CardHeader>
@@ -113,7 +107,6 @@ export default function SecurityPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-primary" />
                 Data Retention
               </CardTitle>
             </CardHeader>
@@ -129,7 +122,6 @@ export default function SecurityPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Mail className="w-5 h-5 text-primary" />
                 Contact Us
               </CardTitle>
             </CardHeader>

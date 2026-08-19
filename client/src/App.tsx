@@ -8,19 +8,20 @@ import { ExperienceModeProvider } from "@/hooks/use-experience-mode";
 import { Navbar } from "@/components/layout/navbar";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
 import { ExperienceSwitcher } from "@/components/experience-switcher";
-import { StaffProtectedRoute, WholesaleCustomerProtectedRoute } from "@/lib/protected-route";
+import { ProtectedRoute, StaffProtectedRoute, WholesaleCustomerProtectedRoute } from "@/lib/protected-route";
+import { ErrorBoundary } from "@/components/error-boundary";
 import AuthPage from "@/pages/auth-page";
 import StaffLogin from "@/pages/staff-login";
 import WholesaleLogin from "@/pages/wholesale-login";
+import WholesaleApply from "@/pages/wholesale-apply";
 import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import WholesaleCustomerPlaceOrder from "@/pages/wholesale-customer-place-order";
 import WholesaleCustomerOrders from "@/pages/wholesale-customer-orders";
+import WholesaleCustomerLocations from "@/pages/wholesale-customer-locations";
 import Shop from "@/pages/shop";
 import ShopV2 from "@/pages/shop-v2";
 import MyAccount from "@/pages/my-account";
-import MySubscriptions from "@/pages/my-subscriptions";
-import OrderHistory from "@/pages/order-history";
 import Subscribe from "@/pages/subscribe";
 import ProductSubscribe from "@/pages/product-subscribe";
 import ProductDetail from "@/pages/product-detail";
@@ -39,6 +40,12 @@ import RetailOrders from "@/pages/retail-orders";
 import RetailSubscriptions from "@/pages/retail-subscriptions";
 import RetailCustomers from "@/pages/retail-customers";
 import Inventory from "@/pages/inventory";
+import Materials from "@/pages/materials";
+import Suppliers from "@/pages/suppliers";
+import Recipes from "@/pages/recipes";
+import Productions from "@/pages/productions";
+import PurchaseOrders from "@/pages/purchase-orders";
+import InventoryDashboard from "@/pages/inventory-dashboard";
 import Reports from "@/pages/reports";
 import Account from "@/pages/account";
 import StaffPortal from "@/pages/staff-portal";
@@ -52,6 +59,7 @@ import AccountingBanks from "@/pages/accounting-banks";
 import AccountingIncomeStatement from "@/pages/accounting-income-statement";
 import DeliveryRoutes from "@/pages/delivery-routes";
 import AdminChecklist from "@/pages/admin-checklist";
+import OrdersBoard from "@/pages/orders-board";
 import Contact from "@/pages/contact";
 import Cart from "@/pages/cart";
 import SecurityPolicy from "@/pages/security-policy";
@@ -65,11 +73,15 @@ function Router() {
       <Route path="/auth" component={AuthPage} />
       <Route path="/staff/login" component={StaffLogin} />
       <Route path="/wholesale/login" component={WholesaleLogin} />
+      <Route path="/wholesale/apply" component={WholesaleApply} />
       <Route path="/forgot-password" component={ForgotPassword} />
       <Route path="/reset-password" component={ResetPassword} />
       <WholesaleCustomerProtectedRoute path="/wholesale-customer" component={() => <Redirect to="/wholesale-customer/place-order" />} />
       <WholesaleCustomerProtectedRoute path="/wholesale-customer/place-order" component={WholesaleCustomerPlaceOrder} />
       <WholesaleCustomerProtectedRoute path="/wholesale-customer/orders" component={WholesaleCustomerOrders} />
+      <WholesaleCustomerProtectedRoute path="/wholesale-customer/locations" component={WholesaleCustomerLocations} />
+      <WholesaleCustomerProtectedRoute path="/wholesale-customer/invoice/:id" component={WholesaleInvoice} />
+      <WholesaleCustomerProtectedRoute path="/wholesale-customer/invoice/:id/payment-success" component={WholesalePaymentSuccess} />
       <Route path="/" component={() => <Redirect to="/shop" />} />
       <Route path="/shop" component={ShopV2} />
       <Route path="/products/:id" component={ProductDetail} />
@@ -79,7 +91,7 @@ function Router() {
       <Route path="/security" component={SecurityPolicy} />
       <Route path="/privacy" component={PrivacyPolicy} />
       <Route path="/data-retention" component={DataRetentionPolicy} />
-      <Route path="/my-account" component={MyAccount} />
+      <ProtectedRoute path="/my-account" component={MyAccount} />
       <Route path="/subscriptions" component={() => <Redirect to="/my-account" />} />
       <Route path="/my-subscriptions" component={() => <Redirect to="/my-account" />} />
       <Route path="/my-orders" component={() => <Redirect to="/my-account" />} />
@@ -105,6 +117,7 @@ function Router() {
       <StaffProtectedRoute path="/staff-portal/wholesale/customers" component={WholesaleCustomers} />
       <StaffProtectedRoute path="/staff-portal/wholesale/delivery-routes" component={DeliveryRoutes} />
       <StaffProtectedRoute path="/staff-portal/wholesale/invoices" component={WholesaleInvoices} />
+      <StaffProtectedRoute path="/staff-portal/orders-board" component={OrdersBoard} />
       <StaffProtectedRoute path="/staff-portal/checklist" component={AdminChecklist} />
       
       {/* Invoice pages remain accessible outside main navigation */}
@@ -122,6 +135,12 @@ function Router() {
       <StaffProtectedRoute path="/admin/accounting/banks" component={AccountingBanks} />
       <StaffProtectedRoute path="/admin/accounting/income-statement" component={AccountingIncomeStatement} />
       <StaffProtectedRoute path="/inventory" component={Inventory} />
+      <StaffProtectedRoute path="/inventory/dashboard" component={InventoryDashboard} />
+      <StaffProtectedRoute path="/inventory/materials" component={Materials} />
+      <StaffProtectedRoute path="/inventory/suppliers" component={Suppliers} />
+      <StaffProtectedRoute path="/inventory/recipes" component={Recipes} />
+      <StaffProtectedRoute path="/inventory/productions" component={Productions} />
+      <StaffProtectedRoute path="/inventory/purchase-orders" component={PurchaseOrders} />
       <StaffProtectedRoute path="/reports" component={Reports} />
       <Route path="/account" component={Account} />
       
@@ -146,7 +165,9 @@ function AppContent() {
       <ImpersonationBanner />
       {!isWholesaleCustomerRoute && <Navbar />}
       <Toaster />
-      <Router />
+      <ErrorBoundary>
+        <Router />
+      </ErrorBoundary>
       <ExperienceSwitcher />
     </>
   );

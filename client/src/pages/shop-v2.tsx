@@ -7,13 +7,14 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShoppingCart, Plus, Check, MapPin, ChevronLeft, ChevronRight, Image as ImageIcon } from "lucide-react";
+import { ShoppingCart, Check, ChevronLeft, ChevronRight, Image as ImageIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
 import logo from "@assets/text-stacked-black_1762299663824.png";
 import { Footer } from "@/components/layout/footer";
+import { SubscribeOptions } from "@/components/subscribe-options";
 
 type RetailCartItemWithProduct = RetailCartItem & {
   retailProduct: RetailProduct & { flavor: Flavor | null; flavors: Flavor[] };
@@ -58,7 +59,7 @@ function ProductImageCarousel({
               setCurrentIndex((currentIndex - 1 + images.length) % images.length);
             }}
             className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity"
-            data-testid={`button-prev-image-${productId}`}
+            aria-label="Previous image" data-testid={`button-prev-image-${productId}`}
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
@@ -68,7 +69,7 @@ function ProductImageCarousel({
               setCurrentIndex((currentIndex + 1) % images.length);
             }}
             className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity"
-            data-testid={`button-next-image-${productId}`}
+            aria-label="Next image" data-testid={`button-next-image-${productId}`}
           >
             <ChevronRight className="w-5 h-5" />
           </button>
@@ -86,7 +87,7 @@ function ProductImageCarousel({
                     ? 'bg-white w-6' 
                     : 'bg-white/50 hover:bg-white/75'
                 }`}
-                data-testid={`button-dot-${productId}-${idx}`}
+                aria-label={`Go to image ${idx + 1}`} data-testid={`button-dot-${productId}-${idx}`}
               />
             ))}
           </div>
@@ -245,7 +246,6 @@ export default function ShopV2() {
           
           {/* Pickup Location Notice */}
           <div className="bg-primary text-primary-foreground py-3 px-4 rounded-md mt-4 inline-flex items-center gap-3">
-            <MapPin className="w-5 h-5 flex-shrink-0" />
             <div>
               <span className="font-semibold">Pickup Only at Our Ballard Location:</span>{" "}
               <span className="opacity-90">4501 Shilshole Ave NW, Seattle, WA 98107</span>
@@ -267,9 +267,11 @@ export default function ShopV2() {
                     if (p.productType === 'single-flavor' && p.flavor) {
                       return p.flavor.isActive;
                     }
-                    // For multi-flavor products, check if all flavors are active
+                    // For multi-flavor products, check if all flavors are active.
+                    // `every` is true for an empty array, which would render an
+                    // un-orderable card, so require at least one flavor.
                     if (p.productType === 'multi-flavor') {
-                      return p.flavors.every(f => f.isActive);
+                      return p.flavors.length > 0 && p.flavors.every(f => f.isActive);
                     }
                     return true;
                   })
@@ -380,18 +382,35 @@ export default function ShopV2() {
                           </div>
                         )}
                         
-                        {/* Show tabs only if subscription discount > 0 */}
+                        {/* Show tabs only if subscription discount > 0.
+                            Tabs default to whichever mode the cart is already in, and the
+                            other is disabled — the blocked option used to stay fully
+                            enabled and only fail with a destructive toast on click. */}
                         {product.subscriptionDiscount != null && Number(product.subscriptionDiscount) > 0 ? (
-                          <Tabs defaultValue="one-time" className="w-full">
+                          <Tabs defaultValue={hasSubscriptionItems ? "subscribe" : "one-time"} className="w-full">
                             <TabsList className="grid w-full grid-cols-2">
-                              <TabsTrigger value="one-time" data-testid={`tab-one-time-${product.id}`}>
+                              <TabsTrigger
+                                value="one-time"
+                                disabled={hasSubscriptionItems}
+                                data-testid={`tab-one-time-${product.id}`}
+                              >
                                 One-time
                               </TabsTrigger>
-                              <TabsTrigger value="subscribe" data-testid={`tab-subscribe-${product.id}`}>
+                              <TabsTrigger
+                                value="subscribe"
+                                disabled={hasOneTimeItems}
+                                data-testid={`tab-subscribe-${product.id}`}
+                              >
                                 Subscribe
                               </TabsTrigger>
                             </TabsList>
                             <TabsContent value="one-time" className="mt-2">
+                            {hasSubscriptionItems ? (
+                              <div className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                                Your cart has a subscription. Check out first, then one-time
+                                items can go in your next order.
+                              </div>
+                            ) : (
                             <Button
                               onClick={() => {
                                 const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
@@ -425,91 +444,37 @@ export default function ShopV2() {
                                 </>
                               )}
                             </Button>
+                            )}
                           </TabsContent>
                           <TabsContent value="subscribe" className="mt-2 space-y-2">
-                            {product.subscriptionDiscount != null && Number(product.subscriptionDiscount) > 0 && (
-                              <div className="text-center py-2 px-3 bg-accent/10 rounded-md mb-2">
-                                <p className="text-sm font-semibold text-accent">
-                                  Subscribe & Save {Number(product.subscriptionDiscount).toFixed(0)}%
-                                </p>
-                                <p className="text-lg font-bold mt-1" data-testid={`text-subscription-price-${product.id}`}>
-                                  ${(parseFloat(product.price) * (1 - Number(product.subscriptionDiscount) / 100)).toFixed(2)}
-                                </p>
-                                <p className="text-xs text-muted-foreground">per delivery</p>
+                            {hasOneTimeItems ? (
+                              <div className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                                Your cart has one-time items. Check those out first, then start a
+                                subscription — the two are ordered separately.
                               </div>
+                            ) : (
+                              <SubscribeOptions
+                                price={product.price}
+                                subscriptionDiscount={product.subscriptionDiscount}
+                                disabled={
+                                  addToCartMutation.isPending ||
+                                  (isMultiFlavor && !selectedFlavors[product.id])
+                                }
+                                testIdPrefix={product.id}
+                                onSelect={(frequency) => {
+                                  const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
+                                  if (isMultiFlavor && !flavorId) {
+                                    toast({
+                                      title: "Please select a flavor",
+                                      description: "Choose which flavor you'd like from the dropdown above",
+                                      variant: "destructive",
+                                    });
+                                    return;
+                                  }
+                                  subscriptionPurchase(product.id, frequency, flavorId);
+                                }}
+                              />
                             )}
-                            <Button
-                              onClick={() => {
-                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
-                                if (isMultiFlavor && !flavorId) {
-                                  toast({ 
-                                    title: "Please select a flavor", 
-                                    description: "Choose which flavor you'd like from the dropdown above",
-                                    variant: "destructive" 
-                                  });
-                                  return;
-                                }
-                                subscriptionPurchase(product.id, 'weekly', flavorId);
-                              }}
-                              disabled={
-                                addToCartMutation.isPending ||
-                                (isMultiFlavor && !selectedFlavors[product.id])
-                              }
-                              variant="outline"
-                              className="w-full"
-                              data-testid={`button-subscribe-weekly-${product.id}`}
-                            >
-                              <Plus className="w-4 h-4 mr-2" />
-                              Weekly
-                            </Button>
-                            <Button
-                              onClick={() => {
-                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
-                                if (isMultiFlavor && !flavorId) {
-                                  toast({ 
-                                    title: "Please select a flavor", 
-                                    description: "Choose which flavor you'd like from the dropdown above",
-                                    variant: "destructive" 
-                                  });
-                                  return;
-                                }
-                                subscriptionPurchase(product.id, 'bi-weekly', flavorId);
-                              }}
-                              disabled={
-                                addToCartMutation.isPending ||
-                                (isMultiFlavor && !selectedFlavors[product.id])
-                              }
-                              variant="outline"
-                              className="w-full"
-                              data-testid={`button-subscribe-biweekly-${product.id}`}
-                            >
-                              <Plus className="w-4 h-4 mr-2" />
-                              Every 2 Weeks
-                            </Button>
-                            <Button
-                              onClick={() => {
-                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
-                                if (isMultiFlavor && !flavorId) {
-                                  toast({ 
-                                    title: "Please select a flavor", 
-                                    description: "Choose which flavor you'd like from the dropdown above",
-                                    variant: "destructive" 
-                                  });
-                                  return;
-                                }
-                                subscriptionPurchase(product.id, 'every-4-weeks', flavorId);
-                              }}
-                              disabled={
-                                addToCartMutation.isPending ||
-                                (isMultiFlavor && !selectedFlavors[product.id])
-                              }
-                              variant="outline"
-                              className="w-full"
-                              data-testid={`button-subscribe-monthly-${product.id}`}
-                            >
-                              <Plus className="w-4 h-4 mr-2" />
-                              Monthly
-                            </Button>
                           </TabsContent>
                         </Tabs>
                         ) : (

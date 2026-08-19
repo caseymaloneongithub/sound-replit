@@ -15,21 +15,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Package, ShoppingCart, Settings, AlertCircle, Loader2, Users, Eye, Building2, Palette, ShoppingBag, Box } from "lucide-react";
+import { Package, ShoppingCart, Settings, Loader2, Users, Eye, Building2, Palette, ShoppingBag, Box } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { InventoryTab } from "@/components/staff/inventory-tab";
 import CRMPage from "@/pages/crm-page";
-import type { Product, WholesaleOrder, WholesaleCustomer, User, Flavor, RetailProduct, WholesaleUnitType } from "@shared/schema";
+import type { Product, ProductType, WholesaleOrder, WholesaleCustomer, User, Flavor, RetailProduct, WholesaleUnitType } from "@shared/schema";
 import { insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema } from "@shared/schema";
 
+// NOTE: pricing is no longer stored on `products` — it lives on the linked
+// productType, so it is displayed read-only here rather than edited.
 interface ProductFormData {
   name: string;
   description: string;
   flavor: string;
-  retailPrice: number;
-  wholesalePrice: number;
   lowStockThreshold: number;
 }
 
@@ -74,8 +74,6 @@ export default function StaffPortal() {
     name: '',
     description: '',
     flavor: '',
-    retailPrice: 0,
-    wholesalePrice: 0,
     lowStockThreshold: 0,
   });
   const [inventoryForms, setInventoryForms] = useState<Record<string, InventoryFormData>>({});
@@ -121,6 +119,12 @@ export default function StaffPortal() {
   const { data: products = [], isLoading: productsLoading } = useQuery<Product[]>({
     queryKey: ['/api/products'],
   });
+
+  // Pricing lives on productTypes (products no longer carry it), so look it up by id.
+  const { data: productTypes = [] } = useQuery<ProductType[]>({
+    queryKey: ['/api/product-types'],
+  });
+  const priceByTypeId = new Map(productTypes.map((pt) => [pt.id, pt]));
 
   const { data: orders = [], isLoading: ordersLoading } = useQuery<WholesaleOrder[]>({
     queryKey: ['/api/wholesale/orders'],
@@ -380,8 +384,6 @@ export default function StaffPortal() {
       name: product.name,
       description: product.description,
       flavor: product.flavor,
-      retailPrice: Number(product.retailPrice),
-      wholesalePrice: Number(product.wholesalePrice),
       lowStockThreshold: product.lowStockThreshold,
     });
   };
@@ -436,7 +438,6 @@ export default function StaffPortal() {
         <div className="max-w-7xl mx-auto px-6 py-20">
           <Card className="max-w-md mx-auto">
             <CardHeader>
-              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-destructive" />
               <CardTitle className="text-center">Access Denied</CardTitle>
               <CardDescription className="text-center">
                 {userError ? "Please log in to access this page." : "You need staff or admin privileges to access this page."}
@@ -532,7 +533,6 @@ export default function StaffPortal() {
             ) : orders.length === 0 ? (
               <Card>
                 <CardContent className="py-12 text-center">
-                  <ShoppingCart className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
                   <p className="text-muted-foreground">No orders found</p>
                 </CardContent>
               </Card>
@@ -659,28 +659,9 @@ export default function StaffPortal() {
                                   data-testid="input-product-flavor"
                                 />
                               </div>
-                              <div>
-                                <Label htmlFor="retailPrice">Retail Price (per case)</Label>
-                                <Input
-                                  id="retailPrice"
-                                  type="number"
-                                  step="0.01"
-                                  value={productForm.retailPrice}
-                                  onChange={(e) => setProductForm({ ...productForm, retailPrice: parseFloat(e.target.value) || 0 })}
-                                  data-testid="input-product-retail-price"
-                                />
-                              </div>
-                              <div>
-                                <Label htmlFor="wholesalePrice">Wholesale Price (per case)</Label>
-                                <Input
-                                  id="wholesalePrice"
-                                  type="number"
-                                  step="0.01"
-                                  value={productForm.wholesalePrice}
-                                  onChange={(e) => setProductForm({ ...productForm, wholesalePrice: parseFloat(e.target.value) || 0 })}
-                                  data-testid="input-product-wholesale-price"
-                                />
-                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                Pricing is managed on the product type, not here.
+                              </p>
                               <div>
                                 <Label htmlFor="lowStockThreshold">Low Stock Threshold</Label>
                                 <Input
@@ -715,11 +696,19 @@ export default function StaffPortal() {
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
                           <span className="text-muted-foreground">Retail Price:</span>
-                          <span className="font-semibold">${Number(product.retailPrice).toFixed(2)} / case</span>
+                          <span className="font-semibold">
+                            {priceByTypeId.has(product.productTypeId)
+                              ? `$${Number(priceByTypeId.get(product.productTypeId)!.retailPrice).toFixed(2)} / case`
+                              : "—"}
+                          </span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-muted-foreground">Wholesale Price:</span>
-                          <span className="font-semibold">${Number(product.wholesalePrice).toFixed(2)} / case</span>
+                          <span className="font-semibold">
+                            {priceByTypeId.has(product.productTypeId)
+                              ? `$${Number(priceByTypeId.get(product.productTypeId)!.wholesalePrice).toFixed(2)} / case`
+                              : "—"}
+                          </span>
                         </div>
                       </div>
                     </CardContent>
@@ -821,7 +810,6 @@ export default function StaffPortal() {
               ) : allUsers.length === 0 ? (
                 <Card>
                   <CardContent className="py-12 text-center">
-                    <Users className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
                     <p className="text-muted-foreground">No users found</p>
                   </CardContent>
                 </Card>
@@ -902,26 +890,22 @@ export default function StaffPortal() {
             <Card className="bg-primary/5 border-primary/20">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Palette className="w-5 h-5" />
                   New Product Management System
                 </CardTitle>
                 <CardDescription className="space-y-2">
                   <p className="font-medium">This is the new flavor-centric product management system with three interconnected parts:</p>
                   <div className="grid gap-2 mt-2">
                     <div className="flex items-start gap-2">
-                      <Palette className="w-4 h-4 mt-0.5 text-primary" />
                       <div>
                         <strong className="text-foreground">Flavors (Central Library)</strong> - Master list of all kombucha flavors used by BOTH retail and wholesale
                       </div>
                     </div>
                     <div className="flex items-start gap-2">
-                      <ShoppingBag className="w-4 h-4 mt-0.5 text-accent" />
                       <div>
                         <strong className="text-foreground">Retail Products</strong> - Combines flavors with unit types (case, keg) and individual retail pricing
                       </div>
                     </div>
                     <div className="flex items-start gap-2">
-                      <Box className="w-4 h-4 mt-0.5 text-orange-600" />
                       <div>
                         <strong className="text-foreground">Wholesale Units</strong> - Defines wholesale packaging types with default pricing and available flavors
                       </div>
@@ -939,7 +923,6 @@ export default function StaffPortal() {
                 <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
                   <div>
                     <CardTitle className="flex items-center gap-2">
-                      <Palette className="w-5 h-5 text-primary" />
                       Flavor Library
                     </CardTitle>
                     <CardDescription>Central repository of kombucha flavors used across retail and wholesale products</CardDescription>
@@ -1074,7 +1057,7 @@ export default function StaffPortal() {
                                   description: flavor.description,
                                   flavorProfile: flavor.flavorProfile,
                                   ingredients: flavor.ingredients,
-                                  imageUrl: flavor.imageUrl,
+                                  imageUrl: flavor.primaryImageUrl ?? '',
                                   isActive: flavor.isActive,
                                   displayOrder: flavor.displayOrder
                                 });
@@ -1191,11 +1174,10 @@ export default function StaffPortal() {
           {/* NEW SCHEMA - Retail Products Management */}
           {user?.isAdmin && (
             <TabsContent value="retail-products" className="space-y-4">
-              <Card className="border-accent/30">
+              <Card className="border-primary/30">
                 <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
                   <div>
                     <CardTitle className="flex items-center gap-2">
-                      <ShoppingBag className="w-5 h-5 text-accent" />
                       Retail Product Offerings
                     </CardTitle>
                     <CardDescription>Create specific products by combining flavors with unit types and setting retail prices</CardDescription>
@@ -1335,7 +1317,7 @@ export default function StaffPortal() {
                                 onClick={() => {
                                   setEditingRetailProduct(product.id);
                                   setRetailProductForm({
-                                    flavorId: product.flavorId,
+                                    flavorId: product.flavorId ?? '',
                                     unitType: product.unitType,
                                     unitDescription: product.unitDescription,
                                     price: Number(product.price),
@@ -1463,7 +1445,6 @@ export default function StaffPortal() {
                 <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
                   <div>
                     <CardTitle className="flex items-center gap-2">
-                      <Box className="w-5 h-5 text-orange-600" />
                       Wholesale Packaging Types
                     </CardTitle>
                     <CardDescription>Define wholesale unit types with default pricing and which flavors are available for each unit</CardDescription>

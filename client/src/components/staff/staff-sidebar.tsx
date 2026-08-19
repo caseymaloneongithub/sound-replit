@@ -20,7 +20,14 @@ import {
   Calculator,
   Route,
   FileCheck,
-  ClipboardCheck
+  ClipboardCheck,
+  Boxes,
+  Building,
+  FlaskConical,
+  Factory,
+  PackageCheck,
+  LayoutDashboard,
+  CalendarDays
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -76,6 +83,17 @@ export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
       ],
     },
     {
+      title: "Production & Supplies",
+      items: [
+        { title: "Dashboard", href: "/inventory/dashboard", icon: LayoutDashboard, adminOnly: true },
+        { title: "Materials", href: "/inventory/materials", icon: Boxes, adminOnly: true },
+        { title: "Suppliers", href: "/inventory/suppliers", icon: Building, adminOnly: true },
+        { title: "Recipes", href: "/inventory/recipes", icon: FlaskConical, adminOnly: true },
+        { title: "Productions", href: "/inventory/productions", icon: Factory, adminOnly: true },
+        { title: "Purchase Orders", href: "/inventory/purchase-orders", icon: PackageCheck, adminOnly: true },
+      ],
+    },
+    {
       title: "Reports",
       items: [
         { title: "Revenue", href: "/reports", icon: DollarSign },
@@ -93,6 +111,7 @@ export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
     {
       title: "Operations",
       items: [
+        { title: "Orders Board", href: "/staff-portal/orders-board", icon: CalendarDays },
         { title: "Weekly Checklist", href: "/staff-portal/checklist", icon: ClipboardCheck },
       ],
     },

@@ -46,7 +46,6 @@ export function ExperienceSwitcher() {
       <div className="bg-card border rounded-lg shadow-lg p-2">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground px-2">
-            <Shield className="h-3 w-3" />
             <span className="hidden sm:inline">Super Admin</span>
           </div>
           <Select value={mode} onValueChange={handleModeChange}>

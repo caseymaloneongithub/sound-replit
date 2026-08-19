@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CalendarIcon, MapPin, Route, Clock, Plus, Navigation, Truck, Building2, X, RefreshCw } from "lucide-react";
+import { CalendarIcon, Route, Plus, X, RefreshCw } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -298,14 +298,12 @@ export default function DeliveryRoutes() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Building2 className="h-5 w-5" />
                   Facility Start/End Point
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 {facility && (
                   <div className="flex items-center gap-2 text-sm">
-                    <MapPin className="h-4 w-4 text-primary" />
                     <span>
                       {facility.address}, {facility.city}, {facility.state}{" "}
                       {facility.zipCode}
@@ -321,7 +319,6 @@ export default function DeliveryRoutes() {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="flex items-center gap-2">
-                      <Truck className="h-5 w-5" />
                       Deliveries for {format(selectedDate, "MMMM d, yyyy")}
                     </CardTitle>
                     <CardDescription>
@@ -366,11 +363,6 @@ export default function DeliveryRoutes() {
                         data-testid={`delivery-order-${order.id}`}
                       >
                         <div className="flex items-center gap-3">
-                          <MapPin
-                            className={`h-5 w-5 ${
-                              order.location?.latitude ? "text-green-500" : "text-muted-foreground"
-                            }`}
-                          />
                           <div>
                             <p className="font-medium">
                               {order.customer?.businessName || "Unknown"}
@@ -401,7 +393,6 @@ export default function DeliveryRoutes() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Navigation className="h-5 w-5" />
                     Optimized Route
                   </CardTitle>
                   <CardDescription>
@@ -478,7 +469,6 @@ export default function DeliveryRoutes() {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="flex items-center gap-2">
-                    <MapPin className="h-5 w-5" />
                     Custom Stops
                   </CardTitle>
                   <Dialog open={isAddStopOpen} onOpenChange={setIsAddStopOpen}>
@@ -623,7 +613,6 @@ export default function DeliveryRoutes() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Clock className="h-5 w-5" />
                   Summary
                 </CardTitle>
               </CardHeader>

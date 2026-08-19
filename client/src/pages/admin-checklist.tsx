@@ -15,18 +15,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
-import { 
-  CalendarIcon, 
-  ChevronLeft, 
-  ChevronRight, 
-  Plus, 
-  ClipboardCheck, 
+import {
+  CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
   Loader2,
   Pencil,
   Trash2,
-  Check,
-  User,
-  AlertTriangle
+  User
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -670,7 +667,6 @@ export default function AdminChecklist() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
-              <ClipboardCheck className="w-6 h-6" />
               Weekly Checklist
             </h1>
             <p className="text-muted-foreground">Track and complete weekly operational tasks</p>
@@ -702,7 +698,6 @@ export default function AdminChecklist() {
         {/* Overdue Tasks Alert */}
         {overdueTasks.length > 0 && (
           <Alert variant="destructive" data-testid="alert-overdue-tasks">
-            <AlertTriangle className="h-4 w-4" />
             <AlertTitle>Incomplete Tasks from Prior Weeks</AlertTitle>
             <AlertDescription>
               <p className="mb-2">
@@ -785,7 +780,6 @@ export default function AdminChecklist() {
             ) : tasksForWeek.length === 0 ? (
               <Card>
                 <CardContent className="py-12 text-center">
-                  <ClipboardCheck className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
                   <p className="text-muted-foreground">No tasks scheduled for this week</p>
                 </CardContent>
               </Card>
@@ -831,7 +825,6 @@ export default function AdminChecklist() {
                           )}
                           {task.completion && (
                             <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
-                              <Check className="w-3 h-3" />
                               <span>
                                 Completed by {task.completion.completedByUser?.firstName || "Unknown"}{" "}
                                 {task.completion.completedByUser?.lastName || ""} at{" "}

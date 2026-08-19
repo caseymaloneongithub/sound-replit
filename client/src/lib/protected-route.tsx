@@ -29,6 +29,18 @@ export function ProtectedRoute({
     );
   }
 
+  // Guards the retail customer account area (/my-account), which is built around
+  // Subscribe & Save. Wholesale accounts don't have subscriptions, so send them to their
+  // own portal rather than showing them an empty subscriptions page they can't use.
+  // The navbar already hides the link; this covers a direct URL or an old bookmark.
+  if (user.role === 'wholesale_customer') {
+    return (
+      <Route path={path}>
+        <Redirect to="/wholesale-customer" />
+      </Route>
+    );
+  }
+
   return <Route path={path} component={Component} />
 }
 

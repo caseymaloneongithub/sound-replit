@@ -1,5 +1,4 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Shield, Users, Share2, Cookie, Bell, UserX, Mail, FileText } from "lucide-react";
 import { Link } from "wouter";
 import logo from "@assets/text-stacked-black_1762299663824.png";
 
@@ -25,7 +24,6 @@ export default function PrivacyPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-primary" />
                 Introduction
               </CardTitle>
             </CardHeader>
@@ -42,7 +40,6 @@ export default function PrivacyPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-primary" />
                 Information We Collect
               </CardTitle>
             </CardHeader>
@@ -67,7 +64,6 @@ export default function PrivacyPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-primary" />
                 How We Use Your Information
               </CardTitle>
             </CardHeader>
@@ -88,7 +84,6 @@ export default function PrivacyPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Share2 className="w-5 h-5 text-primary" />
                 Information Sharing
               </CardTitle>
             </CardHeader>
@@ -109,7 +104,6 @@ export default function PrivacyPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Cookie className="w-5 h-5 text-primary" />
                 Cookies and Tracking
               </CardTitle>
             </CardHeader>
@@ -131,7 +125,6 @@ export default function PrivacyPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <UserX className="w-5 h-5 text-primary" />
                 Your Rights and Choices
               </CardTitle>
             </CardHeader>
@@ -153,7 +146,6 @@ export default function PrivacyPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Bell className="w-5 h-5 text-primary" />
                 Data Retention
               </CardTitle>
             </CardHeader>
@@ -173,7 +165,6 @@ export default function PrivacyPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Mail className="w-5 h-5 text-primary" />
                 Contact Us
               </CardTitle>
             </CardHeader>

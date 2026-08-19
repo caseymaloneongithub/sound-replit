@@ -186,22 +186,21 @@ export default function WholesaleInvoices() {
 
   const getPaymentStatus = (order: WholesaleOrderWithPayment) => {
     if (order.paidAt) {
-      return { label: "Paid", variant: "default" as const, icon: Check };
+      return { label: "Paid", variant: "default" as const };
     }
     if (order.dueDate && isPast(new Date(order.dueDate))) {
       const daysOverdue = differenceInDays(new Date(), new Date(order.dueDate));
-      return { label: `${daysOverdue} days overdue`, variant: "destructive" as const, icon: AlertCircle };
+      return { label: `${daysOverdue} days overdue`, variant: "destructive" as const };
     }
     if (order.dueDate) {
       const daysUntilDue = differenceInDays(new Date(order.dueDate), new Date());
-      return { label: `Due in ${daysUntilDue} days`, variant: "secondary" as const, icon: Clock };
+      return { label: `Due in ${daysUntilDue} days`, variant: "secondary" as const };
     }
-    return { label: "Pending", variant: "outline" as const, icon: Clock };
+    return { label: "Pending", variant: "outline" as const };
   };
 
   const renderInvoiceRow = (order: WholesaleOrderWithPayment) => {
     const paymentStatus = getPaymentStatus(order);
-    const StatusIcon = paymentStatus.icon;
     const customer = getCustomer(order.customerId);
 
     return (
@@ -223,7 +222,6 @@ export default function WholesaleInvoices() {
         </TableCell>
         <TableCell>
           <Badge variant={paymentStatus.variant} className="gap-1">
-            <StatusIcon className="h-3 w-3" />
             {paymentStatus.label}
           </Badge>
         </TableCell>
@@ -286,7 +284,6 @@ export default function WholesaleInvoices() {
         <div className="max-w-7xl mx-auto px-6 py-12">
           <Card>
             <CardContent className="py-12 text-center">
-              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
               <p className="text-muted-foreground">You don't have permission to view invoices.</p>
             </CardContent>
           </Card>
@@ -398,7 +395,6 @@ export default function WholesaleInvoices() {
                 {unpaidInvoices.length === 0 ? (
                   <Card>
                     <CardContent className="py-12 text-center">
-                      <Check className="w-12 h-12 mx-auto mb-4 text-green-500" />
                       <p className="text-muted-foreground">All invoices are paid!</p>
                     </CardContent>
                   </Card>
@@ -429,7 +425,6 @@ export default function WholesaleInvoices() {
                 {overdueInvoices.length === 0 ? (
                   <Card>
                     <CardContent className="py-12 text-center">
-                      <Check className="w-12 h-12 mx-auto mb-4 text-green-500" />
                       <p className="text-muted-foreground">No overdue invoices!</p>
                     </CardContent>
                   </Card>
@@ -460,7 +455,6 @@ export default function WholesaleInvoices() {
                 {paidInvoices.length === 0 ? (
                   <Card>
                     <CardContent className="py-12 text-center">
-                      <FileText className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
                       <p className="text-muted-foreground">No paid invoices yet</p>
                     </CardContent>
                   </Card>
@@ -491,7 +485,6 @@ export default function WholesaleInvoices() {
                 {orders.length === 0 ? (
                   <Card>
                     <CardContent className="py-12 text-center">
-                      <FileText className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
                       <p className="text-muted-foreground">No invoices found</p>
                     </CardContent>
                   </Card>

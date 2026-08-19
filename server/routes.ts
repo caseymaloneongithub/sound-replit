@@ -1,9 +1,10 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import crypto from "crypto";
 import Stripe from "stripe";
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { storage } from "./storage";
-import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings } from "@shared/schema";
+import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, insertMaterialSchema, insertSupplierSchema, insertProcessSchema, insertProductionSchema, insertMaterialOrderSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings } from "@shared/schema";
 import { eq, sql, and, desc, isNull, inArray } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -14,13 +15,36 @@ import { z } from "zod";
 import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesalePaymentReceipt, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
+import { isS3Configured, getPresignedUploadUrl } from "./s3-storage";
+import {
+  frequencyToDays,
+  frequencyToStripeInterval,
+  frequencyLabel,
+  subscriptionFrequencySchema,
+} from "@shared/subscription-frequency";
 import { getObjectAclPolicy } from "./objectAcl";
 import { createStripeCustomer } from "./stripeCustomer";
-import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup } from "@shared/pickup-policy";
+import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange } from "@shared/pickup-policy";
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
 import { insertDeliveryStopSchema } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+/**
+ * Public base URL, used for Stripe success/cancel redirects and emailed links.
+ *
+ * This was derived from REPLIT_DOMAINS, which is unset now the app runs off Replit —
+ * so every production redirect would have pointed at http://localhost:5000. Set APP_URL
+ * in production; REPLIT_DOMAINS is kept only so a Replit deploy keeps working.
+ */
+function getBaseUrl(): string {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, "");
+  if (process.env.REPLIT_DOMAINS) return `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`;
+  if (process.env.NODE_ENV !== "development") {
+    console.warn("[CONFIG] APP_URL is not set — payment redirects will point at localhost.");
+  }
+  return "http://localhost:5000";
+}
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -58,28 +82,8 @@ async function getProductPricing(productId: string): Promise<{ retailPrice: stri
   };
 }
 
-// Simple in-memory rate limiter for email verification codes
-const emailCodeRateLimiter = new Map<string, { count: number; resetAt: number }>();
-const EMAIL_CODE_RATE_LIMIT = 5;
-const EMAIL_CODE_RATE_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-
-function checkEmailCodeRateLimit(email: string): boolean {
-  const key = email.toLowerCase();
-  const now = Date.now();
-  const entry = emailCodeRateLimiter.get(key);
-
-  if (!entry || now >= entry.resetAt) {
-    emailCodeRateLimiter.set(key, { count: 1, resetAt: now + EMAIL_CODE_RATE_WINDOW_MS });
-    return true;
-  }
-
-  if (entry.count >= EMAIL_CODE_RATE_LIMIT) {
-    return false;
-  }
-
-  entry.count++;
-  return true;
-}
+// Email-code rate limiting lives in ./rate-limit so auth.ts shares the same buckets.
+import { checkEmailCodeRateLimit, MAX_CODE_ATTEMPTS, checkSubmissionRateLimit, isHoneypotTripped } from "./rate-limit";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware - sets up /api/register, /api/login, /api/logout, /api/user
@@ -164,9 +168,330 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   };
 
+  /**
+   * Allows staff/admin, or the wholesale customer who actually owns the order named by
+   * `:id`. Invoice viewing and paying were staff-only, so a customer clicking "Pay Now"
+   * on their own invoice got Access Denied — they could see an amount owed but had no
+   * way to look at or settle it.
+   */
+  const isStaffOrOwningWholesaleCustomer = async (req: any, res: any, next: any) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Unauthorized - please log in" });
+      }
+      if (['staff', 'admin', 'super_admin'].includes(req.user.role)) {
+        return next();
+      }
+      if (req.user.role !== 'wholesale_customer') {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      const order = customer ? await storage.getWholesaleOrder(req.params.id) : undefined;
+      // Same 404-for-not-yours response either way, so this can't be used to probe
+      // which order ids exist.
+      if (!customer || !order || order.customerId !== customer.id) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      next();
+    } catch (error: any) {
+      console.error("Error verifying wholesale order ownership:", error);
+      res.status(500).json({ message: "Error verifying access" });
+    }
+  };
+
+  /**
+   * Wholesale application — the public front door for a retailer who wants to carry us.
+   *
+   * Deliberately creates a LEAD, never an account: accounts stay staff-created, so this
+   * page adds no account-spam surface. Previously an interested retailer had no path at
+   * all (the login page only rejected them), and contact-form inquiries were emailed but
+   * never recorded, so they had to be retyped into the CRM by hand or were simply lost.
+   */
+  app.post("/api/wholesale/apply", async (req, res) => {
+    try {
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!checkSubmissionRateLimit(`wholesale-apply:${ip}`, 5, 60 * 60 * 1000)) {
+        return res.status(429).json({ message: "Too many applications from this connection. Please try again later." });
+      }
+      // Silently accept-and-drop, so a bot can't tell it was filtered.
+      if (isHoneypotTripped(req.body)) {
+        return res.json({ success: true, message: "Application received" });
+      }
+
+      const applicationSchema = z.object({
+        businessName: z.string().min(2, "Business name is required"),
+        contactName: z.string().min(2, "Contact name is required"),
+        email: z.string().email("Please enter a valid email"),
+        phone: z.string().min(7, "Phone number is required"),
+        // Required — enforced here too, not just in the browser, since the endpoint is
+        // public and a form can be bypassed. Without an address a lead can't be quoted,
+        // routed, or geocoded.
+        address: z.string().min(1, "Street address is required"),
+        city: z.string().min(1, "City is required"),
+        state: z.string().min(1, "State is required"),
+        zipCode: z.string().min(1, "ZIP code is required"),
+        deliveryInstructions: z.string().optional(),
+      });
+
+      const data = applicationSchema.parse(req.body);
+
+      // The leads table has no columns for the application specifics, so they're kept as
+      // readable notes rather than being dropped on the floor.
+      const notes = [
+        "— Wholesale application from the website —",
+        `Address: ${data.address}, ${data.city}, ${data.state} ${data.zipCode}`,
+        // Copy these onto the location record when converting this lead to an account.
+        data.deliveryInstructions && `\nDelivery instructions:\n${data.deliveryInstructions}`,
+      ].filter(Boolean).join("\n");
+
+      const lead = await storage.createLead({
+        businessName: data.businessName,
+        contactName: data.contactName,
+        email: data.email,
+        phone: data.phone,
+        // Every web application starts at the same priority — there's no longer a signal
+        // on the form to rank them by, and staff triage from the CRM anyway.
+        priorityLevel: "medium",
+        status: "new",
+        notes,
+      });
+
+      // Notify staff, but never fail the applicant's submission because email is down —
+      // the lead is already safely recorded.
+      try {
+        const staffUsers = await db
+          .select({ email: users.email })
+          .from(users)
+          .where(sql`${users.role} IN ('staff', 'admin', 'super_admin') AND ${users.email} IS NOT NULL`);
+        const staffEmails = staffUsers.map(u => u.email).filter((e): e is string => e !== null);
+        if (staffEmails.length > 0) {
+          await sendContactFormNotification({
+            staffEmails,
+            contactName: data.contactName,
+            contactEmail: data.email,
+            contactPhone: data.phone,
+            contactCompany: data.businessName,
+            message: `NEW WHOLESALE APPLICATION\n\n${notes}`,
+          });
+        }
+      } catch (emailError: any) {
+        console.error("[WHOLESALE APPLY] Lead saved but staff email failed:", emailError.message);
+      }
+
+      console.log(`[WHOLESALE APPLY] New lead ${lead.id} from ${data.businessName}`);
+      res.json({ success: true, message: "Application received" });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid form data", errors: error.errors });
+      }
+      console.error("Error processing wholesale application:", error);
+      res.status(500).json({ message: "Error submitting application" });
+    }
+  });
+
+  /**
+   * Identical reply whether or not the address belongs to a wholesale customer. Anything
+   * more specific tells a stranger which businesses we supply.
+   */
+  const GENERIC_CODE_SENT_MESSAGE =
+    "If that email is on a wholesale account, we've sent a sign-in link and code to it.";
+
+  /**
+   * Hold the response until `startedAt + FLOOR`, so the found and not-found paths take the
+   * same observable time. Identical wording alone isn't enough: the found path writes a
+   * verification row and the miss path does no I/O at all, which measured ~250ms apart —
+   * enough to distinguish them and re-open the enumeration the wording closes.
+   */
+  const LOGIN_RESPONSE_FLOOR_MS = 300;
+  async function padLoginResponse(startedAt: number) {
+    const remaining = LOGIN_RESPONSE_FLOOR_MS - (Date.now() - startedAt);
+    if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
+  }
+
+  /**
+   * Resolve (or create) the user row backing a wholesale customer, and make sure
+   * `wholesale_customers.user_id` points at it. Shared by the code and magic-link paths so
+   * the two can't drift.
+   */
+  async function resolveWholesaleUser(wholesaleCustomer: any) {
+    let user = wholesaleCustomer.userId ? await storage.getUser(wholesaleCustomer.userId) : undefined;
+
+    // A user row may already exist for this email without wholesale_customers.user_id
+    // pointing at it (bulk-imported customers land this way). Adopt it instead of
+    // creating a second one — createUser would violate users_email_unique and 500,
+    // which is exactly what locked every imported customer out of the site.
+    if (!user) {
+      const existing = await storage.getUserByEmail(wholesaleCustomer.email);
+      if (existing) {
+        user = existing.role === 'wholesale_customer'
+          ? existing
+          : (await storage.updateUserRole(existing.id, 'wholesale_customer')) || existing;
+        await storage.updateWholesaleCustomer(wholesaleCustomer.id, { userId: user.id });
+        console.log(`[WHOLESALE AUTH] Linked existing user ${user.id} to wholesale customer ${wholesaleCustomer.id}`);
+      }
+    }
+
+    if (!user) {
+      // SECURITY: Use the wholesale customer's PRIMARY email for the user account, not the
+      // login email — keeps one identity per customer even with several contact addresses.
+      const username = wholesaleCustomer.email.split('@')[0] + '-' + wholesaleCustomer.id.substring(0, 8);
+      user = await storage.createUser({
+        username,
+        email: wholesaleCustomer.email,
+        firstName: wholesaleCustomer.contactName.split(' ')[0],
+        lastName: wholesaleCustomer.contactName.split(' ').slice(1).join(' ') || undefined,
+      });
+      user = await storage.updateUserRole(user.id, 'wholesale_customer') || user;
+      await storage.updateWholesaleCustomer(wholesaleCustomer.id, { userId: user.id });
+      console.log(`[WHOLESALE AUTH] Created user account ${user.id} for wholesale customer ${wholesaleCustomer.id}`);
+    }
+
+    return user;
+  }
+
+  /**
+   * Build the Stripe Checkout session a wholesale customer uses to pay an invoice.
+   *
+   * ONE builder for every wholesale payment link — the "Pay by bank transfer" button and
+   * the link in the emailed invoice. They used to be two separate `sessions.create` calls,
+   * and when the button was switched to ACH the emailed link stayed on cards, quietly
+   * leaving a way to pay by card. Anything about how wholesale pays belongs here.
+   */
+  async function createWholesaleCheckoutSession(order: any, customer: any, items: any[]) {
+    if (!stripe) throw new Error("Stripe is not configured");
+    const baseUrl = getBaseUrl();
+
+    const lineItems = items.map((item: any) => ({
+      price_data: {
+        currency: 'usd',
+        product_data: { name: item.product.name },
+        unit_amount: Math.round(parseFloat(item.unitPrice) * 100),
+      },
+      quantity: item.quantity,
+    }));
+
+    const paymentMetadata = {
+      orderId: order.id,
+      invoiceNumber: order.invoiceNumber,
+      type: 'wholesale_invoice_payment',
+    };
+
+    return await stripe.checkout.sessions.create({
+      mode: 'payment',
+      // ACH Direct Debit only — wholesale does not pay by card. Note this makes payment
+      // ASYNCHRONOUS: the customer authorises here, funds settle days later. See
+      // settleWholesaleInvoice, which waits for payment_intent.succeeded.
+      payment_method_types: ['us_bank_account'],
+      payment_method_options: {
+        us_bank_account: { verification_method: 'automatic' },
+      },
+      line_items: lineItems,
+      customer_email: customer.email,
+      metadata: paymentMetadata,
+      // Repeated on the PaymentIntent: settlement events fire against the intent, not the
+      // session, and would otherwise have no way to identify the order.
+      payment_intent_data: {
+        metadata: paymentMetadata,
+        description: `Invoice ${order.invoiceNumber} — ${customer.businessName}`,
+      },
+      success_url: `${baseUrl}/wholesale-customer/invoice/${order.id}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseUrl}/wholesale-customer/invoice/${order.id}`,
+    });
+  }
+
+  /**
+   * Mark a wholesale invoice as SETTLED and send the receipts.
+   *
+   * Only call this when the money has actually arrived. With ACH that means
+   * `payment_intent.succeeded`, NOT `checkout.session.completed` — the customer authorises
+   * the debit at checkout and the funds land ~4-5 business days later, and the debit can
+   * still be returned in between. Marking paid at authorisation would show invoices
+   * settled that may never fund.
+   *
+   * Idempotent: a no-op if the order is already paid, so a replayed webhook can't send a
+   * second receipt.
+   */
+  async function settleWholesaleInvoice(orderId: string, paymentIntentId?: string) {
+    const order = await storage.getWholesaleOrder(orderId);
+    if (!order) {
+      console.error(`[WEBHOOK] Settlement for unknown wholesale order ${orderId}`);
+      return;
+    }
+    if (order.paidAt) {
+      console.log(`[WEBHOOK] Wholesale invoice ${order.invoiceNumber} already settled — ignoring duplicate`);
+      return;
+    }
+
+    const paidAt = new Date();
+    await storage.updateWholesaleOrder(orderId, {
+      paidAt,
+      paymentFailedAt: null,
+      ...(paymentIntentId ? { stripePaymentIntentId: paymentIntentId } : {}),
+    });
+    console.log(`[WEBHOOK] ✅ Wholesale invoice ${order.invoiceNumber} settled (funds received)`);
+
+    const customer = await storage.getWholesaleCustomer(order.customerId);
+    const orderItems = await storage.getWholesaleOrderItems(orderId);
+
+    const receiptItems = await Promise.all(orderItems.map(async (item) => {
+      const unitType = item.unitTypeId ? await storage.getWholesaleUnitType(item.unitTypeId) : null;
+      const flavor = item.flavorId ? await storage.getFlavor(item.flavorId) : null;
+      const productName = flavor
+        ? `${unitType?.name || 'Item'} - ${flavor.name}`
+        : unitType?.name || 'Item';
+      return { productName, quantity: item.quantity, unitPrice: item.unitPrice };
+    }));
+
+    if (customer) {
+      try {
+        await sendWholesalePaymentReceipt({
+          customerEmail: customer.email,
+          businessName: customer.businessName,
+          contactName: customer.contactName,
+          invoiceNumber: order.invoiceNumber,
+          amount: Number(order.totalAmount),
+          paidAt,
+          items: receiptItems,
+        });
+      } catch (emailError) {
+        console.error('[WEBHOOK] Failed to send payment receipt to customer:', emailError);
+      }
+    }
+
+    try {
+      const admins = await storage.getUsersByRole('admin');
+      const superAdmins = await storage.getUsersByRole('super_admin');
+      const adminEmails = [...admins, ...superAdmins]
+        .map(u => u.email)
+        .filter((email): email is string => !!email);
+
+      if (adminEmails.length > 0 && customer) {
+        await sendWholesaleInvoicePaidNotification({
+          adminEmails,
+          businessName: customer.businessName,
+          invoiceNumber: order.invoiceNumber,
+          amount: Number(order.totalAmount),
+          paidAt,
+        });
+      }
+    } catch (emailError) {
+      console.error('[WEBHOOK] Failed to send admin notification for invoice payment:', emailError);
+    }
+  }
+
   // Contact form submission
   app.post("/api/contact", async (req, res) => {
     try {
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!checkSubmissionRateLimit(`contact:${ip}`, 5, 60 * 60 * 1000)) {
+        return res.status(429).json({ message: "Too many messages from this connection. Please try again later." });
+      }
+      if (isHoneypotTripped(req.body)) {
+        return res.json({ success: true, message: "Your message has been sent successfully" });
+      }
+
       const contactFormSchema = z.object({
         name: z.string().min(2, "Name must be at least 2 characters"),
         email: z.string().email("Please enter a valid email"),
@@ -201,9 +526,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      res.json({ 
-        success: true, 
-        message: "Your message has been sent successfully" 
+      // A business enquiry is a sales lead, so record it instead of leaving it to live
+      // only in an inbox. Never block the sender on this.
+      if (validatedData.company) {
+        try {
+          await storage.createLead({
+            businessName: validatedData.company,
+            contactName: validatedData.name,
+            email: validatedData.email,
+            phone: validatedData.phone,
+            priorityLevel: "medium",
+            status: "new",
+            notes: `— Contact form enquiry —\n\n${validatedData.message}`,
+          });
+        } catch (leadError: any) {
+          console.error("[CONTACT] Message sent but lead was not recorded:", leadError.message);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: "Your message has been sent successfully"
       });
     } catch (error: any) {
       console.error("Error processing contact form:", error);
@@ -221,13 +564,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Check if email already has an account
+  // Check if email already has an account.
+  // Retail checkout uses this to offer sign-in instead of duplicate signup, so it stays —
+  // but it answers for ANY address, which makes it a customer-list harvester if left
+  // unmetered. The per-IP cap keeps the legitimate one-at-a-time use working while making
+  // bulk enumeration impractical.
   app.post("/api/check-email", async (req, res) => {
     try {
       const { email } = req.body;
-      
+
       if (!email) {
         return res.status(400).json({ message: "Email is required" });
+      }
+
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!checkSubmissionRateLimit(`check-email:${ip}`, 20, 60 * 60 * 1000)) {
+        return res.status(429).json({ message: "Too many requests. Please try again later." });
       }
 
       // Validate email format
@@ -316,6 +668,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Verification code has expired" });
       }
 
+      // Cap wrong guesses. The send rate limit caps how many codes get emailed, not how
+      // many times each is guessed — without this a live 6-digit code can be brute-forced
+      // inside its 5-minute window. Mirrors the retail 2FA check in auth.ts.
+      if ((verificationCode.attempts ?? 0) >= MAX_CODE_ATTEMPTS) {
+        return res.status(429).json({ message: "Too many incorrect attempts. Please request a new code." });
+      }
+
       // Check if code matches
       if (verificationCode.code !== code) {
         // Increment attempts
@@ -353,9 +712,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Wholesale-specific email authentication
   app.post("/api/wholesale/send-email-code", async (req, res) => {
+    const startedAt = Date.now();
     try {
       const { email } = req.body;
-      
+
       if (!email) {
         return res.status(400).json({ message: "Email is required" });
       }
@@ -366,44 +726,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid email address" });
       }
 
-      // Rate limit: max 5 requests per email per 15 minutes
+      // Rate limit: max 5 requests per email per 15 minutes...
       if (!checkEmailCodeRateLimit(email)) {
-        return res.status(429).json({ message: "Too many verification code requests. Please try again later." });
+        return res.status(429).json({ message: GENERIC_CODE_SENT_MESSAGE });
+      }
+      // ...and per IP, because the per-email limit does nothing against someone probing a
+      // thousand DIFFERENT addresses to work out who our customers are.
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!checkSubmissionRateLimit(`wholesale-code:${ip}`, 20, 60 * 60 * 1000)) {
+        return res.status(429).json({ message: GENERIC_CODE_SENT_MESSAGE });
       }
 
-      // SECURITY: Check if this email belongs to a wholesale customer
-      const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
-      if (!wholesaleCustomer) {
-        return res.status(400).json({ message: "No wholesale account found with this email" });
-      }
+      // ENUMERATION: the response is identical whether or not the account exists — it used
+      // to say "No wholesale account found with this email", which let anyone confirm which
+      // businesses we supply, one address at a time.
+      //
+      // Deliberately NOT awaited. Wording alone isn't enough: looking the customer up and
+      // writing a verification row takes real time that the not-found path doesn't spend,
+      // and that difference was measurable (~250ms) — enough to answer the question the
+      // wording refuses to. Doing all of it after the response means the reply's timing
+      // carries no information. The customer is going to their inbox either way, so a
+      // couple of hundred milliseconds of background work costs them nothing.
+      void (async () => {
+        try {
+          const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
+          if (!wholesaleCustomer) {
+            console.log(`[WHOLESALE AUTH] Login requested for unknown email (generic reply sent)`);
+            return;
+          }
 
-      // Generate 6-digit code
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      
-      // SECURITY: Store code with wholesale customer ID binding to prevent code reuse across accounts
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-      await storage.createEmailVerificationCode({
-        email,
-        code,
-        expiresAt,
-        verified: false,
-        purpose: 'login',
-        wholesaleCustomerId: wholesaleCustomer.id // Bind code to specific wholesale customer
-      });
+          const code = Math.floor(100000 + Math.random() * 900000).toString();
+          // Magic-link token: 32 random bytes, so it is not guessable the way 6 digits are.
+          const loginToken = crypto.randomBytes(32).toString("hex");
 
-      // Try to send email
-      try {
-        await sendEmailVerificationCode({ email, code });
-        console.log(`[WHOLESALE AUTH] Verification code sent to ${email} for customer ${wholesaleCustomer.id}`);
-      } catch (emailError: any) {
-        console.warn(`[WHOLESALE AUTH] Failed to send verification email to ${email}:`, emailError.message);
-        console.log(`[WHOLESALE AUTH] Verification code for ${email} (customer ${wholesaleCustomer.id}) stored in database: ${code}`);
-      }
+          // SECURITY: bind the code to the customer id, so a code can't be replayed against
+          // a different account if an email address is ever reassigned.
+          await storage.createEmailVerificationCode({
+            email,
+            code,
+            loginToken,
+            expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+            verified: false,
+            purpose: 'login',
+            wholesaleCustomerId: wholesaleCustomer.id,
+          });
 
-      res.json({ message: "Verification code sent to your email" });
+          const magicLink = `${getBaseUrl()}/wholesale/login?token=${loginToken}`;
+
+          try {
+            await sendEmailVerificationCode({ email, code, magicLink });
+            console.log(`[WHOLESALE AUTH] Login email sent to ${email} for customer ${wholesaleCustomer.id}`);
+          } catch (emailError: any) {
+            console.warn(`[WHOLESALE AUTH] Failed to send login email to ${email}:`, emailError.message);
+            console.log(`[WHOLESALE AUTH] Code for ${email} (customer ${wholesaleCustomer.id}): ${code}`);
+            console.log(`[WHOLESALE AUTH] Magic link: ${magicLink}`);
+          }
+        } catch (bgError: any) {
+          console.error("[WHOLESALE AUTH] Background login-email work failed:", bgError.message);
+        }
+      })();
+
+      // Small constant floor so the reply doesn't vary with how fast the request was parsed.
+      await padLoginResponse(startedAt);
+      res.json({ message: GENERIC_CODE_SENT_MESSAGE });
     } catch (error: any) {
+      // Even a server-side failure must not distinguish the two cases, so this returns the
+      // same padded generic reply and logs the detail instead.
       console.error("Error sending wholesale email verification code:", error);
-      res.status(500).json({ message: "Error sending verification code: " + error.message });
+      await padLoginResponse(startedAt);
+      res.json({ message: GENERIC_CODE_SENT_MESSAGE });
+    }
+  });
+
+  /**
+   * Redeem a magic link. The token carries its own entropy, so unlike the code path this
+   * takes no email — there is nothing here to probe for account existence.
+   */
+  app.post("/api/wholesale/verify-magic-link", async (req, res) => {
+    try {
+      const { token } = req.body;
+      if (!token || typeof token !== "string") {
+        return res.status(400).json({ message: "Invalid sign-in link" });
+      }
+
+      // Guessing a 32-byte token is infeasible, but cap attempts anyway so this can't be
+      // used as an unmetered lookup endpoint.
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!checkSubmissionRateLimit(`wholesale-magic:${ip}`, 30, 60 * 60 * 1000)) {
+        return res.status(429).json({ message: "Too many attempts. Please try again later." });
+      }
+
+      const verificationCode = await storage.getEmailVerificationCodeByToken(token);
+      // One deliberately vague message for missing/used/expired, so a stale link in an
+      // inbox reveals nothing about whether the account exists.
+      const invalid = { message: "This sign-in link is no longer valid. Please request a new one." };
+
+      if (!verificationCode || !verificationCode.wholesaleCustomerId) {
+        return res.status(400).json(invalid);
+      }
+      if (new Date() > verificationCode.expiresAt) {
+        return res.status(400).json(invalid);
+      }
+
+      const wholesaleCustomer = await storage.getWholesaleCustomer(verificationCode.wholesaleCustomerId);
+      if (!wholesaleCustomer) {
+        return res.status(400).json(invalid);
+      }
+
+      // Single use: consuming the link also retires the 6-digit code on the same row.
+      await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
+
+      const user = await resolveWholesaleUser(wholesaleCustomer);
+
+      req.login(user, (err) => {
+        if (err) {
+          console.error("Wholesale magic-link login error:", err);
+          return res.status(500).json({ message: "Error logging in" });
+        }
+        console.log(`[WHOLESALE AUTH] User ${user.id} logged in via magic link for customer ${wholesaleCustomer.id}`);
+        res.json({ message: "Signed in successfully", user });
+      });
+    } catch (error: any) {
+      console.error("Error verifying wholesale magic link:", error);
+      res.status(500).json({ message: "Error signing in" });
     }
   });
 
@@ -415,70 +860,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Email and code are required" });
       }
 
-      // SECURITY: First verify the email belongs to a wholesale customer BEFORE checking code
+      // ENUMERATION: every failure below returns this one string. Distinct messages —
+      // "no account found", "code expired", "already used" — each confirm that an account
+      // exists for the address, which is exactly what the generic send response prevents.
+      // The specifics go to the server log, not to the caller.
+      const invalidCode = { message: "Invalid or expired verification code" };
+
       const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
       if (!wholesaleCustomer) {
-        return res.status(400).json({ message: "No wholesale account found with this email" });
+        return res.status(400).json(invalidCode);
       }
 
       // Get latest verification code for this email
       const verificationCode = await storage.getLatestEmailVerificationCode(email);
-      
+
       if (!verificationCode) {
-        return res.status(400).json({ message: "No verification code found" });
+        return res.status(400).json(invalidCode);
       }
 
       // SECURITY: Verify the code is bound to the correct wholesale customer
       // This prevents code reuse if emails are reassigned between customers
       if (verificationCode.wholesaleCustomerId !== wholesaleCustomer.id) {
         console.error(`[WHOLESALE AUTH] Code mismatch: code bound to ${verificationCode.wholesaleCustomerId}, but email ${email} belongs to ${wholesaleCustomer.id}`);
-        return res.status(400).json({ message: "Invalid verification code" });
+        return res.status(400).json(invalidCode);
       }
 
-      // Check if code is expired
       if (new Date() > verificationCode.expiresAt) {
-        return res.status(400).json({ message: "Verification code has expired" });
+        return res.status(400).json(invalidCode);
+      }
+
+      // Cap wrong guesses. The send rate limit caps how many codes get emailed, not how
+      // many times each is guessed — without this a live 6-digit code can be brute-forced
+      // inside its window. Mirrors the retail 2FA check in auth.ts.
+      if ((verificationCode.attempts ?? 0) >= MAX_CODE_ATTEMPTS) {
+        return res.status(429).json({ message: "Too many incorrect attempts. Please request a new code." });
       }
 
       // Check if code matches
       if (verificationCode.code !== code) {
-        // Increment attempts
         await storage.incrementEmailVerificationAttempts(verificationCode.id);
-        return res.status(400).json({ message: "Invalid verification code" });
+        return res.status(400).json(invalidCode);
       }
 
-      // Check if already verified
       if (verificationCode.verified) {
-        return res.status(400).json({ message: "Verification code already used" });
+        return res.status(400).json(invalidCode);
       }
 
       // Mark as verified
       await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
 
-      // Get or create user account for this wholesale customer
-      let user = wholesaleCustomer.userId ? await storage.getUser(wholesaleCustomer.userId) : undefined;
-      
-      if (!user) {
-        // SECURITY: Use the wholesale customer's PRIMARY email for the user account, not the login email
-        // This ensures consistency and prevents email confusion
-        const username = wholesaleCustomer.email.split('@')[0] + '-' + wholesaleCustomer.id.substring(0, 8);
-        user = await storage.createUser({
-          username,
-          email: wholesaleCustomer.email, // Use primary email from customer record
-          firstName: wholesaleCustomer.contactName.split(' ')[0],
-          lastName: wholesaleCustomer.contactName.split(' ').slice(1).join(' ') || undefined,
-        });
-
-        // Set the role to wholesale_customer
-        user = await storage.updateUserRole(user.id, 'wholesale_customer') || user;
-
-        // Link the user to the wholesale customer
-        await storage.updateWholesaleCustomer(wholesaleCustomer.id, {
-          userId: user.id
-        });
-        
-        console.log(`[WHOLESALE AUTH] Created user account ${user.id} for wholesale customer ${wholesaleCustomer.id}`);
-      }
+      const user = await resolveWholesaleUser(wholesaleCustomer);
 
       // Log the user in
       req.login(user, (err) => {
@@ -912,10 +1343,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { items, notes, locationId } = req.body;
-      
-      // Validate location if provided
-      if (locationId) {
-        const location = await storage.getWholesaleLocation(locationId);
+
+      // Pickup orders are collected at the brewery, so they carry no delivery location.
+      // Anything else is a delivery and MUST name one — otherwise the order is scheduled
+      // with nowhere to take it, which is how orders used to slip through addressless.
+      const fulfillmentMethod = req.body.fulfillmentMethod === 'pickup' ? 'pickup' : 'delivery';
+      const effectiveLocationId = fulfillmentMethod === 'pickup' ? null : locationId;
+
+      if (fulfillmentMethod === 'delivery') {
+        if (!effectiveLocationId) {
+          return res.status(400).json({ message: "Choose a delivery address, or select pickup." });
+        }
+        const location = await storage.getWholesaleLocation(effectiveLocationId);
         if (!location) {
           return res.status(400).json({ message: "Invalid location ID" });
         }
@@ -923,7 +1362,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(403).json({ message: "Location does not belong to this customer" });
         }
       }
-      
+
+
       if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: "Order must contain at least one item" });
       }
@@ -987,7 +1427,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         invoiceNumber,
         totalAmount: totalAmount.toFixed(2),
         notes: notes || undefined,
-        locationId: locationId || undefined,
+        locationId: effectiveLocationId || undefined,
+        fulfillmentMethod,
         dueDate,
       };
 
@@ -1198,6 +1639,331 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ===== Materials inventory module =====
+
+  // Suppliers
+  app.get("/api/suppliers", isAdmin, async (_req, res) => {
+    try {
+      res.json(await storage.getSuppliers());
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching suppliers: " + error.message });
+    }
+  });
+
+  app.post("/api/suppliers", isAdmin, async (req, res) => {
+    try {
+      const data = insertSupplierSchema.parse(req.body);
+      res.json(await storage.createSupplier(data));
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error creating supplier: " + error.message });
+    }
+  });
+
+  app.patch("/api/suppliers/:id", isAdmin, async (req, res) => {
+    try {
+      const updates = insertSupplierSchema.partial().parse(req.body);
+      const supplier = await storage.updateSupplier(req.params.id, updates);
+      if (!supplier) return res.status(404).json({ message: "Supplier not found" });
+      res.json(supplier);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error updating supplier: " + error.message });
+    }
+  });
+
+  app.delete("/api/suppliers/:id", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteSupplier(req.params.id);
+      res.json({ message: "Supplier deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting supplier: " + error.message });
+    }
+  });
+
+  // Materials
+  app.get("/api/materials", isAdmin, async (_req, res) => {
+    try {
+      res.json(await storage.getMaterials());
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching materials: " + error.message });
+    }
+  });
+
+  app.post("/api/materials", isAdmin, async (req, res) => {
+    try {
+      const data = insertMaterialSchema.parse(req.body);
+      res.json(await storage.createMaterial(data));
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error creating material: " + error.message });
+    }
+  });
+
+  app.patch("/api/materials/:id", isAdmin, async (req, res) => {
+    try {
+      const updates = insertMaterialSchema.partial().parse(req.body);
+      const material = await storage.updateMaterial(req.params.id, updates);
+      if (!material) return res.status(404).json({ message: "Material not found" });
+      res.json(material);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error updating material: " + error.message });
+    }
+  });
+
+  app.delete("/api/materials/:id", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteMaterial(req.params.id);
+      res.json({ message: "Material deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting material: " + error.message });
+    }
+  });
+
+  // Recipes (processes)
+  app.get("/api/processes", isAdmin, async (_req, res) => {
+    try {
+      res.json(await storage.getProcesses());
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching recipes: " + error.message });
+    }
+  });
+
+  app.post("/api/processes", isAdmin, async (req, res) => {
+    try {
+      const data = insertProcessSchema.parse(req.body);
+      res.json(await storage.createProcess(data));
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error creating recipe: " + error.message });
+    }
+  });
+
+  app.patch("/api/processes/:id", isAdmin, async (req, res) => {
+    try {
+      const updates = insertProcessSchema.partial().parse(req.body);
+      const process = await storage.updateProcess(req.params.id, updates);
+      if (!process) return res.status(404).json({ message: "Recipe not found" });
+      res.json(process);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error updating recipe: " + error.message });
+    }
+  });
+
+  app.delete("/api/processes/:id", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteProcess(req.params.id);
+      res.json({ message: "Recipe deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting recipe: " + error.message });
+    }
+  });
+
+  // Recipe bill-of-materials lines
+  app.post("/api/processes/:id/materials", isAdmin, async (req, res) => {
+    try {
+      const schema = z.object({
+        materialId: z.string().min(1),
+        units: z.union([z.string(), z.number()]).transform((v) => String(v)),
+      });
+      const { materialId, units } = schema.parse(req.body);
+      res.json(await storage.addProcessMaterial({ processId: req.params.id, materialId, units }));
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error adding recipe ingredient: " + error.message });
+    }
+  });
+
+  app.patch("/api/process-materials/:lineId", isAdmin, async (req, res) => {
+    try {
+      const { units } = z.object({
+        units: z.union([z.string(), z.number()]).transform((v) => String(v)),
+      }).parse(req.body);
+      const line = await storage.updateProcessMaterial(req.params.lineId, units);
+      if (!line) return res.status(404).json({ message: "Ingredient not found" });
+      res.json(line);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error updating recipe ingredient: " + error.message });
+    }
+  });
+
+  app.delete("/api/process-materials/:lineId", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteProcessMaterial(req.params.lineId);
+      res.json({ message: "Ingredient removed" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error removing recipe ingredient: " + error.message });
+    }
+  });
+
+  // Productions (logging a batch draws down materials via the recipe)
+  app.get("/api/productions", isAdmin, async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 200;
+      res.json(await storage.getProductions(limit));
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching productions: " + error.message });
+    }
+  });
+
+  app.post("/api/productions", isAdmin, async (req, res) => {
+    try {
+      const body = { ...req.body };
+      if (typeof body.date === 'string') body.date = new Date(body.date);
+      const data = insertProductionSchema.parse(body);
+      res.json(await storage.createProduction(data));
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error logging production: " + error.message });
+    }
+  });
+
+  app.delete("/api/productions/:id", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteProduction(req.params.id);
+      res.json({ message: "Production deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting production: " + error.message });
+    }
+  });
+
+  // Purchase orders (delivering a line replenishes material stock)
+  app.get("/api/material-orders", isAdmin, async (_req, res) => {
+    try {
+      res.json(await storage.getMaterialOrders());
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching purchase orders: " + error.message });
+    }
+  });
+
+  app.post("/api/material-orders", isAdmin, async (req, res) => {
+    try {
+      const { lines, ...orderBody } = req.body ?? {};
+      if (typeof orderBody.dateOrdered === 'string') orderBody.dateOrdered = new Date(orderBody.dateOrdered);
+      if (typeof orderBody.dateDelivered === 'string') orderBody.dateDelivered = new Date(orderBody.dateDelivered);
+      const order = insertMaterialOrderSchema.parse(orderBody);
+
+      const lineSchema = z.array(z.object({
+        materialId: z.string().min(1),
+        units: z.union([z.string(), z.number()]).transform((v) => String(v)),
+      }));
+      const validatedLines = lineSchema.parse(lines ?? []);
+
+      res.json(await storage.createMaterialOrder(order, validatedLines));
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error creating purchase order: " + error.message });
+    }
+  });
+
+  app.patch("/api/material-orders/lines/:lineId", isAdmin, async (req, res) => {
+    try {
+      const delivered = !!req.body?.delivered;
+      await storage.setOrderMaterialDelivered(req.params.lineId, delivered);
+      res.json({ message: "Updated" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error updating delivery: " + error.message });
+    }
+  });
+
+  app.delete("/api/material-orders/:id", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteMaterialOrder(req.params.id);
+      res.json({ message: "Purchase order deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting purchase order: " + error.message });
+    }
+  });
+
+  // Clear a stuck/failed billing state so a subscription can charge again.
+  // Without this, a subscription paused after MAX_RETRY_ATTEMPTS (or left in
+  // payment_failed / awaiting_auth / disputed) had NO recovery route at all —
+  // it simply stopped billing forever.
+  app.post("/api/retail-subscriptions/:id/reset-billing", isAdmin, async (req, res) => {
+    try {
+      const { chargeNow } = req.body ?? {};
+
+      const [subscription] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, req.params.id));
+
+      if (!subscription) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+
+      const [updated] = await db
+        .update(retailSubscriptions)
+        .set({
+          status: subscription.status === 'cancelled' ? 'cancelled' : 'active',
+          billingStatus: 'active',
+          retryCount: 0,
+          processingLock: false,
+          processingLockedAt: null,
+          // Optionally make it due immediately so the next run retries it.
+          ...(chargeNow ? { nextChargeAt: new Date() } : {}),
+        })
+        .where(eq(retailSubscriptions.id, req.params.id))
+        .returning();
+
+      console.log(`[SUBSCRIPTION] Billing state reset for ${req.params.id}${chargeNow ? ' (will charge on next run)' : ''}`);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error resetting subscription billing:", error);
+      res.status(500).json({ message: "Error resetting billing state" });
+    }
+  });
+
+  // Inventory analytics
+  app.get("/api/inventory/reorder-report", isAdmin, async (req, res) => {
+    try {
+      const windowDays = req.query.windowDays ? parseInt(req.query.windowDays as string, 10) : 90;
+      res.json(await storage.getReorderReport(windowDays));
+    } catch (error: any) {
+      res.status(500).json({ message: "Error building reorder report: " + error.message });
+    }
+  });
+
+  app.get("/api/inventory/cogs-report", isAdmin, async (req, res) => {
+    try {
+      const days = req.query.days ? parseInt(req.query.days as string, 10) : 90;
+      res.json(await storage.getCogsReport(days));
+    } catch (error: any) {
+      res.status(500).json({ message: "Error building COGS report: " + error.message });
+    }
+  });
+
+  app.get("/api/inventory/dashboard", isAdmin, async (_req, res) => {
+    try {
+      res.json(await storage.getInventoryDashboard());
+    } catch (error: any) {
+      res.status(500).json({ message: "Error building dashboard: " + error.message });
+    }
+  });
+
   // NEW SCHEMA - Retail Product management routes
   app.get("/api/retail-products", async (req: any, res) => {
     try {
@@ -1263,6 +2029,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ message: "Product flavors updated successfully" });
     } catch (error: any) {
       res.status(500).json({ message: "Error setting product flavors: " + error.message });
+    }
+  });
+
+  // Customer-facing catalogue. The management route below is isStaffOrAdmin, so a real
+  // wholesale customer got a 403 and the order form rendered "No unit types available" —
+  // ordering was impossible for everyone except a super_admin testing it. Active only.
+  app.get("/api/wholesale/customer/unit-types", isAuthenticated, isWholesaleCustomer, async (req: any, res) => {
+    try {
+      const unitTypes = await storage.getAllWholesaleUnitTypesWithFlavors();
+      res.json(unitTypes.filter((ut: any) => ut.isActive !== false));
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching wholesale unit types: " + error.message });
     }
   });
 
@@ -1426,15 +2204,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Public file upload URL endpoint (for flavor images, etc.)
   app.post("/api/object-storage/upload-url", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const { filename, directory } = req.body;
+      const { filename, directory, contentType } = req.body;
       if (!filename) {
         return res.status(400).json({ message: "filename is required" });
       }
-      
+
+      // Preferred path: S3-compatible bucket (Cloudflare R2 / S3). Returns the final
+      // public URL too, so the client stores a CDN URL instead of deriving one.
+      if (isS3Configured()) {
+        const { uploadUrl, key, publicUrl } = await getPresignedUploadUrl(filename, {
+          directory: directory === 'public' ? 'images' : directory,
+          contentType,
+        });
+        return res.json({ uploadUrl, key, publicUrl, storage: 's3' });
+      }
+
+      // Legacy fallback (Replit/GCS object storage)
       const objectStorageService = new ObjectStorageService();
       // Don't pass directory since publicPath already points to the public directory
       const uploadUrl = await objectStorageService.getPublicUploadURL(filename, directory === 'public' ? '' : directory);
-      res.json({ uploadUrl });
+      res.json({ uploadUrl, storage: 'legacy' });
     } catch (error: any) {
       console.error("Error getting public upload URL:", error);
       res.status(500).json({ message: "Error getting upload URL: " + error.message });
@@ -1448,7 +2237,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!fileUrl) {
         return res.status(400).json({ message: "fileUrl is required" });
       }
-      
+
+      // S3/R2 buckets are configured public at the bucket level, so there's no
+      // per-object ACL step — this is a no-op for that backend.
+      if (isS3Configured()) {
+        return res.json({ success: true, skipped: 's3-bucket-public' });
+      }
+
       const objectStorageService = new ObjectStorageService();
       await objectStorageService.makeFilePublic(fileUrl);
       res.json({ success: true });
@@ -1650,16 +2445,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const unitAmountCents = Math.round(subscriptionPrice * 100);
 
       // Map frequency to Stripe interval
-      const intervalCount = 
-        frequency === 'weekly' ? 1 :
-        frequency === 'bi-weekly' ? 2 :
-        frequency === 'every-4-weeks' ? 4 :
-        frequency === 'every-6-weeks' ? 6 :
-        8; // every-8-weeks
+      const intervalCount = frequencyToStripeInterval(frequency).interval_count;
 
-      const baseUrl = process.env.REPLIT_DOMAINS
-        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
-        : 'http://localhost:5000';
+      const baseUrl = getBaseUrl();
 
       const imageUrl = product.imageUrl?.startsWith('http') 
         ? product.imageUrl 
@@ -1742,9 +2530,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const hasSubscription = hasLegacySubscription || hasRetailSubscription;
 
-      const baseUrl = process.env.REPLIT_DOMAINS
-        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
-        : 'http://localhost:5000';
+      const baseUrl = getBaseUrl();
 
       // Create line items for both legacy and retail cart items
       const legacyLineItems = await Promise.all(
@@ -1764,11 +2550,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
               'Every 4 Weeks';
             
-            const intervalCount = 
-              item.subscriptionFrequency === 'weekly' ? 1 :
-              item.subscriptionFrequency === 'bi-weekly' ? 2 :
-              4;
-            
+            const intervalCount = frequencyToStripeInterval(item.subscriptionFrequency).interval_count;
+
             return {
               price_data: {
                 currency: 'usd',
@@ -1804,13 +2587,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const retailLineItems = await Promise.all(
         retailItems.map(async (item) => {
           const retailProduct = item.retailProduct;
-          const flavor = retailProduct.flavor;
-          
-          const imageUrl = flavor.primaryImageUrl?.startsWith('http') 
-            ? flavor.primaryImageUrl 
-            : flavor.primaryImageUrl
-              ? `${baseUrl}/public/${flavor.primaryImageUrl}`
-              : undefined;
+          // Multi-flavor products (variety packs) have a null `flavor` — resolve the
+          // selected one instead, and fall back to the product's own name/image.
+          const selectedFlavor =
+            retailProduct.productType === 'multi-flavor' && item.selectedFlavorId
+              ? retailProduct.flavors?.find((f: any) => f.id === item.selectedFlavorId) ?? null
+              : retailProduct.flavor ?? null;
+
+          const displayName = selectedFlavor?.name ?? retailProduct.productName ?? null;
+          const lineName = displayName
+            ? `${displayName} ${retailProduct.unitDescription}`
+            : retailProduct.unitDescription;
+
+          const rawImage = selectedFlavor?.primaryImageUrl ?? retailProduct.productImageUrl ?? null;
+          const imageUrl = rawImage
+            ? (rawImage.startsWith('http') ? rawImage : `${baseUrl}/public/${rawImage}`)
+            : undefined;
           
           // Calculate price with subscription discount if applicable
           const basePrice = parseFloat(retailProduct.price);
@@ -1826,16 +2618,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
               item.subscriptionFrequency === 'bi-weekly' ? 'Bi-weekly' :
               'Every 4 Weeks';
             
-            const intervalCount = 
-              item.subscriptionFrequency === 'weekly' ? 1 :
-              item.subscriptionFrequency === 'bi-weekly' ? 2 :
-              4;
-            
+            const intervalCount = frequencyToStripeInterval(item.subscriptionFrequency).interval_count;
+
             return {
               price_data: {
                 currency: 'usd',
                 product_data: {
-                  name: `${flavor.name} ${retailProduct.unitDescription} (${item.subscriptionFrequency})`,
+                  name: `${lineName} (${item.subscriptionFrequency})`,
                   description: `${frequencyLabel} subscription`,
                   images: imageUrl ? [imageUrl] : [],
                 },
@@ -1852,7 +2641,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               price_data: {
                 currency: 'usd',
                 product_data: {
-                  name: `${flavor.name} ${retailProduct.unitDescription}`,
+                  name: lineName,
                   images: imageUrl ? [imageUrl] : [],
                 },
                 unit_amount: casePriceCents,
@@ -1982,11 +2771,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const subItem = legacyItems.find(item => item.isSubscription) || retailItems.find(item => item.isSubscription);
           if (subItem) {
             const frequency = subItem.subscriptionFrequency || 'weekly';
-            const intervalCount = 
-              frequency === 'weekly' ? 1 :
-              frequency === 'bi-weekly' ? 2 :
-              4;
-            
+            const intervalCount = frequencyToStripeInterval(frequency).interval_count;
+
             taxLineItem.price_data.recurring = {
               interval: 'week' as const,
               interval_count: intervalCount,
@@ -2403,10 +3189,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const amountInCents = Math.round(totalAmount * 100);
 
           // Calculate next charge date (for 2nd order)
-          const daysUntilNext = 
-            (item.subscriptionFrequency || 'weekly') === 'weekly' ? 7 :
-            (item.subscriptionFrequency || 'weekly') === 'bi-weekly' ? 14 :
-            28;
+          const daysUntilNext = frequencyToDays(item.subscriptionFrequency || 'weekly');
           const nextChargeDate = new Date();
           nextChargeDate.setDate(nextChargeDate.getDate() + daysUntilNext);
           const normalizedNextPickupDate = normalizeToAllowedPickupDay(nextChargeDate);
@@ -2440,9 +3223,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             retailProductId: item.retailProductId,
             selectedFlavorId: item.selectedFlavorId,
             quantity: item.quantity,
+            // Lock in the agreed price so later catalogue edits don't silently
+            // re-price this customer's renewals.
+            unitPriceAtSignup: unitPrice.toFixed(2),
           });
 
-          // Charge immediately for first order
+          // Charge immediately for first order.
+          // Keyed on the subscription id so a double-submitted checkout (or a retry
+          // after a lost response) cannot charge the customer twice.
           const paymentIntent = await stripe.paymentIntents.create({
             amount: amountInCents,
             currency: 'usd',
@@ -2457,7 +3245,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               taxAmount: taxAmount.toFixed(2),
               totalAmount: totalAmount.toFixed(2),
             },
-          });
+          }, { idempotencyKey: `retailsub_first_${subscription.id}` });
 
           // Create first order immediately
           if (paymentIntent.status === 'succeeded') {
@@ -2680,9 +3468,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "This plan is not available for online purchase" });
       }
 
-      const baseUrl = process.env.REPLIT_DOMAINS
-        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
-        : 'http://localhost:5000';
+      const baseUrl = getBaseUrl();
 
       const successUrl = `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`;
       const cancelUrl = `${baseUrl}/shop`;
@@ -2782,10 +3568,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             // Calculate next pickup date
             const frequency = session.metadata.subscriptionFrequency || 'weekly';
-            const daysUntilNext = 
-              frequency === 'weekly' ? 7 :
-              frequency === 'bi-weekly' ? 14 :
-              28;
+            const daysUntilNext = frequencyToDays(frequency);
             
             const tentativeNextDate = new Date();
             tentativeNextDate.setDate(tentativeNextDate.getDate() + daysUntilNext);
@@ -2835,74 +3618,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Handle wholesale invoice payments
           if (session.metadata?.type === 'wholesale_invoice_payment' && session.metadata?.orderId) {
             const orderId = session.metadata.orderId;
-            const order = await storage.getWholesaleOrder(orderId);
-            
-            if (order && !order.paidAt) {
-              const paidAt = new Date();
+            const paymentIntentId = session.payment_intent as string | undefined;
+
+            // ACH: this event means "debit authorised", not "money received". Stripe
+            // reports payment_status 'unpaid' while the transfer is in flight, and
+            // settlement arrives later as payment_intent.succeeded. Record the attempt and
+            // wait. Anything that IS instant reports 'paid' and settles right here.
+            if (session.payment_status === 'paid') {
+              await settleWholesaleInvoice(orderId, paymentIntentId);
+            } else {
               await storage.updateWholesaleOrder(orderId, {
-                paidAt,
-                stripePaymentIntentId: session.payment_intent as string,
+                paymentInitiatedAt: new Date(),
+                paymentFailedAt: null,
+                ...(paymentIntentId ? { stripePaymentIntentId: paymentIntentId } : {}),
               });
-              console.log(`[WEBHOOK] ✅ Marked wholesale invoice ${order.invoiceNumber} as paid via Stripe`);
-              
-              // Get customer and order items for emails
-              const customer = await storage.getWholesaleCustomer(order.customerId);
-              const orderItems = await storage.getWholesaleOrderItems(orderId);
-              
-              // Build items list with names for receipt
-              const receiptItems = await Promise.all(orderItems.map(async (item) => {
-                const unitType = await storage.getWholesaleUnitType(item.unitTypeId);
-                const flavor = item.flavorId ? await storage.getFlavor(item.flavorId) : null;
-                const productName = flavor 
-                  ? `${unitType?.name || 'Item'} - ${flavor.name}`
-                  : unitType?.name || 'Item';
-                return {
-                  productName,
-                  quantity: item.quantity,
-                  unitPrice: item.unitPrice,
-                };
-              }));
-              
-              // Send receipt to customer
-              if (customer) {
-                try {
-                  await sendWholesalePaymentReceipt({
-                    customerEmail: customer.email,
-                    businessName: customer.businessName,
-                    contactName: customer.contactName,
-                    invoiceNumber: order.invoiceNumber,
-                    amount: Number(order.totalAmount),
-                    paidAt,
-                    items: receiptItems,
-                  });
-                } catch (emailError) {
-                  console.error('[WEBHOOK] Failed to send payment receipt to customer:', emailError);
-                }
-              }
-              
-              // Send notification to admins
-              try {
-                const admins = await storage.getUsersByRole('admin');
-                const superAdmins = await storage.getUsersByRole('super_admin');
-                const adminEmails = [...admins, ...superAdmins]
-                  .map(u => u.email)
-                  .filter((email): email is string => !!email);
-                
-                if (adminEmails.length > 0 && customer) {
-                  await sendWholesaleInvoicePaidNotification({
-                    adminEmails,
-                    businessName: customer.businessName,
-                    invoiceNumber: order.invoiceNumber,
-                    amount: Number(order.totalAmount),
-                    paidAt,
-                  });
-                }
-              } catch (emailError) {
-                console.error('[WEBHOOK] Failed to send admin notification for invoice payment:', emailError);
-              }
+              console.log(`[WEBHOOK] ⏳ Wholesale invoice ${session.metadata.invoiceNumber}: bank payment authorised, awaiting settlement (status: ${session.payment_status})`);
             }
             break;
           }
+          // Unconditional break: the `break` above is nested inside an `if`, so any
+          // checkout.session that didn't match it used to FALL THROUGH into
+          // invoice.payment_succeeded below and create a spurious duplicate order.
+          break;
         }
         case 'invoice.payment_succeeded': {
           const invoice = event.data.object as any;
@@ -2931,8 +3668,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           // Handle retail subscription
           if (retailSubscription) {
-            if (retailSubscription.billingStatus !== 'active') {
-              console.log(`[WEBHOOK] Retail subscription ${retailSubscription.id} is not active (status: ${retailSubscription.billingStatus}), skipping order creation`);
+            // Check BOTH lifecycle status and billing status. Checking only
+            // billingStatus meant a cancelled or paused subscription still had
+            // renewal orders auto-created from late/duplicate Stripe invoices.
+            if (retailSubscription.status !== 'active' || retailSubscription.billingStatus !== 'active') {
+              console.log(`[WEBHOOK] Retail subscription ${retailSubscription.id} is not active (status: ${retailSubscription.status}, billingStatus: ${retailSubscription.billingStatus}), skipping order creation`);
               break;
             }
             
@@ -3016,10 +3756,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
                 
                 // Update subscription's next delivery date
-                const daysUntilNext = 
-                  retailSubscription.subscriptionFrequency === 'weekly' ? 7 :
-                  retailSubscription.subscriptionFrequency === 'bi-weekly' ? 14 :
-                  28;
+                const daysUntilNext = frequencyToDays(retailSubscription.subscriptionFrequency);
                 
                 const nextDate = new Date();
                 nextDate.setDate(nextDate.getDate() + daysUntilNext);
@@ -3043,10 +3780,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         case 'payment_intent.succeeded': {
           const paymentIntent = event.data.object as Stripe.PaymentIntent;
-          
-          // Handle retail subscription renewal payments
-          if (paymentIntent.metadata?.type === 'retail_subscription_renewal') {
-            console.log(`[WEBHOOK] Processing successful retail subscription renewal payment ${paymentIntent.id}`);
+
+          // Wholesale ACH settlement — this is the event that means the money actually
+          // arrived, days after the customer authorised it at checkout.
+          if (
+            paymentIntent.metadata?.type === 'wholesale_invoice_payment' &&
+            paymentIntent.metadata?.orderId
+          ) {
+            await settleWholesaleInvoice(paymentIntent.metadata.orderId, paymentIntent.id);
+            break;
+          }
+
+          // Handle retail subscription payments — BOTH renewals and first orders.
+          // Previously only renewals matched, so a signup charge that came back
+          // `requires_action`/`processing` and later succeeded was never finalized:
+          // the customer was charged and no order was ever created.
+          if (
+            paymentIntent.metadata?.type === 'retail_subscription_renewal' ||
+            paymentIntent.metadata?.type === 'retail_subscription_first_order'
+          ) {
+            console.log(`[WEBHOOK] Processing successful retail subscription payment ${paymentIntent.id} (${paymentIntent.metadata.type})`);
             
             const { finalizeRetailSubscriptionCharge } = await import('./billing-cron');
             const success = await finalizeRetailSubscriptionCharge(paymentIntent.id);
@@ -3335,6 +4088,132 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           break;
         }
+
+        // ---- Failure / lifecycle events ----
+        // Without these, declines discovered asynchronously, chargebacks, and
+        // Stripe-side cancellations never reached local state: a subscription could
+        // look perfectly healthy while its payments were failing.
+
+        case 'payment_intent.payment_failed': {
+          const paymentIntent = event.data.object as Stripe.PaymentIntent;
+
+          // A wholesale ACH debit can be returned DAYS after the customer authorised it —
+          // insufficient funds, closed account, revoked mandate. Clear the "processing"
+          // state so the invoice shows as unpaid again and can be retried, and tell
+          // someone, because nobody is watching the checkout page by then.
+          if (
+            paymentIntent.metadata?.type === 'wholesale_invoice_payment' &&
+            paymentIntent.metadata?.orderId
+          ) {
+            const failure = paymentIntent.last_payment_error?.message || 'Bank payment failed';
+            const wsOrder = await storage.getWholesaleOrder(paymentIntent.metadata.orderId);
+            await storage.updateWholesaleOrder(paymentIntent.metadata.orderId, {
+              paymentInitiatedAt: null,
+              paymentFailedAt: new Date(),
+            });
+            console.error(`[WEBHOOK] 🚨 Wholesale ACH payment FAILED for invoice ${wsOrder?.invoiceNumber ?? paymentIntent.metadata.orderId}: ${failure}`);
+
+            try {
+              const admins = await storage.getUsersByRole('admin');
+              const superAdmins = await storage.getUsersByRole('super_admin');
+              const adminEmails = [...admins, ...superAdmins]
+                .map(u => u.email)
+                .filter((e): e is string => !!e);
+              const wsCustomer = wsOrder ? await storage.getWholesaleCustomer(wsOrder.customerId) : null;
+              if (adminEmails.length > 0 && wsOrder) {
+                await sendContactFormNotification({
+                  staffEmails: adminEmails,
+                  contactName: wsCustomer?.contactName ?? 'Wholesale customer',
+                  contactEmail: wsCustomer?.email ?? '',
+                  contactCompany: wsCustomer?.businessName ?? '',
+                  message: `BANK PAYMENT FAILED\n\nInvoice ${wsOrder.invoiceNumber} for $${Number(wsOrder.totalAmount).toFixed(2)} did not clear.\nReason: ${failure}\n\nThe invoice is marked unpaid again. Follow up with the customer.`,
+                });
+              }
+            } catch (emailError: any) {
+              console.error('[WEBHOOK] Failed to notify staff of ACH failure:', emailError.message);
+            }
+            break;
+          }
+
+          const subId = paymentIntent.metadata?.retailSubscriptionId;
+          if (!subId) break;
+
+          const failureMessage =
+            paymentIntent.last_payment_error?.message || 'Payment failed';
+          console.warn(`[WEBHOOK] ⚠️ Payment failed for retail subscription ${subId}: ${failureMessage}`);
+
+          await db
+            .update(retailSubscriptions)
+            .set({
+              billingStatus: 'payment_failed',
+              lastPaymentIntentId: paymentIntent.id,
+              // Release any lock so the retry path can pick it up again.
+              processingLock: false,
+              processingLockedAt: null,
+            })
+            .where(eq(retailSubscriptions.id, subId));
+          break;
+        }
+
+        case 'invoice.payment_failed': {
+          const invoice = event.data.object as any;
+          const stripeSubId = invoice.subscription as string | null;
+          if (!stripeSubId) break;
+
+          console.warn(`[WEBHOOK] ⚠️ Invoice payment failed for Stripe subscription ${stripeSubId}`);
+          await db
+            .update(retailSubscriptions)
+            .set({ billingStatus: 'payment_failed' })
+            .where(eq(retailSubscriptions.stripeSubscriptionId, stripeSubId));
+          break;
+        }
+
+        case 'charge.dispute.created': {
+          const dispute = event.data.object as any;
+          const disputedPaymentIntentId = dispute.payment_intent as string | null;
+          console.error(`[WEBHOOK] 🚨 CHARGEBACK opened on PaymentIntent ${disputedPaymentIntentId} (amount ${dispute.amount}, reason: ${dispute.reason})`);
+
+          if (disputedPaymentIntentId) {
+            // Flag the order so staff can see it, and pause the subscription so we
+            // don't keep charging a customer who is actively disputing.
+            const [disputedOrder] = await db
+              .select()
+              .from(retailOrders)
+              .where(eq(retailOrders.stripePaymentIntentId, disputedPaymentIntentId))
+              .limit(1);
+
+            if (disputedOrder) {
+              await db
+                .update(retailOrders)
+                .set({ notes: `${disputedOrder.notes ? disputedOrder.notes + ' | ' : ''}DISPUTED: ${dispute.reason}` })
+                .where(eq(retailOrders.id, disputedOrder.id));
+
+              if (disputedOrder.userId) {
+                await db
+                  .update(retailSubscriptions)
+                  .set({ status: 'paused', billingStatus: 'disputed' })
+                  .where(
+                    and(
+                      eq(retailSubscriptions.userId, disputedOrder.userId),
+                      eq(retailSubscriptions.status, 'active')
+                    )
+                  );
+                console.warn(`[WEBHOOK] Paused active subscriptions for user ${disputedOrder.userId} pending dispute resolution`);
+              }
+            }
+          }
+          break;
+        }
+
+        case 'customer.subscription.deleted': {
+          const stripeSub = event.data.object as any;
+          console.log(`[WEBHOOK] Stripe subscription ${stripeSub.id} was cancelled at the source — syncing local state`);
+          await db
+            .update(retailSubscriptions)
+            .set({ status: 'cancelled', cancelledAt: new Date() })
+            .where(eq(retailSubscriptions.stripeSubscriptionId, stripeSub.id));
+          break;
+        }
       }
 
       res.json({ received: true });
@@ -3383,15 +4262,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const flavorMap = new Map(allFlavors.map(f => [f.id, f]));
 
       // Group items by subscription and enrich
+      // Keep in step with billing-cron's resolveUnitPrice(): prefer the price locked
+      // in at signup, fall back to the current discounted price for legacy rows.
+      const SUBSCRIPTION_TAX_RATE = 0.1035;
+      const unitPriceFor = (item: any, product: any): number => {
+        if (item.unitPriceAtSignup != null) {
+          const locked = parseFloat(String(item.unitPriceAtSignup));
+          if (Number.isFinite(locked)) return locked;
+        }
+        if (!product) return 0;
+        const base = parseFloat(product.price);
+        const discount = product.subscriptionDiscount ? Number(product.subscriptionDiscount) : 0;
+        return base * (1 - discount / 100);
+      };
+
       const subscriptionsWithItems = retailSubs.map(sub => {
         const items = allItems
           .filter(item => item.subscriptionId === sub.id)
-          .map(item => ({
-            ...item,
-            retailProduct: productMap.get(item.retailProductId) || null,
-            flavor: item.selectedFlavorId ? flavorMap.get(item.selectedFlavorId) || null : null,
-          }));
-        return { ...sub, items };
+          .map(item => {
+            const product = productMap.get(item.retailProductId) || null;
+            const unitPrice = unitPriceFor(item, product);
+            return {
+              ...item,
+              retailProduct: product,
+              flavor: item.selectedFlavorId ? flavorMap.get(item.selectedFlavorId) || null : null,
+              // Per-line price so the UI can show a breakdown instead of bare names
+              unitPrice: unitPrice.toFixed(2),
+              lineTotal: (unitPrice * item.quantity).toFixed(2),
+            };
+          });
+
+        // What this customer will actually be charged next, computed the same way
+        // billing does — so the number on screen matches the card statement.
+        const subtotal = items.reduce((sum, i) => sum + parseFloat(i.lineTotal), 0);
+        const taxAmount = subtotal * SUBSCRIPTION_TAX_RATE;
+
+        return {
+          ...sub,
+          items,
+          estimatedNextCharge: {
+            subtotal: subtotal.toFixed(2),
+            taxAmount: taxAmount.toFixed(2),
+            total: (subtotal + taxAmount).toFixed(2),
+          },
+        };
       });
 
       res.json(subscriptionsWithItems);
@@ -3628,6 +4542,154 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ---- Customer self-service: pause / resume / skip / reactivate ----
+  // These were previously staff-only or nonexistent, even though the checkout copy
+  // promised "Pause, modify, or cancel anytime". Each is a separate endpoint because
+  // each has different valid-state rules.
+
+  /** Load a subscription and assert the caller owns it. */
+  async function loadOwnedSubscription(subscriptionId: string, userId: string) {
+    const [sub] = await db
+      .select()
+      .from(retailSubscriptions)
+      .where(eq(retailSubscriptions.id, subscriptionId));
+    if (!sub || sub.userId !== userId) return null;
+    return sub;
+  }
+
+  /** Reject edits while a charge is mid-flight so we can't change what's being billed. */
+  function billingInFlight(sub: any): string | null {
+    if (sub.processingLock) return "Your subscription is being processed right now. Please try again in a moment.";
+    if (sub.billingStatus !== 'active' && sub.billingStatus !== 'payment_failed') {
+      return "Your subscription is mid-payment. Please try again shortly.";
+    }
+    return null;
+  }
+
+  /** Next pickup a sensible distance out, plus the billing date for that week. */
+  function scheduleFrom(daysOut: number) {
+    const target = new Date();
+    target.setDate(target.getDate() + daysOut);
+    const nextDeliveryDate = normalizeToAllowedPickupDay(target);
+    return { nextDeliveryDate, nextChargeAt: getBillingDateForPickup(nextDeliveryDate) };
+  }
+
+  app.post("/api/my-subscriptions/:id/pause", isAuthenticated, async (req: any, res) => {
+    try {
+      const sub = await loadOwnedSubscription(req.params.id, req.user.id);
+      if (!sub) return res.status(404).json({ message: "Subscription not found" });
+      if (sub.status !== 'active') {
+        return res.status(400).json({ message: `This subscription is ${sub.status} and can't be paused.` });
+      }
+      const busy = billingInFlight(sub);
+      if (busy) return res.status(409).json({ message: busy });
+
+      const [updated] = await db
+        .update(retailSubscriptions)
+        .set({ status: 'paused' })
+        .where(eq(retailSubscriptions.id, sub.id))
+        .returning();
+
+      console.log(`[SUBSCRIPTION] Customer paused ${sub.id}`);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error pausing subscription:", error);
+      res.status(500).json({ message: "Error pausing subscription" });
+    }
+  });
+
+  app.post("/api/my-subscriptions/:id/resume", isAuthenticated, async (req: any, res) => {
+    try {
+      const sub = await loadOwnedSubscription(req.params.id, req.user.id);
+      if (!sub) return res.status(404).json({ message: "Subscription not found" });
+      if (sub.status !== 'paused') {
+        return res.status(400).json({ message: `Only a paused subscription can be resumed (this one is ${sub.status}).` });
+      }
+
+      // Schedule a week out so resuming never triggers a surprise same-week charge.
+      const schedule = scheduleFrom(7);
+      const [updated] = await db
+        .update(retailSubscriptions)
+        .set({ status: 'active', billingStatus: 'active', retryCount: 0, ...schedule })
+        .where(eq(retailSubscriptions.id, sub.id))
+        .returning();
+
+      console.log(`[SUBSCRIPTION] Customer resumed ${sub.id}; next pickup ${schedule.nextDeliveryDate.toISOString()}`);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error resuming subscription:", error);
+      res.status(500).json({ message: "Error resuming subscription" });
+    }
+  });
+
+  /** Skip exactly one delivery — push the schedule out by a single cadence interval. */
+  app.post("/api/my-subscriptions/:id/skip", isAuthenticated, async (req: any, res) => {
+    try {
+      const sub = await loadOwnedSubscription(req.params.id, req.user.id);
+      if (!sub) return res.status(404).json({ message: "Subscription not found" });
+      if (sub.status !== 'active') {
+        return res.status(400).json({ message: `This subscription is ${sub.status} — only active subscriptions can skip a delivery.` });
+      }
+      const busy = billingInFlight(sub);
+      if (busy) return res.status(409).json({ message: busy });
+
+      const intervalDays = frequencyToDays(sub.subscriptionFrequency);
+      const base = sub.nextDeliveryDate ? new Date(sub.nextDeliveryDate) : new Date();
+      base.setDate(base.getDate() + intervalDays);
+      const nextDeliveryDate = normalizeToAllowedPickupDay(base);
+      const nextChargeAt = getBillingDateForPickup(nextDeliveryDate);
+
+      const [updated] = await db
+        .update(retailSubscriptions)
+        .set({ nextDeliveryDate, nextChargeAt })
+        .where(eq(retailSubscriptions.id, sub.id))
+        .returning();
+
+      console.log(`[SUBSCRIPTION] Customer skipped one delivery on ${sub.id}; next pickup ${nextDeliveryDate.toISOString()}`);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error skipping delivery:", error);
+      res.status(500).json({ message: "Error skipping delivery" });
+    }
+  });
+
+  app.post("/api/my-subscriptions/:id/reactivate", isAuthenticated, async (req: any, res) => {
+    try {
+      const sub = await loadOwnedSubscription(req.params.id, req.user.id);
+      if (!sub) return res.status(404).json({ message: "Subscription not found" });
+      if (sub.status !== 'cancelled') {
+        return res.status(400).json({ message: `This subscription is ${sub.status}, not cancelled.` });
+      }
+      // Reactivating charges a card, so one must still be on file.
+      if (!sub.stripeCustomerId || !sub.stripePaymentMethodId) {
+        return res.status(400).json({
+          message: "We no longer have a saved payment method for this subscription. Please start a new subscription from the shop.",
+        });
+      }
+
+      const schedule = scheduleFrom(7);
+      const [updated] = await db
+        .update(retailSubscriptions)
+        .set({
+          status: 'active',
+          billingStatus: 'active',
+          retryCount: 0,
+          cancelledAt: null,
+          processingLock: false,
+          processingLockedAt: null,
+          ...schedule,
+        })
+        .where(eq(retailSubscriptions.id, sub.id))
+        .returning();
+
+      console.log(`[SUBSCRIPTION] Customer reactivated ${sub.id}; next pickup ${schedule.nextDeliveryDate.toISOString()}`);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error reactivating subscription:", error);
+      res.status(500).json({ message: "Error reactivating subscription" });
+    }
+  });
+
   // Cancel subscription (DELETE method)
   app.delete("/api/my-subscriptions/:id", isAuthenticated, async (req: any, res) => {
     try {
@@ -3646,13 +4708,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (subscription.status === 'cancelled') {
         return res.status(400).json({ message: "Subscription is already cancelled" });
       }
-      
+
+      // Stop billing at the source FIRST. Previously this only flipped the local
+      // status, so a `stripe_managed` subscription kept charging the customer forever
+      // after the UI told them it was cancelled.
+      if (stripe && subscription.stripeSubscriptionId) {
+        try {
+          await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
+          console.log(`[SUBSCRIPTION] Cancelled Stripe subscription ${subscription.stripeSubscriptionId}`);
+        } catch (stripeError: any) {
+          // Do NOT mark it cancelled locally while Stripe still thinks it's active —
+          // that is exactly the state that silently keeps charging people.
+          console.error(`[SUBSCRIPTION] Failed to cancel Stripe subscription ${subscription.stripeSubscriptionId}:`, stripeError.message);
+          return res.status(502).json({
+            message: "We couldn't stop billing with our payment provider. Your subscription was NOT cancelled — please try again or contact support.",
+          });
+        }
+      }
+
       const [cancelled] = await db
         .update(retailSubscriptions)
-        .set({ status: 'cancelled' })
+        .set({ status: 'cancelled', cancelledAt: new Date() })
         .where(eq(retailSubscriptions.id, subscriptionId))
         .returning();
-      
+
       res.json(cancelled);
     } catch (error: any) {
       console.error("Error cancelling subscription:", error);
@@ -3678,13 +4757,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (subscription.status === 'cancelled') {
         return res.status(400).json({ message: "Subscription is already cancelled" });
       }
-      
+
+      // Stop billing at the source FIRST. Previously this only flipped the local
+      // status, so a `stripe_managed` subscription kept charging the customer forever
+      // after the UI told them it was cancelled.
+      if (stripe && subscription.stripeSubscriptionId) {
+        try {
+          await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
+          console.log(`[SUBSCRIPTION] Cancelled Stripe subscription ${subscription.stripeSubscriptionId}`);
+        } catch (stripeError: any) {
+          // Do NOT mark it cancelled locally while Stripe still thinks it's active —
+          // that is exactly the state that silently keeps charging people.
+          console.error(`[SUBSCRIPTION] Failed to cancel Stripe subscription ${subscription.stripeSubscriptionId}:`, stripeError.message);
+          return res.status(502).json({
+            message: "We couldn't stop billing with our payment provider. Your subscription was NOT cancelled — please try again or contact support.",
+          });
+        }
+      }
+
       const [cancelled] = await db
         .update(retailSubscriptions)
-        .set({ status: 'cancelled' })
+        .set({ status: 'cancelled', cancelledAt: new Date() })
         .where(eq(retailSubscriptions.id, subscriptionId))
         .returning();
-      
+
       res.json(cancelled);
     } catch (error: any) {
       console.error("Error cancelling subscription:", error);
@@ -3800,7 +4896,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!subscription || subscription.userId !== userId) {
         return res.status(404).json({ message: "Subscription not found" });
       }
-      
+
+      // Verify the item belongs to this subscription (prevents editing another user's item)
+      const [item] = await db
+        .select()
+        .from(retailSubscriptionItems)
+        .where(eq(retailSubscriptionItems.id, itemId));
+
+      if (!item || item.subscriptionId !== subscriptionId) {
+        return res.status(404).json({ message: "Item not found" });
+      }
+
       // Update the flavor
       const [updated] = await db
         .update(retailSubscriptionItems)
@@ -3936,7 +5042,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create billing portal session
       const session = await stripe.billingPortal.sessions.create({
         customer: user.stripeCustomerId,
-        return_url: `${req.headers.origin || 'http://localhost:5000'}/my-subscriptions`,
+        // /my-subscriptions only redirects to /my-account — send them straight there
+        return_url: `${req.headers.origin || 'http://localhost:5000'}/my-account`,
       });
 
       res.json({ url: session.url });
@@ -4066,7 +5173,7 @@ Customer Information:
 • additionalEmails - Optional additional authorized emails separated by pipes (|)
 • phone - Business phone number
 • address - Full business address
-• allowOnlinePayment - Set to "true" to enable online payment, "false" for invoice-only
+• allowOnlinePayment - Optional. ACH bank payment is enabled by default; set to "false" for invoice-only
 
 Delivery Location (Optional):
 • locationName - Name of the delivery location
@@ -4352,7 +5459,12 @@ If you have any questions, please don't hesitate to reach out!`,
       if (!wholesaleCustomer) {
         return res.status(404).json({ message: "Wholesale customer not found" });
       }
-      const location = insertWholesaleLocationSchema.parse({ ...req.body, customerId: wholesaleCustomer.id });
+      // customerId comes from the session, never the body. lat/long are a server-side
+      // geocoding cache that feeds delivery routing — a client must not be able to set
+      // them, or an address could be routed to arbitrary coordinates.
+      const location = insertWholesaleLocationSchema
+        .omit({ latitude: true, longitude: true })
+        .parse({ ...req.body, customerId: wholesaleCustomer.id });
       const created = await storage.createWholesaleLocation(location);
       res.json(created);
     } catch (error: any) {
@@ -4375,8 +5487,14 @@ If you have any questions, please don't hesitate to reach out!`,
       if (location.customerId !== wholesaleCustomer.id) {
         return res.status(403).json({ message: "Forbidden: Location belongs to another customer" });
       }
-      
-      const updates = insertWholesaleLocationSchema.partial().parse(req.body);
+
+      // customerId MUST be omitted: `.partial()` made it an optional writable field, so a
+      // customer could have reassigned their location onto another company's account.
+      // lat/long are server-managed geocoding output that feeds delivery routing.
+      const updates = insertWholesaleLocationSchema
+        .omit({ customerId: true, latitude: true, longitude: true })
+        .partial()
+        .parse(req.body);
       const updated = await storage.updateWholesaleLocation(req.params.id, updates);
       res.json(updated);
     } catch (error: any) {
@@ -4485,17 +5603,100 @@ If you have any questions, please don't hesitate to reach out!`,
       const [, year, month, day] = dateMatch;
       const pickupDate = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day)));
 
-      const subscriptions = await storage.getSubscriptionsByPickupDate(pickupDate);
-      res.json(subscriptions);
+      const orders = await storage.getRetailOrdersByPickupDate(pickupDate);
+      res.json(orders);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching pickup report: " + error.message });
+    }
+  });
+
+  /**
+   * Weekly orders board — drives the tablet mounted at the brewery. One Monday-anchored
+   * Pacific week of retail pickups + wholesale deliveries, with per-item production totals
+   * so staff can see both "who gets what" and "what to make" at a glance. weekOffset shifts
+   * whole weeks (0 = this week); clamped so a bad query can't scan the whole table.
+   */
+  app.get("/api/staff/orders-board", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const rawOffset = parseInt(req.query.weekOffset as string, 10);
+      const weekOffset = Number.isFinite(rawOffset) ? Math.max(-26, Math.min(26, rawOffset)) : 0;
+      const { start, end, mondayISO } = getPacificWeekRange(weekOffset);
+
+      const { retail, wholesale } = await storage.getWeeklyBoardOrders(start, end);
+
+      // Normalise both channels to one card shape. The client maps status→stage per kind.
+      const orders = [
+        ...retail.map(o => ({
+          id: o.id,
+          kind: 'retail' as const,
+          title: o.customerName,
+          reference: o.orderNumber,
+          tag: o.isSubscriptionOrder ? 'Subscription' : null,
+          scheduledDate: o.pickupDate ?? o.orderDate,
+          status: o.status,
+          total: o.totalAmount,
+          items: o.items.map(i => ({
+            label: i.unitDescription ? `${i.flavorName} — ${i.unitDescription}` : i.flavorName,
+            quantity: i.quantity,
+          })),
+        })),
+        ...wholesale.map(o => ({
+          id: o.id,
+          kind: 'wholesale' as const,
+          title: o.businessName,
+          reference: o.invoiceNumber,
+          // Pickup is called out explicitly — staff must not stage it onto a delivery run.
+          tag: o.fulfillmentMethod === 'pickup' ? 'Pickup at brewery' : (o.city ?? null),
+          scheduledDate: o.deliveryDate ?? o.orderDate,
+          status: o.status,
+          total: o.totalAmount,
+          items: o.items.map(i => ({
+            label: `${i.flavorName} — ${i.unitTypeName}`,
+            quantity: i.quantity,
+          })),
+        })),
+      ].sort((a, b) => new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime());
+
+      // Production totals, kept per channel because a retail 12-pack and a wholesale case
+      // are different things to pack even when they share a flavor.
+      const tally = (rows: typeof orders) => {
+        const map = new Map<string, number>();
+        for (const o of rows) {
+          for (const it of o.items) {
+            map.set(it.label, (map.get(it.label) ?? 0) + it.quantity);
+          }
+        }
+        return Array.from(map.entries())
+          .map(([label, quantity]) => ({ label, quantity }))
+          .sort((a, b) => b.quantity - a.quantity);
+      };
+
+      // "To prepare this week" is remaining work, so completed orders (retail picked up /
+      // wholesale delivered) don't count toward it — matching the board hiding them.
+      const remaining = orders.filter(o =>
+        !(o.kind === 'retail' && o.status === 'fulfilled') &&
+        !(o.kind === 'wholesale' && o.status === 'delivered')
+      );
+
+      res.json({
+        week: { mondayISO, startISO: start.toISOString(), endISO: end.toISOString(), offset: weekOffset },
+        orders,
+        totals: {
+          retail: tally(remaining.filter(o => o.kind === 'retail')),
+          wholesale: tally(remaining.filter(o => o.kind === 'wholesale')),
+        },
+        counts: { retail: retail.length, wholesale: wholesale.length },
+      });
+    } catch (error: any) {
+      console.error("Error building orders board:", error);
+      res.status(500).json({ message: "Error building orders board: " + error.message });
     }
   });
 
   app.post("/api/wholesale/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { order, items } = req.body;
-      
+
       if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: "Order must contain at least one item" });
       }
@@ -4503,7 +5704,16 @@ If you have any questions, please don't hesitate to reach out!`,
       if (!order.customerId) {
         return res.status(400).json({ message: "Customer ID is required" });
       }
-      
+
+      // Same rule as the customer-facing route: pickup carries no location, delivery must
+      // name one, so an order can never be scheduled with nowhere to take it.
+      order.fulfillmentMethod = order.fulfillmentMethod === 'pickup' ? 'pickup' : 'delivery';
+      if (order.fulfillmentMethod === 'pickup') {
+        order.locationId = null;
+      } else if (!order.locationId) {
+        return res.status(400).json({ message: "Choose a delivery location, or set the order to pickup." });
+      }
+
       let serverCalculatedTotal = 0;
       const validatedItems = [];
       
@@ -4645,7 +5855,7 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
-  app.get("/api/wholesale/orders/:id/invoice", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+  app.get("/api/wholesale/orders/:id/invoice", isAuthenticated, isStaffOrOwningWholesaleCustomer, async (req, res) => {
     try {
       const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
       if (!orderDetails) {
@@ -4684,36 +5894,10 @@ If you have any questions, please don't hesitate to reach out!`,
 
       // Generate payment URL for online payment customers
       let paymentUrl: string | null = null;
-      if (customer.allowOnlinePayment && stripe) {
-        const baseUrl = process.env.REPLIT_DOMAINS
-          ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
-          : 'http://localhost:5000';
-
-        const lineItems = items.map((item: any) => ({
-          price_data: {
-            currency: 'usd',
-            product_data: {
-              name: item.product.name,
-            },
-            unit_amount: Math.round(parseFloat(item.unitPrice) * 100),
-          },
-          quantity: item.quantity,
-        }));
-
-        const session = await stripe.checkout.sessions.create({
-          mode: 'payment',
-          payment_method_types: ['card'],
-          line_items: lineItems,
-          customer_email: customer.email,
-          metadata: {
-            orderId: order.id,
-            invoiceNumber: order.invoiceNumber,
-            type: 'wholesale_invoice_payment',
-          },
-          success_url: `${baseUrl}/wholesale/invoice/${order.id}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${baseUrl}/wholesale/invoice/${order.id}`,
-        });
-
+      // Don't email a payment link for an invoice that's already paid or has a debit in
+      // flight — following it would start a second ACH debit for the same invoice.
+      if (customer.allowOnlinePayment && stripe && !order.paidAt && !order.paymentInitiatedAt) {
+        const session = await createWholesaleCheckoutSession(order, customer, items);
         paymentUrl = session.url;
       }
 
@@ -4984,7 +6168,9 @@ If you have any questions, please don't hesitate to reach out!`,
   });
 
   // Create Stripe checkout session for wholesale invoice payment
-  app.post("/api/wholesale/orders/:id/create-payment", async (req, res) => {
+  // Was completely unauthenticated: anyone who guessed an order id could mint Stripe
+  // checkout sessions against it.
+  app.post("/api/wholesale/orders/:id/create-payment", isAuthenticated, isStaffOrOwningWholesaleCustomer, async (req, res) => {
     try {
       if (!stripe) {
         return res.status(503).json({ message: "Payment processing is not configured" });
@@ -5002,36 +6188,18 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(403).json({ message: "Online payment not enabled for this customer" });
       }
 
-      const baseUrl = process.env.REPLIT_DOMAINS
-        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
-        : 'http://localhost:5000';
+      if (order.paidAt) {
+        return res.status(400).json({ message: "This invoice has already been paid" });
+      }
+      // An ACH debit already in flight takes days to settle. Starting a second one would
+      // debit the customer twice for the same invoice.
+      if (order.paymentInitiatedAt && !order.paymentFailedAt) {
+        return res.status(400).json({
+          message: "A bank payment for this invoice is already processing. It can take up to 5 business days to clear.",
+        });
+      }
 
-      // Create line items from order items
-      const lineItems = orderDetails.items.map(item => ({
-        price_data: {
-          currency: 'usd',
-          product_data: {
-            name: item.product.name,
-          },
-          unit_amount: Math.round(parseFloat(item.unitPrice) * 100),
-        },
-        quantity: item.quantity,
-      }));
-
-      const session = await stripe.checkout.sessions.create({
-        mode: 'payment',
-        payment_method_types: ['card'],
-        line_items: lineItems,
-        customer_email: customer.email,
-        metadata: {
-          orderId: order.id,
-          invoiceNumber: order.invoiceNumber,
-          type: 'wholesale_invoice_payment',
-        },
-        success_url: `${baseUrl}/wholesale/invoice/${order.id}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${baseUrl}/wholesale/invoice/${order.id}`,
-      });
-
+      const session = await createWholesaleCheckoutSession(order, customer, orderDetails.items);
       res.json({ url: session.url, sessionId: session.id });
     } catch (error: any) {
       console.error("Wholesale payment checkout error:", error);
@@ -5136,14 +6304,35 @@ If you have any questions, please don't hesitate to reach out!`,
       if (product.productType === 'multi-flavor' && !selectedFlavorId) {
         return res.status(400).json({ message: "Please select a flavor for this variety pack" });
       }
-      
+
+      // Wholesale accounts don't do subscriptions. Their login is a business identity with
+      // negotiated pricing and invoiced terms; a recurring card charge against it is a
+      // different commercial arrangement entirely. Blocked here rather than only in the UI,
+      // since /api/retail-cart is reachable by any logged-in user.
+      if (isSubscription && (req.user as any)?.role === 'wholesale_customer') {
+        return res.status(403).json({
+          message: "Wholesale accounts can't place subscription orders. Use the wholesale portal to order, or contact us to set up a standing order.",
+        });
+      }
+
+      // Reject unknown cadences at the door — an unrecognised value used to flow all
+      // the way through to billing and silently charge every 4 weeks.
+      let validatedFrequency: string | null = null;
+      if (isSubscription) {
+        const parsed = subscriptionFrequencySchema.safeParse(subscriptionFrequency);
+        if (!parsed.success) {
+          return res.status(400).json({ message: `Invalid subscription frequency: ${subscriptionFrequency}` });
+        }
+        validatedFrequency = parsed.data;
+      }
+
       const cartItem = await storage.addRetailProductToCart({
         sessionId,
         retailProductId,
         selectedFlavorId: selectedFlavorId || null,
         quantity: quantity || 1,
         isSubscription: isSubscription || false,
-        subscriptionFrequency: isSubscription ? subscriptionFrequency : null,
+        subscriptionFrequency: validatedFrequency,
       });
       
       res.json(cartItem);
@@ -7374,7 +8563,9 @@ If you have any questions, please don't hesitate to reach out!`,
         if (!order.deliveryDate) return false;
         const orderDate = new Date(order.deliveryDate);
         return orderDate.toDateString() === targetDate.toDateString() &&
-               order.status !== 'cancelled';
+               order.status !== 'cancelled' &&
+               // Pickups are collected at the brewery — never route a driver to them.
+               order.fulfillmentMethod !== 'pickup';
       });
 
       // Enrich orders with customer and location data
@@ -7416,7 +8607,9 @@ If you have any questions, please don't hesitate to reach out!`,
         if (!order.deliveryDate) return false;
         const orderDate = new Date(order.deliveryDate);
         return orderDate.toDateString() === targetDate.toDateString() &&
-               order.status !== 'cancelled';
+               order.status !== 'cancelled' &&
+               // Pickups are collected at the brewery — never route a driver to them.
+               order.fulfillmentMethod !== 'pickup';
       });
 
       // Build list of stops from orders

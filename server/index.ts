@@ -22,27 +22,13 @@ app.use(express.urlencoded({ extended: false }));
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
 
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
+      // Deliberately does NOT log response bodies — they routinely contain customer
+      // PII, tokens and order details that shouldn't land in server logs.
+      log(`${req.method} ${path} ${res.statusCode} in ${duration}ms`);
     }
   });
 
@@ -54,24 +40,34 @@ app.use((req, res, next) => {
   
   const server = await registerRoutes(app);
 
-  // Start daily billing cron for local subscription management
-  startBillingCron();
-  
-  // Start data retention cleanup jobs
-  scheduleDataRetentionJobs();
+  // Background jobs. Gated so preview/staging deployments never charge cards or
+  // delete customer data. The gate wraps the whole call on purpose: both starters
+  // also kick off an immediate run a few seconds after boot, so scheduling alone
+  // isn't the only thing to suppress — a container restart would otherwise fire a
+  // real billing run.
+  if (process.env.DISABLE_CRON === "true") {
+    log("background jobs disabled (DISABLE_CRON=true)");
+  } else {
+    startBillingCron();
+    scheduleDataRetentionJobs();
+  }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
+    // Log server-side; do NOT re-throw — the response is already sent, and throwing
+    // here surfaces as an unhandledRejection that can crash the process.
+    console.error("Unhandled request error:", err);
     res.status(status).json({ message });
-    throw err;
   });
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
+  // Explicit check: an unset NODE_ENV should mean "production" for a built artifact
+  // (app.get("env") defaults to "development", which would try to boot Vite in prod).
+  if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
   } else {
     serveStatic(app);
@@ -82,11 +78,15 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
+  // reusePort is not supported on Windows (throws ENOTSUP), so only enable it elsewhere.
+  const listenOptions: { port: number; host: string; reusePort?: boolean } = {
     port,
     host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
+  };
+  if (process.platform !== "win32") {
+    listenOptions.reusePort = true;
+  }
+  server.listen(listenOptions, () => {
     log(`serving on port ${port}`);
   });
 })();

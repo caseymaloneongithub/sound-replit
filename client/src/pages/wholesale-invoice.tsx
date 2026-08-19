@@ -5,7 +5,7 @@ import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Printer, ArrowLeft, CreditCard, Loader2, Mail } from "lucide-react";
+import { Printer, ArrowLeft, Landmark, Loader2, Mail } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -13,9 +13,12 @@ import { formatCaseQuantity } from "@shared/pricing";
 import type { User } from "@shared/schema";
 
 export default function WholesaleInvoice() {
+  // Mounted at both the staff path and a customer path. Customers previously landed on
+  // the staff route from "Pay Now" / "View Invoice" and got Access Denied.
   const [, params] = useRoute("/wholesale/invoice/:id");
+  const [, customerParams] = useRoute("/wholesale-customer/invoice/:id");
   const [, setLocation] = useLocation();
-  const orderId = params?.id;
+  const orderId = params?.id ?? customerParams?.id;
   const { toast } = useToast();
 
   const { data: user } = useQuery<User>({
@@ -125,7 +128,13 @@ export default function WholesaleInvoice() {
           </Button>
           <h1 className="text-lg font-semibold">Invoice {order.invoiceNumber}</h1>
           <div className="ml-auto flex items-center gap-2">
-            {customer.allowOnlinePayment && !order.paidAt && (
+            {/* A bank debit already in flight: no pay button, or the customer pays twice. */}
+            {order.paymentInitiatedAt && !order.paidAt && (
+              <span className="text-sm text-muted-foreground flex items-center gap-2" data-testid="text-payment-processing">
+                Bank payment processing
+              </span>
+            )}
+            {customer.allowOnlinePayment && !order.paidAt && !order.paymentInitiatedAt && (
               <Button
                 onClick={handlePayNow}
                 disabled={paymentMutation.isPending}
@@ -138,8 +147,8 @@ export default function WholesaleInvoice() {
                   </>
                 ) : (
                   <>
-                    <CreditCard className="mr-2 h-4 w-4" />
-                    Pay Now
+                    <Landmark className="mr-2 h-4 w-4" />
+                    Pay by bank transfer
                   </>
                 )}
               </Button>

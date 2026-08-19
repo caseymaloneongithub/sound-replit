@@ -5,7 +5,6 @@ import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { LayoutDashboard, Package, Users, ShoppingCart, TrendingUp, DollarSign, Clock, Warehouse } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -54,7 +53,6 @@ export default function Wholesale() {
                   <Card>
                     <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
                       <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-                      <DollarSign className="w-4 h-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                       <div className="text-3xl font-bold" data-testid="text-total-revenue">
@@ -69,7 +67,6 @@ export default function Wholesale() {
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Pending Orders</CardTitle>
-                    <Clock className="w-4 h-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
                     <div className="text-3xl font-bold" data-testid="text-pending-orders">
@@ -83,7 +80,6 @@ export default function Wholesale() {
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Active Customers</CardTitle>
-                    <Users className="w-4 h-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
                     <div className="text-3xl font-bold" data-testid="text-active-customers">
@@ -104,7 +100,6 @@ export default function Wholesale() {
                 <CardContent>
                   {recentOrders.length === 0 ? (
                     <div className="text-center py-12">
-                      <ShoppingCart className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
                       <p className="text-muted-foreground">No orders yet</p>
                     </div>
                   ) : (

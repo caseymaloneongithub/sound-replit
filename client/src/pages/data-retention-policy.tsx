@@ -1,5 +1,4 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Database, Clock, Trash2, Archive, Shield, FileText, Mail } from "lucide-react";
 import { Link } from "wouter";
 import logo from "@assets/text-stacked-black_1762299663824.png";
 
@@ -25,7 +24,6 @@ export default function DataRetentionPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Database className="w-5 h-5 text-primary" />
                 Purpose and Scope
               </CardTitle>
             </CardHeader>
@@ -46,7 +44,6 @@ export default function DataRetentionPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-primary" />
                 Data Retention Periods
               </CardTitle>
             </CardHeader>
@@ -102,7 +99,6 @@ export default function DataRetentionPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Archive className="w-5 h-5 text-primary" />
                 Data Storage and Archival
               </CardTitle>
             </CardHeader>
@@ -119,7 +115,6 @@ export default function DataRetentionPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Trash2 className="w-5 h-5 text-primary" />
                 Data Disposal Procedures
               </CardTitle>
             </CardHeader>
@@ -137,7 +132,6 @@ export default function DataRetentionPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-primary" />
                 Legal Holds and Exceptions
               </CardTitle>
             </CardHeader>
@@ -155,7 +149,6 @@ export default function DataRetentionPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-primary" />
                 Your Rights
               </CardTitle>
             </CardHeader>
@@ -177,7 +170,6 @@ export default function DataRetentionPolicy() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Mail className="w-5 h-5 text-primary" />
                 Contact Us
               </CardTitle>
             </CardHeader>

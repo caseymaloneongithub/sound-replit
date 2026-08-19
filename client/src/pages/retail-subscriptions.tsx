@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Repeat, Loader2, Search, Plus, Edit, Trash2, Calendar, User, Mail, Phone } from "lucide-react";
+import { Loader2, Plus, Edit, Trash2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
@@ -362,7 +362,6 @@ export default function RetailSubscriptions() {
           </div>
           <div className="flex items-center gap-4">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Search by name, email, phone..."
                 value={searchQuery}
@@ -423,7 +422,6 @@ export default function RetailSubscriptions() {
               ) : filteredSubscriptions.length === 0 ? (
                 <Card>
                   <CardContent className="py-12 text-center">
-                    <Repeat className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
                     <h3 className="text-lg font-semibold mb-2">No subscriptions found</h3>
                     <p className="text-muted-foreground">
                       {searchQuery ? "Try a different search term" : "No subscriptions in this category"}
@@ -444,22 +442,18 @@ export default function RetailSubscriptions() {
                               {getStatusLabel(subscription.status)}
                             </Badge>
                             <Badge variant="outline">
-                              <Repeat className="w-3 h-3 mr-1" />
                               {getFrequencyLabel(subscription.subscriptionFrequency)}
                             </Badge>
                           </div>
                           <div className="flex items-center gap-4 text-sm text-muted-foreground">
                             <span className="flex items-center gap-1">
-                              <Mail className="w-4 h-4" />
                               {subscription.customerEmail}
                             </span>
                             <span className="flex items-center gap-1">
-                              <Phone className="w-4 h-4" />
                               {subscription.customerPhone}
                             </span>
                             {subscription.nextDeliveryDate && (
                               <span className="flex items-center gap-1">
-                                <Calendar className="w-4 h-4" />
                                 Next: {format(new Date(subscription.nextDeliveryDate), 'MMM d, yyyy')}
                               </span>
                             )}
@@ -815,7 +809,7 @@ export default function RetailSubscriptions() {
                                   </Select>
                                 </div>
                                 <div>
-                                  <Label className="text-xs">Quantity (cases)</Label>
+                                  <Label className="text-xs">Quantity</Label>
                                   <Select
                                     value={String(item.quantity)}
                                     onValueChange={(value) => handleUpdateNewItem(index, 'quantity', parseInt(value))}

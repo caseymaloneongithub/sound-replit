@@ -8,6 +8,7 @@ import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
 import { createStripeCustomer } from "./stripeCustomer";
 import { sendPasswordResetEmail, sendEmailVerificationCode } from "./email";
+import { checkEmailCodeRateLimit, MAX_CODE_ATTEMPTS } from "./rate-limit";
 
 declare global {
   namespace Express {
@@ -61,9 +62,13 @@ export function setupAuth(app: Express) {
     secret: process.env.SESSION_SECRET!,
     resave: false,
     saveUninitialized: true,
+    // NOTE: saveUninitialized stays true on purpose — guest carts are keyed by
+    // req.sessionID, so the session must persist before anything is written to it.
     store: storage.sessionStore,
     cookie: {
       secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax', // blocks cross-site POSTs from riding the session cookie (CSRF)
+      httpOnly: true,
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     },
   };
@@ -143,10 +148,20 @@ export function setupAuth(app: Express) {
         return res.status(400).send("Email already registered");
       }
 
-      // Create user
+      // Create user — whitelist fields explicitly. NEVER spread req.body here:
+      // users.role / isAdmin are insertable columns, so a spread would let a client
+      // self-assign role:"super_admin". Omitting role falls back to the DB default 'user'.
       const user = await storage.createUser({
-        ...req.body,
+        username,
+        email,
         password: await hashPassword(password),
+        firstName: req.body.firstName,
+        lastName: req.body.lastName,
+        phoneNumber: req.body.phoneNumber,
+        address: req.body.address,
+        city: req.body.city,
+        state: req.body.state,
+        zipCode: req.body.zipCode,
       });
 
       // Create Stripe customer for retail customers only (non-blocking - log errors but don't fail registration)
@@ -222,10 +237,20 @@ export function setupAuth(app: Express) {
         return res.status(401).send(info?.message || "Authentication failed");
       }
       
-      // Require 2FA via email for all users EXCEPT wholesale customers
-      const requires2FA = user.role !== 'wholesale_customer' && user.email;
+      // Require 2FA via email for all users EXCEPT wholesale customers.
+      // Skipped in development so you can log in without receiving an emailed code.
+      const requires2FA =
+        process.env.NODE_ENV !== 'development' &&
+        user.role !== 'wholesale_customer' &&
+        user.email;
       
       if (requires2FA) {
+        // Throttle code generation so a known address can't be email-bombed
+        if (!checkEmailCodeRateLimit(user.email!)) {
+          return res.status(429).json({
+            message: "Too many verification codes requested. Please wait a few minutes and try again.",
+          });
+        }
         try {
           // Generate 6-digit code
           const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -328,7 +353,14 @@ export function setupAuth(app: Express) {
       if (new Date() > verificationCode.expiresAt) {
         return res.status(400).json({ message: "Verification code has expired. Please try logging in again." });
       }
-      
+
+      // Cap wrong guesses so a 6-digit code can't be brute-forced within its window
+      if ((verificationCode.attempts ?? 0) >= MAX_CODE_ATTEMPTS) {
+        return res.status(429).json({
+          message: "Too many incorrect attempts. Please request a new code.",
+        });
+      }
+
       // Check if code matches
       if (verificationCode.code !== code) {
         await storage.incrementEmailVerificationAttempts(verificationCode.id);
@@ -410,12 +442,20 @@ export function setupAuth(app: Express) {
         return res.status(400).json({ message: "Email is required" });
       }
       
-      // Check if user exists
+      // Check if user exists. 2FA at login is required for every non-wholesale role
+      // (see /api/login), so resend must be available to all of them — not just 'user'.
       const user = await storage.getUserByEmail(email);
-      if (!user || user.role !== 'user') {
+      if (!user || user.role === 'wholesale_customer') {
         return res.status(400).json({ message: "Invalid request" });
       }
-      
+
+      // Same throttle as login — resend must not be an email-bombing bypass
+      if (!checkEmailCodeRateLimit(email)) {
+        return res.status(429).json({
+          message: "Too many verification codes requested. Please wait a few minutes and try again.",
+        });
+      }
+
       // Generate new code
       const code = Math.floor(100000 + Math.random() * 900000).toString();
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000);

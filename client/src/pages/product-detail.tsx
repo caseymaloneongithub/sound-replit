@@ -8,10 +8,11 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, ShoppingCart, Plus, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Loader2 } from "lucide-react";
+import { ArrowLeft, ShoppingCart, Check, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Footer } from "@/components/layout/footer";
+import { SubscribeOptions } from "@/components/subscribe-options";
 
 type RetailProductWithFlavors = RetailProduct & {
   flavor: Flavor | null;
@@ -37,7 +38,6 @@ function ProductImageCarousel({
   if (images.length === 0) {
     return (
       <div className="w-full aspect-square md:aspect-[4/3] flex items-center justify-center bg-muted rounded-lg">
-        <ImageIcon className="w-24 h-24 text-muted-foreground" />
       </div>
     );
   }
@@ -56,14 +56,14 @@ function ProductImageCarousel({
           <button
             onClick={() => setCurrentIndex((currentIndex - 1 + images.length) % images.length)}
             className="absolute left-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white rounded-full p-3 opacity-0 group-hover:opacity-100 transition-opacity"
-            data-testid="button-prev-image"
+            aria-label="Previous image" data-testid="button-prev-image"
           >
             <ChevronLeft className="w-6 h-6" />
           </button>
           <button
             onClick={() => setCurrentIndex((currentIndex + 1) % images.length)}
             className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white rounded-full p-3 opacity-0 group-hover:opacity-100 transition-opacity"
-            data-testid="button-next-image"
+            aria-label="Next image" data-testid="button-next-image"
           >
             <ChevronRight className="w-6 h-6" />
           </button>
@@ -78,7 +78,7 @@ function ProductImageCarousel({
                     ? 'bg-white w-8' 
                     : 'bg-white/50 hover:bg-white/75'
                 }`}
-                data-testid={`button-dot-${idx}`}
+                aria-label={`Go to image ${idx + 1}`} data-testid={`button-dot-${idx}`}
               />
             ))}
           </div>
@@ -210,8 +210,14 @@ export default function ProductDetail() {
     ? parseFloat(product.price) * (1 - Number(product.subscriptionDiscount) / 100)
     : null;
 
-  const needsFlavorSelection = isMultiFlavor && product.flavors.length > 0;
-  const canAddToCart = !needsFlavorSelection || selectedFlavor;
+  // The selector only lists active flavors, so gate on those — otherwise a product
+  // whose flavors are all inactive shows an empty dropdown and a permanently
+  // disabled button with no explanation.
+  const activeFlavors = product.flavors?.filter((f) => f.isActive) ?? [];
+  const needsFlavorSelection = isMultiFlavor && activeFlavors.length > 0;
+  const canAddToCart = isMultiFlavor
+    ? activeFlavors.length > 0 && !!selectedFlavor
+    : true;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -343,45 +349,22 @@ export default function ProductDetail() {
                   </TabsContent>
                   
                   <TabsContent value="subscribe" className="space-y-3">
-                    {product.subscriptionDiscount && Number(product.subscriptionDiscount) > 0 && (
-                      <p className="text-sm text-center text-primary font-medium mb-2">
-                        Save {Number(product.subscriptionDiscount).toFixed(0)}% with a subscription!
-                      </p>
+                    {/* Same component the shop grid uses, so the offer, the discounted
+                        price and the cadences are identical on both surfaces. */}
+                    {hasOneTimeItems ? (
+                      <div className="text-sm text-muted-foreground rounded-md border bg-muted/40 p-3">
+                        Your cart has one-time items. Check those out first, then start a
+                        subscription — the two are ordered separately.
+                      </div>
+                    ) : (
+                      <SubscribeOptions
+                        price={product.price}
+                        subscriptionDiscount={product.subscriptionDiscount}
+                        disabled={!canAddToCart || addToCartMutation.isPending}
+                        testIdPrefix="detail"
+                        onSelect={(frequency) => subscriptionPurchase(frequency, selectedFlavor || undefined)}
+                      />
                     )}
-                    <div className="grid grid-cols-2 gap-3">
-                      <Button 
-                        variant="outline"
-                        onClick={() => subscriptionPurchase('weekly', selectedFlavor || undefined)}
-                        disabled={!canAddToCart || addToCartMutation.isPending}
-                        data-testid="button-subscribe-weekly"
-                      >
-                        Weekly
-                      </Button>
-                      <Button 
-                        variant="outline"
-                        onClick={() => subscriptionPurchase('biweekly', selectedFlavor || undefined)}
-                        disabled={!canAddToCart || addToCartMutation.isPending}
-                        data-testid="button-subscribe-biweekly"
-                      >
-                        Every 2 Weeks
-                      </Button>
-                      <Button 
-                        variant="outline"
-                        onClick={() => subscriptionPurchase('monthly', selectedFlavor || undefined)}
-                        disabled={!canAddToCart || addToCartMutation.isPending}
-                        data-testid="button-subscribe-monthly"
-                      >
-                        Monthly
-                      </Button>
-                      <Button 
-                        variant="outline"
-                        onClick={() => subscriptionPurchase('quarterly', selectedFlavor || undefined)}
-                        disabled={!canAddToCart || addToCartMutation.isPending}
-                        data-testid="button-subscribe-quarterly"
-                      >
-                        Quarterly
-                      </Button>
-                    </div>
                   </TabsContent>
                 </Tabs>
               </CardContent>

@@ -76,7 +76,9 @@ export function Navbar() {
                         <ShoppingBag className="w-4 h-4 mr-2" />
                         Orders & Subscriptions
                       </DropdownMenuItem>
-                      {(user.isAdmin || user.role === 'staff') && (
+                      {/* Match the role set StaffProtectedRoute allows, so elevated
+                          users aren't dead-ended without a nav entry. */}
+                      {(user.isAdmin || ['staff', 'admin', 'super_admin'].includes(user.role)) && (
                         <DropdownMenuItem 
                           onClick={() => setLocation('/staff-portal')}
                           data-testid="menu-item-staff-portal"

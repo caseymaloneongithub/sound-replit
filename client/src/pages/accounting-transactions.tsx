@@ -13,20 +13,16 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import { 
-  Receipt, 
-  Search,
-  Filter,
+import {
+  Receipt,
   Upload,
   Download,
   Tags,
   Split,
-  CheckCircle,
   XCircle,
   Calendar as CalendarIcon,
   Loader2,
   MoreHorizontal,
-  FileSpreadsheet,
   Plus,
   ArrowUp,
   ArrowDown,
@@ -475,7 +471,6 @@ export default function AccountingTransactions() {
                 </DialogHeader>
                 <div className="space-y-4">
                   <div className="border-2 border-dashed rounded-lg p-6 text-center">
-                    <FileSpreadsheet className="w-10 h-10 mx-auto mb-4 text-muted-foreground" />
                     <p className="text-sm text-muted-foreground mb-4">
                       Drag and drop your CSV file here, or click to browse
                     </p>
@@ -510,7 +505,6 @@ export default function AccountingTransactions() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              <Filter className="h-5 w-5" />
               Filters
             </CardTitle>
           </CardHeader>
@@ -519,7 +513,6 @@ export default function AccountingTransactions() {
               <div className="space-y-2">
                 <Label>Search</Label>
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search transactions..."
                     value={searchQuery}
@@ -759,12 +752,10 @@ export default function AccountingTransactions() {
                           <td className="p-4 text-center">
                             {isAllocated ? (
                               <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                                <CheckCircle className="w-3 h-3 mr-1" />
                                 Allocated
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
-                                <XCircle className="w-3 h-3 mr-1" />
                                 Pending
                               </Badge>
                             )}

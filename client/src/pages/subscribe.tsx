@@ -10,7 +10,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Check, ArrowLeft } from "lucide-react";
+import { Loader2, ArrowLeft } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import type { SubscriptionPlan } from "@shared/schema";
 
@@ -131,7 +131,6 @@ export default function Subscribe() {
                 <h4 className="font-semibold mb-3">What's included:</h4>
                 {plan.benefits.map((benefit, idx) => (
                   <div key={idx} className="flex items-start gap-2" data-testid={`benefit-${idx}`}>
-                    <Check className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
                     <span className="text-sm">{benefit}</span>
                   </div>
                 ))}

@@ -10,7 +10,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import type { Subscription, UpdateProfile } from "@shared/schema";
 import { updateProfileSchema } from "@shared/schema";
-import { Loader2, Calendar, Package, User, LogOut, Edit, CreditCard } from "lucide-react";
+import { Loader2, LogOut, Edit, CreditCard } from "lucide-react";
 import { format } from "date-fns";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -137,7 +137,6 @@ export default function Account() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-2">
-                  <User className="w-5 h-5" />
                   Profile
                 </CardTitle>
                 <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
@@ -283,7 +282,6 @@ export default function Account() {
           <Card data-testid="card-subscription-summary">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Package className="w-5 h-5" />
                 Active Subscriptions
               </CardTitle>
             </CardHeader>
@@ -300,7 +298,6 @@ export default function Account() {
           <Card data-testid="card-next-pickup">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Calendar className="w-5 h-5" />
                 Next Pickup
               </CardTitle>
             </CardHeader>
@@ -322,7 +319,6 @@ export default function Account() {
           <Card data-testid="card-payment-method">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <CreditCard className="w-5 h-5" />
                 Payment Method
               </CardTitle>
             </CardHeader>

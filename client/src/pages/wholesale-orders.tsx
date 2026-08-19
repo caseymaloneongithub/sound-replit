@@ -15,7 +15,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { ShoppingCart, Eye, CalendarIcon, FileText, ArrowUpDown, Loader2, ChevronRight, ChevronDown, Pencil, Plus, Trash2 } from "lucide-react";
+import { Eye, CalendarIcon, FileText, ArrowUpDown, Loader2, ChevronRight, ChevronDown, Pencil, Plus, Trash2 } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -273,7 +273,6 @@ export default function WholesaleOrders() {
       return (
         <Card>
           <CardContent className="py-12 text-center">
-            <ShoppingCart className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
             <p className="text-muted-foreground">No {getStatusLabel(status).toLowerCase()} orders found</p>
           </CardContent>
         </Card>
@@ -641,7 +640,6 @@ export default function WholesaleOrders() {
         ) : orders.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
-              <ShoppingCart className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
               <p className="text-muted-foreground">No wholesale orders found</p>
             </CardContent>
           </Card>

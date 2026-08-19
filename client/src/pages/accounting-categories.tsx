@@ -24,9 +24,7 @@ import {
   TrendingUp,
   TrendingDown,
   ArrowLeftRight,
-  Loader2,
-  FolderTree,
-  EyeOff
+  Loader2
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -194,16 +192,12 @@ export default function AccountingCategories() {
                 {isInactive && (
                   <Badge variant="outline" className="text-muted-foreground">Inactive</Badge>
                 )}
-                {category.excludeFromReports && (
-                  <EyeOff className="w-3 h-3 text-muted-foreground" title="Excluded from reports" />
-                )}
               </div>
               {category.description && (
                 <p className="text-sm text-muted-foreground mb-2">{category.description}</p>
               )}
               {parentName && (
                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <FolderTree className="w-3 h-3" />
                   Parent: {parentName}
                 </div>
               )}
@@ -258,7 +252,6 @@ export default function AccountingCategories() {
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-green-600" />
               <h2 className="text-lg font-semibold">Income Categories</h2>
               <Badge variant="outline">{incomeCategories.length}</Badge>
             </div>
@@ -300,7 +293,6 @@ export default function AccountingCategories() {
 
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              <TrendingDown className="h-5 w-5 text-red-600" />
               <h2 className="text-lg font-semibold">Expense Categories</h2>
               <Badge variant="outline">{expenseCategories.length}</Badge>
             </div>
@@ -343,7 +335,6 @@ export default function AccountingCategories() {
 
         <div className="space-y-4">
           <div className="flex items-center gap-2">
-            <ArrowLeftRight className="h-5 w-5 text-blue-600" />
             <h2 className="text-lg font-semibold">Transfer Categories</h2>
             <Badge variant="outline">{transferCategories.length}</Badge>
           </div>
@@ -561,7 +552,6 @@ export default function AccountingCategories() {
                         </FormControl>
                         <FormLabel className="!mt-0 text-sm">
                           <span className="flex items-center gap-1">
-                            <EyeOff className="w-3 h-3" />
                             Exclude from reports
                           </span>
                         </FormLabel>

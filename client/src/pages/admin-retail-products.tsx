@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, ShoppingBag, Upload, X } from "lucide-react";
+import { Loader2, Upload, X } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import type { Flavor, RetailProduct } from "@shared/schema";
 
@@ -305,11 +305,10 @@ export default function AdminRetailProducts() {
           </p>
         </div>
 
-        <Card className="border-accent/30 mb-6">
+        <Card className="border-primary/30 mb-6">
           <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-4">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <ShoppingBag className="w-5 h-5 text-accent" />
                 Retail Product Offerings
               </CardTitle>
               <CardDescription>Create specific products by combining flavors with unit types and setting retail prices</CardDescription>

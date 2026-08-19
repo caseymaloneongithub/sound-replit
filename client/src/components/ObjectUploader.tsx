@@ -11,7 +11,9 @@ import { Button } from "@/components/ui/button";
 interface ObjectUploaderProps {
   maxNumberOfFiles?: number;
   maxFileSize?: number;
-  onGetUploadParameters: () => Promise<{
+  // Uppy passes the file here; callers use it to sign the upload with the file's
+  // real MIME type/extension instead of assuming one.
+  onGetUploadParameters: (file?: { name?: string; type?: string }) => Promise<{
     method: "PUT";
     url: string;
   }>;

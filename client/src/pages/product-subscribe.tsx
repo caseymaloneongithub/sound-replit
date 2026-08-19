@@ -8,7 +8,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ArrowLeft, Repeat, Check } from "lucide-react";
+import { Loader2, ArrowLeft, Repeat } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import type { Product } from "@shared/schema";
 
@@ -170,15 +170,12 @@ export default function ProductSubscribe() {
 
               <div className="space-y-2 pt-4 border-t">
                 <div className="flex items-center gap-2 text-sm">
-                  <Check className="w-4 h-4 text-primary" />
                   <span>Pause or cancel anytime</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm">
-                  <Check className="w-4 h-4 text-primary" />
                   <span>Flexible delivery schedule</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm">
-                  <Check className="w-4 h-4 text-primary" />
                   <span>Add or remove products anytime</span>
                 </div>
               </div>
@@ -207,7 +204,7 @@ export default function ProductSubscribe() {
               </div>
 
               <div className="space-y-3">
-                <Label htmlFor="quantity">Quantity (cases)</Label>
+                <Label htmlFor="quantity">Quantity</Label>
                 <Input
                   id="quantity"
                   type="number"

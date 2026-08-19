@@ -13,7 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Plus, Search, Phone, Mail, Building2, User, Calendar, MessageSquare, Pencil, Trash2 } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { insertLeadSchema, insertLeadTouchPointSchema, type Lead, type LeadTouchPoint } from "@shared/schema";
 import { z } from "zod";
@@ -57,9 +57,12 @@ export default function CRMPage() {
     return matchesStatus && matchesPriority;
   });
 
-  // Fetch search results - using default fetcher with query params in query key
+  // The default fetcher joins the query key into a URL path, so params must be sent
+  // as a real query string here (an object key would produce "/[object Object]").
   const { data: searchResults = [], isLoading: isSearching } = useQuery<Lead[]>({
-    queryKey: ["/api/crm/leads/search", { q: searchQuery }],
+    queryKey: ["/api/crm/leads/search", searchQuery],
+    queryFn: () =>
+      apiRequest("GET", `/api/crm/leads/search?q=${encodeURIComponent(searchQuery)}`),
     enabled: searchQuery.length > 0,
   });
 
@@ -379,7 +382,6 @@ export default function CRMPage() {
             <div className="space-y-2">
               <Label data-testid="label-search">Search</Label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   placeholder="Search by name, email, phone..."
                   value={searchQuery}
@@ -433,7 +435,6 @@ export default function CRMPage() {
       ) : displayedLeads.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <Building2 className="w-12 h-12 mx-auto mb-4 text-muted-foreground" data-testid="icon-no-leads" />
             <p className="text-muted-foreground" data-testid="text-no-leads">No leads found</p>
           </CardContent>
         </Card>
@@ -462,23 +463,19 @@ export default function CRMPage() {
                     </div>
                     <div className="flex items-center gap-6 text-sm text-muted-foreground flex-wrap">
                       <div className="flex items-center gap-2" data-testid={`text-contact-${lead.id}`}>
-                        <User className="w-4 h-4" />
                         <span>{lead.contactName}</span>
                       </div>
                       {lead.email && (
                         <div className="flex items-center gap-2" data-testid={`text-email-${lead.id}`}>
-                          <Mail className="w-4 h-4" />
                           <span>{lead.email}</span>
                         </div>
                       )}
                       {lead.phone && (
                         <div className="flex items-center gap-2" data-testid={`text-phone-${lead.id}`}>
-                          <Phone className="w-4 h-4" />
                           <span>{lead.phone}</span>
                         </div>
                       )}
                       <div className="flex items-center gap-2" data-testid={`text-created-${lead.id}`}>
-                        <Calendar className="w-4 h-4" />
                         <span>Created {format(new Date(lead.createdAt), "MMM d, yyyy")}</span>
                       </div>
                     </div>
@@ -541,12 +538,10 @@ export default function CRMPage() {
                     <h4 className="text-sm font-semibold mb-2" data-testid="heading-contact-info">Contact Information</h4>
                     <div className="space-y-2 text-sm">
                       <div className="flex items-center gap-2" data-testid="text-detail-contact">
-                        <User className="w-4 h-4 text-muted-foreground" />
                         <span>{selectedLead.contactName}</span>
                       </div>
                       {selectedLead.email && (
                         <div className="flex items-center gap-2" data-testid="text-detail-email">
-                          <Mail className="w-4 h-4 text-muted-foreground" />
                           <a href={`mailto:${selectedLead.email}`} className="text-primary hover:underline">
                             {selectedLead.email}
                           </a>
@@ -554,7 +549,6 @@ export default function CRMPage() {
                       )}
                       {selectedLead.phone && (
                         <div className="flex items-center gap-2" data-testid="text-detail-phone">
-                          <Phone className="w-4 h-4 text-muted-foreground" />
                           <a href={`tel:${selectedLead.phone}`} className="text-primary hover:underline">
                             {selectedLead.phone}
                           </a>
@@ -590,7 +584,6 @@ export default function CRMPage() {
                         <Card key={tp.id} data-testid={`card-touchpoint-${tp.id}`}>
                           <CardContent className="p-4">
                             <div className="flex items-start gap-3">
-                              <MessageSquare className="w-4 h-4 mt-1 text-muted-foreground" />
                               <div className="flex-1 space-y-1">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="font-semibold text-sm" data-testid={`text-touchpoint-subject-${tp.id}`}>{tp.subject}</span>

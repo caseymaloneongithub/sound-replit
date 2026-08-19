@@ -305,7 +305,6 @@ export default function WholesaleDeliveryReport() {
                     </div>
                   ) : (
                     <div className="text-center py-12">
-                      <CalendarIcon className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
                       <p className="text-muted-foreground">
                         No deliveries scheduled for this date
                       </p>

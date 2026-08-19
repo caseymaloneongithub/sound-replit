@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Minus, Trash2, ShoppingCart } from "lucide-react";
+import { Plus, Minus, Trash2 } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -22,6 +22,7 @@ interface CartItem {
 export default function WholesalePlaceOrder() {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [selectedLocationId, setSelectedLocationId] = useState<string>("");
+  const [fulfillmentMethod, setFulfillmentMethod] = useState<"delivery" | "pickup">("delivery");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState("");
   const [selectedUnitTypeId, setSelectedUnitTypeId] = useState<string>("");
@@ -81,15 +82,16 @@ export default function WholesalePlaceOrder() {
       if (cart.length === 0) {
         throw new Error("Cart is empty");
       }
-      // Require location if customer has locations
-      if (customerLocations.length > 0 && !selectedLocationId) {
-        throw new Error("Please select a delivery location");
+      // Delivery needs an address; pickup is collected at the brewery and needs none.
+      if (fulfillmentMethod === "delivery" && !selectedLocationId) {
+        throw new Error("Please select a delivery location, or set this order to pickup");
       }
 
       return await apiRequest("POST", "/api/wholesale/orders", {
         order: {
           customerId: selectedCustomerId,
-          locationId: selectedLocationId || undefined,
+          fulfillmentMethod,
+          locationId: fulfillmentMethod === "delivery" ? selectedLocationId || undefined : undefined,
           notes: notes || undefined,
         },
         items: cart,
@@ -166,12 +168,25 @@ export default function WholesalePlaceOrder() {
     if (newQuantity <= 0) {
       removeFromCart(unitTypeId, flavorId);
     } else {
-      setCart(cart.map(item => 
+      setCart(cart.map(item =>
         item.unitTypeId === unitTypeId && item.flavorId === flavorId
           ? { ...item, quantity: newQuantity }
           : item
       ));
     }
+  };
+
+  // Typing into the quantity field must let the box go EMPTY mid-edit (stored as 0) so you
+  // can backspace and retype — coercing empty to 0/1 on every keystroke made that
+  // impossible. Removal stays on the minus button; an empty field snaps to 1 on blur.
+  const setCartQuantity = (unitTypeId: string, flavorId: string, raw: string) => {
+    const digits = raw.replace(/[^0-9]/g, "");
+    const n = digits === "" ? 0 : parseInt(digits, 10);
+    setCart(cart.map(item =>
+      item.unitTypeId === unitTypeId && item.flavorId === flavorId
+        ? { ...item, quantity: n }
+        : item
+    ));
   };
 
   const removeFromCart = (unitTypeId: string, flavorId: string) => {
@@ -233,7 +248,36 @@ export default function WholesalePlaceOrder() {
                 </Select>
               </div>
 
-              {selectedCustomerId && customerLocations.length > 0 && (
+              {selectedCustomerId && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Fulfillment</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant={fulfillmentMethod === "delivery" ? "default" : "outline"}
+                      onClick={() => setFulfillmentMethod("delivery")}
+                      data-testid="button-method-delivery"
+                    >
+                      Delivery
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={fulfillmentMethod === "pickup" ? "default" : "outline"}
+                      onClick={() => setFulfillmentMethod("pickup")}
+                      data-testid="button-method-pickup"
+                    >
+                      Pickup
+                    </Button>
+                  </div>
+                  {fulfillmentMethod === "pickup" && (
+                    <p className="text-xs text-muted-foreground">
+                      Collected at the brewery — this order stays off the delivery report and route.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {selectedCustomerId && fulfillmentMethod === "delivery" && customerLocations.length > 0 && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Delivery Location</label>
                   <Select value={selectedLocationId} onValueChange={setSelectedLocationId}>
@@ -337,12 +381,16 @@ export default function WholesalePlaceOrder() {
                           {selectedFlavorId && (
                             <>
                               <div className="space-y-2">
-                                <label className="text-sm font-medium">Quantity (cases)</label>
+                                <label className="text-sm font-medium">Quantity</label>
                                 <Input
-                                  type="number"
-                                  value={quantity}
-                                  onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                                  min="1"
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={quantity === 0 ? "" : quantity}
+                                  onChange={(e) => {
+                                    const d = e.target.value.replace(/[^0-9]/g, "");
+                                    setQuantity(d === "" ? 0 : parseInt(d, 10));
+                                  }}
+                                  onBlur={() => { if (quantity < 1) setQuantity(1); }}
                                   data-testid="input-quantity"
                                 />
                               </div>
@@ -375,7 +423,6 @@ export default function WholesalePlaceOrder() {
                   <CardContent>
                     {cart.length === 0 ? (
                       <div className="text-center py-8">
-                        <ShoppingCart className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
                         <p className="text-muted-foreground">Cart is empty</p>
                       </div>
                     ) : (
@@ -411,11 +458,12 @@ export default function WholesalePlaceOrder() {
                                   <Minus className="w-4 h-4" />
                                 </Button>
                                 <Input
-                                  type="number"
-                                  value={item.quantity}
-                                  onChange={(e) => updateQuantity(item.unitTypeId, item.flavorId, parseInt(e.target.value) || 0)}
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={item.quantity === 0 ? "" : item.quantity}
+                                  onChange={(e) => setCartQuantity(item.unitTypeId, item.flavorId, e.target.value)}
+                                  onBlur={() => { if (item.quantity < 1) updateQuantity(item.unitTypeId, item.flavorId, 1); }}
                                   className="w-16 text-center"
-                                  min="0"
                                   data-testid={`input-cart-quantity-${index}`}
                                 />
                                 <Button

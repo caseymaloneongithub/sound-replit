@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Mail, Phone, MapPin, Plus, Loader2, CreditCard, Users, Edit, X, FileDown, Upload, MoreHorizontal, Trash2 } from "lucide-react";
+import { Mail, MapPin, Plus, Loader2, Edit, X, FileDown, Upload, MoreHorizontal, Trash2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { useForm } from "react-hook-form";
@@ -52,7 +52,7 @@ export default function WholesaleCustomers() {
       contactName: "",
       email: "",
       phone: "",
-      allowOnlinePayment: false,
+      allowOnlinePayment: true,
     },
   });
 
@@ -129,7 +129,7 @@ export default function WholesaleCustomers() {
       contactName: "",
       email: "",
       phone: "",
-      allowOnlinePayment: false,
+      allowOnlinePayment: true,
     });
     setDialogOpen(true);
   };
@@ -711,9 +711,10 @@ export default function WholesaleCustomers() {
                       render={({ field }) => (
                         <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
                           <div className="space-y-0.5">
-                            <FormLabel>Allow Online Payment</FormLabel>
+                            <FormLabel>Allow Online Payment (ACH)</FormLabel>
                             <p className="text-sm text-muted-foreground">
-                              Enable this customer to pay online via Stripe
+                              Let this customer pay invoices by bank transfer. On by default —
+                              turn off for invoice-only terms or a credit hold.
                             </p>
                           </div>
                           <FormControl>
@@ -877,7 +878,6 @@ export default function WholesaleCustomers() {
                     </div>
                   ) : (
                     <div className="text-center py-12">
-                      <Users className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
                       <p className="text-muted-foreground">No customers yet</p>
                     </div>
                   )}
@@ -901,7 +901,6 @@ export default function WholesaleCustomers() {
               <Label className="text-sm font-medium">Primary Email</Label>
               <div className="flex items-center gap-2 mt-2">
                 <Badge variant="secondary" className="flex items-center gap-1">
-                  <Mail className="w-3 h-3" />
                   {selectedCustomer?.email}
                 </Badge>
                 <span className="text-xs text-muted-foreground">(Primary contact)</span>
