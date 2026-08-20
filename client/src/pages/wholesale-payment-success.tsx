@@ -37,7 +37,8 @@ export default function WholesalePaymentSuccess() {
           <p className="text-sm text-muted-foreground text-center">
             Bank transfers usually take 4&ndash;5 business days to clear. Your invoice will
             show as <span className="font-medium text-foreground">Payment processing</span>{" "}
-            until then, and we'll email you a receipt once the funds arrive.
+            until then, and will switch to <span className="font-medium text-foreground">Paid</span>{" "}
+            once the funds arrive.
           </p>
           <p className="text-sm text-muted-foreground text-center">
             There's nothing else you need to do &mdash; please don't pay again.

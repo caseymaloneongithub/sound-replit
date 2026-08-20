@@ -12,7 +12,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesalePaymentReceipt, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendWholesaleWelcomeEmail } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, getPresignedUploadUrl } from "./s3-storage";
@@ -434,33 +434,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     console.log(`[WEBHOOK] ✅ Wholesale invoice ${order.invoiceNumber} settled (funds received)`);
 
+    // POLICY (2026-08-19): no automatic emails to wholesale customers except order
+    // confirmations — the settlement receipt is deliberately not sent. The invoice
+    // flips to Paid in the portal, which is where customers check. Staff still get
+    // the paid notification below. (Dropping the receipt also removed the
+    // 2-queries-per-line-item lookup this webhook was flagged for in review.)
     const customer = await storage.getWholesaleCustomer(order.customerId);
-    const orderItems = await storage.getWholesaleOrderItems(orderId);
-
-    const receiptItems = await Promise.all(orderItems.map(async (item) => {
-      const unitType = item.unitTypeId ? await storage.getWholesaleUnitType(item.unitTypeId) : null;
-      const flavor = item.flavorId ? await storage.getFlavor(item.flavorId) : null;
-      const productName = flavor
-        ? `${unitType?.name || 'Item'} - ${flavor.name}`
-        : unitType?.name || 'Item';
-      return { productName, quantity: item.quantity, unitPrice: item.unitPrice };
-    }));
-
-    if (customer) {
-      try {
-        await sendWholesalePaymentReceipt({
-          customerEmail: customer.email,
-          businessName: customer.businessName,
-          contactName: customer.contactName,
-          invoiceNumber: order.invoiceNumber,
-          amount: Number(order.totalAmount),
-          paidAt,
-          items: receiptItems,
-        });
-      } catch (emailError) {
-        console.error('[WEBHOOK] Failed to send payment receipt to customer:', emailError);
-      }
-    }
 
     try {
       const admins = await storage.getUsersByRole('admin');
@@ -5112,19 +5091,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customer = insertWholesaleCustomerSchema.parse(req.body);
       const created = await storage.createWholesaleCustomer(customer);
 
-      // Tell the customer their account exists. Creating an account used to be a dead
-      // end: the application sat approved but nobody told the applicant, so someone had
-      // to remember to email them by hand. Background + non-fatal — the account is
-      // created regardless. (The CSV bulk-import path deliberately does NOT send these.)
-      sendWholesaleWelcomeEmail({
-        email: created.email,
-        businessName: created.businessName,
-        contactName: created.contactName,
-        loginUrl: `${getBaseUrl()}/wholesale/login`,
-        alreadyExisted: false,
-      }).catch((emailError: any) => {
-        console.error(`[WHOLESALE] Customer ${created.id} created but welcome email failed:`, emailError.message);
-      });
+      // POLICY (2026-08-19): no automatic emails to wholesale customers except order
+      // confirmations, for now. sendWholesaleWelcomeEmail exists in email.ts, fully
+      // built, deliberately unwired — reconnect here when that changes. Until then,
+      // telling the customer their account is ready is a manual step.
 
       res.json(created);
     } catch (error: any) {
