@@ -204,14 +204,6 @@ export default function ShopV2() {
     });
   };
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">Loading products...</p>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-background">
       <div 
@@ -316,6 +308,12 @@ export default function ShopV2() {
             </div>
           </div>
         </div>
+
+        {/* Products load after the hero and lanes are already on screen — the page
+            never blanks while the catalogue query is in flight. */}
+        {isLoading && (
+          <p className="text-muted-foreground py-12" data-testid="text-products-loading">Loading products...</p>
+        )}
 
         {Object.entries(groupedProducts).map(([unitType, unitProducts]) => (
           <div key={unitType} className="mb-12">
