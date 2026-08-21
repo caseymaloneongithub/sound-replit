@@ -76,6 +76,28 @@ export async function getPresignedUploadUrl(
   return { uploadUrl, key, publicUrl: getPublicUrl(key) };
 }
 
+/**
+ * Server-side upload: the browser PUTs the file to OUR server, and the server writes it
+ * to the bucket here. This replaced direct browser→bucket presigned uploads, which need a
+ * CORS policy on the bucket for every origin the site is ever served from (localhost, the
+ * test subdomain, production…). Without it the browser's PUT dies with "Failed to fetch"
+ * and the image silently never lands — exactly the bug that surfaced on the flavor page.
+ * Proxying the bytes costs the app server a few hundred KB per image and removes the
+ * configuration dependency entirely.
+ */
+export async function putObject(key: string, body: Buffer, contentType?: string): Promise<{ publicUrl: string }> {
+  if (!isS3Configured()) {
+    throw new Error("S3 storage is not configured");
+  }
+  await getClient().send(new PutObjectCommand({
+    Bucket: S3_BUCKET!,
+    Key: key,
+    Body: body,
+    ContentType: contentType,
+  }));
+  return { publicUrl: getPublicUrl(key) };
+}
+
 export async function deleteObject(key: string): Promise<void> {
   if (!isS3Configured()) return;
   await getClient().send(new DeleteObjectCommand({ Bucket: S3_BUCKET!, Key: key }));

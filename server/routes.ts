@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import Stripe from "stripe";
@@ -15,7 +15,7 @@ import { z } from "zod";
 import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
-import { isS3Configured, getPresignedUploadUrl } from "./s3-storage";
+import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
 import {
   frequencyToDays,
   frequencyToStripeInterval,
@@ -2243,14 +2243,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "filename is required" });
       }
 
-      // Preferred path: S3-compatible bucket (Cloudflare R2 / S3). Returns the final
-      // public URL too, so the client stores a CDN URL instead of deriving one.
+      // Preferred path: S3-compatible bucket (Cloudflare R2 / S3). The upload URL is a
+      // SAME-ORIGIN endpoint on this server which forwards the bytes to the bucket —
+      // not a presigned bucket URL. Presigned browser→bucket PUTs need a CORS policy on
+      // the bucket for every origin the site runs on; without it the browser's PUT fails
+      // with "Failed to fetch" and nothing lands. Same-origin needs nothing.
       if (isS3Configured()) {
-        const { uploadUrl, key, publicUrl } = await getPresignedUploadUrl(filename, {
-          directory: directory === 'public' ? 'images' : directory,
-          contentType,
+        const key = buildObjectKey(filename, directory === 'public' ? 'images' : directory);
+        return res.json({
+          uploadUrl: `/api/object-storage/upload/${key.split('/').map(encodeURIComponent).join('/')}`,
+          key,
+          publicUrl: getPublicUrl(key),
+          storage: 's3',
         });
-        return res.json({ uploadUrl, key, publicUrl, storage: 's3' });
       }
 
       // Legacy fallback (Replit/GCS object storage)
@@ -2263,6 +2268,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Error getting upload URL: " + error.message });
     }
   });
+
+  // Receive the file bytes from the browser and write them to the bucket (see upload-url
+  // above for why this is proxied). Raw body, capped at 20 MB — product photos are far
+  // smaller; the cap stops this being used as an arbitrary-file dumping ground.
+  app.put(
+    "/api/object-storage/upload/:key(*)",
+    isAuthenticated,
+    isStaffOrAdmin,
+    express.raw({ type: () => true, limit: '20mb' }),
+    async (req, res) => {
+      try {
+        if (!isS3Configured()) {
+          return res.status(503).json({ message: "Image storage is not configured" });
+        }
+        const key = req.params.key;
+        // Only accept keys this server would itself have minted (dir/unique-name); stops
+        // overwriting arbitrary objects in the bucket.
+        if (!/^[\w\-]+\/[\w.\-]+$/.test(key)) {
+          return res.status(400).json({ message: "Invalid object key" });
+        }
+        const body = req.body as Buffer;
+        if (!body || !Buffer.isBuffer(body) || body.length === 0) {
+          return res.status(400).json({ message: "Empty upload" });
+        }
+        const contentType = req.headers['content-type'] || 'application/octet-stream';
+        if (!/^image\//.test(contentType)) {
+          return res.status(415).json({ message: "Only image uploads are accepted" });
+        }
+        const { publicUrl } = await putObject(key, body, contentType);
+        res.json({ publicUrl, key, size: body.length });
+      } catch (error: any) {
+        console.error("Error storing upload:", error);
+        res.status(500).json({ message: "Error storing upload: " + error.message });
+      }
+    }
+  );
 
   // Make uploaded file publicly readable
   app.post("/api/object-storage/make-public", isAuthenticated, isStaffOrAdmin, async (req, res) => {

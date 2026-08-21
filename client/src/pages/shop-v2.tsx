@@ -15,6 +15,7 @@ import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg"
 import logo from "@assets/text-stacked-black_1762299663824.png";
 import { Footer } from "@/components/layout/footer";
 import { SubscribeOptions } from "@/components/subscribe-options";
+import { useAuth } from "@/hooks/use-auth";
 
 type RetailCartItemWithProduct = RetailCartItem & {
   retailProduct: RetailProduct & { flavor: Flavor | null; flavors: Flavor[] };
@@ -103,6 +104,10 @@ type RetailProductWithFlavors = RetailProduct & {
 };
 
 export default function ShopV2() {
+  // Drives the two audience lanes in the hero: a signed-in wholesale customer gets
+  // reorder shortcuts, a signed-in retail customer gets their subscription, everyone
+  // else gets the two front doors.
+  const { user } = useAuth();
   const [addedToCart, setAddedToCart] = useState<Set<string>>(new Set());
   const [selectedFlavors, setSelectedFlavors] = useState<Record<string, string>>({});
   const { toast } = useToast();
@@ -223,24 +228,83 @@ export default function ShopV2() {
         </div>
       </div>
 
-      <div className="bg-muted/50 py-12">
-        <div className="max-w-4xl mx-auto px-6 text-center">
-          <p className="text-lg md:text-xl mb-4">
-            <span className="font-semibold">Retailers and Distributors:</span> Get in touch with us{" "}
-            <a 
-              href="/contact" 
-              className="hover:underline font-semibold"
-              style={{ color: '#F2C179' }}
-              data-testid="link-wholesale-contact"
-            >
-              here
-            </a>{" "}
-            for wholesale pricing.
-          </p>
+      {/* Who are you, and what should you do here? Two lanes — trade and home — each with
+          the one or two actions that matter, and each aware of whether you're already a
+          customer. The old banner was a single line of text pointing retailers at a contact
+          form; everyone else had to guess that the products below were pickup-only. */}
+      <div className="bg-muted/50 py-10">
+        <div className="container mx-auto px-4 grid gap-6 md:grid-cols-2 max-w-5xl">
+          {/* Trade lane */}
+          <div className="bg-background border rounded-md p-6 flex flex-col" data-testid="lane-wholesale">
+            <p className="text-xs font-semibold tracking-wider uppercase text-muted-foreground">For shops, cafés &amp; restaurants</p>
+            {user?.role === "wholesale_customer" ? (
+              <>
+                <h2 className="text-2xl font-bold mt-2">Welcome back</h2>
+                <p className="text-muted-foreground mt-1 flex-1">Reorder your usual in a couple of taps, or build a new order.</p>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Button asChild size="lg" data-testid="button-lane-reorder">
+                    <Link href="/wholesale-customer/orders">Reorder from a past order</Link>
+                  </Button>
+                  <Button asChild size="lg" variant="outline" data-testid="button-lane-new-order">
+                    <Link href="/wholesale-customer/place-order">Place a new order</Link>
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 className="text-2xl font-bold mt-2">Wholesale ordering</h2>
+                <p className="text-muted-foreground mt-1 flex-1">
+                  Cases and kegs, delivered on our routes or picked up at the brewery. Order online, net-30 invoicing.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Button asChild size="lg" data-testid="button-lane-wholesale-login">
+                    <Link href="/wholesale/login">Sign in to order</Link>
+                  </Button>
+                  <Button asChild size="lg" variant="outline" data-testid="button-lane-wholesale-apply">
+                    <Link href="/wholesale/apply">Become a stockist</Link>
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Home lane */}
+          <div className="bg-background border rounded-md p-6 flex flex-col" data-testid="lane-retail">
+            <p className="text-xs font-semibold tracking-wider uppercase text-muted-foreground">For your fridge</p>
+            {user && user.role !== "wholesale_customer" ? (
+              <>
+                <h2 className="text-2xl font-bold mt-2">Welcome back</h2>
+                <p className="text-muted-foreground mt-1 flex-1">Shop below, or manage your Subscribe &amp; Save deliveries.</p>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Button asChild size="lg" data-testid="button-lane-shop">
+                    <a href="#shop">Shop kombucha</a>
+                  </Button>
+                  <Button asChild size="lg" variant="outline" data-testid="button-lane-account">
+                    <Link href="/my-account">My subscription</Link>
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 className="text-2xl font-bold mt-2">Shop 12-packs &amp; kegs</h2>
+                <p className="text-muted-foreground mt-1 flex-1">
+                  Pick up at the brewery in Ballard, Mon&ndash;Thu. Subscribe &amp; Save 10% on a standing order you can skip or pause any time.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Button asChild size="lg" data-testid="button-lane-shop">
+                    <a href="#shop">Shop kombucha</a>
+                  </Button>
+                  <Button asChild size="lg" variant="outline" data-testid="button-lane-subscribe">
+                    <a href="#shop">Subscribe &amp; Save</a>
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-8">
+      <div id="shop" className="container mx-auto px-4 py-8 scroll-mt-4">
         <div className="mb-8">
           <h2 className="text-3xl font-bold mb-2" data-testid="text-products-title">Shop Our Kombucha</h2>
           
