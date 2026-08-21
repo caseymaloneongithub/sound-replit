@@ -23,6 +23,11 @@ type CogsReport = {
   totalMaterialCost: number;
   byRecipe: { processId: string; title: string; flavorName: string | null; units: number; materialCost: number }[];
 };
+type LimitRow = {
+  processId: string; title: string; unit: string;
+  maxUnits: number | null;
+  limiting: { materialId: string; title: string; unit: string; stock: number; perUnit: number } | null;
+};
 type ReorderRow = {
   id: string; title: string; unit: string; stock: number; supplierName: string | null;
   dailyUsage: number; daysOfCover: number | null; leadTimeDays: number;
@@ -58,6 +63,7 @@ function StatCard({ label, value }: {
 export default function InventoryDashboard() {
   const { data: dash, isLoading } = useQuery<Dashboard>({ queryKey: ["/api/inventory/dashboard"] });
   const { data: reorder = [] } = useQuery<ReorderRow[]>({ queryKey: ["/api/inventory/reorder-report"] });
+  const { data: limits = [] } = useQuery<LimitRow[]>({ queryKey: ["/api/inventory/limit-report"] });
   const { data: cogs } = useQuery<CogsReport>({ queryKey: ["/api/inventory/cogs-report"] });
 
   const alerts = useMemo(
@@ -208,6 +214,57 @@ export default function InventoryDashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Production limits — what can we actually make with what's on the shelf */}
+        {limits.length > 0 && (
+          <Card className="mt-6">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Production limits</CardTitle>
+              <CardDescription>
+                Maximum each recipe can produce from stock on hand, and the ingredient that
+                runs out first. Scarcest at the top.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Recipe</TableHead>
+                    <TableHead className="text-right">Can make</TableHead>
+                    <TableHead>Limiting ingredient</TableHead>
+                    <TableHead className="text-right">Its stock</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {limits.map((r) => (
+                    <TableRow key={r.processId} data-testid={`row-limit-${r.processId}`}>
+                      {/* Keep the Brew:/Bottle: prefix — unlike material categories it
+                          distinguishes two different recipes for the same flavor. */}
+                      <TableCell className="text-sm">{r.title.replace(":", " · ")}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm">
+                        {r.maxUnits === null ? (
+                          <span className="text-muted-foreground">no recipe lines</span>
+                        ) : (
+                          <span className={r.maxUnits === 0 ? "font-semibold text-red-600 dark:text-red-400" : "font-medium"}>
+                            {r.maxUnits.toLocaleString()} {r.unit}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {r.limiting ? shortMaterial(r.limiting.title) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
+                        {r.limiting
+                          ? `${r.limiting.stock.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${r.limiting.unit} (${r.limiting.perUnit.toLocaleString(undefined, { maximumFractionDigits: 4 })}/${r.unit})`
+                          : "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Cost of goods produced */}
         {cogs && cogs.byRecipe.length > 0 && (

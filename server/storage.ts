@@ -1329,6 +1329,81 @@ export class PostgresStorage implements IStorage {
     };
   }
 
+  /**
+   * Production-limit report: for every recipe, the maximum output producible from raw
+   * material stock on hand, and which ingredient runs out first.
+   *
+   * Mirrors applyProductionStock's math exactly — that method deducts
+   * `produced units x bomLine.units` per material, so the ceiling for one line is
+   * stock / perUnit and the recipe's ceiling is the minimum across its lines. Floored to
+   * whole output units (you can't sell 0.7 of a case, and a conservative number is the
+   * useful one on the brewery floor).
+   */
+  async getInventoryLimitReport(): Promise<Array<{
+    processId: string; title: string; unit: string;
+    maxUnits: number | null;
+    limiting: { materialId: string; title: string; unit: string; stock: number; perUnit: number } | null;
+    lines: Array<{ materialId: string; title: string; unit: string; stock: number; perUnit: number; maxFromThis: number }>;
+  }>> {
+    const rows = await db
+      .select({
+        processId: processes.id,
+        processTitle: processes.title,
+        processUnit: processes.unit,
+        materialId: materials.id,
+        materialTitle: materials.title,
+        materialUnit: materials.unit,
+        stock: materials.stock,
+        perUnit: processMaterials.units,
+      })
+      .from(processes)
+      .leftJoin(processMaterials, eq(processMaterials.processId, processes.id))
+      .leftJoin(materials, eq(materials.id, processMaterials.materialId))
+      .where(isNull(processes.deletedAt));
+
+    const byProcess = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const arr = byProcess.get(r.processId) ?? [];
+      arr.push(r);
+      byProcess.set(r.processId, arr);
+    }
+
+    const report = [];
+    for (const [processId, group] of Array.from(byProcess.entries())) {
+      const lines = group
+        .filter(g => g.materialId && Number(g.perUnit) > 0)
+        .map(g => {
+          const stock = Math.max(0, Number(g.stock)); // negative drift can't produce anything
+          const perUnit = Number(g.perUnit);
+          return {
+            materialId: g.materialId!,
+            title: g.materialTitle!,
+            unit: g.materialUnit!,
+            stock,
+            perUnit,
+            maxFromThis: Math.floor(stock / perUnit),
+          };
+        })
+        .sort((a, b) => a.maxFromThis - b.maxFromThis);
+
+      report.push({
+        processId,
+        title: group[0].processTitle,
+        unit: group[0].processUnit,
+        // null = recipe has no usable BOM lines, so there is nothing to compute — that is
+        // "recipe not set up", which is different from a hard 0 caused by an empty shelf.
+        maxUnits: lines.length ? lines[0].maxFromThis : null,
+        limiting: lines.length
+          ? { materialId: lines[0].materialId, title: lines[0].title, unit: lines[0].unit, stock: lines[0].stock, perUnit: lines[0].perUnit }
+          : null,
+        lines,
+      });
+    }
+
+    // Scarcest first — the recipes about to hit a wall are the ones staff need to see.
+    return report.sort((a, b) => (a.maxUnits ?? Infinity) - (b.maxUnits ?? Infinity));
+  }
+
   async getInventoryDashboard(): Promise<{
     inventoryValue: number; totalMaterials: number; batchesLast30: number; casesLast30: number;
     flavorMix: { flavor: string; cases: number }[];

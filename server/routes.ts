@@ -1945,6 +1945,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Production limits: max producible per recipe from stock on hand + the limiting
+  // ingredient. Staff-visible (not admin-only) — this answers the brewery-floor question
+  // "what can we actually make today", same audience as the orders board.
+  app.get("/api/inventory/limit-report", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
+    try {
+      res.json(await storage.getInventoryLimitReport());
+    } catch (error: any) {
+      res.status(500).json({ message: "Error building limit report: " + error.message });
+    }
+  });
+
   // NEW SCHEMA - Retail Product management routes
   app.get("/api/retail-products", async (req: any, res) => {
     try {
