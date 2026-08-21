@@ -21,7 +21,7 @@ export function Navbar() {
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur">
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
-        <Link href="/shop" data-testid="link-home">
+        <Link href="/" data-testid="link-home">
           <img 
             src={logo} 
             alt="Puget Sound Kombucha Co." 
