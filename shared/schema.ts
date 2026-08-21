@@ -868,6 +868,33 @@ export const processMaterials = pgTable("process_materials", {
 });
 
 // Productions - logged batches; recording one decrements material stock via the recipe
+// What each batch ACTUALLY consumed, captured at logging time. Deleting a batch reverses
+// from this snapshot — never from the recipe as it stands today. Recipes get tuned (new
+// can recipes especially); without this, deleting an old batch after a recipe edit would
+// restore the wrong amounts and the count would drift by the difference, silently.
+export const productionMaterialUsage = pgTable("production_material_usage", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  productionId: varchar("production_id").notNull().references(() => productions.id, { onDelete: 'cascade' }),
+  materialId: varchar("material_id").notNull().references(() => materials.id),
+  unitsConsumed: decimal("units_consumed", { precision: 16, scale: 6 }).notNull(),
+});
+
+// Ledger of every manual change to a material's stock: physical counts and corrections.
+// `delta` is the correction applied; `stock_after` is the number the shelf was set to.
+// This is what makes a monthly count auditable — the system's number vs the counted
+// number, by whom, when, and why — and what lets drift be diagnosed instead of guessed at.
+export const materialStockAdjustments = pgTable("material_stock_adjustments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  materialId: varchar("material_id").notNull().references(() => materials.id),
+  delta: decimal("delta", { precision: 14, scale: 4 }).notNull(),
+  stockBefore: decimal("stock_before", { precision: 14, scale: 4 }).notNull(),
+  stockAfter: decimal("stock_after", { precision: 14, scale: 4 }).notNull(),
+  reason: text("reason").notNull(), // 'count' | 'correction'
+  note: text("note"),
+  userId: varchar("user_id").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const productions = pgTable("productions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   processId: varchar("process_id").notNull().references(() => processes.id),

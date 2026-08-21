@@ -1692,9 +1692,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /**
+   * Record a physical count or correction. THE way to change stock by hand: sets the shelf
+   * number and writes a ledger row with the delta vs what the system believed, who, when,
+   * why. A monthly count is a series of these; the ledger is where drift gets diagnosed.
+   */
+  app.post("/api/materials/:id/count", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
+    try {
+      const schema = z.object({
+        counted: z.coerce.number().min(0, "Counted quantity cannot be negative").max(1e9),
+        reason: z.enum(['count', 'correction']).default('count'),
+        note: z.string().trim().max(500).optional().nullable(),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+      const adj = await storage.recordMaterialCount(req.params.id, parsed.data.counted, parsed.data.reason, parsed.data.note ?? null, req.user?.id ?? null);
+      if (!adj) return res.status(404).json({ message: "Material not found" });
+      res.json(adj);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error recording count: " + error.message });
+    }
+  });
+
+  app.get("/api/materials/:id/adjustments", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      res.json(await storage.getMaterialAdjustments(req.params.id));
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching adjustments: " + error.message });
+    }
+  });
+
   app.patch("/api/materials/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const updates = insertMaterialSchema.partial().parse(req.body);
+      // Stock is NOT editable here. Overwriting it silently is how a count drifts without
+      // a trace, and a save from a form loaded minutes ago would undo any batch logged in
+      // between. Stock changes go through POST /api/materials/:id/count, which records
+      // the delta and computes against the live value.
+      if ('stock' in updates) {
+        return res.status(400).json({ message: "Stock can't be edited directly — use Record count, which keeps a ledger of the change." });
+      }
       const material = await storage.updateMaterial(req.params.id, updates);
       if (!material) return res.status(404).json({ message: "Material not found" });
       res.json(material);

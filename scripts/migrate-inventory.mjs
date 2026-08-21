@@ -66,6 +66,23 @@ async function main() {
 
   const client = await pool.connect();
   try {
+    // ---- SAFETY: refuse to wipe a database the new system has already written to ----
+    // Legacy ids are integers-as-strings; anything the new app creates gets a UUID. Once a
+    // single UUID exists in these tables, this mirror would destroy real data. After the
+    // production cutover this script must never run again — pass --force only if you
+    // truly mean to discard everything logged in the new system.
+    const probe = await client.query(`
+      SELECT count(*)::int AS n FROM (
+        SELECT id FROM productions WHERE id !~ '^[0-9]+$'
+        UNION ALL SELECT id FROM materials WHERE id !~ '^[0-9]+$'
+        UNION ALL SELECT id FROM material_orders WHERE id !~ '^[0-9]+$'
+        UNION ALL SELECT id FROM processes WHERE id !~ '^[0-9]+$'
+      ) x`);
+    if (probe.rows[0].n > 0 && !process.argv.includes('--force')) {
+      throw new Error(`Target already contains ${probe.rows[0].n} row(s) created by the new system (non-legacy ids). ` +
+        `Mirroring would delete them. Re-run with --force ONLY if you intend to discard new-system inventory data.`);
+    }
+
     // ---- Flavor name -> id map (for linking recipes) ----
     const flavorRes = await client.query("SELECT id, name FROM flavors");
     const flavorMap = new Map(

@@ -76,6 +76,10 @@ import {
   productTypes,
   wholesalePricing,
   inventoryAdjustments,
+
+  productionMaterialUsage,
+
+  materialStockAdjustments,
   type Product, type InsertProduct,
   type ProductType, type InsertProductType,
   type WholesalePricing, type InsertWholesalePricing,
@@ -1067,61 +1071,106 @@ export class PostgresStorage implements IStorage {
   }
 
   // Apply (sign = -1 to consume, +1 to restore) a production's material draw to stock, per the recipe BOM
-  private async applyProductionStock(processId: string, units: number, sign: 1 | -1): Promise<void> {
-    const bom = await db.select().from(processMaterials).where(eq(processMaterials.processId, processId));
-    for (const b of bom) {
-      const delta = sign * units * Number(b.units);
-      await db
-        .update(materials)
-        .set({ stock: sql`${materials.stock} + ${delta}` })
-        .where(eq(materials.id, b.materialId));
-    }
-  }
-
+  /**
+   * Log a batch. Everything happens in ONE transaction with exact numeric SQL:
+   *   1. insert the production row
+   *   2. snapshot what it consumes (units × each recipe line) into production_material_usage
+   *   3. deduct those exact amounts from material stock in a single statement
+   *   4. add finished-goods stock if the recipe is linked to a sellable product
+   *
+   * The previous version did step 3 as one UPDATE per recipe line with JS float math and
+   * no transaction — a failure after the insert left a batch on record with materials only
+   * partly deducted, and the deduction itself was rounded in JS before it hit the DB.
+   */
   async createProduction(data: InsertProduction): Promise<Production> {
-    const result = await db.insert(productions).values(data).returning();
-    const created = result[0];
-    // Draw down raw materials consumed by this batch
-    await this.applyProductionStock(created.processId, Number(created.units), -1);
-    // If this recipe yields a finished-goods product, add the output to sellable stock
-    const proc = (await db.select().from(processes).where(eq(processes.id, created.processId)))[0];
-    if (proc?.finishedProductId) {
-      const qty = Math.round(Number(created.units));
-      if (qty !== 0) {
-        // Records an auditable adjustment AND updates products.stock_quantity
-        await this.createInventoryAdjustment({
-          productId: proc.finishedProductId,
-          quantity: qty,
-          reason: 'production',
-          batchMetadata: JSON.stringify({ productionId: created.id, processTitle: proc.title }),
-          notes: `Production logged: ${proc.title}`,
-        });
+    return await db.transaction(async (tx) => {
+      const [created] = await tx.insert(productions).values(data).returning();
+
+      // Snapshot consumption from the recipe AS IT IS NOW — this is the record of truth
+      // for reversal, so later recipe edits can't change what this batch "used".
+      await tx.execute(sql`
+        INSERT INTO production_material_usage (production_id, material_id, units_consumed)
+        SELECT ${created.id}, pm.material_id, (${String(created.units)}::numeric * pm.units)
+        FROM process_materials pm
+        WHERE pm.process_id = ${created.processId} AND pm.units > 0
+      `);
+
+      // One statement, exact numeric arithmetic, no per-line round trips.
+      await tx.execute(sql`
+        UPDATE materials m
+        SET stock = m.stock - u.units_consumed
+        FROM production_material_usage u
+        WHERE u.production_id = ${created.id} AND u.material_id = m.id
+      `);
+
+      const [proc] = await tx.select().from(processes).where(eq(processes.id, created.processId));
+      if (proc?.finishedProductId) {
+        const qty = Math.round(Number(created.units));
+        if (qty !== 0) {
+          await tx.insert(inventoryAdjustments).values({
+            productId: proc.finishedProductId,
+            quantity: qty,
+            reason: 'production',
+            batchMetadata: JSON.stringify({ productionId: created.id, processTitle: proc.title }),
+            notes: `Production logged: ${proc.title}`,
+          });
+          await tx.update(products)
+            .set({ stockQuantity: sql`${products.stockQuantity} + ${qty}`, inStock: sql`(${products.stockQuantity} + ${qty}) > 0` })
+            .where(eq(products.id, proc.finishedProductId));
+        }
       }
-    }
-    return created;
+      return created;
+    });
   }
 
+  /**
+   * Delete a batch, restoring EXACTLY what it consumed from its usage snapshot — not from
+   * the recipe as it stands today. Batches logged before the snapshot table existed have
+   * no usage rows; for those we fall back to the current recipe (the old behaviour) and
+   * say so in the log, because it is the best information available.
+   */
   async deleteProduction(id: string): Promise<void> {
-    const existing = await db.select().from(productions).where(eq(productions.id, id));
-    const prod = existing[0];
-    if (!prod) return;
-    // Restore the materials this batch had consumed
-    await this.applyProductionStock(prod.processId, Number(prod.units), 1);
-    // Reverse any finished-goods stock this batch had added
-    const proc = (await db.select().from(processes).where(eq(processes.id, prod.processId)))[0];
-    if (proc?.finishedProductId) {
-      const qty = Math.round(Number(prod.units));
-      if (qty !== 0) {
-        await this.createInventoryAdjustment({
-          productId: proc.finishedProductId,
-          quantity: -qty,
-          reason: 'correction',
-          batchMetadata: JSON.stringify({ reversedProductionId: prod.id }),
-          notes: `Reversal of deleted production: ${proc.title}`,
-        });
+    await db.transaction(async (tx) => {
+      const [prod] = await tx.select().from(productions).where(eq(productions.id, id));
+      if (!prod) return;
+
+      const usage = await tx.select().from(productionMaterialUsage).where(eq(productionMaterialUsage.productionId, id));
+      if (usage.length > 0) {
+        await tx.execute(sql`
+          UPDATE materials m
+          SET stock = m.stock + u.units_consumed
+          FROM production_material_usage u
+          WHERE u.production_id = ${id} AND u.material_id = m.id
+        `);
+      } else {
+        console.warn(`[INVENTORY] Production ${id} predates usage snapshots — restoring from the CURRENT recipe (may differ from what was consumed if the recipe changed).`);
+        await tx.execute(sql`
+          UPDATE materials m
+          SET stock = m.stock + (${String(prod.units)}::numeric * pm.units)
+          FROM process_materials pm
+          WHERE pm.process_id = ${prod.processId} AND pm.material_id = m.id AND pm.units > 0
+        `);
       }
-    }
-    await db.delete(productions).where(eq(productions.id, id));
+
+      const [proc] = await tx.select().from(processes).where(eq(processes.id, prod.processId));
+      if (proc?.finishedProductId) {
+        const qty = Math.round(Number(prod.units));
+        if (qty !== 0) {
+          await tx.insert(inventoryAdjustments).values({
+            productId: proc.finishedProductId,
+            quantity: -qty,
+            reason: 'correction',
+            batchMetadata: JSON.stringify({ reversedProductionId: prod.id }),
+            notes: `Reversal of deleted production: ${proc.title}`,
+          });
+          await tx.update(products)
+            .set({ stockQuantity: sql`${products.stockQuantity} - ${qty}`, inStock: sql`(${products.stockQuantity} - ${qty}) > 0` })
+            .where(eq(products.id, proc.finishedProductId));
+        }
+      }
+      // usage rows cascade-delete with the production
+      await tx.delete(productions).where(eq(productions.id, id));
+    });
   }
 
   // Purchase orders (replenishment). Marking a line delivered adds its units to material stock.
@@ -1168,43 +1217,104 @@ export class PostgresStorage implements IStorage {
     return created;
   }
 
-  // Toggle a PO line's delivered flag and move stock accordingly (+units in, -units if reversed)
+  /**
+   * Toggle a PO line's delivered flag and move stock accordingly (+units in, -units if
+   * reversed). The flag flip is a compare-and-set: it only succeeds if the line is still
+   * in the state the caller saw, and stock moves only when that flip actually happened.
+   * The old read-then-update let two people tapping "received" at once add the units
+   * twice. All inside one transaction so the flag and the stock can never disagree.
+   */
   async setOrderMaterialDelivered(lineId: string, delivered: boolean): Promise<void> {
-    const existing = await db.select().from(orderMaterials).where(eq(orderMaterials.id, lineId));
-    const line = existing[0];
-    if (!line) return;
+    await db.transaction(async (tx) => {
+      const [line] = await tx.select().from(orderMaterials).where(eq(orderMaterials.id, lineId));
+      if (!line) return;
 
-    if (line.delivered !== delivered) {
-      const signed = delivered ? Number(line.units) : -Number(line.units);
-      await db
-        .update(materials)
-        .set({ stock: sql`${materials.stock} + ${signed}` })
-        .where(eq(materials.id, line.materialId));
-      await db.update(orderMaterials).set({ delivered }).where(eq(orderMaterials.id, lineId));
-    }
+      // Atomic flip: affects 0 rows if someone else already changed it.
+      const flipped = await tx
+        .update(orderMaterials)
+        .set({ delivered })
+        .where(and(eq(orderMaterials.id, lineId), eq(orderMaterials.delivered, !delivered)))
+        .returning({ id: orderMaterials.id, units: orderMaterials.units, materialId: orderMaterials.materialId });
 
-    // Reflect overall delivery on the order: fully delivered => stamp dateDelivered, else clear it
-    const siblings = await db.select().from(orderMaterials).where(eq(orderMaterials.orderId, line.orderId));
-    const allDelivered = siblings.length > 0 && siblings.every((s) => s.delivered);
-    await db
-      .update(materialOrders)
-      .set({ dateDelivered: allDelivered ? new Date() : null })
-      .where(eq(materialOrders.id, line.orderId));
+      if (flipped.length === 1) {
+        const signedSql = delivered
+          ? sql`${materials.stock} + ${String(flipped[0].units)}::numeric`
+          : sql`${materials.stock} - ${String(flipped[0].units)}::numeric`;
+        await tx.update(materials).set({ stock: signedSql }).where(eq(materials.id, flipped[0].materialId));
+      }
+
+      // Reflect overall delivery on the order: fully delivered => stamp dateDelivered, else clear it
+      const siblings = await tx.select().from(orderMaterials).where(eq(orderMaterials.orderId, line.orderId));
+      const allDelivered = siblings.length > 0 && siblings.every((s) => s.delivered);
+      await tx
+        .update(materialOrders)
+        .set({ dateDelivered: allDelivered ? new Date() : null })
+        .where(eq(materialOrders.id, line.orderId));
+    });
   }
 
   async deleteMaterialOrder(id: string): Promise<void> {
-    const lines = await db.select().from(orderMaterials).where(eq(orderMaterials.orderId, id));
-    // Reverse stock for any lines that had been received
-    for (const l of lines) {
-      if (l.delivered) {
-        await db
-          .update(materials)
-          .set({ stock: sql`${materials.stock} - ${Number(l.units)}` })
-          .where(eq(materials.id, l.materialId));
-      }
-    }
-    await db.delete(orderMaterials).where(eq(orderMaterials.orderId, id));
-    await db.delete(materialOrders).where(eq(materialOrders.id, id));
+    // Reversing received stock and deleting the order must land together: a failure
+    // between them used to leave either phantom stock or a vanished order with stock
+    // still counted.
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        UPDATE materials m
+        SET stock = m.stock - om.units
+        FROM order_materials om
+        WHERE om.order_id = ${id} AND om.delivered = true AND om.material_id = m.id
+      `);
+      await tx.delete(orderMaterials).where(eq(orderMaterials.orderId, id));
+      await tx.delete(materialOrders).where(eq(materialOrders.id, id));
+    });
+  }
+
+  /**
+   * Record a physical count (or a correction) for a material. The shelf number is SET to
+   * `counted`, and the ledger records the delta against what the system believed — which
+   * is the number that matters for finding drift. Computed inside the transaction from the
+   * live value, so a batch logged while the count was being typed is not lost.
+   *
+   * This is the ONLY sanctioned way to change stock by hand; the generic material PATCH
+   * refuses the stock field. Overwriting stock silently was how drift became invisible.
+   */
+  async recordMaterialCount(materialId: string, counted: number, reason: 'count' | 'correction', note: string | null, userId: string | null) {
+    return await db.transaction(async (tx) => {
+      const [before] = await tx.select({ stock: materials.stock }).from(materials).where(eq(materials.id, materialId)).for('update');
+      if (!before) return null;
+      const stockBefore = Number(before.stock);
+      const delta = counted - stockBefore;
+      await tx.update(materials).set({ stock: counted.toFixed(4) }).where(eq(materials.id, materialId));
+      const [adj] = await tx.insert(materialStockAdjustments).values({
+        materialId,
+        delta: delta.toFixed(4),
+        stockBefore: stockBefore.toFixed(4),
+        stockAfter: counted.toFixed(4),
+        reason,
+        note,
+        userId,
+      }).returning();
+      return adj;
+    });
+  }
+
+  async getMaterialAdjustments(materialId: string, limit = 50) {
+    return await db
+      .select({
+        id: materialStockAdjustments.id,
+        delta: materialStockAdjustments.delta,
+        stockBefore: materialStockAdjustments.stockBefore,
+        stockAfter: materialStockAdjustments.stockAfter,
+        reason: materialStockAdjustments.reason,
+        note: materialStockAdjustments.note,
+        createdAt: materialStockAdjustments.createdAt,
+        userName: users.username,
+      })
+      .from(materialStockAdjustments)
+      .leftJoin(users, eq(users.id, materialStockAdjustments.userId))
+      .where(eq(materialStockAdjustments.materialId, materialId))
+      .orderBy(desc(materialStockAdjustments.createdAt))
+      .limit(limit);
   }
 
   // ===== Analytics: smart reorder + dashboard =====
@@ -1409,13 +1519,21 @@ export class PostgresStorage implements IStorage {
     inventoryValue: number; totalMaterials: number; batchesLast30: number; casesLast30: number;
     flavorMix: { flavor: string; cases: number }[];
     monthly: { month: string; cases: number }[];
+    negativeStock: { id: string; title: string; unit: string; stock: number }[];
   }> {
     const mats = await this.getMaterials();
     const inventoryValue = mats.reduce((s, m) => s + Number(m.stock) * Number(m.cost), 0);
+    // Negative stock is almost always a delivery that was never marked received, or a
+    // batch logged against the wrong recipe — either way it means the number is wrong and
+    // someone should look. Silently clamping it hid the signal.
+    const negativeStock = mats
+      .filter(m => Number(m.stock) < 0)
+      .map(m => ({ id: m.id, title: m.title, unit: m.unit, stock: Number(m.stock) }))
+      .sort((a, b) => a.stock - b.stock);
 
     const rows = await db
       .select({
-        flavorName: flavors.name, title: processes.title,
+        flavorName: flavors.name, title: processes.title, processUnit: processes.unit,
         units: productions.units, date: productions.date,
       })
       .from(productions)
@@ -1441,7 +1559,9 @@ export class PostgresStorage implements IStorage {
     let casesLast30 = 0;
 
     for (const r of rows) {
-      const isBottle = r.title.startsWith('Bottle:');
+      // "Cases" = any recipe whose OUTPUT unit is a case — bottling today, canning next
+      // month. Keying on the "Bottle:" title prefix made can batches invisible here.
+      const isBottle = String(r.processUnit).toLowerCase().startsWith('case') || r.title.startsWith('Bottle:') || r.title.startsWith('Can:');
       const d = new Date(r.date);
       const units = Number(r.units);
       if (d >= cutoff30) {
@@ -1464,6 +1584,7 @@ export class PostgresStorage implements IStorage {
       totalMaterials: mats.length,
       batchesLast30,
       casesLast30: Math.round(casesLast30),
+      negativeStock,
       flavorMix,
       monthly: monthly.map((m) => ({ month: m.month, cases: Math.round(m.cases) })),
     };

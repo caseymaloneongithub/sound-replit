@@ -85,14 +85,17 @@ function MaterialForm({
 
   const save = useMutation({
     mutationFn: async () => {
-      const body = {
+      // Stock is only settable when CREATING a material (its opening balance). Editing
+      // stock on an existing material goes through "Record count", which keeps a ledger —
+      // the server rejects stock on PATCH for exactly that reason.
+      const body: Record<string, unknown> = {
         title,
         unit,
         cost: String(n(cost)),
-        stock: String(n(stock)),
         orderSize: String(n(orderSize)),
         supplierId: supplierId === "none" ? null : supplierId,
       };
+      if (!isEdit) body.stock = String(n(stock));
       return isEdit
         ? apiRequest("PATCH", `/api/materials/${material!.id}`, body)
         : apiRequest("POST", "/api/materials", body);
@@ -154,9 +157,16 @@ function MaterialForm({
             onChange={(e) => setCost(e.target.value)} data-testid="input-material-cost" />
         </div>
         <div className="space-y-2">
-          <label className="text-sm font-medium">On hand</label>
-          <Input type="number" step="0.0001" min="0" value={stock}
-            onChange={(e) => setStock(e.target.value)} data-testid="input-material-stock" />
+          <label className="text-sm font-medium">{isEdit ? "On hand" : "Opening stock"}</label>
+          {isEdit ? (
+            <div className="h-10 flex items-center text-sm tabular-nums" title="Use Record count to change stock">
+              {n(stock).toLocaleString()} <span className="text-muted-foreground ml-1">{unit}</span>
+            </div>
+          ) : (
+            <Input type="number" step="0.0001" min="0" value={stock}
+              onChange={(e) => setStock(e.target.value)} data-testid="input-material-stock" />
+          )}
+          {isEdit && <p className="text-xs text-muted-foreground">Change stock with Record count, so the change is logged.</p>}
         </div>
         <div className="space-y-2">
           <label className="text-sm font-medium">Reorder size</label>
@@ -173,6 +183,77 @@ function MaterialForm({
         </Button>
       </DialogFooter>
     </div>
+  );
+}
+
+/**
+ * Record a physical count for one material. Sets the shelf number and logs the delta
+ * against what the system believed — the ledger entry is the whole point of doing it
+ * this way instead of editing the number.
+ */
+function CountDialog({ material, onClose }: { material: EnrichedMaterial | null; onClose: () => void }) {
+  const { toast } = useToast();
+  const [counted, setCounted] = useState("");
+  const [note, setNote] = useState("");
+  const current = material ? n(material.stock) : 0;
+  const countedNum = counted === "" ? null : Number(counted);
+  const delta = countedNum === null || !Number.isFinite(countedNum) ? null : countedNum - current;
+
+  const save = useMutation({
+    mutationFn: async () =>
+      apiRequest("POST", `/api/materials/${material!.id}/count`, { counted: countedNum, note: note || null, reason: "count" }),
+    onSuccess: () => {
+      toast({
+        title: "Count recorded",
+        description: delta === 0
+          ? `${material!.title} matched the system exactly.`
+          : `${material!.title}: ${current.toLocaleString()} → ${countedNum!.toLocaleString()} ${material!.unit} (${delta! > 0 ? "+" : ""}${delta!.toLocaleString()}).`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/materials"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/reorder-report"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/limit-report"] });
+      setCounted(""); setNote(""); onClose();
+    },
+    onError: (e: any) => toast({ title: "Couldn't record count", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={!!material} onOpenChange={(o) => { if (!o) { setCounted(""); setNote(""); onClose(); } }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Record count — {material ? splitTitle(material.title).name : ""}</DialogTitle>
+          <DialogDescription>
+            System has <span className="font-medium text-foreground tabular-nums">{current.toLocaleString()} {material?.unit}</span>.
+            Enter what you actually counted; the difference is logged.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Counted quantity ({material?.unit})</label>
+            <Input type="number" step="0.0001" min="0" autoFocus value={counted}
+              onChange={(e) => setCounted(e.target.value)} placeholder={String(current)}
+              data-testid="input-count-quantity" />
+            {delta !== null && (
+              <p className={`text-sm tabular-nums ${delta === 0 ? "text-muted-foreground" : delta > 0 ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}>
+                {delta === 0 ? "Matches the system." : `${delta > 0 ? "+" : ""}${delta.toLocaleString()} ${material?.unit} vs system`}
+              </p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Note (optional)</label>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Monthly count, found a spilled bag" data-testid="input-count-note" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { setCounted(""); setNote(""); onClose(); }}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={countedNum === null || !Number.isFinite(countedNum) || countedNum < 0 || save.isPending}
+            data-testid="button-save-count">
+            {save.isPending ? "Saving…" : "Record count"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -197,6 +278,7 @@ export default function Materials() {
   const [category, setCategory] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<EnrichedMaterial | null>(null);
+  const [counting, setCounting] = useState<EnrichedMaterial | null>(null);
 
   const { data: materials = [], isLoading } = useQuery<EnrichedMaterial[]>({
     queryKey: ["/api/materials"],
@@ -365,6 +447,10 @@ export default function Materials() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
+                        <Button variant="ghost" size="sm" onClick={() => setCounting(m)}
+                          data-testid={`button-count-material-${m.id}`}>
+                          Count
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => setEditing(m)}
                           data-testid={`button-edit-material-${m.id}`}>
                           Edit
@@ -396,6 +482,8 @@ export default function Materials() {
           <MaterialForm suppliers={suppliers} onClose={() => setCreateOpen(false)} />
         </DialogContent>
       </Dialog>
+
+      <CountDialog material={counting} onClose={() => setCounting(null)} />
 
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent>

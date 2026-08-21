@@ -17,6 +17,7 @@ type Dashboard = {
   inventoryValue: number; totalMaterials: number; batchesLast30: number; casesLast30: number;
   flavorMix: { flavor: string; cases: number }[];
   monthly: { month: string; cases: number }[];
+  negativeStock: { id: string; title: string; unit: string; stock: number }[];
 };
 type CogsReport = {
   windowDays: number;
@@ -104,6 +105,29 @@ export default function InventoryDashboard() {
           <StatCard label="Batches — last 30d" value={dash.batchesLast30.toLocaleString()} />
           <StatCard label="Cases — last 30d" value={dash.casesLast30.toLocaleString()} />
         </div>
+
+        {/* Negative stock = the number is wrong. Usually a delivery never marked received. */}
+        {dash.negativeStock?.length > 0 && (
+          <Card className="mb-6 border-red-300 dark:border-red-900">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg text-red-700 dark:text-red-400">Stock below zero — needs a look</CardTitle>
+              <CardDescription>
+                A negative on-hand means a batch was logged against stock the system never saw arrive.
+                Mark the delivery received on its purchase order, or record a count.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <ul className="text-sm space-y-1">
+                {dash.negativeStock.map((m) => (
+                  <li key={m.id} className="flex justify-between tabular-nums" data-testid={`negative-${m.id}`}>
+                    <span>{shortMaterial(m.title)}</span>
+                    <span className="text-red-700 dark:text-red-400 font-medium">{m.stock.toLocaleString()} {m.unit}</span>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Reorder alerts */}
         <Card className="mb-6">
