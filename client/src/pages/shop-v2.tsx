@@ -231,7 +231,7 @@ export default function ShopV2() {
             <p className="text-xs font-semibold tracking-wider uppercase text-muted-foreground">For shops, cafés &amp; restaurants</p>
             {user?.role === "wholesale_customer" ? (
               <>
-                <h2 className="text-2xl font-bold mt-2">Welcome back</h2>
+                <h2 className="text-2xl font-bold mt-2">Wholesale orders</h2>
                 <p className="text-muted-foreground mt-1 flex-1">Reorder your usual in a couple of taps, or build a new order.</p>
                 <div className="flex flex-wrap gap-2 mt-4">
                   <Button asChild size="lg" data-testid="button-lane-reorder">
@@ -265,7 +265,7 @@ export default function ShopV2() {
             <p className="text-xs font-semibold tracking-wider uppercase text-muted-foreground">For your fridge</p>
             {user && user.role !== "wholesale_customer" ? (
               <>
-                <h2 className="text-2xl font-bold mt-2">Welcome back</h2>
+                <h2 className="text-2xl font-bold mt-2">Retail orders</h2>
                 <p className="text-muted-foreground mt-1 flex-1">Shop below, or manage your Subscribe &amp; Save deliveries.</p>
                 <div className="flex flex-wrap gap-2 mt-4">
                   <Button asChild size="lg" data-testid="button-lane-shop">
