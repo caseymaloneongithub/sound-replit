@@ -121,7 +121,7 @@ export default function Home() {
         <div className="max-w-2xl mb-10">
           <h2 className="text-3xl font-bold mb-2" data-testid="text-flavors-title">Our flavors</h2>
           <p className="text-muted-foreground">
-            Small-batch kombucha brewed in Seattle from real tea, fruit, herbs and spices. Every flavor is available by the 12-pack and on draft.
+            Small-batch kombucha brewed in Seattle from real tea, fruit, herbs and spices.
           </p>
         </div>
 
