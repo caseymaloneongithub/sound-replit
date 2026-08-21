@@ -56,6 +56,7 @@ import {
   deliveryRouteStops,
   wholesaleOrders,
   wholesaleOrderItems,
+  wholesaleOrderAdjustments,
   users,
   verificationCodes,
   emailVerificationCodes,
@@ -2581,6 +2582,47 @@ export class PostgresStorage implements IStorage {
     }));
 
     return { retail, wholesale };
+  }
+
+  async getWholesaleOrderAdjustments(orderId: string) {
+    return await db
+      .select()
+      .from(wholesaleOrderAdjustments)
+      .where(eq(wholesaleOrderAdjustments.orderId, orderId))
+      .orderBy(asc(wholesaleOrderAdjustments.createdAt));
+  }
+
+  /**
+   * Recompute an order's total as items subtotal + signed adjustments, and persist it.
+   * The single writer for totalAmount whenever adjustments change — callers never send a
+   * client-computed total. Returns the new total.
+   */
+  async recomputeWholesaleOrderTotal(orderId: string): Promise<number> {
+    const [row] = (await db.execute(sql`
+      SELECT
+        COALESCE((SELECT SUM(quantity * unit_price) FROM wholesale_order_items WHERE order_id = ${orderId}), 0)
+        + COALESCE((SELECT SUM(amount) FROM wholesale_order_adjustments WHERE order_id = ${orderId}), 0)
+        AS total
+    `)).rows as Array<{ total: string }>;
+    const total = Number(row.total);
+    await db.update(wholesaleOrders).set({ totalAmount: total.toFixed(2), updatedAt: new Date() }).where(eq(wholesaleOrders.id, orderId));
+    return total;
+  }
+
+  async createWholesaleOrderAdjustment(data: { orderId: string; label: string; amount: string; createdByUserId?: string | null }) {
+    const [created] = await db.insert(wholesaleOrderAdjustments).values(data).returning();
+    const total = await this.recomputeWholesaleOrderTotal(data.orderId);
+    return { adjustment: created, total };
+  }
+
+  async deleteWholesaleOrderAdjustment(id: string, orderId: string): Promise<number | null> {
+    // Scoped to the order so a stray id can't delete another invoice's adjustment.
+    const deleted = await db
+      .delete(wholesaleOrderAdjustments)
+      .where(and(eq(wholesaleOrderAdjustments.id, id), eq(wholesaleOrderAdjustments.orderId, orderId)))
+      .returning();
+    if (deleted.length === 0) return null;
+    return await this.recomputeWholesaleOrderTotal(orderId);
   }
 
   async getWholesaleOrderWithDetails(id: string): Promise<{

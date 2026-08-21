@@ -475,6 +475,19 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   deletedAt: timestamp("deleted_at"), // Soft delete - null means active
 });
 
+// Signed invoice adjustments (pallet fees, damage credits, negotiated discounts).
+// Itemized rather than a single column so multiple fees coexist and each is auditable.
+// wholesale_orders.totalAmount ALWAYS equals items subtotal + sum(adjustments) — it is
+// recomputed server-side whenever an adjustment changes, never trusted from a client.
+export const wholesaleOrderAdjustments = pgTable("wholesale_order_adjustments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => wholesaleOrders.id),
+  label: text("label").notNull(), // e.g. 'Pallet fee', 'Damaged case credit'
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(), // signed: + fee, - credit
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const wholesaleOrderItems = pgTable("wholesale_order_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orderId: varchar("order_id").notNull().references(() => wholesaleOrders.id),

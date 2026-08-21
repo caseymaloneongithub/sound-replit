@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Input } from "@/components/ui/input";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { format } from "date-fns";
@@ -7,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Printer, ArrowLeft, Landmark, Loader2, Mail } from "lucide-react";
 import { useLocation } from "wouter";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatCaseQuantity } from "@shared/pricing";
 import type { User } from "@shared/schema";
@@ -27,13 +28,43 @@ export default function WholesaleInvoice() {
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
+  const isStaff = user?.role === "staff" || user?.role === "admin" || user?.role === "super_admin";
+
   const { data: invoiceData, isLoading } = useQuery<{
     order: any;
     customer: any;
     items: any[];
+    adjustments: Array<{ id: string; label: string; amount: string }>;
   }>({
     queryKey: ["/api/wholesale/orders", orderId, "invoice"],
     enabled: !!orderId,
+  });
+
+  const [adjLabel, setAdjLabel] = useState("");
+  const [adjAmount, setAdjAmount] = useState("");
+
+  const refreshInvoice = () =>
+    queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders", orderId, "invoice"] });
+
+  const addAdjustment = useMutation({
+    mutationFn: async () =>
+      apiRequest("POST", `/api/wholesale/orders/${orderId}/adjustments`, {
+        label: adjLabel,
+        amount: Number(adjAmount),
+      }),
+    onSuccess: () => {
+      setAdjLabel("");
+      setAdjAmount("");
+      refreshInvoice();
+    },
+    onError: (e: any) => toast({ title: "Couldn't add adjustment", description: e.message, variant: "destructive" }),
+  });
+
+  const removeAdjustment = useMutation({
+    mutationFn: async (adjustmentId: string) =>
+      apiRequest("DELETE", `/api/wholesale/orders/${orderId}/adjustments/${adjustmentId}`),
+    onSuccess: refreshInvoice,
+    onError: (e: any) => toast({ title: "Couldn't remove adjustment", description: e.message, variant: "destructive" }),
   });
 
   const paymentMutation = useMutation({
@@ -109,6 +140,8 @@ export default function WholesaleInvoice() {
   const subtotal = items.reduce((sum: number, item: any) => {
     return sum + parseFloat(item.unitPrice) * item.quantity;
   }, 0);
+  // Adjustments lock the moment money starts moving: paid, or an ACH debit in flight.
+  const adjustmentsLocked = !!order.paidAt || (!!order.paymentInitiatedAt && !order.paymentFailedAt);
 
   return (
     <div className="min-h-screen bg-background">
@@ -303,11 +336,66 @@ export default function WholesaleInvoice() {
             </div>
 
             <div className="flex justify-end mb-8">
-              <div className="w-64 space-y-2">
+              <div className="w-80 space-y-2">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Subtotal:</span>
                   <span>${subtotal.toFixed(2)}</span>
                 </div>
+
+                {/* Signed adjustments: pallet fees, damage credits. Customers see them
+                    read-only; staff can edit until payment starts. */}
+                {(invoiceData.adjustments ?? []).map((a) => (
+                  <div key={a.id} className="flex justify-between items-center text-muted-foreground" data-testid={`adjustment-${a.id}`}>
+                    <span className="flex items-center gap-1">
+                      {isStaff && !adjustmentsLocked && (
+                        <button
+                          type="button"
+                          onClick={() => removeAdjustment.mutate(a.id)}
+                          className="print:hidden text-destructive hover:opacity-70 mr-1"
+                          aria-label={`Remove ${a.label}`}
+                          data-testid={`button-remove-adjustment-${a.id}`}
+                        >
+                          ×
+                        </button>
+                      )}
+                      {a.label}:
+                    </span>
+                    <span className={Number(a.amount) < 0 ? "text-green-700 dark:text-green-400" : ""}>
+                      {Number(a.amount) < 0 ? "−" : "+"}${Math.abs(Number(a.amount)).toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+
+                {isStaff && !adjustmentsLocked && (
+                  <div className="print:hidden flex items-center gap-2 pt-1">
+                    <Input
+                      value={adjLabel}
+                      onChange={(e) => setAdjLabel(e.target.value)}
+                      placeholder="e.g. Pallet fee"
+                      className="h-8 text-sm"
+                      data-testid="input-adjustment-label"
+                    />
+                    <Input
+                      value={adjAmount}
+                      onChange={(e) => setAdjAmount(e.target.value.replace(/[^0-9.\-]/g, ""))}
+                      placeholder="+/- amount"
+                      inputMode="decimal"
+                      className="h-8 w-28 text-sm text-right"
+                      data-testid="input-adjustment-amount"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      disabled={!adjLabel.trim() || !adjAmount || Number(adjAmount) === 0 || addAdjustment.isPending}
+                      onClick={() => addAdjustment.mutate()}
+                      data-testid="button-add-adjustment"
+                    >
+                      Add
+                    </Button>
+                  </div>
+                )}
+
                 <Separator />
                 <div className="flex justify-between text-lg font-bold">
                   <span>Total:</span>

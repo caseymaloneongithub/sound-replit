@@ -365,14 +365,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!stripe) throw new Error("Stripe is not configured");
     const baseUrl = getBaseUrl();
 
-    const lineItems = items.map((item: any) => ({
+    // ONE line for the full invoice total, not per-item lines. Invoices can carry signed
+    // adjustments (pallet fees, damage credits) and Stripe line items cannot be negative,
+    // so itemizing would either drop credits or drift from totalAmount. The itemized view
+    // lives on the invoice page; the charge must simply equal the invoice.
+    const lineItems = [{
       price_data: {
         currency: 'usd',
-        product_data: { name: item.product.name },
-        unit_amount: Math.round(parseFloat(item.unitPrice) * 100),
+        product_data: { name: `Invoice ${order.invoiceNumber} — Puget Sound Kombucha Co.` },
+        unit_amount: Math.round(parseFloat(order.totalAmount) * 100),
       },
-      quantity: item.quantity,
-    }));
+      quantity: 1,
+    }];
+    void items; // itemization intentionally not sent to Stripe
 
     const paymentMetadata = {
       orderId: order.id,
@@ -5856,9 +5861,67 @@ If you have any questions, please don't hesitate to reach out!`,
       if (!orderDetails) {
         return res.status(404).json({ message: "Order not found" });
       }
-      res.json(orderDetails);
+      const adjustments = await storage.getWholesaleOrderAdjustments(req.params.id);
+      res.json({ ...orderDetails, adjustments });
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching invoice: " + error.message });
+    }
+  });
+
+  /**
+   * Invoice adjustments: signed amounts (pallet fee +, damage credit -) staff can attach
+   * to an order. Locked once payment is settled or an ACH debit is in flight — changing
+   * an invoice mid-debit would desync the amount charged from the amount invoiced.
+   */
+  app.post("/api/wholesale/orders/:id/adjustments", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
+    try {
+      const order = await storage.getWholesaleOrder(req.params.id);
+      if (!order) return res.status(404).json({ message: "Order not found" });
+      if (order.paidAt) return res.status(400).json({ message: "This invoice is already paid — adjustments are locked." });
+      if (order.paymentInitiatedAt && !order.paymentFailedAt) {
+        return res.status(400).json({ message: "A bank payment is processing — adjustments are locked until it settles or fails." });
+      }
+
+      const schema = z.object({
+        label: z.string().trim().min(1, "Label is required").max(100),
+        amount: z.coerce.number().refine(n => Number.isFinite(n) && n !== 0, "Amount must be a non-zero number")
+          .refine(n => Math.abs(n) <= 10000, "Amount out of range"),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+
+      // A credit larger than the invoice would produce a negative total; refuse rather
+      // than invent a "we owe them money" state the payment flow can't represent.
+      const wouldBe = Number(order.totalAmount) + parsed.data.amount;
+      if (wouldBe < 0) {
+        return res.status(400).json({ message: `That credit exceeds the invoice — total would be $${wouldBe.toFixed(2)}.` });
+      }
+
+      const { adjustment, total } = await storage.createWholesaleOrderAdjustment({
+        orderId: req.params.id,
+        label: parsed.data.label,
+        amount: parsed.data.amount.toFixed(2),
+        createdByUserId: req.user?.id ?? null,
+      });
+      res.json({ adjustment, totalAmount: total.toFixed(2) });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error adding adjustment: " + error.message });
+    }
+  });
+
+  app.delete("/api/wholesale/orders/:id/adjustments/:adjustmentId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const order = await storage.getWholesaleOrder(req.params.id);
+      if (!order) return res.status(404).json({ message: "Order not found" });
+      if (order.paidAt) return res.status(400).json({ message: "This invoice is already paid — adjustments are locked." });
+      if (order.paymentInitiatedAt && !order.paymentFailedAt) {
+        return res.status(400).json({ message: "A bank payment is processing — adjustments are locked until it settles or fails." });
+      }
+      const total = await storage.deleteWholesaleOrderAdjustment(req.params.adjustmentId, req.params.id);
+      if (total === null) return res.status(404).json({ message: "Adjustment not found" });
+      res.json({ totalAmount: total.toFixed(2) });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error removing adjustment: " + error.message });
     }
   });
 
@@ -5874,9 +5937,10 @@ If you have any questions, please don't hesitate to reach out!`,
       const { order, customer, items } = orderDetails;
       
       // Calculate subtotal
-      const subtotal = items.reduce((sum: number, item: any) => {
-        return sum + parseFloat(item.unitPrice) * item.quantity;
-      }, 0);
+      // The email template renders this as the amount due, so it must be the true invoice
+      // total (items + adjustments) — summing items alone would understate an invoice
+      // carrying a pallet fee or overstate one carrying a credit.
+      const subtotal = parseFloat(order.totalAmount);
       
       // Set due date (default 30 days from now if not provided)
       const dueDateValue = dueDate ? new Date(dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -5896,12 +5960,21 @@ If you have any questions, please don't hesitate to reach out!`,
         paymentUrl = session.url;
       }
 
-      // Prepare invoice items for email
-      const invoiceItems = items.map((item: any) => ({
-        productName: item.product.name,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-      }));
+      // Prepare invoice items for email — adjustments render as qty-1 lines so the
+      // emailed invoice's lines sum to the same total the customer is asked to pay.
+      const orderAdjustments = await storage.getWholesaleOrderAdjustments(order.id);
+      const invoiceItems = [
+        ...items.map((item: any) => ({
+          productName: item.product.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+        })),
+        ...orderAdjustments.map((a) => ({
+          productName: a.label,
+          quantity: 1,
+          unitPrice: a.amount,
+        })),
+      ];
 
       // Prepare location if available
       const location = order.location ? {
