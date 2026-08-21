@@ -1628,7 +1628,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ===== Materials inventory module =====
 
   // Suppliers
-  app.get("/api/suppliers", isAdmin, async (_req, res) => {
+  app.get("/api/suppliers", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
     try {
       res.json(await storage.getSuppliers());
     } catch (error: any) {
@@ -1636,7 +1636,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/suppliers", isAdmin, async (req, res) => {
+  app.post("/api/suppliers", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const data = insertSupplierSchema.parse(req.body);
       res.json(await storage.createSupplier(data));
@@ -1648,7 +1648,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/suppliers/:id", isAdmin, async (req, res) => {
+  app.patch("/api/suppliers/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const updates = insertSupplierSchema.partial().parse(req.body);
       const supplier = await storage.updateSupplier(req.params.id, updates);
@@ -1662,7 +1662,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/suppliers/:id", isAdmin, async (req, res) => {
+  app.delete("/api/suppliers/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       await storage.deleteSupplier(req.params.id);
       res.json({ message: "Supplier deleted successfully" });
@@ -1672,7 +1672,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Materials
-  app.get("/api/materials", isAdmin, async (_req, res) => {
+  app.get("/api/materials", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
     try {
       res.json(await storage.getMaterials());
     } catch (error: any) {
@@ -1680,7 +1680,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/materials", isAdmin, async (req, res) => {
+  app.post("/api/materials", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const data = insertMaterialSchema.parse(req.body);
       res.json(await storage.createMaterial(data));
@@ -1692,7 +1692,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/materials/:id", isAdmin, async (req, res) => {
+  app.patch("/api/materials/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const updates = insertMaterialSchema.partial().parse(req.body);
       const material = await storage.updateMaterial(req.params.id, updates);
@@ -1706,7 +1706,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/materials/:id", isAdmin, async (req, res) => {
+  app.delete("/api/materials/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       await storage.deleteMaterial(req.params.id);
       res.json({ message: "Material deleted successfully" });
@@ -1716,7 +1716,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Recipes (processes)
-  app.get("/api/processes", isAdmin, async (_req, res) => {
+  app.get("/api/processes", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
     try {
       res.json(await storage.getProcesses());
     } catch (error: any) {
@@ -1724,7 +1724,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/processes", isAdmin, async (req, res) => {
+  app.post("/api/processes", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const data = insertProcessSchema.parse(req.body);
       res.json(await storage.createProcess(data));
@@ -1736,7 +1736,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/processes/:id", isAdmin, async (req, res) => {
+  app.patch("/api/processes/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const updates = insertProcessSchema.partial().parse(req.body);
       const process = await storage.updateProcess(req.params.id, updates);
@@ -1750,7 +1750,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/processes/:id", isAdmin, async (req, res) => {
+  app.delete("/api/processes/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       await storage.deleteProcess(req.params.id);
       res.json({ message: "Recipe deleted successfully" });
@@ -1760,7 +1760,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Recipe bill-of-materials lines
-  app.post("/api/processes/:id/materials", isAdmin, async (req, res) => {
+  app.post("/api/processes/:id/materials", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const schema = z.object({
         materialId: z.string().min(1),
@@ -1776,7 +1776,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/process-materials/:lineId", isAdmin, async (req, res) => {
+  app.patch("/api/process-materials/:lineId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { units } = z.object({
         units: z.union([z.string(), z.number()]).transform((v) => String(v)),
@@ -1792,7 +1792,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/process-materials/:lineId", isAdmin, async (req, res) => {
+  app.delete("/api/process-materials/:lineId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       await storage.deleteProcessMaterial(req.params.lineId);
       res.json({ message: "Ingredient removed" });
@@ -1802,7 +1802,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Productions (logging a batch draws down materials via the recipe)
-  app.get("/api/productions", isAdmin, async (req, res) => {
+  app.get("/api/productions", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 200;
       res.json(await storage.getProductions(limit));
@@ -1811,7 +1811,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/productions", isAdmin, async (req, res) => {
+  app.post("/api/productions", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const body = { ...req.body };
       if (typeof body.date === 'string') body.date = new Date(body.date);
@@ -1825,7 +1825,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/productions/:id", isAdmin, async (req, res) => {
+  app.delete("/api/productions/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       await storage.deleteProduction(req.params.id);
       res.json({ message: "Production deleted successfully" });
@@ -1835,7 +1835,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Purchase orders (delivering a line replenishes material stock)
-  app.get("/api/material-orders", isAdmin, async (_req, res) => {
+  app.get("/api/material-orders", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
     try {
       res.json(await storage.getMaterialOrders());
     } catch (error: any) {
@@ -1843,7 +1843,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/material-orders", isAdmin, async (req, res) => {
+  app.post("/api/material-orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { lines, ...orderBody } = req.body ?? {};
       if (typeof orderBody.dateOrdered === 'string') orderBody.dateOrdered = new Date(orderBody.dateOrdered);
@@ -1865,7 +1865,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/material-orders/lines/:lineId", isAdmin, async (req, res) => {
+  app.patch("/api/material-orders/lines/:lineId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const delivered = !!req.body?.delivered;
       await storage.setOrderMaterialDelivered(req.params.lineId, delivered);
@@ -1875,7 +1875,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/material-orders/:id", isAdmin, async (req, res) => {
+  app.delete("/api/material-orders/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       await storage.deleteMaterialOrder(req.params.id);
       res.json({ message: "Purchase order deleted successfully" });
@@ -1924,7 +1924,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Inventory analytics
-  app.get("/api/inventory/reorder-report", isAdmin, async (req, res) => {
+  app.get("/api/inventory/reorder-report", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const windowDays = req.query.windowDays ? parseInt(req.query.windowDays as string, 10) : 90;
       res.json(await storage.getReorderReport(windowDays));
@@ -1933,7 +1933,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/inventory/cogs-report", isAdmin, async (req, res) => {
+  app.get("/api/inventory/cogs-report", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const days = req.query.days ? parseInt(req.query.days as string, 10) : 90;
       res.json(await storage.getCogsReport(days));
@@ -1942,7 +1942,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/inventory/dashboard", isAdmin, async (_req, res) => {
+  app.get("/api/inventory/dashboard", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
     try {
       res.json(await storage.getInventoryDashboard());
     } catch (error: any) {
@@ -6435,7 +6435,7 @@ If you have any questions, please don't hesitate to reach out!`,
   });
 
   // Inventory management routes
-  app.get("/api/inventory/low-stock", async (req, res) => {
+  app.get("/api/inventory/low-stock", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const lowStockProducts = await storage.getLowStockProducts();
       res.json(lowStockProducts);
@@ -6444,7 +6444,7 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
-  app.patch("/api/inventory/:id", async (req, res) => {
+  app.patch("/api/inventory/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { stockQuantity } = req.body;
       const parsedStock = Number(stockQuantity);
@@ -7433,7 +7433,9 @@ If you have any questions, please don't hesitate to reach out!`,
   app.patch("/api/staff/users/:id/role", isAuthenticated, isSuperAdmin, async (req, res) => {
     try {
       const roleSchema = z.object({
-        role: z.enum(['user', 'staff', 'admin', 'super_admin']),
+        // wholesale_customer included so a mis-click promoting a wholesale account is
+        // REVERSIBLE — without it, the demote back was rejected and the fix needed SQL.
+        role: z.enum(['user', 'wholesale_customer', 'staff', 'admin', 'super_admin']),
       });
       
       const parsed = roleSchema.safeParse(req.body);

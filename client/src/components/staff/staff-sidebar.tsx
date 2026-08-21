@@ -85,12 +85,12 @@ export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
     {
       title: "Production & Supplies",
       items: [
-        { title: "Dashboard", href: "/inventory/dashboard", icon: LayoutDashboard, adminOnly: true },
-        { title: "Materials", href: "/inventory/materials", icon: Boxes, adminOnly: true },
-        { title: "Suppliers", href: "/inventory/suppliers", icon: Building, adminOnly: true },
-        { title: "Recipes", href: "/inventory/recipes", icon: FlaskConical, adminOnly: true },
-        { title: "Productions", href: "/inventory/productions", icon: Factory, adminOnly: true },
-        { title: "Purchase Orders", href: "/inventory/purchase-orders", icon: PackageCheck, adminOnly: true },
+        { title: "Dashboard", href: "/inventory/dashboard", icon: LayoutDashboard },
+        { title: "Materials", href: "/inventory/materials", icon: Boxes },
+        { title: "Suppliers", href: "/inventory/suppliers", icon: Building },
+        { title: "Recipes", href: "/inventory/recipes", icon: FlaskConical },
+        { title: "Productions", href: "/inventory/productions", icon: Factory },
+        { title: "Purchase Orders", href: "/inventory/purchase-orders", icon: PackageCheck },
       ],
     },
     {

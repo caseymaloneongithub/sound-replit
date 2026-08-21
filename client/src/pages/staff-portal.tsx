@@ -126,19 +126,41 @@ export default function StaffPortal() {
   });
   const priceByTypeId = new Map(productTypes.map((pt) => [pt.id, pt]));
 
-  const { data: orders = [], isLoading: ordersLoading } = useQuery<WholesaleOrder[]>({
+  // The endpoint became paginated ({ orders, total }) in the pagination work merged from
+  // main; this page still read it as a bare array and crashed with "orders.map is not a
+  // function" the moment any tab here rendered.
+  const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: WholesaleOrder[]; total: number }>({
     queryKey: ['/api/wholesale/orders'],
   });
+  const orders = ordersResponse?.orders ?? [];
 
   const { data: customers = [], isLoading: customersLoading } = useQuery<WholesaleCustomer[]>({
     queryKey: ['/api/wholesale/customers'],
   });
 
+  // "Who has portal access" is the question this tab answers, so it defaults to portal
+  // roles only; All + search exist to find a customer account and promote it.
+  const [userFilter, setUserFilter] = useState<'portal' | 'all'>('portal');
+  const [userSearch, setUserSearch] = useState('');
+
+  const roleRank: Record<string, number> = { super_admin: 0, admin: 1, staff: 2, wholesale_customer: 3, user: 4 };
+
   const { data: allUsers = [], isLoading: usersLoading } = useQuery<User[]>({
     queryKey: ['/api/staff/users'],
     enabled: user?.role === 'super_admin',
   });
-  
+
+  const visibleUsers = allUsers
+    .filter(u => userFilter === 'all' || ['staff', 'admin', 'super_admin'].includes(u.role))
+    .filter(u => {
+      const q = userSearch.trim().toLowerCase();
+      if (!q) return true;
+      return [u.firstName, u.lastName, u.email, u.username]
+        .filter(Boolean)
+        .some(v => String(v).toLowerCase().includes(q));
+    })
+    .sort((a, b) => (roleRank[a.role] ?? 9) - (roleRank[b.role] ?? 9) || String(a.email ?? '').localeCompare(String(b.email ?? '')));
+
   // New schema queries
   const { data: flavors = [], isLoading: flavorsLoading } = useQuery<Flavor[]>({
     queryKey: ['/api/flavors'],
@@ -721,6 +743,34 @@ export default function StaffPortal() {
 
           {user?.role === 'super_admin' && (
             <TabsContent value="users" className="space-y-4">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex gap-2">
+                  <Button
+                    variant={userFilter === 'portal' ? 'secondary' : 'outline'}
+                    size="sm"
+                    onClick={() => setUserFilter('portal')}
+                    data-testid="button-filter-portal"
+                  >
+                    Portal access ({allUsers.filter(x => ['staff', 'admin', 'super_admin'].includes(x.role)).length})
+                  </Button>
+                  <Button
+                    variant={userFilter === 'all' ? 'secondary' : 'outline'}
+                    size="sm"
+                    onClick={() => setUserFilter('all')}
+                    data-testid="button-filter-all"
+                  >
+                    All users ({allUsers.length})
+                  </Button>
+                </div>
+                <Input
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  placeholder="Search name, email, username…"
+                  className="max-w-xs h-9"
+                  data-testid="input-user-search"
+                />
+              </div>
+
               <Card>
                 <CardHeader>
                   <CardTitle>Stripe Customer Sync</CardTitle>
@@ -815,7 +865,7 @@ export default function StaffPortal() {
                 </Card>
               ) : (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {allUsers.map((u) => (
+                  {visibleUsers.map((u) => (
                     <Card key={u.id} data-testid={`card-user-${u.id}`}>
                       <CardHeader>
                         <CardTitle className="flex items-center justify-between">
@@ -849,9 +899,13 @@ export default function StaffPortal() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="user" data-testid={`option-user-${u.id}`}>User</SelectItem>
-                              <SelectItem value="admin" data-testid={`option-admin-${u.id}`}>Admin</SelectItem>
-                              <SelectItem value="super_admin" data-testid={`option-super-admin-${u.id}`}>Super Admin</SelectItem>
+                              <SelectItem value="user" data-testid={`option-user-${u.id}`}>User — no portal access</SelectItem>
+                              <SelectItem value="wholesale_customer" data-testid={`option-wholesale-${u.id}`}>Wholesale Customer</SelectItem>
+                              {/* Staff was missing entirely, which made it impossible to
+                                  grant portal access at the level most employees need. */}
+                              <SelectItem value="staff" data-testid={`option-staff-${u.id}`}>Staff — portal, day-to-day ops</SelectItem>
+                              <SelectItem value="admin" data-testid={`option-admin-${u.id}`}>Admin — portal + admin areas</SelectItem>
+                              <SelectItem value="super_admin" data-testid={`option-super-admin-${u.id}`}>Super Admin — everything</SelectItem>
                             </SelectContent>
                           </Select>
                           {u.id === user?.id && (
