@@ -29,7 +29,7 @@ export default function Home() {
     <div className="min-h-screen bg-background">
       <div
         className="relative h-96 bg-cover bg-center flex items-center justify-center"
-        style={{ backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url(${seattleHero})` }}
+        style={{ backgroundImage: `linear-gradient(rgba(20, 50, 60, 0.5), rgba(20, 50, 60, 0.62)), url(${seattleHero})` }}
       >
         <div className="text-center text-white px-4">
           <img
@@ -47,8 +47,8 @@ export default function Home() {
       <div className="bg-muted/50 py-10">
         <div className="container mx-auto px-4 grid gap-6 md:grid-cols-2 max-w-5xl">
           {/* Trade lane */}
-          <div className="bg-background border rounded-md p-6 flex flex-col" data-testid="lane-wholesale">
-            <p className="text-xs font-semibold tracking-wider uppercase text-muted-foreground">For shops, cafés &amp; restaurants</p>
+          <div className="bg-card border border-card-border rounded-lg p-6 flex flex-col shadow-[0_10px_24px_-16px_hsl(189_56%_27%/0.35)]" data-testid="lane-wholesale">
+            <p className="text-xs font-semibold tracking-wider uppercase text-cedar">For shops, cafés &amp; restaurants</p>
             {user?.role === "wholesale_customer" ? (
               <>
                 <h2 className="text-2xl font-bold mt-2">Wholesale orders</h2>
@@ -81,8 +81,8 @@ export default function Home() {
           </div>
 
           {/* Home lane */}
-          <div className="bg-background border rounded-md p-6 flex flex-col" data-testid="lane-retail">
-            <p className="text-xs font-semibold tracking-wider uppercase text-muted-foreground">For your fridge</p>
+          <div className="bg-card border border-card-border rounded-lg p-6 flex flex-col shadow-[0_10px_24px_-16px_hsl(189_56%_27%/0.35)]" data-testid="lane-retail">
+            <p className="text-xs font-semibold tracking-wider uppercase text-cedar">For your fridge</p>
             {user && user.role !== "wholesale_customer" ? (
               <>
                 <h2 className="text-2xl font-bold mt-2">Retail orders</h2>
@@ -145,7 +145,7 @@ export default function Home() {
               </div>
               <h3 className="text-2xl font-semibold mt-4" data-testid={`flavor-name-${flavor.id}`}>{flavor.name}</h3>
               {flavor.flavorProfile && (
-                <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground mt-1">{flavor.flavorProfile}</p>
+                <p className="text-sm font-medium uppercase tracking-wide text-cedar mt-1">{flavor.flavorProfile}</p>
               )}
               <p className="mt-3 text-foreground/90 leading-relaxed">{flavor.description}</p>
               {flavor.ingredients?.length > 0 && (

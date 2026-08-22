@@ -203,7 +203,7 @@ export default function ShopV2() {
     <div className="min-h-screen bg-background">
       <div 
         className="relative h-96 bg-cover bg-center flex items-center justify-center"
-        style={{ backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url(${seattleHero})` }}
+        style={{ backgroundImage: `linear-gradient(rgba(20, 50, 60, 0.5), rgba(20, 50, 60, 0.62)), url(${seattleHero})` }}
       >
         <div className="text-center text-white px-4">
           <img 
