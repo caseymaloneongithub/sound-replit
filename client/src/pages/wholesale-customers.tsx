@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { ContactRequestsPanel } from "@/components/staff/contact-requests-panel";
+import { AuthorizedContactsDialog } from "@/components/staff/authorized-contacts-dialog";
 import { WholesaleCustomer, insertWholesaleCustomerSchema, WholesaleLocation, insertWholesaleLocationSchema } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -762,6 +764,7 @@ export default function WholesaleCustomers() {
           </div>
         </div>
 
+        <ContactRequestsPanel />
         <Card>
                 <CardHeader>
                   <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>Wholesale Customers</CardTitle>
@@ -834,7 +837,7 @@ export default function WholesaleCustomers() {
                                       data-testid={`button-manage-emails-${customer.id}`}
                                     >
                                       <Mail className="w-4 h-4 mr-2" />
-                                      Manage Emails
+                                      Authorized contacts
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                       onClick={() => {
@@ -885,89 +888,8 @@ export default function WholesaleCustomers() {
               </Card>
       </div>
 
-      {/* Email Management Dialog */}
-      <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Manage Authorized Emails</DialogTitle>
-            <DialogDescription>
-              {selectedCustomer?.businessName} - Add or remove email addresses that can log into this wholesale account
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4">
-            {/* Primary Email (read-only) */}
-            <div>
-              <Label className="text-sm font-medium">Primary Email</Label>
-              <div className="flex items-center gap-2 mt-2">
-                <Badge variant="secondary" className="flex items-center gap-1">
-                  {selectedCustomer?.email}
-                </Badge>
-                <span className="text-xs text-muted-foreground">(Primary contact)</span>
-              </div>
-            </div>
-
-            {/* Authorized Emails */}
-            <div>
-              <Label className="text-sm font-medium">Additional Authorized Emails</Label>
-              <div className="mt-2 space-y-2">
-                {selectedCustomer?.emails && selectedCustomer.emails.length > 0 ? (
-                  selectedCustomer.emails.map((email) => (
-                    <div key={email} className="flex items-center justify-between gap-2 p-2 border rounded-md">
-                      <span className="text-sm">{email}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => handleRemoveEmail(email)}
-                        disabled={updateEmailsMutation.isPending}
-                        data-testid={`button-remove-email-${email}`}
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-sm text-muted-foreground">No additional emails authorized</p>
-                )}
-              </div>
-            </div>
-
-            {/* Add New Email */}
-            <div>
-              <Label className="text-sm font-medium">Add New Email</Label>
-              <div className="flex gap-2 mt-2">
-                <Input
-                  type="email"
-                  placeholder="email@example.com"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddEmail();
-                    }
-                  }}
-                  data-testid="input-new-email"
-                />
-                <Button
-                  onClick={handleAddEmail}
-                  disabled={!newEmail || updateEmailsMutation.isPending}
-                  data-testid="button-add-email"
-                >
-                  {updateEmailsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEmailDialogOpen(false)} data-testid="button-close-email-dialog">
-              Done
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Authorized contacts (logins) for the selected store */}
+      <AuthorizedContactsDialog customer={selectedCustomer} open={emailDialogOpen} onOpenChange={setEmailDialogOpen} />
 
       {/* Location Management Dialog */}
       <Dialog open={locationDialogOpen} onOpenChange={(open) => {

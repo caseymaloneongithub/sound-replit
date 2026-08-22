@@ -1,4 +1,5 @@
 import { useAuth } from "@/hooks/use-auth";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { Redirect, Route } from "wouter";
 
@@ -95,6 +96,14 @@ export function WholesaleCustomerProtectedRoute({
   component: () => React.JSX.Element;
 }) {
   const { user, isLoading } = useAuth();
+  // A wholesale login that isn't on an account yet (or is still pending) belongs on the
+  // claim page, not on pages that assume an account. Pending contacts may use the order
+  // page to build the order they'll place once approved.
+  const { data: claim, isLoading: claimLoading } = useQuery<{ state: string }>({
+    queryKey: ["/api/wholesale/claim/status"],
+    enabled: !!user && user.role === "wholesale_customer",
+    staleTime: 30_000,
+  });
 
   if (isLoading) {
     return (
@@ -112,6 +121,26 @@ export function WholesaleCustomerProtectedRoute({
         <Redirect to="/wholesale/login" />
       </Route>
     );
+  }
+
+  if (user.role === 'wholesale_customer' && claimLoading) {
+    return (
+      <Route path={path}>
+        <div className="flex items-center justify-center min-h-screen">
+          <Loader2 className="h-8 w-8 animate-spin text-border" />
+        </div>
+      </Route>
+    );
+  }
+  if (user.role === 'wholesale_customer' && claim && claim.state !== 'linked' && path !== '/wholesale/claim') {
+    const pendingMayOrder = claim.state === 'pending' && path === '/wholesale-customer/place-order';
+    if (!pendingMayOrder) {
+      return (
+        <Route path={path}>
+          <Redirect to="/wholesale/claim" />
+        </Route>
+      );
+    }
   }
 
   // Allow wholesale customers and super admins (for testing/viewing purposes)

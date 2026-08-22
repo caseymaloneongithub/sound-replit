@@ -58,6 +58,11 @@ export default function WholesaleLogin() {
         const data = await apiRequest("POST", "/api/wholesale/verify-magic-link", { token });
         queryClient.setQueryData(["/api/user"], data.user);
         await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+        if (data.needsClaim) {
+          // Verified email, no account yet: "which store are you ordering for?"
+          setLocation("/wholesale/claim");
+          return;
+        }
         toast({ title: "Welcome back!", description: "You're signed in." });
         setLocation("/wholesale-customer/place-order");
       } catch (error: any) {
@@ -97,7 +102,7 @@ export default function WholesaleLogin() {
         title: "Check your email",
         // The server replies the same way whether or not the account exists, so the wording
         // here must not promise a code was actually issued.
-        description: data?.message || "If that email is on a wholesale account, we've sent a sign-in link and code to it.",
+        description: data?.message || "We've sent a sign-in link and code to that address.",
       });
     } catch (error: any) {
       toast({
@@ -135,6 +140,11 @@ export default function WholesaleLogin() {
       // Invalidate to ensure all components using useAuth get the update
       await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
       
+      if (data.needsClaim) {
+        setTimeout(() => setLocation("/wholesale/claim"), 100);
+        return;
+      }
+
       toast({
         title: "Welcome back!",
         description: "You have successfully logged in.",

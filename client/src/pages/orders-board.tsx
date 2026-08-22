@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Link } from "wouter";
+import { usePendingLinkRequests } from "@/components/staff/contact-requests-panel";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { formatInTimeZone } from "date-fns-tz";
 import { ChevronLeft, ChevronRight, RefreshCw, Eye, EyeOff } from "lucide-react";
@@ -93,6 +95,9 @@ export default function OrdersBoard() {
     : "";
   const weekName = weekOffset === 0 ? "This week" : weekOffset === 1 ? "Next week" : weekOffset === -1 ? "Last week" : weekLabel;
 
+  const { data: pendingRequests } = usePendingLinkRequests();
+  const pendingCount = pendingRequests?.length ?? 0;
+
   const allOrders = data?.orders ?? [];
   const doneCount = allOrders.filter((o) => nextStatus(o) === null).length;
   const visibleOrders = showDone ? allOrders : allOrders.filter((o) => nextStatus(o) !== null);
@@ -110,6 +115,12 @@ export default function OrdersBoard() {
   return (
     <StaffLayout>
       <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
+        {pendingCount > 0 && (
+          <Link href="/staff-portal/wholesale/customers" className="block rounded-md border bg-muted/50 px-4 py-3 text-base hover:bg-muted" data-testid="banner-contact-requests">
+            <span className="font-semibold">{pendingCount} {pendingCount === 1 ? "person is" : "people are"} waiting to be connected to a store.</span>{" "}
+            <span className="text-muted-foreground">Tap to review — approving also releases any order they built.</span>
+          </Link>
+        )}
         {/* Week navigation — large touch targets for a tablet */}
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>

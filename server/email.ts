@@ -2306,3 +2306,54 @@ Puget Sound Kombucha Co.
     throw error;
   }
 }
+
+// ---------------------------------------------------------------------------------------
+// Claim-your-store: "you're connected" — the one automatic wholesale email besides order
+// confirmations. Gated on WHOLESALE_APPROVAL_EMAILS=true so it can only fire where that
+// is deliberately set (production). Dev and test databases carry real customer addresses;
+// without the flag this logs what it would have sent and returns.
+// ---------------------------------------------------------------------------------------
+interface WholesaleContactApprovedParams {
+  to: string;
+  businessName: string;
+  orderPlaced: boolean;
+  portalUrl: string;
+}
+
+export function wholesaleApprovalEmailsEnabled(): boolean {
+  return process.env.WHOLESALE_APPROVAL_EMAILS === 'true';
+}
+
+export async function sendWholesaleContactApprovedEmail(params: WholesaleContactApprovedParams): Promise<void> {
+  const transporter = createTransporter();
+  if (!wholesaleApprovalEmailsEnabled() || !transporter) {
+    console.log(`[EMAIL] (not sent — ${!wholesaleApprovalEmailsEnabled() ? 'WHOLESALE_APPROVAL_EMAILS is not true' : 'mail not configured'}) approval email to ${params.to} for ${params.businessName}`);
+    return;
+  }
+  const orderLine = params.orderPlaced
+    ? `<p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey};">The order you built while you were waiting has been placed — you'll get a separate confirmation for it.</p>`
+    : '';
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.to,
+    subject: `You're connected to ${params.businessName}`,
+    text: `You're connected to ${params.businessName} on Puget Sound Kombucha's wholesale site.\n\n${params.orderPlaced ? 'The order you built while waiting has been placed; a separate confirmation is on its way.\n\n' : ''}Order any time: ${params.portalUrl}\nSign in with just this email — no password.`,
+    html: `
+<!DOCTYPE html>
+<html><body style="margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:${BRAND_COLORS.backgroundGrey};">
+  <div style="max-width:600px; margin:0 auto; background:${BRAND_COLORS.white};">
+    ${getEmailHeader("You're connected")}
+    <div style="padding: 32px 24px;">
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey}; font-size: 16px;">You're now a contact on <strong>${params.businessName}</strong> and can order for the store.</p>
+      ${orderLine}
+      <p style="margin: 0 0 24px; color: ${BRAND_COLORS.darkGrey};">Sign in with just this email address — no password — and you'll stay signed in on your device for 30 days.</p>
+      <p style="margin: 0 0 24px;"><a href="${params.portalUrl}" style="display:inline-block; background:${BRAND_COLORS.black}; color:${BRAND_COLORS.white}; text-decoration:none; padding: 12px 22px; border-radius: 6px; font-weight: 600;">Order online</a></p>
+      ${getEmailFooter()}
+    </div>
+  </div>
+</body></html>`,
+    attachments: getLogoAttachment(),
+  };
+  await transporter.sendMail(mailOptions);
+  console.log(`[EMAIL] Approval email sent to ${params.to} for ${params.businessName}`);
+}

@@ -16,6 +16,7 @@ import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleIn
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
+import { registerClaimRoutes, getPendingClaim, holdPendingOrder } from "./claim-flow";
 import {
   frequencyToDays,
   frequencyToStripeInterval,
@@ -39,6 +40,17 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
  * so every production redirect would have pointed at http://localhost:5000. Set APP_URL
  * in production; REPLIT_DOMAINS is kept only so a Replit deploy keeps working.
  */
+/**
+ * A customer order that failed validation (bad item, missing address, under minimum…).
+ * Carries the HTTP status + body the route used to send directly, so the same order code
+ * can run from the route AND from claim approval (placing an order that was held).
+ */
+class OrderValidationError extends Error {
+  constructor(public status: number, public body: any) {
+    super(body?.message || "Invalid order");
+  }
+}
+
 function getBaseUrl(): string {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, "");
   if (process.env.REPLIT_DOMAINS) return `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`;
@@ -317,6 +329,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * `wholesale_customers.user_id` points at it. Shared by the code and magic-link paths so
    * the two can't drift.
    */
+  /**
+   * The user row for an email that verified a login link but is not on any wholesale
+   * account yet — the start of the claim flow. Reuses an existing customer-side user row;
+   * a brand-new email gets a passwordless wholesale_customer user with no account attached.
+   */
+  async function resolveClaimantUser(email: string) {
+    const existing = await storage.getUserByEmail(email);
+    if (existing) {
+      if (!['user', 'wholesale_customer'].includes(existing.role)) {
+        throw new Error("Staff accounts can't sign in through the wholesale form");
+      }
+      return existing;
+    }
+    const username = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_') + '-' + crypto.randomUUID().slice(0, 8);
+    const created = await storage.createUser({ username, email });
+    return (await storage.updateUserRole(created.id, 'wholesale_customer')) || created;
+  }
+
   async function resolveWholesaleUser(wholesaleCustomer: any) {
     let user = wholesaleCustomer.userId ? await storage.getUser(wholesaleCustomer.userId) : undefined;
 
@@ -737,8 +767,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
           if (!wholesaleCustomer) {
-            console.log(`[WHOLESALE AUTH] Login requested for unknown email (generic reply sent)`);
-            return;
+            // Not on any account yet. They still get a link — it lands them on "which store
+            // are you ordering for?" (claim flow), so a new buyer at a store we already
+            // serve can connect themselves. Staff/admin logins never go this way.
+            const existingUser = await storage.getUserByEmail(email);
+            if (existingUser && !['user', 'wholesale_customer'].includes(existingUser.role)) {
+              console.log(`[WHOLESALE AUTH] Login requested for a staff/admin email via the wholesale form (generic reply sent)`);
+              return;
+            }
           }
 
           const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -754,17 +790,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             expiresAt: new Date(Date.now() + 15 * 60 * 1000),
             verified: false,
             purpose: 'login',
-            wholesaleCustomerId: wholesaleCustomer.id,
+            wholesaleCustomerId: wholesaleCustomer?.id ?? null,
           });
 
           const magicLink = `${getBaseUrl()}/wholesale/login?token=${loginToken}`;
 
           try {
             await sendEmailVerificationCode({ email, code, magicLink, expiresMinutes: 15 });
-            console.log(`[WHOLESALE AUTH] Login email sent to ${email} for customer ${wholesaleCustomer.id}`);
+            console.log(`[WHOLESALE AUTH] Login email sent to ${email} for ${wholesaleCustomer ? `customer ${wholesaleCustomer.id}` : 'a new contact (claim flow)'}`);
           } catch (emailError: any) {
             console.warn(`[WHOLESALE AUTH] Failed to send login email to ${email}:`, emailError.message);
-            console.log(`[WHOLESALE AUTH] Code for ${email} (customer ${wholesaleCustomer.id}): ${code}`);
+            console.log(`[WHOLESALE AUTH] Code for ${email} (${wholesaleCustomer ? `customer ${wholesaleCustomer.id}` : 'new contact'}): ${code}`);
             console.log(`[WHOLESALE AUTH] Magic link: ${magicLink}`);
           }
         } catch (bgError: any) {
@@ -807,30 +843,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // inbox reveals nothing about whether the account exists.
       const invalid = { message: "This sign-in link is no longer valid. Please request a new one." };
 
-      if (!verificationCode || !verificationCode.wholesaleCustomerId) {
+      if (!verificationCode || verificationCode.verified) {
         return res.status(400).json(invalid);
       }
       if (new Date() > verificationCode.expiresAt) {
         return res.status(400).json(invalid);
       }
 
-      const wholesaleCustomer = await storage.getWholesaleCustomer(verificationCode.wholesaleCustomerId);
-      if (!wholesaleCustomer) {
-        return res.status(400).json(invalid);
+      // A row with no customer is a new contact starting the claim flow ("which store are
+      // you ordering for?"); a row with one is an ordinary sign-in.
+      let wholesaleCustomer: any = null;
+      if (verificationCode.wholesaleCustomerId) {
+        wholesaleCustomer = await storage.getWholesaleCustomer(verificationCode.wholesaleCustomerId);
+        if (!wholesaleCustomer) {
+          return res.status(400).json(invalid);
+        }
       }
 
       // Single use: consuming the link also retires the 6-digit code on the same row.
       await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
 
-      const user = await resolveWholesaleUser(wholesaleCustomer);
+      const user = wholesaleCustomer
+        ? await resolveWholesaleUser(wholesaleCustomer)
+        : await resolveClaimantUser(verificationCode.email);
 
       req.login(user, (err) => {
         if (err) {
           console.error("Wholesale magic-link login error:", err);
           return res.status(500).json({ message: "Error logging in" });
         }
-        console.log(`[WHOLESALE AUTH] User ${user.id} logged in via magic link for customer ${wholesaleCustomer.id}`);
-        res.json({ message: "Signed in successfully", user });
+        console.log(`[WHOLESALE AUTH] User ${user.id} logged in via magic link ${wholesaleCustomer ? `for customer ${wholesaleCustomer.id}` : '(claim flow)'}`);
+        res.json({ message: "Signed in successfully", user, needsClaim: !wholesaleCustomer });
       });
     } catch (error: any) {
       console.error("Error verifying wholesale magic link:", error);
@@ -852,10 +895,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // The specifics go to the server log, not to the caller.
       const invalidCode = { message: "Invalid or expired verification code" };
 
+      // May be null: a new contact verifying an email before claiming a store.
       const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
-      if (!wholesaleCustomer) {
-        return res.status(400).json(invalidCode);
-      }
 
       // Get latest verification code for this email
       const verificationCode = await storage.getLatestEmailVerificationCode(email);
@@ -866,8 +907,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // SECURITY: Verify the code is bound to the correct wholesale customer
       // This prevents code reuse if emails are reassigned between customers
-      if (verificationCode.wholesaleCustomerId !== wholesaleCustomer.id) {
-        console.error(`[WHOLESALE AUTH] Code mismatch: code bound to ${verificationCode.wholesaleCustomerId}, but email ${email} belongs to ${wholesaleCustomer.id}`);
+      if ((verificationCode.wholesaleCustomerId ?? null) !== (wholesaleCustomer?.id ?? null)) {
+        console.error(`[WHOLESALE AUTH] Code mismatch: code bound to ${verificationCode.wholesaleCustomerId}, but email ${email} belongs to ${wholesaleCustomer?.id ?? 'no account'}`);
         return res.status(400).json(invalidCode);
       }
 
@@ -895,7 +936,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Mark as verified
       await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
 
-      const user = await resolveWholesaleUser(wholesaleCustomer);
+      const user = wholesaleCustomer
+        ? await resolveWholesaleUser(wholesaleCustomer)
+        : await resolveClaimantUser(email);
 
       // Log the user in
       req.login(user, (err) => {
@@ -903,8 +946,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.error("Wholesale login error:", err);
           return res.status(500).json({ message: "Error logging in" });
         }
-        console.log(`[WHOLESALE AUTH] User ${user.id} logged in via email ${email} for customer ${wholesaleCustomer.id}`);
-        res.json({ message: "Email verified and logged in successfully", user });
+        console.log(`[WHOLESALE AUTH] User ${user.id} logged in via email ${email} ${wholesaleCustomer ? `for customer ${wholesaleCustomer.id}` : '(claim flow)'}`);
+        res.json({ message: "Email verified and logged in successfully", user, needsClaim: !wholesaleCustomer });
       });
     } catch (error: any) {
       console.error("Error verifying wholesale email code:", error);
@@ -1236,6 +1279,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get wholesale customer record for authenticated user
       const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
       if (!customer) {
+        // Still waiting for staff to confirm them on a store: enough of the store to build
+        // an order against (name + id), nothing else about the account.
+        const pending = await getPendingClaim(req.user.id);
+        if (pending) {
+          return res.json({
+            id: pending.customer.id,
+            businessName: pending.customer.businessName,
+            contactName: '',
+            email: req.user.email,
+            emails: [],
+            phone: '',
+            allowOnlinePayment: false,
+            linkStatus: 'pending',
+          });
+        }
         return res.status(404).json({ message: "Wholesale customer record not found" });
       }
 
@@ -1254,6 +1312,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get wholesale customer record for authenticated user
       const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
       if (!customer) {
+        // Pending contacts see no history until they're approved.
+        if (await getPendingClaim(req.user.id)) return res.json([]);
         return res.status(404).json({ message: "Wholesale customer record not found" });
       }
 
@@ -1305,6 +1365,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get wholesale customer record for authenticated user
       const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
       if (!customer) {
+        // Pending contacts build against list prices; the held order is re-priced with the
+        // store's own pricing when it is actually placed on approval.
+        if (await getPendingClaim(req.user.id)) return res.json([]);
         return res.status(404).json({ message: "Wholesale customer record not found" });
       }
 
@@ -1316,42 +1379,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/wholesale/customer/orders", isAuthenticated, isWholesaleCustomer, async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ message: "Not authenticated" });
-      }
-      
-      // Get wholesale customer record for authenticated user
-      const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
-      if (!customer) {
-        return res.status(404).json({ message: "Wholesale customer record not found" });
-      }
-
-      const { items, notes, locationId } = req.body;
+  /**
+   * Place an order for a wholesale customer: validate items, price them (custom pricing
+   * falls back to list), enforce the minimum, mint an invoice number, write the rows, and
+   * fire the confirmation emails. Throws OrderValidationError for anything the caller did
+   * wrong. Shared by the customer-portal route and by claim approval, which places the
+   * order a new contact built while they were waiting.
+   */
+  async function placeCustomerOrder(
+    customer: { id: string; email: string; businessName: string; contactName: string },
+    body: any,
+    opts: { placedByUserId: string | null }
+  ) {
+      const { items, notes, locationId } = body;
 
       // Pickup orders are collected at the brewery, so they carry no delivery location.
       // Anything else is a delivery and MUST name one — otherwise the order is scheduled
       // with nowhere to take it, which is how orders used to slip through addressless.
-      const fulfillmentMethod = req.body.fulfillmentMethod === 'pickup' ? 'pickup' : 'delivery';
+      const fulfillmentMethod = body.fulfillmentMethod === 'pickup' ? 'pickup' : 'delivery';
       const effectiveLocationId = fulfillmentMethod === 'pickup' ? null : locationId;
 
       if (fulfillmentMethod === 'delivery') {
         if (!effectiveLocationId) {
-          return res.status(400).json({ message: "Choose a delivery address, or select pickup." });
+          throw new OrderValidationError(400, { message: "Choose a delivery address, or select pickup." });
         }
         const location = await storage.getWholesaleLocation(effectiveLocationId);
         if (!location) {
-          return res.status(400).json({ message: "Invalid location ID" });
+          throw new OrderValidationError(400, { message: "Invalid location ID" });
         }
         if (location.customerId !== customer.id) {
-          return res.status(403).json({ message: "Location does not belong to this customer" });
+          throw new OrderValidationError(403, { message: "Location does not belong to this customer" });
         }
       }
 
 
       if (!items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ message: "Order must contain at least one item" });
+        throw new OrderValidationError(400, { message: "Order must contain at least one item" });
       }
 
       // Calculate prices for items and total
@@ -1360,19 +1423,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const item of items) {
         if (!item.unitTypeId || !item.flavorId || !item.quantity || item.quantity <= 0) {
-          return res.status(400).json({ message: "Invalid item data: unitTypeId, flavorId, and quantity are required" });
+          throw new OrderValidationError(400, { message: "Invalid item data: unitTypeId, flavorId, and quantity are required" });
         }
 
         const unitType = await storage.getWholesaleUnitType(item.unitTypeId);
         if (!unitType) {
-          return res.status(400).json({ message: `Unit type ${item.unitTypeId} not found` });
+          throw new OrderValidationError(400, { message: `Unit type ${item.unitTypeId} not found` });
         }
 
         // Verify flavor exists
         const allFlavors = await storage.getFlavors();
         const flavor = allFlavors.find(f => f.id === item.flavorId);
         if (!flavor) {
-          return res.status(400).json({ message: `Flavor ${item.flavorId} not found` });
+          throw new OrderValidationError(400, { message: `Flavor ${item.flavorId} not found` });
         }
 
         // Get custom pricing or default unit type price
@@ -1394,7 +1457,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const minOrderAmount = minOrderResult[0] ? parseFloat(minOrderResult[0].value) : 0;
       
       if (minOrderAmount > 0 && totalAmount < minOrderAmount) {
-        return res.status(400).json({ 
+        throw new OrderValidationError(400, { 
           message: `Order total of $${totalAmount.toFixed(2)} does not meet the minimum order amount of $${minOrderAmount.toFixed(2)}. Please add more items to your order.`,
           minimumOrderAmount: minOrderAmount,
           currentTotal: totalAmount
@@ -1410,6 +1473,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const orderData = {
         customerId: customer.id,
+        placedByUserId: opts.placedByUserId ?? undefined,
         invoiceNumber,
         totalAmount: totalAmount.toFixed(2),
         notes: notes || undefined,
@@ -1482,7 +1546,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('[ORDER] Failed to send admin notification:', emailError);
       });
 
-      res.json(createdOrder);
+      return createdOrder;
+  }
+
+  app.post("/api/wholesale/customer/orders", isAuthenticated, isWholesaleCustomer, async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+      
+      // Get wholesale customer record for authenticated user
+      const customer = await storage.getWholesaleCustomerByUserId(req.user.id);
+      if (!customer) {
+        // A new contact waiting for staff approval on a store: hold the order on their
+        // request (no order row, no invoice number, no emails). It is placed for real the
+        // moment staff approve.
+        const pending = await getPendingClaim(req.user.id);
+        if (pending) {
+          const held = await holdPendingOrder(pending.request, pending.customer, req.body);
+          if (!held.ok) return res.status(held.status).json({ message: held.message });
+          return res.json({ held: true, pendingOrder: held.pendingOrder });
+        }
+        return res.status(404).json({ message: "Wholesale customer record not found" });
+      }
+
+      try {
+        const order = await placeCustomerOrder(customer, req.body, { placedByUserId: req.user.id });
+        res.json(order);
+      } catch (e: any) {
+        if (e instanceof OrderValidationError) return res.status(e.status).json(e.body);
+        throw e;
+      }
     } catch (error: any) {
       console.error("Wholesale customer order creation error:", error);
       res.status(500).json({ message: "Error creating order: " + error.message });
@@ -5526,6 +5620,17 @@ If you have any questions, please don't hesitate to reach out!`,
     try {
       const wholesaleCustomer = await storage.getWholesaleCustomerByUserId(req.user.id);
       if (!wholesaleCustomer) {
+        // Pending contacts can pick a delivery address for the order they're building —
+        // names and streets only, no phone numbers or delivery notes.
+        const pending = await getPendingClaim(req.user.id);
+        if (pending) {
+          const locs = await storage.getWholesaleLocations(pending.customer.id);
+          return res.json(locs.filter((l) => l.isActive).map((l) => ({
+            id: l.id, customerId: l.customerId, locationName: l.locationName, address: l.address,
+            city: l.city, state: l.state, zipCode: l.zipCode, isActive: l.isActive,
+            contactName: null, contactPhone: null, deliveryInstructions: null,
+          })));
+        }
         return res.status(404).json({ message: "Wholesale customer not found" });
       }
       const locations = await storage.getWholesaleLocations(wholesaleCustomer.id);
@@ -8937,6 +9042,8 @@ If you have any questions, please don't hesitate to reach out!`,
       res.status(500).json({ message: "Error deleting route: " + error.message });
     }
   });
+
+  registerClaimRoutes(app, { isAuthenticated, isStaffOrAdmin, placeCustomerOrder, baseUrl: getBaseUrl });
 
   const httpServer = createServer(app);
 

@@ -134,12 +134,17 @@ export default function WholesaleCustomerPlaceOrder() {
         items: cart,
       });
     },
-    onSuccess: () => {
-      toast({
-        title: "Order Created",
-        description: "Your wholesale order has been placed successfully",
-      });
+    onSuccess: (result: any) => {
+      // A contact still waiting for approval: the order is held on their request and
+      // placed the moment staff confirm them — tell them that, not "placed".
+      const held = !!result?.held;
+      toast(
+        held
+          ? { title: "Order saved", description: `We'll send it through as soon as we confirm you on ${customer?.businessName || "the store"}.` }
+          : { title: "Order Created", description: "Your wholesale order has been placed successfully" }
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale-customer/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/claim/status"] });
       clearWholesaleCart(customer?.id);
       setCart([]);
       setNotes("");
@@ -147,7 +152,7 @@ export default function WholesaleCustomerPlaceOrder() {
       setSelectedUnitTypeId("");
       setSelectedFlavorId("");
       setQuantity("1");
-      setLocation("/wholesale-customer");
+      setLocation(held ? "/wholesale/claim" : "/wholesale-customer");
     },
     onError: (error: any) => {
       toast({
@@ -256,6 +261,12 @@ export default function WholesaleCustomerPlaceOrder() {
 
   return (
     <WholesaleCustomerLayout>
+      {(customer as any)?.linkStatus === "pending" && (
+        <div className="mb-4 rounded-md border bg-muted/50 px-4 py-3 text-sm" data-testid="banner-pending-claim">
+          <span className="font-medium">Waiting for confirmation on {customer?.businessName}.</span>{" "}
+          Build your order now — it goes through as soon as we confirm you, usually the same business day.
+        </div>
+      )}
       <div className="py-8">
         <div className="mb-6">
           <h1 className="text-3xl font-bold mb-2">

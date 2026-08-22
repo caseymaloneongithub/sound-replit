@@ -453,6 +453,9 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   // null is already ambiguous (it also means "no address on file"), and the delivery report
   // and route optimizer must be able to exclude pickups so they never hit a driver's route.
   fulfillmentMethod: text("fulfillment_method").notNull().default('delivery'),
+  // Which login placed it (customer-portal orders only; staff-entered and legacy rows are
+  // null). Lets the per-store contact list show "last ordered" per person.
+  placedByUserId: varchar("placed_by_user_id").references(() => users.id),
   orderDate: timestamp("order_date").notNull().defaultNow(),
   deliveryDate: timestamp("delivery_date"),
   status: text("status").notNull().default('pending'), // 'pending', 'packaged', 'delivered'
@@ -950,3 +953,39 @@ export type ProcessMaterial = typeof processMaterials.$inferSelect;
 export type Production = typeof productions.$inferSelect;
 export type MaterialOrder = typeof materialOrders.$inferSelect;
 export type OrderMaterial = typeof orderMaterials.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Claim-your-store: a new contact at a store we already serve verifies an email,
+// names the store, and asks to be linked. Auto-approved when the email domain is
+// already on the account; otherwise staff approve with one tap.
+// ---------------------------------------------------------------------------
+export const wholesaleLinkRequests = pgTable("wholesale_link_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  email: text("email").notNull(), // lower-cased
+  customerId: varchar("customer_id").notNull().references(() => wholesaleCustomers.id, { onDelete: 'cascade' }),
+  status: text("status").notNull().default('pending'), // pending | approved | denied
+  autoApproved: boolean("auto_approved").notNull().default(false),
+  // An order the claimant built while waiting, held as JSON (not a real order row) and
+  // placed through the normal path the moment staff approve. Nothing else in the system
+  // can see it until then.
+  pendingOrder: jsonb("pending_order"),
+  placedOrderId: varchar("placed_order_id"),
+  denyReason: text("deny_reason"),
+  decidedAt: timestamp("decided_at"),
+  decidedByUserId: varchar("decided_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export type WholesaleLinkRequest = typeof wholesaleLinkRequests.$inferSelect;
+
+// Every store-name search a claimant runs: the audit trail, and the per-email daily
+// rate limit is a count over this table.
+export const wholesaleStoreSearches = pgTable("wholesale_store_searches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  email: text("email").notNull(),
+  query: text("query").notNull(),
+  resultCount: integer("result_count").notNull().default(0),
+  ip: text("ip"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
