@@ -192,6 +192,11 @@ function FlavorForm({
 
       if (s3PublicUrl) {
         publicUrl = s3PublicUrl;
+      } else if (rawUrl.includes('/api/object-storage/upload/')) {
+        // Our own upload endpoint, not a CDN URL — the server should have answered with a
+        // Location header pointing at the public object. Refuse to save a dead link.
+        toast({ title: 'Upload failed', description: 'The server did not return the image address. Try again.', variant: 'destructive' });
+        return;
       } else {
         try {
           await fetch('/api/object-storage/make-public', {
@@ -354,6 +359,7 @@ function FlavorForm({
             </div>
           ) : (
             <ObjectUploader
+              cropAspectRatio={1}
               maxNumberOfFiles={1}
               onGetUploadParameters={(file) => handleGetUploadUrl(false, file)}
               onComplete={(result) => handleUploadComplete(result, false)}
@@ -388,6 +394,7 @@ function FlavorForm({
             </div>
           ) : (
             <ObjectUploader
+              cropAspectRatio={1}
               maxNumberOfFiles={1}
               onGetUploadParameters={(file) => handleGetUploadUrl(true, file)}
               onComplete={(result) => handleUploadComplete(result, true)}

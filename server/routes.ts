@@ -2297,6 +2297,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(415).json({ message: "Only image uploads are accepted" });
         }
         const { publicUrl } = await putObject(key, body, contentType);
+        // Uppy's S3 plugin takes the response's Location header as the file's final URL,
+        // so the client gets the public CDN URL back through Uppy itself rather than
+        // having to remember it across the upload.
+        res.setHeader("Location", publicUrl);
         res.json({ publicUrl, key, size: body.length });
       } catch (error: any) {
         console.error("Error storing upload:", error);
