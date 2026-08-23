@@ -347,37 +347,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return (await storage.updateUserRole(created.id, 'wholesale_customer')) || created;
   }
 
-  async function resolveWholesaleUser(wholesaleCustomer: any) {
-    let user = wholesaleCustomer.userId ? await storage.getUser(wholesaleCustomer.userId) : undefined;
+  async function resolveWholesaleUser(wholesaleCustomer: any, loginEmail?: string) {
+    // One user PER EMAIL, not per customer. Each authorized contact is their own login,
+    // so orders record who placed them and confirmations go to that person (owner
+    // decision 2026-08-23). Legacy accounts had one shared user carrying the primary
+    // email — the primary still matches it by email below, and every other contact gets
+    // their own row the first time they sign in after this change.
+    const email = String(loginEmail || wholesaleCustomer.email).trim();
+    const isPrimary = email.toLowerCase() === String(wholesaleCustomer.email).trim().toLowerCase();
 
-    // A user row may already exist for this email without wholesale_customers.user_id
-    // pointing at it (bulk-imported customers land this way). Adopt it instead of
-    // creating a second one — createUser would violate users_email_unique and 500,
-    // which is exactly what locked every imported customer out of the site.
-    if (!user) {
-      const existing = await storage.getUserByEmail(wholesaleCustomer.email);
-      if (existing) {
-        user = existing.role === 'wholesale_customer'
-          ? existing
-          : (await storage.updateUserRole(existing.id, 'wholesale_customer')) || existing;
-        await storage.updateWholesaleCustomer(wholesaleCustomer.id, { userId: user.id });
-        console.log(`[WHOLESALE AUTH] Linked existing user ${user.id} to wholesale customer ${wholesaleCustomer.id}`);
+    // A user row may already exist for this email (legacy shared user, bulk import, a
+    // retail account). Adopt it instead of creating a second one — createUser would
+    // violate users_email_unique and 500, which is exactly what locked every imported
+    // customer out of the site.
+    let user = await storage.getUserByEmail(email);
+    if (user) {
+      if (!['user', 'wholesale_customer'].includes(user.role)) {
+        // Never convert a staff login. send-email-code refuses these up front; a stale
+        // link could still get here.
+        throw new Error("Staff accounts can't sign in through the wholesale form");
       }
-    }
-
-    if (!user) {
-      // SECURITY: Use the wholesale customer's PRIMARY email for the user account, not the
-      // login email — keeps one identity per customer even with several contact addresses.
-      const username = wholesaleCustomer.email.split('@')[0] + '-' + wholesaleCustomer.id.substring(0, 8);
+      if (user.role !== 'wholesale_customer' || user.wholesaleCustomerId !== wholesaleCustomer.id) {
+        // The verification row bound this email to this customer, so a stale link to some
+        // other customer (email reassigned) is corrected here.
+        await db.execute(sql`UPDATE users SET role = 'wholesale_customer', wholesale_customer_id = ${wholesaleCustomer.id} WHERE id = ${user.id}`);
+        user = (await storage.getUser(user.id)) || user;
+        console.log(`[WHOLESALE AUTH] Linked existing user ${user.id} (${email}) to wholesale customer ${wholesaleCustomer.id}`);
+      }
+    } else {
+      const username = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_') + '-' + wholesaleCustomer.id.substring(0, 8);
       user = await storage.createUser({
         username,
-        email: wholesaleCustomer.email,
-        firstName: wholesaleCustomer.contactName.split(' ')[0],
-        lastName: wholesaleCustomer.contactName.split(' ').slice(1).join(' ') || undefined,
+        email,
+        firstName: isPrimary ? wholesaleCustomer.contactName.split(' ')[0] : undefined,
+        lastName: isPrimary ? (wholesaleCustomer.contactName.split(' ').slice(1).join(' ') || undefined) : undefined,
       });
-      user = await storage.updateUserRole(user.id, 'wholesale_customer') || user;
+      await db.execute(sql`UPDATE users SET role = 'wholesale_customer', wholesale_customer_id = ${wholesaleCustomer.id} WHERE id = ${user.id}`);
+      user = (await storage.getUser(user.id)) || user;
+      console.log(`[WHOLESALE AUTH] Created user account ${user.id} (${email}) for wholesale customer ${wholesaleCustomer.id}`);
+    }
+
+    // Keep the legacy pointer for the primary email so old lookups still resolve.
+    if (isPrimary && !wholesaleCustomer.userId) {
       await storage.updateWholesaleCustomer(wholesaleCustomer.id, { userId: user.id });
-      console.log(`[WHOLESALE AUTH] Created user account ${user.id} for wholesale customer ${wholesaleCustomer.id}`);
     }
 
     return user;
@@ -864,7 +876,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
 
       const user = wholesaleCustomer
-        ? await resolveWholesaleUser(wholesaleCustomer)
+        ? await resolveWholesaleUser(wholesaleCustomer, verificationCode.email)
         : await resolveClaimantUser(verificationCode.email);
 
       req.login(user, (err) => {
@@ -937,7 +949,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
 
       const user = wholesaleCustomer
-        ? await resolveWholesaleUser(wholesaleCustomer)
+        ? await resolveWholesaleUser(wholesaleCustomer, email)
         : await resolveClaimantUser(email);
 
       // Log the user in
@@ -1508,9 +1520,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       }));
 
+      // Confirmation goes to whoever placed the order (owner decision 2026-08-23) —
+      // stores with several buyers kept confusing the primary contact with someone
+      // else's order. Falls back to the store's primary email when the placer is
+      // unknown (claim-approval edge cases, legacy rows).
+      const placer = opts.placedByUserId ? await storage.getUser(opts.placedByUserId) : undefined;
+      const confirmationEmail = placer?.email || customer.email;
+
       // Send emails in the background (don't block the response)
       sendWholesaleOrderConfirmation({
-        customerEmail: customer.email,
+        customerEmail: confirmationEmail,
         businessName: customer.businessName,
         contactName: customer.contactName,
         invoiceNumber,
