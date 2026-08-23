@@ -624,7 +624,9 @@ export default function AdminChecklist() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin-tasks/completions/by-week", weekStartString, weekEndString] });
+      // Prefix invalidation: refreshes the selected week AND the prior-weeks query that
+      // feeds the overdue alert — the exact-key version left the alert stale.
+      queryClient.invalidateQueries({ queryKey: ["/api/admin-tasks/completions/by-week"] });
       toast({ title: "Task completed", description: "Task has been marked as complete" });
     },
     onError: (error: any) => {
@@ -637,7 +639,7 @@ export default function AdminChecklist() {
       return await apiRequest("DELETE", `/api/admin-tasks/completions/${completionId}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin-tasks/completions/by-week", weekStartString, weekEndString] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin-tasks/completions/by-week"] });
       toast({ title: "Task uncompleted", description: "Task completion has been undone" });
     },
     onError: (error: any) => {
@@ -703,12 +705,25 @@ export default function AdminChecklist() {
               <p className="mb-2">
                 You have {overdueTasks.length} incomplete task{overdueTasks.length !== 1 ? "s" : ""} from previous weeks:
               </p>
-              <ul className="list-disc pl-5 space-y-1 max-h-32 overflow-y-auto">
+              <ul className="space-y-1.5 max-h-40 overflow-y-auto">
                 {overdueTasks.map((item, idx) => (
-                  <li key={`${item.task.id}-${idx}`} className="text-sm">
-                    <span className="font-medium">{item.task.title}</span>
-                    <span className="text-muted-foreground ml-1">
-                      (Due {format(item.dueDate, "MMM d")} - Week of {item.weekLabel})
+                  <li key={`${item.task.id}-${idx}`} className="text-sm flex items-start gap-2">
+                    {/* Check it off right here — no paging back to the week it belongs to.
+                        The completion is recorded against the original due date, so that
+                        week's history reads correctly. */}
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={false}
+                      disabled={completeTaskMutation.isPending}
+                      onCheckedChange={() => completeTaskMutation.mutate({ taskId: item.task.id, instanceDate: item.dueDate })}
+                      aria-label={`Mark ${item.task.title} complete`}
+                      data-testid={`checkbox-overdue-${item.task.id}-${idx}`}
+                    />
+                    <span>
+                      <span className="font-medium">{item.task.title}</span>
+                      <span className="text-muted-foreground ml-1">
+                        (Due {format(item.dueDate, "MMM d")} - Week of {item.weekLabel})
+                      </span>
                     </span>
                   </li>
                 ))}
