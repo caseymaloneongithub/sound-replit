@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ContactRequestsPanel } from "@/components/staff/contact-requests-panel";
 import { AuthorizedContactsDialog } from "@/components/staff/authorized-contacts-dialog";
+import { CustomerPricingDialog } from "@/components/staff/customer-pricing-dialog";
+import { useAuth } from "@/hooks/use-auth";
 import { WholesaleCustomer, insertWholesaleCustomerSchema, WholesaleLocation, insertWholesaleLocationSchema } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Mail, MapPin, Plus, Loader2, Edit, X, FileDown, Upload, MoreHorizontal, Trash2 } from "lucide-react";
+import { Mail, MapPin, Plus, Loader2, Edit, X, FileDown, Upload, MoreHorizontal, Trash2, DollarSign } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { useForm } from "react-hook-form";
@@ -30,6 +32,9 @@ export default function WholesaleCustomers() {
   const [editingCustomer, setEditingCustomer] = useState<WholesaleCustomer | null>(null);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [locationDialogOpen, setLocationDialogOpen] = useState(false);
+  const [pricingDialogOpen, setPricingDialogOpen] = useState(false);
+  const { user: currentUser } = useAuth();
+  const canEditPricing = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
   const [editingLocation, setEditingLocation] = useState<WholesaleLocation | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<WholesaleCustomer | null>(null);
   const [newEmail, setNewEmail] = useState("");
@@ -862,6 +867,16 @@ export default function WholesaleCustomers() {
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                       onClick={() => {
+                                        setSelectedCustomer(customer);
+                                        setPricingDialogOpen(true);
+                                      }}
+                                      data-testid={`button-manage-pricing-${customer.id}`}
+                                    >
+                                      <DollarSign className="w-4 h-4 mr-2" />
+                                      Pricing
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => {
                                         setCustomerToDelete(customer);
                                         setDeleteDialogOpen(true);
                                       }}
@@ -890,6 +905,9 @@ export default function WholesaleCustomers() {
 
       {/* Authorized contacts (logins) for the selected store */}
       <AuthorizedContactsDialog customer={selectedCustomer} open={emailDialogOpen} onOpenChange={setEmailDialogOpen} />
+
+      {/* Per-customer price overrides — same data the wholesale units page edits unit-first */}
+      <CustomerPricingDialog customer={selectedCustomer} open={pricingDialogOpen} onOpenChange={setPricingDialogOpen} canEdit={canEditPricing} />
 
       {/* Location Management Dialog */}
       <Dialog open={locationDialogOpen} onOpenChange={(open) => {
