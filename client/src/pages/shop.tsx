@@ -8,7 +8,7 @@ import { Plus, Check, Repeat, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
+import fishermensTerminal from "@assets/stock_images/fishermens_terminal_ballard.jpg"; // Fishermen's Terminal, Ballard (Unsplash, free commercial use)
 import logo from "@assets/text-stacked-black_1762299663824.png";
 import { getCasePrice } from "@shared/pricing";
 
@@ -159,7 +159,7 @@ export default function Shop() {
       <div className="relative h-[70vh] md:h-[70vh] flex items-center justify-center overflow-hidden">
         <div className="absolute inset-0 z-0">
           <img 
-            src={seattleHero} 
+            src={fishermensTerminal} 
             alt="Seattle skyline and Puget Sound" 
             className="w-full h-full object-cover"
           />

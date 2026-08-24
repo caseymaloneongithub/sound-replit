@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import type { Flavor } from "@shared/schema";
 import { Button } from "@/components/ui/button";
-import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
+import fishermensTerminal from "@assets/stock_images/fishermens_terminal_ballard.jpg"; // Fishermen's Terminal, Ballard (Unsplash, free commercial use)
 import logo from "@assets/text-stacked-black_1762299663824.png";
 import { Footer } from "@/components/layout/footer";
 import { useAuth } from "@/hooks/use-auth";
@@ -29,7 +29,7 @@ export default function Home() {
     <div className="min-h-screen bg-background">
       <div
         className="relative h-96 bg-cover bg-center flex items-center justify-center"
-        style={{ backgroundImage: `linear-gradient(rgba(20, 50, 60, 0.5), rgba(20, 50, 60, 0.62)), url(${seattleHero})` }}
+        style={{ backgroundImage: `linear-gradient(rgba(20, 50, 60, 0.45), rgba(20, 50, 60, 0.6)), url(${fishermensTerminal})` }}
       >
         <div className="text-center text-white px-4">
           <img

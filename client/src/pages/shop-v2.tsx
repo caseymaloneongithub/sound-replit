@@ -11,7 +11,7 @@ import { ShoppingCart, Check, ChevronLeft, ChevronRight, Image as ImageIcon } fr
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import seattleHero from "@assets/stock_images/seattle_skyline_with_db3ee238.jpg";
+import fishermensTerminal from "@assets/stock_images/fishermens_terminal_ballard.jpg"; // Fishermen's Terminal, Ballard (Unsplash, free commercial use)
 import logo from "@assets/text-stacked-black_1762299663824.png";
 import { Footer } from "@/components/layout/footer";
 import { SubscribeOptions } from "@/components/subscribe-options";
@@ -203,7 +203,7 @@ export default function ShopV2() {
     <div className="min-h-screen bg-background">
       <div 
         className="relative h-96 bg-cover bg-center flex items-center justify-center"
-        style={{ backgroundImage: `linear-gradient(rgba(20, 50, 60, 0.5), rgba(20, 50, 60, 0.62)), url(${seattleHero})` }}
+        style={{ backgroundImage: `linear-gradient(rgba(20, 50, 60, 0.45), rgba(20, 50, 60, 0.6)), url(${fishermensTerminal})` }}
       >
         <div className="text-center text-white px-4">
           <img 
