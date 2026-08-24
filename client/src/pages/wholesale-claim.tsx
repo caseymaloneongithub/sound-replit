@@ -11,9 +11,10 @@ import { useToast } from "@/hooks/use-toast";
 
 /**
  * Claim your store: shown to a verified wholesale login that isn't on an account yet.
- * They name their store, confirm it, and are either connected on the spot (email domain
- * already on the account) or wait for a one-tap staff approval — building their order in
- * the meantime if they like.
+ * They start typing their store, pick it, and are connected on the spot — the email is
+ * added to the store's contacts and they can order immediately. Staff see every join in
+ * the New Contacts feed with one-click removal. (Pending/denied states remain only for
+ * requests from before the approval gate was dropped, 2026-08-23.)
  */
 
 type Match = { id: string; businessName: string; street: string | null; city: string | null; locationCount: number };
@@ -24,7 +25,7 @@ type ClaimStatus =
   | { state: "denied"; customer: { id: string; businessName: string }; request: { id: string; decidedAt: string | null } }
   | { state: "none" };
 
-const MIN_CHARS = 4;
+const MIN_CHARS = 2;
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -120,7 +121,7 @@ function SearchCard({ email, denied }: { email: string; denied: Extract<ClaimSta
             <CardDescription>
               {result.autoApproved
                 ? `${email} matches the email domain already on this account, so you're connected to ${result.customer.businessName} and can order now.`
-                : `You're connected to ${result.customer.businessName}.`}
+                : `This email is now a contact on ${result.customer.businessName} — you can order right away.`}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -149,7 +150,7 @@ function SearchCard({ email, denied }: { email: string; denied: Extract<ClaimSta
           <CardDescription>
             {denied
               ? `We couldn't confirm ${email} on ${denied.customer.businessName}. If that was the wrong store, search again — or apply for a new account.`
-              : `We didn't recognize ${email} yet. Tell us your store and we'll connect you.`}
+              : `We didn't recognize ${email} yet. Pick your store and you're in — we'll add this email to its contacts.`}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -159,7 +160,7 @@ function SearchCard({ email, denied }: { email: string; denied: Extract<ClaimSta
               id="store-name"
               value={query}
               onChange={(e) => { setQuery(e.target.value); setSelectedId(null); }}
-              placeholder="As it appears on your invoices"
+              placeholder="Start typing — we'll match it"
               autoFocus
               autoComplete="off"
               data-testid="input-claim-store"

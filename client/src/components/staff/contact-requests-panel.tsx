@@ -22,18 +22,19 @@ export type LinkRequestRow = {
   businessName: string;
 };
 
-export const PENDING_REQUESTS_KEY = ["/api/wholesale/link-requests", "pending"] as const;
+function requestsQuery(status: string) {
+  return {
+    queryKey: ["/api/wholesale/link-requests", status] as const,
+    queryFn: async () => {
+      const res = await fetch(`/api/wholesale/link-requests?status=${status}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load contact requests");
+      return res.json() as Promise<LinkRequestRow[]>;
+    },
+  };
+}
 
 export function usePendingLinkRequests() {
-  return useQuery<LinkRequestRow[]>({
-    queryKey: PENDING_REQUESTS_KEY,
-    queryFn: async () => {
-      const res = await fetch("/api/wholesale/link-requests?status=pending", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load contact requests");
-      return res.json();
-    },
-    refetchInterval: 60_000,
-  });
+  return useQuery<LinkRequestRow[]>({ ...requestsQuery("pending"), refetchInterval: 60_000 });
 }
 
 function invalidateAll() {
@@ -42,7 +43,8 @@ function invalidateAll() {
   queryClient.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith("/api/wholesale/customers/") });
 }
 
-/** Approve / Deny buttons for one request. Shared by the queue and the per-store dialog. */
+/** Approve / Deny buttons for one request. Only legacy pending rows still use this —
+ *  self-joins connect immediately now — but the endpoints and UI stay for any stragglers. */
 export function RequestActions({ request, size = "sm" }: { request: { id: string; email: string; businessName?: string }; size?: "sm" | "default" }) {
   const { toast } = useToast();
   const [denyOpen, setDenyOpen] = useState(false);
@@ -106,22 +108,40 @@ export function RequestActions({ request, size = "sm" }: { request: { id: string
   );
 }
 
-/** The queue: every pending "connect me to this store" request, newest first. */
+/**
+ * Self-joins connect immediately (owner decision 2026-08-23), so oversight lives here:
+ * every contact who added themselves in the last 14 days, with one-click removal. Legacy
+ * pending rows (from before the gate was dropped) still show with Approve/Deny.
+ */
 export function ContactRequestsPanel() {
-  const { data, isLoading } = usePendingLinkRequests();
-  const rows = data ?? [];
-  if (isLoading || rows.length === 0) return null;
+  const { toast } = useToast();
+  const { data: pending = [] } = usePendingLinkRequests();
+  const { data: recent = [], isLoading } = useQuery<LinkRequestRow[]>({ ...requestsQuery("recent"), refetchInterval: 60_000 });
+
+  const remove = useMutation({
+    mutationFn: async (r: LinkRequestRow) => apiRequest("DELETE", `/api/wholesale/customers/${r.customerId}/contacts/${encodeURIComponent(r.email)}`),
+    onSuccess: (_, r) => {
+      invalidateAll();
+      toast({ title: `${r.email} removed`, description: `No longer able to sign in to ${r.businessName}.` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't remove contact", description: e.message, variant: "destructive" }),
+  });
+
+  if (isLoading || (pending.length === 0 && recent.length === 0)) return null;
 
   return (
     <Card className="mb-6" data-testid="panel-contact-requests">
       <CardHeader>
         <CardTitle style={{ fontFamily: "var(--font-heading)" }}>
-          Contact requests <span className="ml-2 inline-flex items-center rounded-full bg-cedar px-2 py-0.5 text-xs font-semibold text-white align-middle">{rows.length}</span>
+          New contacts
+          <span className="ml-2 inline-flex items-center rounded-full bg-cedar px-2 py-0.5 text-xs font-semibold text-white align-middle">{pending.length + recent.length}</span>
         </CardTitle>
-        <CardDescription>People who verified their email and asked to be connected to a store. Approving connects the login and places any order they built while waiting.</CardDescription>
+        <CardDescription>
+          People who verified an email and connected themselves to a store. They can order immediately — remove anyone who doesn't belong.
+        </CardDescription>
       </CardHeader>
       <CardContent className="divide-y">
-        {rows.map((r) => (
+        {pending.map((r) => (
           <div key={r.id} className="py-3 flex flex-wrap items-center justify-between gap-3" data-testid={`request-${r.id}`}>
             <div className="min-w-0">
               <div className="font-semibold">{r.email}</div>
@@ -131,6 +151,27 @@ export function ContactRequestsPanel() {
               </div>
             </div>
             <RequestActions request={r} />
+          </div>
+        ))}
+        {recent.map((r) => (
+          <div key={r.id} className="py-3 flex flex-wrap items-center justify-between gap-3" data-testid={`recent-join-${r.id}`}>
+            <div className="min-w-0">
+              <div className="font-semibold">{r.email}</div>
+              <div className="text-sm text-muted-foreground">
+                joined <span className="font-medium text-foreground">{r.businessName}</span> · {formatDistanceToNow(new Date(r.decidedAt ?? r.createdAt), { addSuffix: true })}
+                {r.autoApproved ? " · email domain matched" : ""}
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              disabled={remove.isPending}
+              onClick={() => { if (window.confirm(`Remove ${r.email} from ${r.businessName}?`)) remove.mutate(r); }}
+              data-testid={`button-remove-join-${r.id}`}
+            >
+              Remove
+            </Button>
           </div>
         ))}
       </CardContent>

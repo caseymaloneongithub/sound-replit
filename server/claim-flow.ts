@@ -35,9 +35,9 @@ import { sendWholesaleContactApprovedEmail } from "./email";
 // ----------------------------------------------------------------------------------------
 // Policy knobs
 // ----------------------------------------------------------------------------------------
-export const SEARCH_MIN_CHARS = 4;
-export const SEARCH_MAX_RESULTS = 5;
-export const SEARCHES_PER_EMAIL_PER_DAY = 10;
+export const SEARCH_MIN_CHARS = 2;
+export const SEARCH_MAX_RESULTS = 8;
+export const SEARCHES_PER_EMAIL_PER_DAY = 100; // generous — humans never hit it; bulk scraping still does
 
 // A matching domain only counts as proof when it's a company domain. Anyone can make a
 // gmail address, so gmail matching gmail proves nothing.
@@ -171,6 +171,12 @@ export async function removeContact(customer: WholesaleCustomer, email: string):
     .update(users)
     .set({ wholesaleCustomerId: null, role: "user" })
     .where(and(sql`LOWER(${users.email}) = ${e}`, eq(users.wholesaleCustomerId, customer.id)));
+  // Retire their join record too, or the "new contacts" feed keeps listing someone who
+  // was just removed.
+  await db
+    .update(wholesaleLinkRequests)
+    .set({ status: "removed" })
+    .where(and(eq(wholesaleLinkRequests.customerId, customer.id), eq(wholesaleLinkRequests.email, e), eq(wholesaleLinkRequests.status, "approved")));
   return { ok: true };
 }
 
@@ -320,6 +326,11 @@ export async function createLinkRequest(user: { id: string; email: string }, cus
   if (existing && existing.status === "pending" && existing.customerId === customer.id) {
     return { request: existing, autoApproved: false };
   }
+  // Every verified email joins immediately — no staff gate (owner decision 2026-08-23:
+  // stores rotate buyers constantly, and the friction cost more than the gate protected).
+  // The record still notes whether the domain matched, and every join shows up in the
+  // staff "new contacts" feed with one-click removal — oversight moved from approval to
+  // visibility.
   const domain = emailDomain(email);
   const domainOnAccount = !FREE_MAIL_DOMAINS.has(domain) && customerEmails(customer).some((e) => emailDomain(e) === domain);
 
@@ -329,17 +340,13 @@ export async function createLinkRequest(user: { id: string; email: string }, cus
       userId: user.id,
       email,
       customerId: customer.id,
-      status: domainOnAccount ? "approved" : "pending",
+      status: "approved",
       autoApproved: domainOnAccount,
-      decidedAt: domainOnAccount ? new Date() : null,
+      decidedAt: new Date(),
     })
     .returning();
-  if (domainOnAccount) {
-    await linkUserToCustomer(user.id, customer, email);
-    console.log(`[CLAIM] ${email} auto-linked to ${customer.businessName} (${customer.id}) by domain match`);
-  } else {
-    console.log(`[CLAIM] ${email} requested to join ${customer.businessName} (${customer.id}) — pending staff approval`);
-  }
+  await linkUserToCustomer(user.id, customer, email);
+  console.log(`[CLAIM] ${email} joined ${customer.businessName} (${customer.id})${domainOnAccount ? " (domain match)" : ""}`);
   return { request, autoApproved: domainOnAccount };
 }
 
@@ -439,7 +446,14 @@ export function registerClaimRoutes(app: Express, deps: ClaimRouteDeps) {
         })
         .from(wholesaleLinkRequests)
         .innerJoin(wholesaleCustomers, eq(wholesaleCustomers.id, wholesaleLinkRequests.customerId))
-        .where(status === "all" ? sql`true` : eq(wholesaleLinkRequests.status, status))
+        .where(
+          status === "all"
+            ? sql`true`
+            : status === "recent"
+              // The staff feed of self-joined contacts: approved in the last 14 days.
+              ? and(eq(wholesaleLinkRequests.status, "approved"), gte(wholesaleLinkRequests.decidedAt, sql`now() - interval '14 days'`))
+              : eq(wholesaleLinkRequests.status, status)
+        )
         .orderBy(desc(wholesaleLinkRequests.createdAt))
         .limit(200);
       res.json(rows);
