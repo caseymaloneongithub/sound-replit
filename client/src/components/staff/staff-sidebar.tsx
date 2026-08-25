@@ -1,8 +1,9 @@
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import { endOfWeek, format, startOfDay, startOfWeek, subWeeks } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { 
-  Package,
+import {
   ShoppingCart,
   Users,
   FileText,
@@ -18,7 +19,6 @@ import {
   Tags,
   Landmark,
   Calculator,
-  Route,
   FileCheck,
   ClipboardCheck,
   Boxes,
@@ -27,20 +27,71 @@ import {
   Factory,
   PackageCheck,
   LayoutDashboard,
-  CalendarDays
+  CalendarDays,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { useNewContactCount } from "@/components/staff/contact-requests-panel";
+import { isTaskDueInWeek, getTaskDueDateInWeek } from "@/lib/checklist-recurrence";
+import type { AdminTask, AdminTaskCompletion } from "@shared/schema";
 
 interface NavItem {
   title: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   adminOnly?: boolean;
+  /** Show the "Admin" pill — only for admin items inside sections staff can also see. */
+  adminBadge?: boolean;
+  /** Extra paths that keep this item highlighted (e.g. the second tab of a merged page). */
+  alsoMatch?: string[];
+  /** Live to-do count; rendered only when > 0. */
+  count?: number;
 }
 
 interface NavSection {
   title: string;
+  adminOnly?: boolean;
   items: NavItem[];
+}
+
+/**
+ * Overdue checklist items across the prior 4 weeks — same queries and the same recurrence
+ * rules as the Weekly Checklist page (shared via lib/checklist-recurrence), so the badge
+ * and the page always agree.
+ */
+function useOverdueChecklistCount(): number {
+  const currentWeekStart = startOfWeek(new Date(), { weekStartsOn: 0 });
+  const priorStart = format(subWeeks(currentWeekStart, 4), "yyyy-MM-dd");
+  const priorEnd = format(endOfWeek(subWeeks(currentWeekStart, 1), { weekStartsOn: 0 }), "yyyy-MM-dd");
+
+  const { data: tasks = [] } = useQuery<AdminTask[]>({
+    queryKey: ["/api/admin-tasks"],
+    staleTime: 5 * 60_000,
+  });
+  const { data: priorCompletions = [] } = useQuery<AdminTaskCompletion[]>({
+    queryKey: ["/api/admin-tasks/completions/by-week", priorStart, priorEnd],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin-tasks/completions/by-week?start=${priorStart}&end=${priorEnd}`);
+      if (!res.ok) throw new Error("Failed to fetch prior completions");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+
+  let count = 0;
+  for (let i = 1; i <= 4; i++) {
+    const weekStart = subWeeks(currentWeekStart, i);
+    const weekEnd = endOfWeek(weekStart, { weekStartsOn: 0 });
+    for (const task of tasks) {
+      if (!task.isActive || !isTaskDueInWeek(task, weekStart, weekEnd)) continue;
+      const due = getTaskDueDateInWeek(task, weekStart, weekEnd);
+      if (!due) continue;
+      const done = priorCompletions.some(
+        (c) => c.taskId === task.id && startOfDay(new Date(c.instanceDate)).getTime() === startOfDay(due).getTime()
+      );
+      if (!done) count++;
+    }
+  }
+  return count;
 }
 
 interface StaffSidebarProps {
@@ -50,77 +101,82 @@ interface StaffSidebarProps {
 export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
   const [location] = useLocation();
   const { user } = useAuth();
+  const overdueCount = useOverdueChecklistCount();
+  const newContactCount = useNewContactCount();
 
   // Check if user has elevated privileges (admin or super_admin)
-  const isElevated = user?.role === 'admin' || user?.role === 'super_admin';
+  const isElevated = user?.role === "admin" || user?.role === "super_admin";
 
+  // Ordered by how often each page is touched: daily work first, setup and money last.
+  // Admin-only pages cluster into admin-only sections so staff never see stubs of things
+  // they can't open; the "Admin" pill appears only on Invoices, the one admin item left
+  // inside a shared section.
   const navSections: NavSection[] = [
     {
-      title: "Product Management",
+      title: "Today",
       items: [
-        { title: "Flavor Library", href: "/admin/flavors", icon: Palette, adminOnly: true },
-        { title: "Retail Products", href: "/admin/retail-products", icon: ShoppingBag, adminOnly: true },
-        { title: "Wholesale Units", href: "/admin/wholesale-units", icon: Box, adminOnly: true },
+        { title: "Orders Board", href: "/staff-portal/orders-board", icon: CalendarDays },
+        { title: "Weekly Checklist", href: "/staff-portal/checklist", icon: ClipboardCheck, count: overdueCount },
       ],
     },
     {
       title: "Wholesale",
       items: [
-        { title: "Place Order", href: "/staff-portal/wholesale/place-order", icon: ShoppingCart },
         { title: "Orders", href: "/staff-portal/wholesale/orders", icon: FileText },
-        { title: "Invoices", href: "/staff-portal/wholesale/invoices", icon: FileCheck, adminOnly: true },
-        { title: "Customers", href: "/staff-portal/wholesale/customers", icon: Users },
-        { title: "Delivery Report", href: "/staff-portal/wholesale/delivery-report", icon: TruckIcon },
-        { title: "Route Optimization", href: "/staff-portal/wholesale/delivery-routes", icon: Route },
+        { title: "Place Order", href: "/staff-portal/wholesale/place-order", icon: ShoppingCart },
+        { title: "Customers", href: "/staff-portal/wholesale/customers", icon: Users, count: newContactCount },
+        {
+          title: "Deliveries & Routes",
+          href: "/staff-portal/wholesale/delivery-report",
+          icon: TruckIcon,
+          alsoMatch: ["/staff-portal/wholesale/delivery-routes"],
+        },
+        { title: "Leads", href: "/crm", icon: Building2 },
+        { title: "Invoices", href: "/staff-portal/wholesale/invoices", icon: FileCheck, adminOnly: true, adminBadge: true },
       ],
     },
     {
       title: "Retail",
       items: [
         { title: "Orders", href: "/retail/orders", icon: ShoppingCart },
-        { title: "Subscriptions", href: "/retail/subscriptions", icon: Repeat },
         { title: "Customers", href: "/retail/customers", icon: Users },
+        { title: "Subscriptions", href: "/retail/subscriptions", icon: Repeat },
       ],
     },
     {
-      title: "Production & Supplies",
+      title: "Brewing & Inventory",
       items: [
         { title: "Dashboard", href: "/inventory/dashboard", icon: LayoutDashboard },
-        { title: "Materials", href: "/inventory/materials", icon: Boxes },
-        { title: "Suppliers", href: "/inventory/suppliers", icon: Building },
-        { title: "Recipes", href: "/inventory/recipes", icon: FlaskConical },
         { title: "Productions", href: "/inventory/productions", icon: Factory },
+        { title: "Recipes", href: "/inventory/recipes", icon: FlaskConical },
+        { title: "Materials", href: "/inventory/materials", icon: Boxes },
         { title: "Purchase Orders", href: "/inventory/purchase-orders", icon: PackageCheck },
+        { title: "Suppliers", href: "/inventory/suppliers", icon: Building },
       ],
     },
     {
-      title: "Reports",
+      title: "Catalog",
+      adminOnly: true,
+      items: [
+        { title: "Flavors", href: "/admin/flavors", icon: Palette, adminOnly: true },
+        { title: "Retail Products", href: "/admin/retail-products", icon: ShoppingBag, adminOnly: true },
+        { title: "Wholesale Units", href: "/admin/wholesale-units", icon: Box, adminOnly: true },
+      ],
+    },
+    {
+      title: "Money",
       items: [
         { title: "Revenue", href: "/reports", icon: DollarSign },
-      ],
-    },
-    {
-      title: "Accounting",
-      items: [
-        { title: "Dashboard", href: "/admin/accounting", icon: Calculator, adminOnly: true },
+        { title: "Accounting", href: "/admin/accounting", icon: Calculator, adminOnly: true },
         { title: "Transactions", href: "/admin/accounting/transactions", icon: Receipt, adminOnly: true },
         { title: "Categories", href: "/admin/accounting/categories", icon: Tags, adminOnly: true },
         { title: "Bank Connections", href: "/admin/accounting/banks", icon: Landmark, adminOnly: true },
       ],
     },
     {
-      title: "Operations",
-      items: [
-        { title: "Orders Board", href: "/staff-portal/orders-board", icon: CalendarDays },
-        { title: "Weekly Checklist", href: "/staff-portal/checklist", icon: ClipboardCheck },
-      ],
-    },
-    {
-      title: "Administration",
-      items: [
-        { title: "CRM", href: "/crm", icon: Building2 },
-        { title: "User Management", href: "/user-management", icon: UserCog, adminOnly: true },
-      ],
+      title: "Admin",
+      adminOnly: true,
+      items: [{ title: "User Management", href: "/user-management", icon: UserCog, adminOnly: true }],
     },
   ];
 
@@ -131,13 +187,10 @@ export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
         <p className="text-sm text-muted-foreground">Management Portal</p>
       </div>
 
-      <nav className="px-3 space-y-6">
+      <nav className="px-3 space-y-6 pb-8">
         {navSections.map((section) => {
-          // Filter out admin-only items if user is not elevated (admin or super_admin)
-          const visibleItems = section.items.filter(
-            (item) => !item.adminOnly || isElevated
-          );
-
+          if (section.adminOnly && !isElevated) return null;
+          const visibleItems = section.items.filter((item) => !item.adminOnly || isElevated);
           if (visibleItems.length === 0) return null;
 
           return (
@@ -148,12 +201,13 @@ export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
               <div className="space-y-1">
                 {visibleItems.map((item) => {
                   const Icon = item.icon;
-                  // For exact match routes (like /admin/accounting), only match exactly
-                  // For other routes, also match child paths
+                  // /admin/accounting has child routes that are their own nav items, so it
+                  // only highlights on exact match.
                   const isExactMatchRoute = item.href === "/admin/accounting";
-                  const isActive = isExactMatchRoute 
-                    ? location === item.href 
-                    : (location === item.href || location.startsWith(item.href + "/"));
+                  const matches = (href: string) => location === href || location.startsWith(href + "/");
+                  const isActive = isExactMatchRoute
+                    ? location === item.href
+                    : matches(item.href) || (item.alsoMatch ?? []).some(matches);
 
                   return (
                     <Button
@@ -167,11 +221,15 @@ export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
                       <Link href={item.href}>
                         <Icon className="w-4 h-4" />
                         <span>{item.title}</span>
-                        {item.adminOnly && (
+                        {item.count ? (
+                          <span className="ml-auto rounded-full bg-cedar px-2 py-0.5 text-xs font-semibold text-white" data-testid={`nav-count-${item.href.replace(/\//g, "-")}`}>
+                            {item.count}
+                          </span>
+                        ) : item.adminBadge ? (
                           <Badge variant="secondary" className="ml-auto text-xs">
                             Admin
                           </Badge>
-                        )}
+                        ) : null}
                       </Link>
                     </Button>
                   );

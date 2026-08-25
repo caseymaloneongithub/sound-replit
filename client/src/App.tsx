@@ -41,7 +41,6 @@ import WholesalePaymentSuccess from "@/pages/wholesale-payment-success";
 import RetailOrders from "@/pages/retail-orders";
 import RetailSubscriptions from "@/pages/retail-subscriptions";
 import RetailCustomers from "@/pages/retail-customers";
-import Inventory from "@/pages/inventory";
 import Materials from "@/pages/materials";
 import Suppliers from "@/pages/suppliers";
 import Recipes from "@/pages/recipes";
@@ -137,7 +136,8 @@ function Router() {
       <StaffProtectedRoute path="/admin/accounting/categories" component={AccountingCategories} />
       <StaffProtectedRoute path="/admin/accounting/banks" component={AccountingBanks} />
       <StaffProtectedRoute path="/admin/accounting/income-statement" component={AccountingIncomeStatement} />
-      <StaffProtectedRoute path="/inventory" component={Inventory} />
+      {/* The old /inventory hub duplicated the sidebar; the dashboard is the real front door. */}
+      <Route path="/inventory" component={() => <Redirect to="/inventory/dashboard" />} />
       <StaffProtectedRoute path="/inventory/dashboard" component={InventoryDashboard} />
       <StaffProtectedRoute path="/inventory/materials" component={Materials} />
       <StaffProtectedRoute path="/inventory/suppliers" component={Suppliers} />

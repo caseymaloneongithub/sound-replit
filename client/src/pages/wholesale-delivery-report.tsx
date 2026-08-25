@@ -9,6 +9,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CalendarIcon, Printer } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
+import { DeliveriesTabs } from "@/components/staff/deliveries-tabs";
 import { format, startOfWeek, endOfWeek, addDays } from "date-fns";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -103,6 +104,7 @@ export default function WholesaleDeliveryReport() {
   return (
     <StaffLayout>
       <div className="max-w-7xl mx-auto px-6 py-12">
+        <DeliveriesTabs />
         <div className="flex items-center justify-between mb-8 print:hidden">
           <div>
             <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>

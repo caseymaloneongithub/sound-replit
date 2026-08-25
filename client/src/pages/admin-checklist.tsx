@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { format, startOfDay, startOfWeek, endOfWeek, addWeeks, subWeeks, addDays, isWithinInterval, getDay, getDate, getMonth, eachDayOfInterval } from "date-fns";
 import { StaffLayout } from "@/components/staff/staff-layout";
+import { isTaskDueInWeek, getTaskDueDateInWeek } from "@/lib/checklist-recurrence";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -118,63 +119,6 @@ function getRecurrenceBadgeColor(recurrence: string): string {
 function getCategoryBadgeVariant(category: string | null): "default" | "secondary" | "outline" {
   if (!category) return "outline";
   return "secondary";
-}
-
-function isTaskDueOnDate(task: AdminTask, date: Date): boolean {
-  // Check if date is within task's start/end date range
-  if (task.startDate) {
-    const startDate = startOfDay(new Date(task.startDate));
-    if (date < startDate) return false;
-  }
-  if (task.endDate) {
-    const endDate = startOfDay(new Date(task.endDate));
-    if (date > endDate) return false;
-  }
-
-  const dayOfWeek = getDay(date);
-  const dayOfMonth = getDate(date);
-  const month = getMonth(date) + 1; // getMonth returns 0-11
-
-  switch (task.recurrence) {
-    case "daily":
-      return true;
-    case "weekly":
-      return task.dayOfWeek === dayOfWeek;
-    case "monthly":
-      return task.dayOfMonth === dayOfMonth;
-    case "quarterly":
-      // Quarters: Jan (1), Apr (4), Jul (7), Oct (10)
-      const quarterMonths = [1, 4, 7, 10];
-      return quarterMonths.includes(month) && task.dayOfMonth === dayOfMonth;
-    case "yearly":
-      return task.monthOfYear === month && task.dayOfMonth === dayOfMonth;
-    case "one-time":
-      // One-time tasks show on the specific date stored in dayOfMonth/monthOfYear or on creation date
-      if (task.dayOfMonth && task.monthOfYear) {
-        // Use current year since one-time doesn't specify year
-        const taskDate = new Date(date.getFullYear(), task.monthOfYear - 1, task.dayOfMonth);
-        return startOfDay(taskDate).getTime() === startOfDay(date).getTime();
-      }
-      // Fallback: show on creation date
-      if (task.createdAt) {
-        return startOfDay(new Date(task.createdAt)).getTime() === startOfDay(date).getTime();
-      }
-      return false;
-    default:
-      return false;
-  }
-}
-
-function isTaskDueInWeek(task: AdminTask, weekStart: Date, weekEnd: Date): boolean {
-  // Check if the task is due on any day within the week
-  const daysInWeek = eachDayOfInterval({ start: weekStart, end: weekEnd });
-  return daysInWeek.some(day => isTaskDueOnDate(task, day));
-}
-
-function getTaskDueDateInWeek(task: AdminTask, weekStart: Date, weekEnd: Date): Date | null {
-  // Find the specific date this task is due within the week
-  const daysInWeek = eachDayOfInterval({ start: weekStart, end: weekEnd });
-  return daysInWeek.find(day => isTaskDueOnDate(task, day)) || null;
 }
 
 function TaskForm({ 

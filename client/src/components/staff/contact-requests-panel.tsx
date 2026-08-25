@@ -178,3 +178,10 @@ export function ContactRequestsPanel() {
     </Card>
   );
 }
+
+/** Sidebar badge: legacy pending requests + contacts who self-joined in the last 14 days. */
+export function useNewContactCount(): number {
+  const { data: pending = [] } = useQuery<LinkRequestRow[]>({ ...requestsQuery("pending"), refetchInterval: 60_000, staleTime: 30_000 });
+  const { data: recent = [] } = useQuery<LinkRequestRow[]>({ ...requestsQuery("recent"), refetchInterval: 60_000, staleTime: 30_000 });
+  return pending.length + recent.length;
+}

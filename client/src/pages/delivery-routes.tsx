@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CalendarIcon, Route, Plus, X, RefreshCw } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
+import { DeliveriesTabs } from "@/components/staff/deliveries-tabs";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -248,6 +249,7 @@ export default function DeliveryRoutes() {
   return (
     <StaffLayout>
       <div className="max-w-7xl mx-auto px-6 py-12">
+        <DeliveriesTabs />
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1
