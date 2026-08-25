@@ -304,6 +304,7 @@ export interface IStorage {
   cancelRetailOrderWithInventoryRestore(id: string, staffUserId: string, reason: string): Promise<void>;
   generateNextOrderNumber(): Promise<string>;
   updateWholesaleOrderFulfillment(id: string, userId: string): Promise<WholesaleOrder | undefined>;
+  applyWholesaleOrderStock(orderId: string, action: 'apply' | 'restore', userId?: string): Promise<{ changed: boolean; warnings: string[] }>;
   
   createPasswordResetToken(userId: string, token: string, expiresAt: Date): Promise<void>;
   getPasswordResetToken(token: string): Promise<{ id: string; userId: string; expiresAt: Date; used: boolean } | undefined>;
@@ -2874,6 +2875,8 @@ export class PostgresStorage implements IStorage {
   }
 
   async deleteWholesaleOrder(id: string): Promise<void> {
+    // Deleting an order puts back any finished-goods stock it consumed at packaging.
+    await this.applyWholesaleOrderStock(id, 'restore');
     // Soft delete - set deletedAt timestamp instead of removing the row
     await db.update(wholesaleOrders).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(wholesaleOrders.id, id));
   }
@@ -3719,6 +3722,7 @@ export class PostgresStorage implements IStorage {
 
   async updateRetailOrderStatus(id: string, status: string, userId?: string): Promise<RetailOrder | undefined> {
     if (status === 'fulfilled' && userId) {
+      const stockWarnings: string[] = [];
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -3742,12 +3746,15 @@ export class PostgresStorage implements IStorage {
           for (const item of orderItems) {
             const currentStock = stockMap.get(item.productId);
             if (currentStock === undefined) {
-              throw new Error(`Product not found: ${item.productId}`);
+              stockWarnings.push(`Product ${item.productId} not found — stock not adjusted`);
+              continue;
             }
 
+            // Negative stock is allowed by design (owner: warn, don't block — the pickup
+            // already happened). The dashboard's below-zero flag holds it until the count.
             const newStock = currentStock - item.quantity;
             if (newStock < 0) {
-              throw new Error(`Insufficient stock for product ${item.productId}. Required: ${item.quantity}, Available: ${currentStock}`);
+              stockWarnings.push(`Stock below zero: product ${item.productId} at ${newStock}`);
             }
 
             await client.query(
@@ -3795,11 +3802,12 @@ export class PostgresStorage implements IStorage {
           for (const [productId, quantity] of Array.from(needed.entries())) {
             const currentStock = v2StockMap.get(productId);
             if (currentStock === undefined) {
-              throw new Error(`Finished-goods product not found: ${productId}`);
+              stockWarnings.push(`Finished-goods product ${productId} not found — stock not adjusted`);
+              continue;
             }
             const newStock = currentStock - quantity;
             if (newStock < 0) {
-              throw new Error(`Insufficient stock for product ${productId}. Required: ${quantity}, Available: ${currentStock}`);
+              stockWarnings.push(`Stock below zero: product ${productId} at ${newStock}`);
             }
 
             await client.query(
@@ -3823,7 +3831,8 @@ export class PostgresStorage implements IStorage {
 
         await client.query('COMMIT');
 
-        const updatedOrder = await this.getRetailOrder(id);
+        const updatedOrder: any = await this.getRetailOrder(id);
+        if (updatedOrder && stockWarnings.length) updatedOrder.stockWarnings = stockWarnings;
         return updatedOrder;
       } catch (error) {
         await client.query('ROLLBACK');
@@ -3968,61 +3977,121 @@ export class PostgresStorage implements IStorage {
     }
   }
 
-  async updateWholesaleOrderFulfillment(id: string, userId: string): Promise<WholesaleOrder | undefined> {
+  /**
+   * Move finished-goods stock for a wholesale order. 'apply' when it crosses into
+   * packaged — the owner's definition: it's in bottles/cans/kegs and on the shelf, so the
+   * order's share leaves that shelf. 'restore' when it's walked back or deleted.
+   *
+   * Idempotent via the ledger: the net of this order's fulfillment rows says whether its
+   * stock is currently taken, so repeated board taps can't double-count.
+   *
+   * Lines resolve to a product by (flavor, container) through the unit type; anything
+   * unresolvable becomes a warning, never a silent skip. Stock MAY GO NEGATIVE by design
+   * (owner decision: warn, don't block — the physical world already happened); warnings
+   * surface on the board and the dashboard flags negatives until the monthly count
+   * reconciles them.
+   */
+  async applyWholesaleOrderStock(orderId: string, action: 'apply' | 'restore', userId?: string): Promise<{ changed: boolean; warnings: string[] }> {
+    const warnings: string[] = [];
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-
-      const orderItems = await db
-        .select()
-        .from(wholesaleOrderItems)
-        .where(eq(wholesaleOrderItems.orderId, id));
-
-      for (const item of orderItems) {
-        const productResult = await client.query(
-          'SELECT stock_quantity FROM products WHERE id = $1 FOR UPDATE',
-          [item.productId]
-        );
-
-        if (productResult.rows.length === 0) {
-          throw new Error(`Product not found: ${item.productId}`);
-        }
-
-        const currentStock = productResult.rows[0].stock_quantity;
-        const newStock = currentStock - item.quantity;
-
-        if (newStock < 0) {
-          throw new Error(`Insufficient stock for product ${item.productId}. Required: ${item.quantity}, Available: ${currentStock}`);
-        }
-
-        await client.query(
-          'UPDATE products SET stock_quantity = $1, in_stock = $2 WHERE id = $3',
-          [newStock, newStock > 0, item.productId]
-        );
-
-        await client.query(
-          `INSERT INTO inventory_adjustments 
-          (product_id, quantity, reason, staff_user_id, order_id, order_type)
-          VALUES ($1, $2, $3, $4, $5, $6)`,
-          [item.productId, -item.quantity, 'fulfillment', userId, id, 'wholesale']
-        );
+      const netRes = await client.query(
+        `SELECT COALESCE(SUM(quantity), 0)::int AS net FROM inventory_adjustments
+         WHERE order_id = $1 AND order_type = 'wholesale' AND reason IN ('fulfillment', 'fulfillment-restore')`,
+        [orderId]
+      );
+      const applied = netRes.rows[0].net < 0;
+      if ((action === 'apply') === applied) {
+        await client.query('COMMIT');
+        return { changed: false, warnings };
       }
 
-      await client.query(
-        'UPDATE wholesale_orders SET status = $1, fulfilled_at = $2, fulfilled_by_user_id = $3 WHERE id = $4',
-        ['fulfilled', new Date(), userId, id]
-      );
-
+      if (action === 'apply') {
+        const lines = await client.query(
+          `SELECT COALESCE(oi.product_id, p.id) AS product_id, oi.quantity,
+                  COALESCE(f.name, '?') AS flavor_name, COALESCE(ut.name, '?') AS unit_name,
+                  p2.name AS product_name
+           FROM wholesale_order_items oi
+           LEFT JOIN wholesale_unit_types ut ON ut.id = oi.unit_type_id
+           LEFT JOIN flavors f ON f.id = oi.flavor_id
+           LEFT JOIN products p ON p.flavor_id = oi.flavor_id AND p.container = ut.container
+           LEFT JOIN products p2 ON p2.id = COALESCE(oi.product_id, p.id)
+           WHERE oi.order_id = $1`,
+          [orderId]
+        );
+        const needed = new Map<string, number>();
+        const label = new Map<string, string>();
+        for (const row of lines.rows) {
+          if (!row.product_id) {
+            warnings.push(`${row.quantity}× ${row.flavor_name} ${row.unit_name}: no finished-goods product — stock not adjusted`);
+            continue;
+          }
+          needed.set(row.product_id, (needed.get(row.product_id) ?? 0) + row.quantity);
+          label.set(row.product_id, row.product_name || `${row.flavor_name} ${row.unit_name}`);
+        }
+        if (needed.size === 0) {
+          await client.query('COMMIT');
+          return { changed: false, warnings };
+        }
+        const ids = Array.from(needed.keys());
+        const stock = await client.query('SELECT id, stock_quantity FROM products WHERE id = ANY($1::text[]) FOR UPDATE', [ids]);
+        const stockMap = new Map<string, number>(stock.rows.map((r: any) => [r.id, r.stock_quantity]));
+        for (const [productId, qty] of Array.from(needed.entries())) {
+          const cur = stockMap.get(productId);
+          if (cur === undefined) {
+            warnings.push(`${label.get(productId)}: product row missing — stock not adjusted`);
+            continue;
+          }
+          const next = cur - qty;
+          if (next < 0) warnings.push(`${label.get(productId)}: now ${next} on hand (had ${cur}, order took ${qty})`);
+          await client.query('UPDATE products SET stock_quantity = $1, in_stock = $2 WHERE id = $3', [next, next > 0, productId]);
+          await client.query(
+            `INSERT INTO inventory_adjustments (product_id, quantity, reason, staff_user_id, order_id, order_type)
+             VALUES ($1, $2, 'fulfillment', $3, $4, 'wholesale')`,
+            [productId, -qty, userId ?? null, orderId]
+          );
+        }
+      } else {
+        const rows = await client.query(
+          `SELECT product_id, -SUM(quantity)::int AS qty FROM inventory_adjustments
+           WHERE order_id = $1 AND order_type = 'wholesale' AND reason IN ('fulfillment', 'fulfillment-restore')
+           GROUP BY product_id HAVING SUM(quantity) <> 0`,
+          [orderId]
+        );
+        for (const row of rows.rows) {
+          await client.query(
+            `UPDATE products SET stock_quantity = stock_quantity + $1,
+               in_stock = (stock_quantity + $1) > 0 WHERE id = $2`,
+            [row.qty, row.product_id]
+          );
+          await client.query(
+            `INSERT INTO inventory_adjustments (product_id, quantity, reason, staff_user_id, order_id, order_type)
+             VALUES ($1, $2, 'fulfillment-restore', $3, $4, 'wholesale')`,
+            [row.product_id, row.qty, userId ?? null, orderId]
+          );
+        }
+      }
       await client.query('COMMIT');
-
-      const updatedOrder = await this.getWholesaleOrder(id);
-      return updatedOrder;
+      return { changed: true, warnings };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
     } finally {
       client.release();
     }
+  }
+
+  async updateWholesaleOrderFulfillment(id: string, userId: string): Promise<WholesaleOrder | undefined> {
+    const { warnings } = await this.applyWholesaleOrderStock(id, 'apply', userId);
+    const result = await db
+      .update(wholesaleOrders)
+      .set({ status: 'fulfilled', fulfilledAt: new Date(), fulfilledByUserId: userId, updatedAt: new Date() })
+      .where(eq(wholesaleOrders.id, id))
+      .returning();
+    const order: any = result[0];
+    if (order && warnings.length) order.stockWarnings = warnings;
+    return order;
   }
 
   // Migration: Backfill existing subscriptions into subscription_items table

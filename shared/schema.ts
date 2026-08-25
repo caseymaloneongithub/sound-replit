@@ -110,6 +110,10 @@ export const products = pgTable("products", {
   isActive: boolean("is_active").notNull().default(true),
   stockQuantity: integer("stock_quantity").notNull().default(0),
   lowStockThreshold: integer("low_stock_threshold").notNull().default(50),
+  // Structured identity: (flavor, container) is how order lines and recipes resolve to a
+  // finished-goods product. Containers: 'bottle-case' | 'can-case' | 'keg-sixth'.
+  flavorId: varchar("flavor_id").references(() => flavors.id),
+  container: text("container"),
 });
 
 export const inventoryAdjustments = pgTable("inventory_adjustments", {
@@ -174,6 +178,9 @@ export const wholesaleUnitTypes = pgTable("wholesale_unit_types", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(), // e.g., "Case", "1/6 Barrel Keg", "1/2 Barrel Keg"
   unitType: text("unit_type").notNull().unique(), // 'case', '1/6-barrel', '1/2-barrel'
+  // Which physical package this sells — resolves order lines to finished-goods stock by
+  // (flavor, container). Same vocabulary as products.container.
+  container: text("container"),
   description: text("description").notNull(), // e.g., "12 bottles per case"
   defaultPrice: decimal("default_price", { precision: 10, scale: 2 }).notNull(),
   isActive: boolean("is_active").notNull().default(true),

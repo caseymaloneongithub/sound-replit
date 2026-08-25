@@ -2103,6 +2103,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Production limits: max producible per recipe from stock on hand + the limiting
   // ingredient. Staff-visible (not admin-only) — this answers the brewery-floor question
   // "what can we actually make today", same audience as the orders board.
+  app.get("/api/inventory/finished-goods", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
+    try {
+      const rows = await db.execute(sql`
+        SELECT p.id, p.name, p.container, p.stock_quantity AS "stockQuantity", f.name AS flavor
+        FROM products p
+        LEFT JOIN flavors f ON f.id = p.flavor_id
+        WHERE p.is_active AND p.container IS NOT NULL
+        ORDER BY p.container, f.name NULLS LAST`);
+      res.json(rows.rows);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching finished goods: " + error.message });
+    }
+  });
+
   app.get("/api/inventory/limit-report", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
     try {
       res.json(await storage.getInventoryLimitReport());
@@ -6305,11 +6319,20 @@ If you have any questions, please don't hesitate to reach out!`,
 
       let updated = order;
 
+      let stockWarnings: string[] = [];
       if (status) {
         if (!['pending', 'processing', 'packaged', 'shipped', 'delivered'].includes(status)) {
           return res.status(400).json({ message: "Invalid status" });
         }
         updated = await storage.updateWholesaleOrderStatus(req.params.id, status);
+        // Packaged = it's in bottles/cans/kegs on the shelf, and this order's share leaves
+        // it. Walking the order back before packaged puts the stock back. Idempotent.
+        const stock = await storage.applyWholesaleOrderStock(
+          req.params.id,
+          ['packaged', 'shipped', 'delivered', 'fulfilled'].includes(status) ? 'apply' : 'restore',
+          (req as any).user?.id
+        );
+        stockWarnings = stock.warnings;
       }
 
       if (deliveryDate !== undefined) {
@@ -6385,7 +6408,7 @@ If you have any questions, please don't hesitate to reach out!`,
         updated = await storage.updateWholesaleOrder(req.params.id, { totalAmount: newTotal.toString() }) || updated;
       }
 
-      res.json(updated);
+      res.json({ ...updated, stockWarnings });
     } catch (error: any) {
       res.status(500).json({ message: "Error updating order: " + error.message });
     }
@@ -7528,8 +7551,13 @@ If you have any questions, please don't hesitate to reach out!`,
       if (!order) {
         return res.status(404).json({ message: "Order not found" });
       }
-      
-      res.json(order);
+      const stock = await storage.applyWholesaleOrderStock(
+        req.params.id,
+        ['packaged', 'shipped', 'delivered'].includes(parsed.data.status) ? 'apply' : 'restore',
+        req.user?.id
+      );
+
+      res.json({ ...order, stockWarnings: stock.warnings });
     } catch (error: any) {
       console.error("Error updating order status:", error);
       res.status(500).json({ message: "Failed to update order status" });

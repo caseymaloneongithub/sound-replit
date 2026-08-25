@@ -66,6 +66,9 @@ export default function InventoryDashboard() {
   const { data: reorder = [] } = useQuery<ReorderRow[]>({ queryKey: ["/api/inventory/reorder-report"] });
   const { data: limits = [] } = useQuery<LimitRow[]>({ queryKey: ["/api/inventory/limit-report"] });
   const { data: cogs } = useQuery<CogsReport>({ queryKey: ["/api/inventory/cogs-report"] });
+  const { data: finished = [] } = useQuery<Array<{ id: string; name: string; container: string; stockQuantity: number; flavor: string | null }>>({
+    queryKey: ["/api/inventory/finished-goods"],
+  });
 
   const alerts = useMemo(
     () =>
@@ -238,6 +241,44 @@ export default function InventoryDashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Finished goods — what's packaged and on the shelf right now. Productions add
+            to it; packaging a wholesale order or fulfilling a retail pickup subtracts.
+            Negative means more left the shelf than the system saw arrive — the monthly
+            count reconciles it. */}
+        {finished.length > 0 && (
+          <Card className="mt-6" data-testid="card-finished-goods">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Finished goods on the shelf</CardTitle>
+              <CardDescription>
+                Productions add to these; packaging an order subtracts. Negative numbers need a look.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-6 md:grid-cols-3">
+                {([["bottle-case", "Bottle cases"], ["can-case", "Can cases"], ["keg-sixth", "1/6 kegs"]] as const).map(([key, title]) => {
+                  const rows = finished.filter((p) => p.container === key);
+                  if (rows.length === 0) return null;
+                  return (
+                    <div key={key}>
+                      <div className="text-sm font-semibold mb-2">{title}</div>
+                      <div className="rounded-md border divide-y">
+                        {rows.map((p) => (
+                          <div key={p.id} className="flex items-center justify-between px-3 py-1.5 text-sm" data-testid={`finished-${p.id}`}>
+                            <span>{p.flavor ?? p.name}</span>
+                            <span className={`font-medium tabular-nums ${p.stockQuantity < 0 ? "text-red-600 dark:text-red-400" : p.stockQuantity === 0 ? "text-muted-foreground" : ""}`}>
+                              {p.stockQuantity}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Production limits — what can we actually make with what's on the shelf */}
         {limits.length > 0 && (
