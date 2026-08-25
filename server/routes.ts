@@ -12,7 +12,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
@@ -5493,6 +5493,154 @@ If you have any questions, please don't hesitate to reach out!`,
   });
 
   // Retail customer routes (staff and admin access)
+  /** Create a 7-day set-password token and send (or log-suppress) the retail welcome. */
+  async function sendRetailWelcome(user: { id: string; email: string | null; firstName: string | null; username: string }): Promise<'sent' | 'suppressed' | 'no-email'> {
+    if (!user.email) return 'no-email';
+    const token = crypto.randomBytes(32).toString('hex');
+    await storage.createPasswordResetToken(user.id, token, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    await sendRetailWelcomeEmail({
+      to: user.email,
+      name: user.firstName || user.username,
+      setPasswordUrl: `${getBaseUrl()}/reset-password?token=${token}`,
+    });
+    return retailWelcomeEmailsEnabled() ? 'sent' : 'suppressed';
+  }
+
+  // Staff adds a retail customer; the welcome email (with its set-password link) is
+  // opt-in per add and only actually sends where RETAIL_WELCOME_EMAILS=true (production).
+  app.post("/api/retail/customers", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const schema = z.object({
+        firstName: z.string().trim().min(1),
+        lastName: z.string().trim().optional().default(''),
+        email: z.string().trim().email(),
+        phone: z.string().trim().optional().default(''),
+        sendWelcome: z.boolean().optional().default(true),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid customer data", errors: parsed.error.errors });
+      const { firstName, lastName, email, phone, sendWelcome } = parsed.data;
+      const existing = await storage.getUserByEmail(email);
+      if (existing) return res.status(409).json({ message: `${email} already has an account` });
+      const username = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_') + '-' + crypto.randomUUID().slice(0, 6);
+      const user = await storage.createUser({ username, email, firstName, lastName: lastName || undefined, phoneNumber: phone });
+      const welcome = sendWelcome ? await sendRetailWelcome(user) : 'skipped';
+      console.log(`[RETAIL] Customer added by staff: ${email} (welcome: ${welcome})`);
+      res.status(201).json({ user, welcome });
+    } catch (e: any) {
+      res.status(500).json({ message: "Error adding customer: " + e.message });
+    }
+  });
+
+  app.post("/api/retail/customers/:id/send-welcome", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.id);
+      if (!user) return res.status(404).json({ message: "Customer not found" });
+      if (user.role !== 'user') return res.status(400).json({ message: "Welcome emails are for retail customers only" });
+      const welcome = await sendRetailWelcome(user);
+      res.json({ welcome });
+    } catch (e: any) {
+      res.status(500).json({ message: "Error sending welcome: " + e.message });
+    }
+  });
+
+  // Shopify customer export import. Deliberately NO welcome emails here — an import must
+  // never mass-email real people by surprise; staff send welcomes per customer afterward.
+  app.post("/api/retail/customers/import", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const rows = req.body?.rows;
+      if (!Array.isArray(rows)) return res.status(400).json({ message: "rows array required" });
+      const results = { imported: 0, skipped: 0, errors: [] as string[] };
+      for (const row of rows.slice(0, 5000)) {
+        const email = String(row.email || '').trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          if (email) results.errors.push(`Skipped invalid email "${email}"`);
+          continue;
+        }
+        const existing = await storage.getUserByEmail(email);
+        if (existing) { results.skipped++; continue; }
+        const username = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_') + '-' + crypto.randomUUID().slice(0, 6);
+        await storage.createUser({
+          username,
+          email,
+          firstName: String(row.firstName || '').trim() || undefined,
+          lastName: String(row.lastName || '').trim() || undefined,
+          phoneNumber: String(row.phone || '').trim(),
+        });
+        results.imported++;
+      }
+      console.log(`[RETAIL] Customer import: ${results.imported} created, ${results.skipped} already existed, ${results.errors.length} rejected`);
+      res.json(results);
+    } catch (e: any) {
+      res.status(500).json({ message: "Import failed: " + e.message });
+    }
+  });
+
+  // Staff-entered retail order (phone/walk-in): no Stripe payment — pay at pickup. Uses
+  // the same v2 item rows as checkout, so the orders board and stock fulfilment treat it
+  // like any other order.
+  app.post("/api/retail/orders", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const schema = z.object({
+        userId: z.string().min(1),
+        items: z.array(z.object({
+          retailProductId: z.string().min(1),
+          selectedFlavorId: z.string().optional().nullable(),
+          quantity: z.number().int().min(1).max(50),
+        })).min(1),
+        pickupDate: z.string().optional().nullable(),
+        notes: z.string().optional(),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid order", errors: parsed.error.errors });
+      const user = await storage.getUser(parsed.data.userId);
+      if (!user || !user.email) return res.status(400).json({ message: "Customer not found" });
+
+      let subtotal = 0;
+      let deposit = 0;
+      const lines: Array<{ retailProductId: string; selectedFlavorId: string | null; quantity: number; unitPrice: string }> = [];
+      for (const item of parsed.data.items) {
+        const [rp] = await db.select().from(retailProducts).where(eq(retailProducts.id, item.retailProductId));
+        if (!rp) return res.status(400).json({ message: `Unknown product ${item.retailProductId}` });
+        subtotal += Number(rp.price) * item.quantity;
+        deposit += Number(rp.deposit || 0) * item.quantity;
+        lines.push({ retailProductId: rp.id, selectedFlavorId: item.selectedFlavorId || null, quantity: item.quantity, unitPrice: String(rp.price) });
+      }
+      const total = subtotal + deposit;
+
+      // Same ORDxxxxxx series checkout mints; retry past the rare collision.
+      let order: any = null;
+      for (let attempt = 0; !order; attempt++) {
+        const cntRes: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM retail_orders`);
+        const orderNumber = `ORD${String(Number(cntRes.rows[0].n) + 1 + attempt).padStart(6, '0')}`;
+        try {
+          order = await storage.createRetailOrder({
+            orderNumber,
+            userId: user.id,
+            customerName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username,
+            customerEmail: user.email,
+            customerPhone: user.phoneNumber || '',
+            pickupDate: parsed.data.pickupDate ? new Date(parsed.data.pickupDate) : null,
+            subtotal: subtotal.toFixed(2),
+            taxAmount: '0.00',
+            depositAmount: deposit.toFixed(2),
+            totalAmount: total.toFixed(2),
+            notes: parsed.data.notes?.trim() ? `${parsed.data.notes.trim()} — staff-entered, pay at pickup` : 'Staff-entered, pay at pickup',
+          } as any);
+        } catch (err: any) {
+          if (attempt >= 5 || !String(err?.message || '').includes('unique')) throw err;
+        }
+      }
+      for (const line of lines) {
+        await db.insert(retailOrderItemsV2).values({ orderId: order.id, ...line });
+      }
+      console.log(`[RETAIL] Staff order ${order.orderNumber} for ${user.email}: ${total.toFixed(2)} (pay at pickup)`);
+      res.status(201).json(order);
+    } catch (e: any) {
+      res.status(500).json({ message: "Error creating order: " + e.message });
+    }
+  });
+
   app.get("/api/retail/customers", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const searchQuery = typeof req.query.search === 'string' ? req.query.search : undefined;

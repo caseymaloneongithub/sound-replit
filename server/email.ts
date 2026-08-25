@@ -2357,3 +2357,52 @@ export async function sendWholesaleContactApprovedEmail(params: WholesaleContact
   await transporter.sendMail(mailOptions);
   console.log(`[EMAIL] Approval email sent to ${params.to} for ${params.businessName}`);
 }
+
+// ---------------------------------------------------------------------------------------
+// Retail welcome: "you've been added to our new ordering system" + a set-password link.
+// Sent when staff add a customer (or press Send welcome on one) — never automatically on
+// import. Gated on RETAIL_WELCOME_EMAILS=true, set only in production: dev and test
+// databases hold real customer addresses.
+// ---------------------------------------------------------------------------------------
+export function retailWelcomeEmailsEnabled(): boolean {
+  return process.env.RETAIL_WELCOME_EMAILS === 'true';
+}
+
+export async function sendRetailWelcomeEmail(params: { to: string; name: string; setPasswordUrl: string }): Promise<void> {
+  const transporter = createTransporter();
+  if (!retailWelcomeEmailsEnabled() || !transporter) {
+    console.log(`[EMAIL] (not sent — ${!retailWelcomeEmailsEnabled() ? 'RETAIL_WELCOME_EMAILS is not true' : 'mail not configured'}) retail welcome to ${params.to}`);
+    return;
+  }
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.to,
+    subject: 'Your Puget Sound Kombucha account is ready',
+    text: `Hi ${params.name},
+
+We've moved our ordering online, and your account is ready. Set a password here (link is good for 7 days):
+${params.setPasswordUrl}
+
+Then order 12-packs and kegs for pickup at the brewery in Ballard, or set up Subscribe & Save.
+
+Thank you,
+Puget Sound Kombucha Co.`,
+    html: `
+<!DOCTYPE html>
+<html><body style="margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:${BRAND_COLORS.backgroundGrey};">
+  <div style="max-width:600px; margin:0 auto; background:${BRAND_COLORS.white};">
+    ${getEmailHeader('Your account is ready')}
+    <div style="padding: 32px 24px;">
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey}; font-size: 16px;">Hi ${params.name},</p>
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey};">We've moved our ordering online, and your account is ready. Set a password to get started — the link is good for 7 days.</p>
+      <p style="margin: 0 0 24px;"><a href="${params.setPasswordUrl}" style="display:inline-block; background:${BRAND_COLORS.black}; color:${BRAND_COLORS.white}; text-decoration:none; padding: 12px 22px; border-radius: 6px; font-weight: 600;">Set your password</a></p>
+      <p style="margin: 0 0 8px; color: ${BRAND_COLORS.darkGrey};">Then order 12-packs and kegs for pickup at the brewery in Ballard, or set up Subscribe &amp; Save.</p>
+      ${getEmailFooter()}
+    </div>
+  </div>
+</body></html>`,
+    attachments: getLogoAttachment(),
+  };
+  await transporter.sendMail(mailOptions);
+  console.log(`[EMAIL] Retail welcome sent to ${params.to}`);
+}
