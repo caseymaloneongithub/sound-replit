@@ -11,3 +11,5 @@ inventory.db
 *.sqlite
 *.sqlite3
 .claude/settings.local.json
+scripts/stripe-subscription-map.suggested.json
+scripts/stripe-subscription-map.json
