@@ -245,6 +245,9 @@ export function setupAuth(app: Express) {
       // Skipped in development so you can log in without receiving an emailed code.
       const requires2FA =
         process.env.NODE_ENV !== 'development' &&
+        // Owner decision (2026-08-25): staff 2FA can be switched off in production —
+        // password-only login. Set DISABLE_STAFF_2FA=true to disable.
+        process.env.DISABLE_STAFF_2FA !== 'true' &&
         user.role !== 'wholesale_customer' &&
         user.email;
       
