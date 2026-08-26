@@ -92,5 +92,7 @@ app.use((req, res, next) => {
   }
   server.listen(listenOptions, () => {
     log(`serving on port ${port}`);
+    // Non-fatal SMTP self-check — prints a one-line verdict to the logs.
+    import('./email').then(({ verifyEmailTransport }) => verifyEmailTransport()).catch(() => {});
   });
 })();

@@ -77,13 +77,40 @@ const createTransporter = () => {
   }
 
   return nodemailer.createTransport({
-    service: 'gmail',
+    // Explicit host/port rather than service:'gmail', and short timeouts: on hosts with
+    // broken IPv6 egress (Railway among them) the default config can hang a request for
+    // two minutes instead of failing. This fails in seconds with a real error.
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
     auth: {
       user: gmailUser,
       pass: gmailAppPassword,
     },
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
 };
+
+/**
+ * Startup self-check: connects and authenticates to SMTP, then logs a definitive verdict.
+ * Turns "email is stuck" from a guessing game into one line in the deploy logs.
+ */
+export async function verifyEmailTransport(): Promise<void> {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.warn('[EMAIL] SMTP check: GMAIL_USER / GMAIL_APP_PASSWORD not set — all email is log-only.');
+    return;
+  }
+  try {
+    await transporter.verify();
+    console.log('[EMAIL] SMTP check: connected and authenticated to smtp.gmail.com — email will send.');
+  } catch (err: any) {
+    console.error('[EMAIL] SMTP check FAILED: ' + (err?.code ?? '') + ' ' + (err?.message ?? err));
+    console.error('[EMAIL] ETIMEDOUT/ECONNECTION here means the host cannot reach smtp.gmail.com:465 (port block or IPv6 egress — try NODE_OPTIONS=--dns-result-order=ipv4first). EAUTH means the app password is wrong.');
+  }
+}
 
 interface PaymentFailureEmailParams {
   customerEmail: string;
