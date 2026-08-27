@@ -33,7 +33,6 @@ export default function WholesaleLogin() {
   const [pickingLocation, setPickingLocation] = useState(false);
   const [locOptions, setLocOptions] = useState<Loc[]>([]);
   const [chosenLoc, setChosenLoc] = useState<Loc | null>(null);
-  const [skippedStore, setSkippedStore] = useState(false); // returning customer path
 
   // Step 2 — email (+ code fallback)
   const [email, setEmail] = useState("");
@@ -93,7 +92,7 @@ export default function WholesaleLogin() {
       if (!res.ok) throw new Error(body?.message || "Search failed");
       return body;
     },
-    enabled: debounced.length >= MIN_CHARS && !store && !skippedStore,
+    enabled: debounced.length >= MIN_CHARS && !store,
     retry: false,
     staleTime: 60_000,
   });
@@ -125,7 +124,7 @@ export default function WholesaleLogin() {
   const matches = debounced.length >= MIN_CHARS ? data?.matches ?? [] : [];
   const single = matches.length === 1 ? matches[0] : null;
   const chosen = useMemo(() => (single ? single : matches.find((m) => m.id === selectedId) ?? null), [single, matches, selectedId]);
-  const onEmailStep = (!!store && !pickingLocation) || skippedStore;
+  const onEmailStep = !!store && !pickingLocation;
 
   const sendLink = async () => {
     if (!email.trim()) {
@@ -192,7 +191,7 @@ export default function WholesaleLogin() {
             <CardTitle>Order online</CardTitle>
             {!onEmailStep && (
               <CardDescription>
-                Start typing your store and pick it from the list. Ordered with us online before? Skip straight to your email below.
+                Start typing your store and pick it from the list.
               </CardDescription>
             )}
           </CardHeader>
@@ -262,12 +261,6 @@ export default function WholesaleLogin() {
                   </p>
                 )}
 
-                <p className="text-sm text-muted-foreground pt-1">
-                  Ordered online before?{" "}
-                  <button type="button" className="text-primary font-medium" onClick={() => setSkippedStore(true)} data-testid="button-skip-store">
-                    Skip to your email
-                  </button>
-                </p>
               </>
             )}
 
