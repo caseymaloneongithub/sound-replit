@@ -72,6 +72,15 @@ export default function WholesaleCustomerPlaceOrder() {
 
   // Auto-select location if customer has exactly one
   useEffect(() => {
+    // Store-first ordering: ?location=<id> arrives from the sign-in redirect with the
+    // delivery location the visitor picked before their email. Take it once, if valid.
+    const preferred = new URLSearchParams(window.location.search).get("location");
+    if (preferred && !selectedLocationId && locations.some((l) => l.id === preferred)) {
+      setSelectedLocationId(preferred);
+      setFulfillmentMethod("delivery");
+      window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
     if (locations.length === 1 && !selectedLocationId) {
       setSelectedLocationId(locations[0].id);
     }

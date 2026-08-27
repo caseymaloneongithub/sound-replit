@@ -265,7 +265,14 @@ export async function getCustomerContacts(customerId: string): Promise<ContactRo
 // ----------------------------------------------------------------------------------------
 // Search
 // ----------------------------------------------------------------------------------------
-export type StoreMatch = { id: string; businessName: string; street: string | null; city: string | null; locationCount: number };
+export type StoreMatch = {
+  id: string;
+  businessName: string;
+  street: string | null;
+  city: string | null;
+  locationCount: number;
+  matchedLocation: { id: string; locationName: string; street: string; city: string } | null;
+};
 
 function tokens(q: string): string[] {
   return q
@@ -283,14 +290,13 @@ function tokens(q: string): string[] {
 export async function searchStores(q: string): Promise<StoreMatch[]> {
   const toks = tokens(q);
   if (toks.length === 0) return [];
-  const conds = toks.map(
-    (t) => sql`(c.business_name || ' ' || COALESCE(l.agg, '')) ~* ${"\\m" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`
-  );
+  const esc = (t: string) => "\\m" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const conds = toks.map((t) => sql`(c.business_name || ' ' || COALESCE(l.agg, '')) ~* ${esc(t)}`);
   const rows = await db.execute(sql`
     SELECT c.id, c.business_name AS "businessName", l.first_street AS street, l.first_city AS city, COALESCE(l.n, 0)::int AS "locationCount"
     FROM wholesale_customers c
     LEFT JOIN LATERAL (
-      SELECT string_agg(address || ' ' || city, ' ') AS agg,
+      SELECT string_agg(location_name || ' ' || address || ' ' || city, ' ') AS agg,
              (array_agg(address ORDER BY created_at))[1] AS first_street,
              (array_agg(city ORDER BY created_at))[1] AS first_city,
              count(*) AS n
@@ -300,13 +306,46 @@ export async function searchStores(q: string): Promise<StoreMatch[]> {
     ORDER BY c.business_name
     LIMIT ${SEARCH_MAX_RESULTS + 1}
   `);
-  return (rows.rows as any[]).slice(0, SEARCH_MAX_RESULTS).map((r) => ({
+  const matches: StoreMatch[] = (rows.rows as any[]).slice(0, SEARCH_MAX_RESULTS).map((r) => ({
     id: r.id,
     businessName: r.businessName,
     street: r.street ?? null,
     city: r.city ?? null,
     locationCount: Number(r.locationCount) || 0,
+    matchedLocation: null,
   }));
+
+  // For multi-location matches, work out whether the query already names a location
+  // ("evergreens fremont" → the Fremont store) so the picker can preselect it. Tokens
+  // that are part of the business name don't count as location hints.
+  for (const m of matches) {
+    if (m.locationCount < 2) continue;
+    const bizLower = m.businessName.toLowerCase();
+    const hints = toks.filter((t) => !bizLower.includes(t));
+    if (hints.length === 0) continue;
+    const locs = await getPublicLocations(m.id);
+    let best: { loc: (typeof locs)[number]; score: number } | null = null;
+    let tie = false;
+    for (const loc of locs) {
+      const text = `${loc.locationName} ${loc.street} ${loc.city}`.toLowerCase();
+      const score = hints.filter((h) => text.includes(h)).length;
+      if (score === 0) continue;
+      if (!best || score > best.score) { best = { loc, score }; tie = false; }
+      else if (score === best.score) tie = true;
+    }
+    if (best && !tie) m.matchedLocation = best.loc;
+  }
+  return matches;
+}
+
+/** Active locations of one store, public fields only — powers the location picker. */
+export async function getPublicLocations(customerId: string): Promise<Array<{ id: string; locationName: string; street: string; city: string }>> {
+  const rows = await db
+    .select({ id: wholesaleLocations.id, locationName: wholesaleLocations.locationName, street: wholesaleLocations.address, city: wholesaleLocations.city })
+    .from(wholesaleLocations)
+    .where(and(eq(wholesaleLocations.customerId, customerId), eq(wholesaleLocations.isActive, true)))
+    .orderBy(wholesaleLocations.locationName);
+  return rows;
 }
 
 async function searchesTodayByIp(ip: string): Promise<number> {
@@ -425,6 +464,30 @@ export function registerClaimRoutes(app: Express, deps: ClaimRouteDeps) {
     } catch (e: any) {
       console.error("[CLAIM] search error:", e);
       res.status(500).json({ message: "Search failed: " + e.message });
+    }
+  });
+
+  app.get("/api/wholesale/claim/locations", async (req: any, res) => {
+    try {
+      const customerId = String(req.query.customerId || "");
+      if (!customerId) return res.status(400).json({ message: "customerId required" });
+      const ip = req.ip || req.socket?.remoteAddress || "unknown";
+      if (!req.user && (await searchesTodayByIp(ip)) >= SEARCHES_PER_IP_PER_DAY) {
+        return res.status(429).json({ message: "That's enough for today." });
+      }
+      const customer = await storage.getWholesaleCustomer(customerId);
+      if (!customer) return res.status(404).json({ message: "Store not found" });
+      const locations = await getPublicLocations(customerId);
+      await db.insert(wholesaleStoreSearches).values({
+        userId: req.user?.id ?? null,
+        email: req.user?.email ? normalizeEmail(req.user.email) : "anon",
+        query: ("locations:" + customer.businessName).slice(0, 200),
+        resultCount: locations.length,
+        ip,
+      });
+      res.json({ businessName: customer.businessName, locations });
+    } catch (e: any) {
+      res.status(500).json({ message: "Error loading locations: " + e.message });
     }
   });
 

@@ -70,6 +70,9 @@ export const emailVerificationCodes = pgTable("email_verification_codes", {
   // same expiry, same single-use consumption — the link and the code are two ways to
   // redeem one issued credential, so redeeming either retires both.
   loginToken: varchar("login_token"),
+  // Store-first ordering: delivery location picked before sign-in; preselected on the
+  // order page after the link/code is redeemed.
+  claimLocationId: varchar("claim_location_id"),
   expiresAt: timestamp("expires_at").notNull(),
   verified: boolean("verified").notNull().default(false),
   consumedAt: timestamp("consumed_at"),

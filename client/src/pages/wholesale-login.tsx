@@ -16,7 +16,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
  * sessions last 30 days, so most weeks skip all of this.
  */
 
-type Match = { id: string; businessName: string; street: string | null; city: string | null; locationCount: number };
+type Loc = { id: string; locationName: string; street: string; city: string };
+type Match = { id: string; businessName: string; street: string | null; city: string | null; locationCount: number; matchedLocation: Loc | null };
 const MIN_CHARS = 2;
 
 export default function WholesaleLogin() {
@@ -29,6 +30,9 @@ export default function WholesaleLogin() {
   const [debounced, setDebounced] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [store, setStore] = useState<Match | null>(null); // confirmed choice
+  const [pickingLocation, setPickingLocation] = useState(false);
+  const [locOptions, setLocOptions] = useState<Loc[]>([]);
+  const [chosenLoc, setChosenLoc] = useState<Loc | null>(null);
   const [skippedStore, setSkippedStore] = useState(false); // returning customer path
 
   // Step 2 — email (+ code fallback)
@@ -58,7 +62,7 @@ export default function WholesaleLogin() {
           return;
         }
         toast({ title: "You're in", description: "Signed in — you'll stay signed in on this device for 30 days." });
-        setLocation("/wholesale-customer/place-order");
+        setLocation(data.preferredLocationId ? `/wholesale-customer/place-order?location=${data.preferredLocationId}` : "/wholesale-customer/place-order");
       } catch (error: any) {
         // Strip the spent token from the URL so a refresh doesn't retry it and re-toast.
         window.history.replaceState({}, "", "/wholesale/login");
@@ -94,10 +98,34 @@ export default function WholesaleLogin() {
     staleTime: 60_000,
   });
 
+  // Confirming a store with several locations asks "which one?" before the email; the
+  // search may already know (e.g. "evergreens fremont") and preselects it. A single
+  // location is taken silently so it can be preselected on the order page.
+  const confirmStore = async (m: Match) => {
+    setStore(m);
+    if (m.locationCount < 2) {
+      try {
+        const res = await fetch(`/api/wholesale/claim/locations?customerId=${m.id}`, { credentials: "include" });
+        const body = await res.json();
+        if (res.ok && body.locations?.length === 1) setChosenLoc(body.locations[0]);
+      } catch { /* location preselect is best-effort */ }
+      return;
+    }
+    setPickingLocation(true);
+    setChosenLoc(m.matchedLocation);
+    try {
+      const res = await fetch(`/api/wholesale/claim/locations?customerId=${m.id}`, { credentials: "include" });
+      const body = await res.json();
+      if (res.ok) setLocOptions(body.locations ?? []);
+    } catch {
+      setPickingLocation(false); // picker unavailable — email step works without it
+    }
+  };
+
   const matches = debounced.length >= MIN_CHARS ? data?.matches ?? [] : [];
   const single = matches.length === 1 ? matches[0] : null;
   const chosen = useMemo(() => (single ? single : matches.find((m) => m.id === selectedId) ?? null), [single, matches, selectedId]);
-  const onEmailStep = !!store || skippedStore;
+  const onEmailStep = (!!store && !pickingLocation) || skippedStore;
 
   const sendLink = async () => {
     if (!email.trim()) {
@@ -109,6 +137,7 @@ export default function WholesaleLogin() {
       await apiRequest("POST", "/api/wholesale/send-email-code", {
         email: email.trim(),
         ...(store ? { claimCustomerId: store.id } : {}),
+        ...(chosenLoc ? { claimLocationId: chosenLoc.id } : {}),
       });
       setSent(true);
       toast({ title: "Check your email", description: "The link signs you in and takes you straight to ordering. There's a 6-digit code too if that's easier." });
@@ -134,7 +163,7 @@ export default function WholesaleLogin() {
         return;
       }
       toast({ title: "You're in", description: "You'll stay signed in on this device for 30 days." });
-      setTimeout(() => setLocation("/wholesale-customer/place-order"), 100);
+      setTimeout(() => setLocation(data.preferredLocationId ? `/wholesale-customer/place-order?location=${data.preferredLocationId}` : "/wholesale-customer/place-order"), 100);
     } catch (error: any) {
       toast({ title: "That code didn't work", description: "Codes are good for 15 minutes. Re-send if it's been a while.", variant: "destructive" });
     } finally {
@@ -191,7 +220,7 @@ export default function WholesaleLogin() {
                       <div className="font-semibold">{single.businessName}</div>
                       <div className="text-sm text-muted-foreground">{[single.street, single.city].filter(Boolean).join(", ") || "No address on file"}{single.locationCount > 1 ? ` · ${single.locationCount} locations` : ""}</div>
                     </div>
-                    <Button className="w-full mt-3" onClick={() => setStore(single)} data-testid="button-confirm-store">
+                    <Button className="w-full mt-3" onClick={() => confirmStore(single)} data-testid="button-confirm-store">
                       This is my store
                     </Button>
                   </div>
@@ -220,7 +249,7 @@ export default function WholesaleLogin() {
                         );
                       })}
                     </div>
-                    <Button className="w-full mt-3" disabled={!chosen} onClick={() => chosen && setStore(chosen)} data-testid="button-confirm-store">
+                    <Button className="w-full mt-3" disabled={!chosen} onClick={() => chosen && confirmStore(chosen)} data-testid="button-confirm-store">
                       This is my store
                     </Button>
                   </div>
@@ -242,12 +271,55 @@ export default function WholesaleLogin() {
               </>
             )}
 
+            {pickingLocation && store && (
+              <div data-testid="location-picker">
+                <div className="flex items-center justify-between rounded-md bg-muted/60 px-3 py-2 text-sm mb-3">
+                  <span className="font-semibold">{store.businessName}</span>
+                  <button type="button" className="text-primary font-medium" onClick={() => { setStore(null); setPickingLocation(false); setChosenLoc(null); }} data-testid="button-change-store">Change</button>
+                </div>
+                <Label>Which location?</Label>
+                <div className="rounded-md border divide-y overflow-hidden mt-1 max-h-64 overflow-y-auto">
+                  {locOptions.map((l) => {
+                    const sel = chosenLoc?.id === l.id;
+                    return (
+                      <button
+                        type="button"
+                        key={l.id}
+                        onClick={() => setChosenLoc(l)}
+                        className={`w-full text-left px-3 py-2.5 flex items-start gap-3 ${sel ? "bg-muted" : "bg-card hover:bg-muted/50"}`}
+                        aria-pressed={sel}
+                        data-testid={`location-option-${l.id}`}
+                      >
+                        <span className={`mt-1.5 h-3.5 w-3.5 rounded-full border-2 shrink-0 ${sel ? "border-primary bg-primary" : "border-muted-foreground/50"}`} />
+                        <span>
+                          <span className="block font-semibold">{l.locationName}</span>
+                          <span className="block text-sm text-muted-foreground">{[l.street, l.city].filter(Boolean).join(", ")}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {locOptions.length === 0 && <p className="px-3 py-3 text-sm text-muted-foreground">Loading locations…</p>}
+                </div>
+                <Button className="w-full mt-3" disabled={!chosenLoc} onClick={() => setPickingLocation(false)} data-testid="button-confirm-location">
+                  Continue
+                </Button>
+                <p className="text-sm text-muted-foreground mt-2 text-center">
+                  <button type="button" className="text-primary font-medium" onClick={() => { setChosenLoc(null); setPickingLocation(false); }} data-testid="button-skip-location">
+                    Not sure — skip for now
+                  </button>
+                </p>
+              </div>
+            )}
+
             {onEmailStep && (
               <>
                 {store && (
                   <div className="flex items-center justify-between rounded-md bg-muted/60 px-3 py-2 text-sm" data-testid="chip-chosen-store">
-                    <span><span className="font-semibold">{store.businessName}</span><span className="text-muted-foreground"> · {[store.street, store.city].filter(Boolean).join(", ")}</span></span>
-                    <button type="button" className="text-primary font-medium" onClick={() => { setStore(null); setSent(false); }} data-testid="button-change-store">Change</button>
+                    <span>
+                      <span className="font-semibold">{store.businessName}</span>
+                      <span className="text-muted-foreground"> · {chosenLoc ? `${chosenLoc.locationName} — ${[chosenLoc.street, chosenLoc.city].filter(Boolean).join(", ")}` : [store.street, store.city].filter(Boolean).join(", ")}</span>
+                    </span>
+                    <button type="button" className="text-primary font-medium" onClick={() => { setStore(null); setChosenLoc(null); setLocOptions([]); setSent(false); }} data-testid="button-change-store">Change</button>
                   </div>
                 )}
                 <div>

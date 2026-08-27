@@ -742,7 +742,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/wholesale/send-email-code", async (req, res) => {
     const startedAt = Date.now();
     try {
-      const { email, claimCustomerId } = req.body;
+      const { email, claimCustomerId, claimLocationId } = req.body;
 
       if (!email) {
         return res.status(400).json({ message: "Email is required" });
@@ -809,6 +809,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             verified: false,
             purpose: wholesaleCustomer ? 'login' : claimCustomer ? 'claim-login' : 'login',
             wholesaleCustomerId: wholesaleCustomer?.id ?? claimCustomer?.id ?? null,
+            // The picked delivery location rides along and is preselected on the order
+            // page after redemption — validated against the bound customer here.
+            claimLocationId: await (async () => {
+              const boundCustomerId = wholesaleCustomer?.id ?? claimCustomer?.id;
+              if (!boundCustomerId || !claimLocationId || typeof claimLocationId !== 'string') return null;
+              const loc = await storage.getWholesaleLocation(claimLocationId);
+              return loc && loc.customerId === boundCustomerId ? loc.id : null;
+            })(),
           });
 
           const magicLink = `${getBaseUrl()}/wholesale/login?token=${loginToken}`;
@@ -901,7 +909,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(500).json({ message: "Error logging in" });
         }
         console.log(`[WHOLESALE AUTH] User ${user.id} logged in via magic link ${wholesaleCustomer ? `for customer ${wholesaleCustomer.id}` : '(claim flow)'}`);
-        res.json({ message: "Signed in successfully", user, needsClaim: !wholesaleCustomer && verificationCode.purpose !== 'claim-login' });
+        res.json({
+          message: "Signed in successfully",
+          user,
+          needsClaim: !wholesaleCustomer && verificationCode.purpose !== 'claim-login',
+          preferredLocationId: (verificationCode as any).claimLocationId ?? null,
+        });
       });
     } catch (error: any) {
       console.error("Error verifying wholesale magic link:", error);
@@ -985,7 +998,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(500).json({ message: "Error logging in" });
         }
         console.log(`[WHOLESALE AUTH] User ${user.id} logged in via email ${email} ${wholesaleCustomer ? `for customer ${wholesaleCustomer.id}` : '(claim flow)'}`);
-        res.json({ message: "Email verified and logged in successfully", user, needsClaim: !wholesaleCustomer && !isClaimLogin });
+        res.json({
+          message: "Email verified and logged in successfully",
+          user,
+          needsClaim: !wholesaleCustomer && !isClaimLogin,
+          preferredLocationId: (verificationCode as any).claimLocationId ?? null,
+        });
       });
     } catch (error: any) {
       console.error("Error verifying wholesale email code:", error);
