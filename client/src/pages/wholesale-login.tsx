@@ -1,48 +1,42 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useLocation, Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-const emailLoginSchema = z.object({
-  email: z.string().email("Please enter a valid email address"),
-  verificationCode: z.string().optional(),
-});
+/**
+ * Store-first wholesale ordering (owner decision 2026-08-26): visitors go straight to
+ * naming their store, then give an email. The link that arrives signs them in AND
+ * connects them to the store they picked, landing on the order page. Known emails always
+ * sign in to their own account regardless of the store picked. No password anywhere;
+ * sessions last 30 days, so most weeks skip all of this.
+ */
+
+type Match = { id: string; businessName: string; street: string | null; city: string | null; locationCount: number };
+const MIN_CHARS = 2;
 
 export default function WholesaleLogin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const [emailLoginCodeSent, setEmailLoginCodeSent] = useState(false);
-  const [sendingEmailLoginCode, setSendingEmailLoginCode] = useState(false);
-  const [verifyingEmailLoginCode, setVerifyingEmailLoginCode] = useState(false);
   const [redeemingToken, setRedeemingToken] = useState(false);
 
-  const emailLoginForm = useForm<z.infer<typeof emailLoginSchema>>({
-    resolver: zodResolver(emailLoginSchema),
-    defaultValues: {
-      email: "",
-      verificationCode: "",
-    },
-  });
+  // Step 1 — store
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [store, setStore] = useState<Match | null>(null); // confirmed choice
+  const [skippedStore, setSkippedStore] = useState(false); // returning customer path
+
+  // Step 2 — email (+ code fallback)
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [verifying, setVerifying] = useState(false);
 
   /**
    * Redeem a magic link on arrival. The email leads with a sign-in button, so most
@@ -59,11 +53,11 @@ export default function WholesaleLogin() {
         queryClient.setQueryData(["/api/user"], data.user);
         await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
         if (data.needsClaim) {
-          // Verified email, no account yet: "which store are you ordering for?"
+          // Verified email, no account and no store picked: "which store are you ordering for?"
           setLocation("/wholesale/claim");
           return;
         }
-        toast({ title: "Welcome back!", description: "You're signed in." });
+        toast({ title: "You're in", description: "Signed in — you'll stay signed in on this device for 30 days." });
         setLocation("/wholesale-customer/place-order");
       } catch (error: any) {
         // Strip the spent token from the URL so a refresh doesn't retry it and re-toast.
@@ -82,91 +76,74 @@ export default function WholesaleLogin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const sendEmailLoginCode = async () => {
-    const email = emailLoginForm.getValues("email");
-    
-    if (!email) {
-      toast({
-        title: "Error",
-        description: "Please enter your email address",
-        variant: "destructive",
-      });
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query.trim()), 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const { data, isFetching, error } = useQuery<{ matches: Match[]; message?: string }>({
+    queryKey: ["/api/wholesale/claim/search", debounced],
+    queryFn: async () => {
+      const res = await fetch(`/api/wholesale/claim/search?q=${encodeURIComponent(debounced)}`, { credentials: "include" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message || "Search failed");
+      return body;
+    },
+    enabled: debounced.length >= MIN_CHARS && !store && !skippedStore,
+    retry: false,
+    staleTime: 60_000,
+  });
+
+  const matches = debounced.length >= MIN_CHARS ? data?.matches ?? [] : [];
+  const single = matches.length === 1 ? matches[0] : null;
+  const chosen = useMemo(() => (single ? single : matches.find((m) => m.id === selectedId) ?? null), [single, matches, selectedId]);
+  const onEmailStep = !!store || skippedStore;
+
+  const sendLink = async () => {
+    if (!email.trim()) {
+      toast({ title: "Enter your email", variant: "destructive" });
       return;
     }
-
-    setSendingEmailLoginCode(true);
+    setSending(true);
     try {
-      const data = await apiRequest("POST", "/api/wholesale/send-email-code", { email });
-      setEmailLoginCodeSent(true);
-      toast({
-        title: "Check your email",
-        // The server replies the same way whether or not the account exists, so the wording
-        // here must not promise a code was actually issued.
-        description: data?.message || "We've sent a sign-in link and code to that address.",
+      await apiRequest("POST", "/api/wholesale/send-email-code", {
+        email: email.trim(),
+        ...(store ? { claimCustomerId: store.id } : {}),
       });
+      setSent(true);
+      toast({ title: "Check your email", description: "The link signs you in and takes you straight to ordering. There's a 6-digit code too if that's easier." });
     } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to send verification code",
-        variant: "destructive",
-      });
+      toast({ title: "Couldn't send", description: error.message || "Try again.", variant: "destructive" });
     } finally {
-      setSendingEmailLoginCode(false);
+      setSending(false);
     }
   };
 
-  const onEmailLogin = async (values: z.infer<typeof emailLoginSchema>) => {
-    const { email, verificationCode } = values;
-    
-    if (!verificationCode || verificationCode.length !== 6) {
-      toast({
-        title: "Error",
-        description: "Please enter the 6-digit verification code",
-        variant: "destructive",
-      });
+  const verifyCode = async () => {
+    if (code.length !== 6) {
+      toast({ title: "Enter the 6-digit code from the email", variant: "destructive" });
       return;
     }
-
-    setVerifyingEmailLoginCode(true);
+    setVerifying(true);
     try {
-      const data = await apiRequest("POST", "/api/wholesale/verify-email-code", { 
-        email, 
-        code: verificationCode 
-      });
-      
-      // Update the auth context with the logged-in user
+      const data = await apiRequest("POST", "/api/wholesale/verify-email-code", { email: email.trim(), code });
       queryClient.setQueryData(["/api/user"], data.user);
-      
-      // Invalidate to ensure all components using useAuth get the update
       await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
-      
       if (data.needsClaim) {
         setTimeout(() => setLocation("/wholesale/claim"), 100);
         return;
       }
-
-      toast({
-        title: "Welcome back!",
-        description: "You have successfully logged in.",
-      });
-      
-      // Give React Query a moment to update before redirecting
-      setTimeout(() => {
-        setLocation("/wholesale-customer/place-order");
-      }, 100);
+      toast({ title: "You're in", description: "You'll stay signed in on this device for 30 days." });
+      setTimeout(() => setLocation("/wholesale-customer/place-order"), 100);
     } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Invalid verification code",
-        variant: "destructive",
-      });
+      toast({ title: "That code didn't work", description: "Codes are good for 15 minutes. Re-send if it's been a while.", variant: "destructive" });
     } finally {
-      setVerifyingEmailLoginCode(false);
+      setVerifying(false);
     }
   };
 
-  // Arriving from a magic link: show progress rather than flashing the login form at
-  // someone who is already being signed in.
+  // Arriving from a magic link: show progress rather than flashing the form at someone
+  // who is already being signed in.
   if (redeemingToken) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/20 p-4">
@@ -181,110 +158,149 @@ export default function WholesaleLogin() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/20 p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">Wholesale Portal</h1>
-          <p className="text-muted-foreground">
-            Sign in to access your wholesale account
-          </p>
-        </div>
-
         <Card>
           <CardHeader>
             <CardTitle>Order online</CardTitle>
             <CardDescription>
-              Enter your email and we'll send you a link that signs you in — no password, no
-              account setup. You'll stay signed in on this device for 30 days.
+              {onEmailStep
+                ? "One email — no password, no account setup. You'll stay signed in on this device for 30 days."
+                : "Start typing your store and pick it from the list. Ordered with us online before? Skip straight to your email below."}
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <Form {...emailLoginForm}>
-              <form onSubmit={emailLoginForm.handleSubmit(onEmailLogin)} className="space-y-4">
-                <FormField
-                  control={emailLoginForm.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email Address</FormLabel>
-                      <div className="flex gap-2">
-                        <FormControl>
-                          <Input
-                            type="email"
-                            placeholder="Enter your email"
-                            data-testid="input-wholesale-email-login"
-                            {...field}
-                            disabled={emailLoginCodeSent}
-                          />
-                        </FormControl>
-                        <Button
-                          type="button"
-                          onClick={sendEmailLoginCode}
-                          disabled={sendingEmailLoginCode || emailLoginCodeSent || !field.value}
-                          data-testid="button-send-wholesale-email-code"
-                        >
-                          {sendingEmailLoginCode ? "Sending..." : emailLoginCodeSent ? "Sent" : "Email me a link"}
-                        </Button>
-                      </div>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {emailLoginCodeSent && (
-                  <FormField
-                    control={emailLoginForm.control}
-                    name="verificationCode"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Verification Code</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder="Enter 6-digit code"
-                            maxLength={6}
-                            data-testid="input-wholesale-email-verification-code"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                        <p className="text-xs text-muted-foreground">
-                          Check your email for the verification code. It expires in 5 minutes.
-                        </p>
-                      </FormItem>
-                    )}
+          <CardContent className="space-y-4">
+            {!onEmailStep && (
+              <>
+                <div>
+                  <Label htmlFor="store">Your store</Label>
+                  <Input
+                    id="store"
+                    value={query}
+                    onChange={(e) => { setQuery(e.target.value); setSelectedId(null); }}
+                    placeholder="Start typing — we'll match it"
+                    autoFocus
+                    autoComplete="off"
+                    data-testid="input-store-search"
                   />
-                )}
+                </div>
 
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={verifyingEmailLoginCode || !emailLoginCodeSent}
-                  data-testid="button-wholesale-email-login-submit"
-                >
-                  {verifyingEmailLoginCode ? "Verifying..." : "Continue with code"}
-                </Button>
+                {error && <p className="text-sm text-destructive" data-testid="text-store-search-error">{(error as Error).message}</p>}
 
-                {emailLoginCodeSent && (
-                  <div className="text-center">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setEmailLoginCodeSent(false);
-                        emailLoginForm.setValue("verificationCode", "");
-                      }}
-                      data-testid="button-wholesale-resend-email-code"
-                    >
-                      Resend Code
+                {single && (
+                  <div data-testid="single-store-match">
+                    <div className="rounded-md bg-muted/60 p-3">
+                      <div className="font-semibold">{single.businessName}</div>
+                      <div className="text-sm text-muted-foreground">{[single.street, single.city].filter(Boolean).join(", ") || "No address on file"}{single.locationCount > 1 ? ` · ${single.locationCount} locations` : ""}</div>
+                    </div>
+                    <Button className="w-full mt-3" onClick={() => setStore(single)} data-testid="button-confirm-store">
+                      This is my store
                     </Button>
                   </div>
                 )}
-              </form>
-            </Form>
+
+                {matches.length > 1 && (
+                  <div data-testid="store-match-list">
+                    <div className="rounded-md border divide-y overflow-hidden">
+                      {matches.map((m) => {
+                        const sel = m.id === selectedId;
+                        return (
+                          <button
+                            type="button"
+                            key={m.id}
+                            onClick={() => setSelectedId(m.id)}
+                            className={`w-full text-left px-3 py-2.5 flex items-start gap-3 ${sel ? "bg-muted" : "bg-card hover:bg-muted/50"}`}
+                            aria-pressed={sel}
+                            data-testid={`store-match-${m.id}`}
+                          >
+                            <span className={`mt-1.5 h-3.5 w-3.5 rounded-full border-2 shrink-0 ${sel ? "border-primary bg-primary" : "border-muted-foreground/50"}`} />
+                            <span>
+                              <span className="block font-semibold">{m.businessName}</span>
+                              <span className="block text-sm text-muted-foreground">{[m.street, m.city].filter(Boolean).join(", ")}{m.locationCount > 1 ? ` · ${m.locationCount} locations` : ""}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <Button className="w-full mt-3" disabled={!chosen} onClick={() => chosen && setStore(chosen)} data-testid="button-confirm-store">
+                      This is my store
+                    </Button>
+                  </div>
+                )}
+
+                {debounced.length >= MIN_CHARS && !isFetching && !error && matches.length === 0 && (
+                  <p className="text-sm text-muted-foreground" data-testid="text-no-store-match">
+                    No match — try the name as it appears on your invoices, or{" "}
+                    <Link href="/wholesale/apply" className="text-primary font-medium">apply for a wholesale account</Link>.
+                  </p>
+                )}
+
+                <p className="text-sm text-muted-foreground pt-1">
+                  Ordered online before?{" "}
+                  <button type="button" className="text-primary font-medium" onClick={() => setSkippedStore(true)} data-testid="button-skip-store">
+                    Skip to your email
+                  </button>
+                </p>
+              </>
+            )}
+
+            {onEmailStep && (
+              <>
+                {store && (
+                  <div className="flex items-center justify-between rounded-md bg-muted/60 px-3 py-2 text-sm" data-testid="chip-chosen-store">
+                    <span><span className="font-semibold">{store.businessName}</span><span className="text-muted-foreground"> · {[store.street, store.city].filter(Boolean).join(", ")}</span></span>
+                    <button type="button" className="text-primary font-medium" onClick={() => { setStore(null); setSent(false); }} data-testid="button-change-store">Change</button>
+                  </div>
+                )}
+                <div>
+                  <Label htmlFor="email">Your email</Label>
+                  <div className="flex gap-2 mt-1">
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="you@yourstore.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      disabled={sent}
+                      autoFocus
+                      data-testid="input-wholesale-email-login"
+                      onKeyDown={(e) => { if (e.key === "Enter" && !sent) { e.preventDefault(); sendLink(); } }}
+                    />
+                    <Button type="button" onClick={sendLink} disabled={sending || sent || !email.trim()} data-testid="button-send-wholesale-email-code">
+                      {sending ? "Sending…" : sent ? "Sent" : "Email me a link"}
+                    </Button>
+                  </div>
+                </div>
+
+                {sent && (
+                  <div>
+                    <Label htmlFor="code">Or enter the 6-digit code from the email</Label>
+                    <div className="flex gap-2 mt-1">
+                      <Input
+                        id="code"
+                        placeholder="123456"
+                        maxLength={6}
+                        inputMode="numeric"
+                        value={code}
+                        onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                        data-testid="input-wholesale-email-verification-code"
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); verifyCode(); } }}
+                      />
+                      <Button type="button" onClick={verifyCode} disabled={verifying || code.length !== 6} data-testid="button-wholesale-email-login-submit">
+                        {verifying ? "Checking…" : "Continue"}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Link and code are good for 15 minutes.{" "}
+                      <button type="button" className="text-primary font-medium" onClick={() => { setSent(false); setCode(""); }} data-testid="button-wholesale-resend-email-code">
+                        Re-send
+                      </button>
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
           </CardContent>
         </Card>
 
-        {/* A prospective retailer landing here previously had nowhere to go — the page
-            could only reject an unrecognised email. */}
         <div className="text-center mt-6 space-y-2">
           <p className="text-sm text-muted-foreground">
             Want to carry our kombucha?{" "}

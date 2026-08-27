@@ -16,7 +16,7 @@ import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleIn
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
-import { registerClaimRoutes, getPendingClaim, holdPendingOrder } from "./claim-flow";
+import { registerClaimRoutes, getPendingClaim, holdPendingOrder, createLinkRequest } from "./claim-flow";
 import {
   frequencyToDays,
   frequencyToStripeInterval,
@@ -742,7 +742,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/wholesale/send-email-code", async (req, res) => {
     const startedAt = Date.now();
     try {
-      const { email } = req.body;
+      const { email, claimCustomerId } = req.body;
 
       if (!email) {
         return res.status(400).json({ message: "Email is required" });
@@ -778,14 +778,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       void (async () => {
         try {
           const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
+          // Store-first ordering: the page can hand us the store the visitor picked, and
+          // the link that arrives both signs them in AND connects them to it. A known
+          // email always wins over the picked store (their real account is theirs).
+          let claimCustomer = null;
           if (!wholesaleCustomer) {
-            // Not on any account yet. They still get a link — it lands them on "which store
-            // are you ordering for?" (claim flow), so a new buyer at a store we already
-            // serve can connect themselves. Staff/admin logins never go this way.
+            // Not on any account yet. They still get a link. Staff/admin logins never go
+            // this way.
             const existingUser = await storage.getUserByEmail(email);
             if (existingUser && !['user', 'wholesale_customer'].includes(existingUser.role)) {
               console.log(`[WHOLESALE AUTH] Login requested for a staff/admin email via the wholesale form (generic reply sent)`);
               return;
+            }
+            if (claimCustomerId && typeof claimCustomerId === 'string') {
+              claimCustomer = await storage.getWholesaleCustomer(claimCustomerId);
             }
           }
 
@@ -801,8 +807,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             loginToken,
             expiresAt: new Date(Date.now() + 15 * 60 * 1000),
             verified: false,
-            purpose: 'login',
-            wholesaleCustomerId: wholesaleCustomer?.id ?? null,
+            purpose: wholesaleCustomer ? 'login' : claimCustomer ? 'claim-login' : 'login',
+            wholesaleCustomerId: wholesaleCustomer?.id ?? claimCustomer?.id ?? null,
           });
 
           const magicLink = `${getBaseUrl()}/wholesale/login?token=${loginToken}`;
@@ -875,9 +881,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Single use: consuming the link also retires the 6-digit code on the same row.
       await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
 
-      const user = wholesaleCustomer
-        ? await resolveWholesaleUser(wholesaleCustomer, verificationCode.email)
-        : await resolveClaimantUser(verificationCode.email);
+      let user;
+      if (verificationCode.purpose === 'claim-login' && wholesaleCustomer) {
+        // Store-first flow: the visitor picked their store before verifying the email.
+        // Joining goes through the same self-join path as the claim page — join record,
+        // email added to the store's contacts, staff feed entry.
+        const claimant = await resolveClaimantUser(verificationCode.email);
+        await createLinkRequest({ id: claimant.id, email: verificationCode.email }, wholesaleCustomer);
+        user = (await storage.getUser(claimant.id)) || claimant;
+      } else {
+        user = wholesaleCustomer
+          ? await resolveWholesaleUser(wholesaleCustomer, verificationCode.email)
+          : await resolveClaimantUser(verificationCode.email);
+      }
 
       req.login(user, (err) => {
         if (err) {
@@ -885,7 +901,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(500).json({ message: "Error logging in" });
         }
         console.log(`[WHOLESALE AUTH] User ${user.id} logged in via magic link ${wholesaleCustomer ? `for customer ${wholesaleCustomer.id}` : '(claim flow)'}`);
-        res.json({ message: "Signed in successfully", user, needsClaim: !wholesaleCustomer });
+        res.json({ message: "Signed in successfully", user, needsClaim: !wholesaleCustomer && verificationCode.purpose !== 'claim-login' });
       });
     } catch (error: any) {
       console.error("Error verifying wholesale magic link:", error);
@@ -919,7 +935,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // SECURITY: Verify the code is bound to the correct wholesale customer
       // This prevents code reuse if emails are reassigned between customers
-      if ((verificationCode.wholesaleCustomerId ?? null) !== (wholesaleCustomer?.id ?? null)) {
+      const isClaimLogin = verificationCode.purpose === 'claim-login';
+      if (!isClaimLogin && (verificationCode.wholesaleCustomerId ?? null) !== (wholesaleCustomer?.id ?? null)) {
         console.error(`[WHOLESALE AUTH] Code mismatch: code bound to ${verificationCode.wholesaleCustomerId}, but email ${email} belongs to ${wholesaleCustomer?.id ?? 'no account'}`);
         return res.status(400).json(invalidCode);
       }
@@ -948,9 +965,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Mark as verified
       await storage.markEmailVerificationCodeAsVerified(verificationCode.id);
 
-      const user = wholesaleCustomer
-        ? await resolveWholesaleUser(wholesaleCustomer, email)
-        : await resolveClaimantUser(email);
+      let user;
+      if (isClaimLogin && verificationCode.wholesaleCustomerId) {
+        const claimCustomer = await storage.getWholesaleCustomer(verificationCode.wholesaleCustomerId);
+        if (!claimCustomer) return res.status(400).json(invalidCode);
+        const claimant = await resolveClaimantUser(email);
+        await createLinkRequest({ id: claimant.id, email }, claimCustomer);
+        user = (await storage.getUser(claimant.id)) || claimant;
+      } else {
+        user = wholesaleCustomer
+          ? await resolveWholesaleUser(wholesaleCustomer, email)
+          : await resolveClaimantUser(email);
+      }
 
       // Log the user in
       req.login(user, (err) => {
@@ -959,7 +985,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(500).json({ message: "Error logging in" });
         }
         console.log(`[WHOLESALE AUTH] User ${user.id} logged in via email ${email} ${wholesaleCustomer ? `for customer ${wholesaleCustomer.id}` : '(claim flow)'}`);
-        res.json({ message: "Email verified and logged in successfully", user, needsClaim: !wholesaleCustomer });
+        res.json({ message: "Email verified and logged in successfully", user, needsClaim: !wholesaleCustomer && !isClaimLogin });
       });
     } catch (error: any) {
       console.error("Error verifying wholesale email code:", error);

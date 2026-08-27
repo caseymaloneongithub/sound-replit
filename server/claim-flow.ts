@@ -37,7 +37,8 @@ import { sendWholesaleContactApprovedEmail } from "./email";
 // ----------------------------------------------------------------------------------------
 export const SEARCH_MIN_CHARS = 2;
 export const SEARCH_MAX_RESULTS = 8;
-export const SEARCHES_PER_EMAIL_PER_DAY = 100; // generous — humans never hit it; bulk scraping still does
+export const SEARCHES_PER_EMAIL_PER_DAY = 100;
+export const SEARCHES_PER_IP_PER_DAY = 300; // generous — humans never hit it; bulk scraping still does
 
 // A matching domain only counts as proof when it's a company domain. Anyone can make a
 // gmail address, so gmail matching gmail proves nothing.
@@ -308,6 +309,15 @@ export async function searchStores(q: string): Promise<StoreMatch[]> {
   }));
 }
 
+async function searchesTodayByIp(ip: string): Promise<number> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const r = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(wholesaleStoreSearches)
+    .where(and(eq(wholesaleStoreSearches.ip, ip), gte(wholesaleStoreSearches.createdAt, since)));
+  return r[0]?.n ?? 0;
+}
+
 async function searchesToday(email: string): Promise<number> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const r = await db
@@ -386,23 +396,30 @@ export function registerClaimRoutes(app: Express, deps: ClaimRouteDeps) {
     }
   });
 
-  app.get("/api/wholesale/claim/search", isAuthenticated, isClaimant, async (req: any, res) => {
+  // No login required (owner decision: store-first ordering — visitors type their store
+  // before giving an email). Anonymous searches are capped per IP and still logged.
+  app.get("/api/wholesale/claim/search", async (req: any, res) => {
     try {
       const q = String(req.query.q || "").trim();
       if (q.length < SEARCH_MIN_CHARS) {
         return res.status(400).json({ message: `Type at least ${SEARCH_MIN_CHARS} characters of the store name`, matches: [] });
       }
-      const email = normalizeEmail(req.user.email || "");
-      if ((await searchesToday(email)) >= SEARCHES_PER_EMAIL_PER_DAY) {
-        return res.status(429).json({ message: "That's enough searches for today. If you can't find your store, apply for an account and we'll sort it out.", matches: [] });
+      const ip = req.ip || req.socket?.remoteAddress || "unknown";
+      const email = req.user?.email ? normalizeEmail(req.user.email) : null;
+      if (email) {
+        if ((await searchesToday(email)) >= SEARCHES_PER_EMAIL_PER_DAY) {
+          return res.status(429).json({ message: "That's enough searches for today. If you can't find your store, apply for an account and we'll sort it out.", matches: [] });
+        }
+      } else if ((await searchesTodayByIp(ip)) >= SEARCHES_PER_IP_PER_DAY) {
+        return res.status(429).json({ message: "That's enough searches for today.", matches: [] });
       }
       const matches = await searchStores(q);
       await db.insert(wholesaleStoreSearches).values({
-        userId: req.user.id,
-        email,
+        userId: req.user?.id ?? null,
+        email: email ?? "anon",
         query: q.slice(0, 200),
         resultCount: matches.length,
-        ip: req.ip || req.socket?.remoteAddress || null,
+        ip,
       });
       res.json({ matches });
     } catch (e: any) {
