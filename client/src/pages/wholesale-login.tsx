@@ -24,6 +24,9 @@ export default function WholesaleLogin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [redeemingToken, setRedeemingToken] = useState(false);
+  // Ordering needs no sign-in (owner decision 2026-08-27) — this is the side door for
+  // order history and invoices, still email-verified because it exposes account data.
+  const [signInMode, setSignInMode] = useState(false);
 
   // Step 1 — store
   const [query, setQuery] = useState("");
@@ -103,11 +106,13 @@ export default function WholesaleLogin() {
   const confirmStore = async (m: Match) => {
     setStore(m);
     if (m.locationCount < 2) {
+      let locId: string | null = null;
       try {
         const res = await fetch(`/api/wholesale/claim/locations?customerId=${m.id}`, { credentials: "include" });
         const body = await res.json();
-        if (res.ok && body.locations?.length === 1) setChosenLoc(body.locations[0]);
-      } catch { /* location preselect is best-effort */ }
+        if (res.ok && body.locations?.length === 1) locId = body.locations[0].id;
+      } catch { /* location is best-effort */ }
+      goToOrder(m.id, locId);
       return;
     }
     setPickingLocation(true);
@@ -124,7 +129,9 @@ export default function WholesaleLogin() {
   const matches = debounced.length >= MIN_CHARS ? data?.matches ?? [] : [];
   const single = matches.length === 1 ? matches[0] : null;
   const chosen = useMemo(() => (single ? single : matches.find((m) => m.id === selectedId) ?? null), [single, matches, selectedId]);
-  const onEmailStep = !!store && !pickingLocation;
+  const goToOrder = (storeId: string, locId: string | null) =>
+    setLocation(`/wholesale/order?customer=${storeId}${locId ? `&location=${locId}` : ""}`);
+  const onEmailStep = signInMode;
 
   const sendLink = async () => {
     if (!email.trim()) {
@@ -133,11 +140,7 @@ export default function WholesaleLogin() {
     }
     setSending(true);
     try {
-      await apiRequest("POST", "/api/wholesale/send-email-code", {
-        email: email.trim(),
-        ...(store ? { claimCustomerId: store.id } : {}),
-        ...(chosenLoc ? { claimLocationId: chosenLoc.id } : {}),
-      });
+      await apiRequest("POST", "/api/wholesale/send-email-code", { email: email.trim() });
       setSent(true);
       toast({ title: "Check your email", description: "The link signs you in and takes you straight to ordering. There's a 6-digit code too if that's easier." });
     } catch (error: any) {
@@ -196,7 +199,7 @@ export default function WholesaleLogin() {
             )}
           </CardHeader>
           <CardContent className="space-y-4">
-            {!onEmailStep && (
+            {!onEmailStep && !pickingLocation && (
               <>
                 <div>
                   <Label htmlFor="store">Your store</Label>
@@ -255,6 +258,12 @@ export default function WholesaleLogin() {
                   </div>
                 )}
 
+                <p className="text-sm text-muted-foreground pt-1">
+                  <button type="button" className="text-primary font-medium" onClick={() => setSignInMode(true)} data-testid="button-signin-mode">
+                    Sign in for order history &amp; invoices
+                  </button>
+                </p>
+
                 {debounced.length >= MIN_CHARS && !isFetching && !error && matches.length === 0 && (
                   <p className="text-sm text-muted-foreground" data-testid="text-no-store-match">
                     No match — try the name as it appears on your invoices, or{" "}
@@ -294,11 +303,11 @@ export default function WholesaleLogin() {
                   })}
                   {locOptions.length === 0 && <p className="px-3 py-3 text-sm text-muted-foreground">Loading locations…</p>}
                 </div>
-                <Button className="w-full mt-3" disabled={!chosenLoc} onClick={() => setPickingLocation(false)} data-testid="button-confirm-location">
+                <Button className="w-full mt-3" disabled={!chosenLoc} onClick={() => chosenLoc && goToOrder(store.id, chosenLoc.id)} data-testid="button-confirm-location">
                   Continue
                 </Button>
                 <p className="text-sm text-muted-foreground mt-2 text-center">
-                  <button type="button" className="text-primary font-medium" onClick={() => { setChosenLoc(null); setPickingLocation(false); }} data-testid="button-skip-location">
+                  <button type="button" className="text-primary font-medium" onClick={() => goToOrder(store.id, null)} data-testid="button-skip-location">
                     Not sure — skip for now
                   </button>
                 </p>
@@ -307,15 +316,9 @@ export default function WholesaleLogin() {
 
             {onEmailStep && (
               <>
-                {store && (
-                  <div className="flex items-center justify-between rounded-md bg-muted/60 px-3 py-2 text-sm" data-testid="chip-chosen-store">
-                    <span>
-                      <span className="font-semibold">{store.businessName}</span>
-                      <span className="text-muted-foreground"> · {chosenLoc ? `${chosenLoc.locationName} — ${[chosenLoc.street, chosenLoc.city].filter(Boolean).join(", ")}` : [store.street, store.city].filter(Boolean).join(", ")}</span>
-                    </span>
-                    <button type="button" className="text-primary font-medium" onClick={() => { setStore(null); setChosenLoc(null); setLocOptions([]); setSent(false); }} data-testid="button-change-store">Change</button>
-                  </div>
-                )}
+                <p className="text-sm text-muted-foreground" data-testid="text-signin-blurb">
+                  For order history and invoices we'll email you a sign-in link.
+                </p>
                 <div>
                   <Label htmlFor="email">Your email</Label>
                   <div className="flex gap-2 mt-1">

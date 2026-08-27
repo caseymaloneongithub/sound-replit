@@ -1619,6 +1619,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return createdOrder;
   }
 
+  // Anonymous menu for guest ordering — the same catalogue the shop shows, list prices.
+  app.get("/api/wholesale/guest/unit-types", async (_req, res) => {
+    try {
+      const unitTypes = await storage.getAllWholesaleUnitTypesWithFlavors();
+      res.json(unitTypes.filter((ut: any) => ut.isActive !== false));
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching unit types: " + error.message });
+    }
+  });
+
+  // Guest wholesale order (owner decision 2026-08-27): no sign-in, no email verification.
+  // The email is an FYI contact for the confirmation only; invoices go to the billing
+  // contacts on file, and staff filter incoming orders as they arrive. Bot guards: the
+  // honeypot field and per-IP rate limits; store-specific pricing is applied server-side
+  // by placeCustomerOrder like any other order.
+  app.post("/api/wholesale/guest-order", async (req: any, res) => {
+    try {
+      // Honeypot: bots fill every field. Pretend success so they don't adapt.
+      if (typeof req.body?.website === "string" && req.body.website.trim() !== "") {
+        console.warn("[GUEST ORDER] honeypot tripped");
+        return res.json({ invoiceNumber: "INV-" + new Date().getFullYear() + "-0000" });
+      }
+      const ip = req.ip || req.socket?.remoteAddress || "unknown";
+      if (!checkSubmissionRateLimit(`guest-order-hr:${ip}`, 5, 60 * 60 * 1000) ||
+          !checkSubmissionRateLimit(`guest-order-day:${ip}`, 20, 24 * 60 * 60 * 1000)) {
+        return res.status(429).json({ message: "Too many orders from this connection — give us a call and we'll take it by phone." });
+      }
+      const contactEmail = typeof req.body?.contactEmail === "string" ? req.body.contactEmail.trim() : "";
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+        return res.status(400).json({ message: "Enter an email address for the order confirmation." });
+      }
+      const customer = await storage.getWholesaleCustomer(String(req.body?.customerId || ""));
+      if (!customer) {
+        return res.status(400).json({ message: "Pick your store first." });
+      }
+      const order = await placeCustomerOrder(customer, req.body, { placedByUserId: null });
+      console.log(`[GUEST ORDER] ${order.invoiceNumber} for ${customer.businessName} (${contactEmail}) from ${ip}`);
+      res.status(201).json({ id: order.id, invoiceNumber: order.invoiceNumber });
+    } catch (e: any) {
+      if (e instanceof OrderValidationError) return res.status(e.status).json(e.body);
+      console.error("[GUEST ORDER] error:", e);
+      res.status(500).json({ message: "Error placing order: " + e.message });
+    }
+  });
+
   app.post("/api/wholesale/customer/orders", isAuthenticated, isWholesaleCustomer, async (req, res) => {
     try {
       if (!req.user) {

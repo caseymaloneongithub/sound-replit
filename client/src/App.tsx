@@ -15,6 +15,7 @@ import StaffLogin from "@/pages/staff-login";
 import WholesaleLogin from "@/pages/wholesale-login";
 import WholesaleApply from "@/pages/wholesale-apply";
 import WholesaleClaim from "@/pages/wholesale-claim";
+import WholesaleGuestOrder from "@/pages/wholesale-guest-order";
 import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import WholesaleCustomerPlaceOrder from "@/pages/wholesale-customer-place-order";
@@ -76,6 +77,7 @@ function Router() {
       <Route path="/wholesale/login" component={WholesaleLogin} />
       <Route path="/wholesale/apply" component={WholesaleApply} />
       <Route path="/wholesale/claim" component={WholesaleClaim} />
+      <Route path="/wholesale/order" component={WholesaleGuestOrder} />
       <Route path="/forgot-password" component={ForgotPassword} />
       <Route path="/reset-password" component={ResetPassword} />
       <WholesaleCustomerProtectedRoute path="/wholesale-customer" component={() => <Redirect to="/wholesale-customer/place-order" />} />

@@ -66,7 +66,7 @@ export default function Home() {
               <>
                 <h2 className="text-2xl font-bold mt-2">Wholesale ordering</h2>
                 <p className="text-muted-foreground mt-1 flex-1">
-                  Cases and kegs, delivered or picked up. Order with just your email &mdash; no password.
+                  Cases and kegs, delivered or picked up &mdash; no account needed.
                 </p>
                 <div className="flex flex-wrap gap-2 mt-4">
                   <Button asChild size="lg" data-testid="button-lane-wholesale-login">
