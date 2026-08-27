@@ -161,11 +161,11 @@ export default function WholesaleLogin() {
         <Card>
           <CardHeader>
             <CardTitle>Order online</CardTitle>
-            <CardDescription>
-              {onEmailStep
-                ? "One email — no password, no account setup. You'll stay signed in on this device for 30 days."
-                : "Start typing your store and pick it from the list. Ordered with us online before? Skip straight to your email below."}
-            </CardDescription>
+            {!onEmailStep && (
+              <CardDescription>
+                Start typing your store and pick it from the list. Ordered with us online before? Skip straight to your email below.
+              </CardDescription>
+            )}
           </CardHeader>
           <CardContent className="space-y-4">
             {!onEmailStep && (
