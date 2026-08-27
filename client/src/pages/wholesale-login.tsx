@@ -201,6 +201,7 @@ export default function WholesaleLogin() {
                 <div>
                   <Label htmlFor="store">Your store</Label>
                   <Input
+                    className="mt-1.5"
                     id="store"
                     value={query}
                     onChange={(e) => { setQuery(e.target.value); setSelectedId(null); }}
