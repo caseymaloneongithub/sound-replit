@@ -190,9 +190,10 @@ export default function WholesaleLogin() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Wholesale Login</CardTitle>
+            <CardTitle>Order online</CardTitle>
             <CardDescription>
-              Enter your email and we'll send you a sign-in link
+              Enter your email and we'll send you a link that signs you in — no password, no
+              account setup. You'll stay signed in on this device for 30 days.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -220,7 +221,7 @@ export default function WholesaleLogin() {
                           disabled={sendingEmailLoginCode || emailLoginCodeSent || !field.value}
                           data-testid="button-send-wholesale-email-code"
                         >
-                          {sendingEmailLoginCode ? "Sending..." : emailLoginCodeSent ? "Sent" : "Send Code"}
+                          {sendingEmailLoginCode ? "Sending..." : emailLoginCodeSent ? "Sent" : "Email me a link"}
                         </Button>
                       </div>
                       <FormMessage />
@@ -258,7 +259,7 @@ export default function WholesaleLogin() {
                   disabled={verifyingEmailLoginCode || !emailLoginCodeSent}
                   data-testid="button-wholesale-email-login-submit"
                 >
-                  {verifyingEmailLoginCode ? "Verifying..." : "Verify & Login"}
+                  {verifyingEmailLoginCode ? "Verifying..." : "Continue with code"}
                 </Button>
 
                 {emailLoginCodeSent && (
