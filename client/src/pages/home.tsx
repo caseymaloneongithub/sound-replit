@@ -98,7 +98,7 @@ export default function Home() {
               </>
             ) : (
               <>
-                <h2 className="text-2xl font-bold mt-2">Shop 12-packs &amp; kegs</h2>
+                <h2 className="text-2xl font-bold mt-2">Public pickup orders</h2>
                 <p className="text-muted-foreground mt-1 flex-1">
                   Pick up at the brewery in Ballard, Mon&ndash;Thu. Subscribe &amp; Save 10% on a standing order you can skip or pause any time.
                 </p>

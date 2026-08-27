@@ -87,6 +87,9 @@ interface PaymentIntentResponse {
 }
 
 function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentIntentResponse; isSubscription: boolean }) {
+  // Flavor preferences only apply when a mixed/variety pack is in the order.
+  const { items: checkoutCartItems } = useUnifiedCart();
+  const hasMixedPack = (checkoutCartItems ?? []).some((i: any) => i.retailProduct?.productType === "multi-flavor");
   const stripe = useStripe();
   const elements = useElements();
   const { toast } = useToast();
@@ -460,22 +463,26 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
             </div>
           </div>
 
-          <div className="border-t pt-4 mt-4">
-            <h3 className="font-medium mb-2">Order Notes (Optional)</h3>
-            <div className="space-y-2">
-              <Label htmlFor="flavorNotes">Flavor Preferences</Label>
-              <Textarea
-                id="flavorNotes"
-                {...form.register("flavorNotes")}
-                placeholder="For mixed cases, let us know your preferred flavors (e.g., '6 Ginger Lemon, 4 Lavender Blueberry, 2 Classic')"
-                rows={3}
-                data-testid="input-flavor-notes"
-              />
-              <p className="text-xs text-muted-foreground">
-                Tell us which flavors you'd like in your order. This is especially helpful for mixed cases or if you have specific preferences.
-              </p>
+          {/* Only a mixed pack needs flavor preferences — single-flavor items already say
+              what they are. Real flavors in the example, not invented ones. */}
+          {hasMixedPack && (
+            <div className="border-t pt-4 mt-4">
+              <h3 className="font-medium mb-2">Order Notes (Optional)</h3>
+              <div className="space-y-2">
+                <Label htmlFor="flavorNotes">Flavor Preferences</Label>
+                <Textarea
+                  id="flavorNotes"
+                  {...form.register("flavorNotes")}
+                  placeholder="How should we build your mixed pack? (e.g., '4 Wildberry, 4 Mist, 2 Sunbreak, 2 Bonfire')"
+                  rows={3}
+                  data-testid="input-flavor-notes"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Leave it blank and we'll pack a variety across our current flavors.
+                </p>
+              </div>
             </div>
-          </div>
+          )}
           
           {!isLoggedIn && (
             <div className="border-t pt-4 mt-4">

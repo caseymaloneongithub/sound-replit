@@ -778,21 +778,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       void (async () => {
         try {
           const wholesaleCustomer = await storage.getWholesaleCustomerByAnyEmail(email);
-          // Store-first ordering: the page can hand us the store the visitor picked, and
-          // the link that arrives both signs them in AND connects them to it. A known
-          // email always wins over the picked store (their real account is theirs).
-          let claimCustomer = null;
+          // Sign-in exists only to expose account data (order history, invoices), and
+          // ordering itself needs no sign-in at all — so links go to KNOWN billing
+          // contacts only (owner decision 2026-08-27). Unknown emails get the same
+          // generic reply and no link; staff add new contacts on the customer.
           if (!wholesaleCustomer) {
-            // Not on any account yet. They still get a link. Staff/admin logins never go
-            // this way.
-            const existingUser = await storage.getUserByEmail(email);
-            if (existingUser && !['user', 'wholesale_customer'].includes(existingUser.role)) {
-              console.log(`[WHOLESALE AUTH] Login requested for a staff/admin email via the wholesale form (generic reply sent)`);
-              return;
-            }
-            if (claimCustomerId && typeof claimCustomerId === 'string') {
-              claimCustomer = await storage.getWholesaleCustomer(claimCustomerId);
-            }
+            console.log(`[WHOLESALE AUTH] Sign-in requested for unknown email (generic reply sent, no link)`);
+            return;
           }
 
           const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -807,16 +799,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             loginToken,
             expiresAt: new Date(Date.now() + 15 * 60 * 1000),
             verified: false,
-            purpose: wholesaleCustomer ? 'login' : claimCustomer ? 'claim-login' : 'login',
-            wholesaleCustomerId: wholesaleCustomer?.id ?? claimCustomer?.id ?? null,
+            purpose: 'login',
+            wholesaleCustomerId: wholesaleCustomer.id,
             // The picked delivery location rides along and is preselected on the order
             // page after redemption — validated against the bound customer here.
-            claimLocationId: await (async () => {
-              const boundCustomerId = wholesaleCustomer?.id ?? claimCustomer?.id;
-              if (!boundCustomerId || !claimLocationId || typeof claimLocationId !== 'string') return null;
-              const loc = await storage.getWholesaleLocation(claimLocationId);
-              return loc && loc.customerId === boundCustomerId ? loc.id : null;
-            })(),
+            claimLocationId: null,
           });
 
           const magicLink = `${getBaseUrl()}/wholesale/login?token=${loginToken}`;

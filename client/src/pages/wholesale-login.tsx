@@ -63,8 +63,8 @@ export default function WholesaleLogin() {
           setLocation("/wholesale/claim");
           return;
         }
-        toast({ title: "You're in", description: "Signed in — you'll stay signed in on this device for 30 days." });
-        setLocation(data.preferredLocationId ? `/wholesale-customer/place-order?location=${data.preferredLocationId}` : "/wholesale-customer/place-order");
+        toast({ title: "You're in", description: "Here are your orders and invoices." });
+        setLocation("/wholesale-customer/orders");
       } catch (error: any) {
         // Strip the spent token from the URL so a refresh doesn't retry it and re-toast.
         window.history.replaceState({}, "", "/wholesale/login");
@@ -142,7 +142,7 @@ export default function WholesaleLogin() {
     try {
       await apiRequest("POST", "/api/wholesale/send-email-code", { email: email.trim() });
       setSent(true);
-      toast({ title: "Check your email", description: "The link signs you in and takes you straight to ordering. There's a 6-digit code too if that's easier." });
+      toast({ title: "Check your email", description: "If that address is on the account, a sign-in link (and 6-digit code) is on its way." });
     } catch (error: any) {
       toast({ title: "Couldn't send", description: error.message || "Try again.", variant: "destructive" });
     } finally {
@@ -164,8 +164,8 @@ export default function WholesaleLogin() {
         setTimeout(() => setLocation("/wholesale/claim"), 100);
         return;
       }
-      toast({ title: "You're in", description: "You'll stay signed in on this device for 30 days." });
-      setTimeout(() => setLocation(data.preferredLocationId ? `/wholesale-customer/place-order?location=${data.preferredLocationId}` : "/wholesale-customer/place-order"), 100);
+      toast({ title: "You're in", description: "Here are your orders and invoices." });
+      setTimeout(() => setLocation("/wholesale-customer/orders"), 100);
     } catch (error: any) {
       toast({ title: "That code didn't work", description: "Codes are good for 15 minutes. Re-send if it's been a while.", variant: "destructive" });
     } finally {
