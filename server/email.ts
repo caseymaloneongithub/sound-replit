@@ -15,30 +15,18 @@ const BRAND_COLORS = {
   white: '#FFFFFF',
 };
 
-// Logo configuration for email embedding - using white logo for black backgrounds
-const LOGO_PATH = join(process.cwd(), 'attached_assets', 'text-stacked-white.png');
-const LOGO_CID = 'logo@pugetsoundkombucha';
+// Logo: served from the public R2 bucket rather than attached per-email — one mechanism
+// that works over SMTP and HTTP mail APIs alike, and smaller emails.
+const LOGO_URL = 'https://pub-fa09cd644b5c4f1985abd165027b2596.r2.dev/images/email-logo-white.png';
+const hasLogo = true;
 
-// Check if logo file exists
-const hasLogo = existsSync(LOGO_PATH);
-if (!hasLogo) {
-  console.warn('[EMAIL] Logo file not found at:', LOGO_PATH);
-}
-
-// Get logo attachment for emails
-const getLogoAttachment = () => {
-  if (!hasLogo) return [];
-  return [{
-    filename: 'logo.png',
-    path: LOGO_PATH,
-    cid: LOGO_CID
-  }];
-};
+// Kept for call-site compatibility; the logo is a hosted image now, nothing to attach.
+const getLogoAttachment = (): any[] => [];
 
 // Email header template with white logo PNG on black background
 const getEmailHeader = (title: string) => {
   const logoHtml = hasLogo 
-    ? `<img src="cid:${LOGO_CID}" alt="Puget Sound Kombucha Co." style="max-width: 200px; height: auto;" />`
+    ? `<img src="${LOGO_URL}" alt="Puget Sound Kombucha Co." style="max-width: 200px; height: auto;" />`
     : `<div style="margin-bottom: 8px;">
         <span style="color: ${BRAND_COLORS.white}; font-size: 28px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;">PUGET SOUND</span>
       </div>
@@ -67,7 +55,56 @@ const getEmailFooter = () => `
 `;
 
 // Create reusable transporter
+/**
+ * Send one email through the Resend HTTP API (https over 443 — no SMTP ports, which
+ * Railway blocks). Accepts nodemailer-shaped mailOptions so every existing send function
+ * works unchanged. From-address comes from RESEND_FROM (must be on the verified domain).
+ */
+async function resendSendMail(mailOptions: any): Promise<void> {
+  const attachments = await Promise.all((mailOptions.attachments ?? []).map(async (a: any) => {
+    let content: string | undefined;
+    if (a.content) {
+      content = Buffer.isBuffer(a.content) ? a.content.toString('base64') : Buffer.from(String(a.content)).toString('base64');
+    } else if (a.path) {
+      const { readFile } = await import('fs/promises');
+      content = (await readFile(a.path)).toString('base64');
+    }
+    return { filename: a.filename, content };
+  }));
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: process.env.RESEND_FROM || mailOptions.from,
+      to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
+      subject: mailOptions.subject,
+      html: mailOptions.html,
+      text: mailOptions.text,
+      ...(attachments.length ? { attachments } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Resend API ${res.status}: ${body.slice(0, 300)}`);
+  }
+}
+
+async function resendVerify(): Promise<true> {
+  const res = await fetch('https://api.resend.com/domains', {
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+  });
+  if (!res.ok) throw new Error(`Resend API key rejected (HTTP ${res.status})`);
+  return true;
+}
+
 const createTransporter = () => {
+  // Preferred: Resend over HTTPS. SMTP ports are blocked on Railway (verified 2026-08-25:
+  // ETIMEDOUT to smtp.gmail.com:465 even on the paid plan), so the SMTP path below only
+  // serves environments that allow it.
+  if (process.env.RESEND_API_KEY) {
+    return { sendMail: resendSendMail, verify: resendVerify } as any;
+  }
+
   const gmailUser = process.env.GMAIL_USER;
   const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
 
@@ -100,12 +137,12 @@ const createTransporter = () => {
 export async function verifyEmailTransport(): Promise<void> {
   const transporter = createTransporter();
   if (!transporter) {
-    console.warn('[EMAIL] SMTP check: GMAIL_USER / GMAIL_APP_PASSWORD not set — all email is log-only.');
+    console.warn('[EMAIL] Mail check: neither RESEND_API_KEY nor GMAIL_USER/GMAIL_APP_PASSWORD set — all email is log-only.');
     return;
   }
   try {
     await transporter.verify();
-    console.log('[EMAIL] SMTP check: connected and authenticated to smtp.gmail.com — email will send.');
+    console.log(`[EMAIL] ${process.env.RESEND_API_KEY ? 'Resend HTTP API check: key accepted' : 'SMTP check: connected and authenticated to smtp.gmail.com'} — email will send.`);
   } catch (err: any) {
     console.error('[EMAIL] SMTP check FAILED: ' + (err?.code ?? '') + ' ' + (err?.message ?? err));
     console.error('[EMAIL] ETIMEDOUT/ECONNECTION here means the host cannot reach smtp.gmail.com:465 (port block or IPv6 egress — try NODE_OPTIONS=--dns-result-order=ipv4first). EAUTH means the app password is wrong.');
