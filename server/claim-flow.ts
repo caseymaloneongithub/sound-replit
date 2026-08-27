@@ -83,6 +83,7 @@ type PublicRequest = {
 export type PendingOrder = {
   items: Array<{ unitTypeId: string; flavorId: string; quantity: number; label: string }>;
   notes?: string;
+  contactEmail?: string;
   locationId?: string;
   fulfillmentMethod: "delivery" | "pickup";
   summary: string; // "4× Wildberry 12-pk, 1× Mist 1/6 bbl" — what staff see in the queue
@@ -562,7 +563,7 @@ export function registerClaimRoutes(app: Express, deps: ClaimRouteDeps) {
         try {
           const order = await placeCustomerOrder(
             customer,
-            { items: held.items.map(({ unitTypeId, flavorId, quantity }) => ({ unitTypeId, flavorId, quantity })), notes: held.notes, locationId: held.locationId, fulfillmentMethod: held.fulfillmentMethod },
+            { items: held.items.map(({ unitTypeId, flavorId, quantity }) => ({ unitTypeId, flavorId, quantity })), notes: held.notes, contactEmail: held.contactEmail, locationId: held.locationId, fulfillmentMethod: held.fulfillmentMethod },
             { placedByUserId: request.userId }
           );
           placedOrderId = order?.id ?? null;
@@ -694,6 +695,7 @@ export async function holdPendingOrder(
   const pendingOrder: PendingOrder = {
     items: labeled,
     notes: typeof body?.notes === "string" && body.notes.trim() ? body.notes.trim() : undefined,
+    contactEmail: typeof body?.contactEmail === "string" && body.contactEmail.trim() ? body.contactEmail.trim() : undefined,
     locationId: locationId || undefined,
     fulfillmentMethod,
     summary: labeled.map((i) => `${i.quantity}× ${i.label}`).join(", "),

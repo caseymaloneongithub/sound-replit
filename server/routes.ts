@@ -1448,6 +1448,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     opts: { placedByUserId: string | null }
   ) {
       const { items, notes, locationId } = body;
+      // Email the orderer gave at submission — the confirmation goes here. May differ
+      // from the billing/primary contact (floor staff order; the office pays).
+      const contactEmail =
+        typeof body.contactEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.contactEmail.trim())
+          ? body.contactEmail.trim()
+          : null;
 
       // Pickup orders are collected at the brewery, so they carry no delivery location.
       // Anything else is a delivery and MUST name one — otherwise the order is scheduled
@@ -1536,6 +1542,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         locationId: effectiveLocationId || undefined,
         fulfillmentMethod,
         dueDate,
+        contactEmail: contactEmail || undefined,
       };
 
       const createdOrder = await storage.createWholesaleOrder(orderData);
@@ -1569,7 +1576,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // else's order. Falls back to the store's primary email when the placer is
       // unknown (claim-approval edge cases, legacy rows).
       const placer = opts.placedByUserId ? await storage.getUser(opts.placedByUserId) : undefined;
-      const confirmationEmail = placer?.email || customer.email;
+      const confirmationEmail = contactEmail || placer?.email || customer.email;
 
       // Send emails in the background (don't block the response)
       sendWholesaleOrderConfirmation({

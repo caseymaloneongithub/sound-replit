@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Plus, Minus, Trash2, MapPin } from "lucide-react";
 import { useLocation } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -26,6 +27,7 @@ interface CartItem {
 export default function WholesaleCustomerPlaceOrder() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState<string>("");
   // Delivery or collect from the brewery. Pickup carries no address, so it's also the way
   // a customer with no location on file can still place an order.
@@ -36,6 +38,13 @@ export default function WholesaleCustomerPlaceOrder() {
   const [cartHydrated, setCartHydrated] = useState(false);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const { user } = useAuth();
+
+  // Prefill the order email with the login email once — the person ordering may swap in
+  // a different address (the confirmation goes there; billing stays on the primary).
+  useEffect(() => {
+    if (user?.email) setContactEmail((prev) => prev || user.email!);
+  }, [user?.email]);
 
   const { data: customer } = useQuery<WholesaleCustomer>({
     queryKey: ["/api/wholesale-customer"],
@@ -135,6 +144,7 @@ export default function WholesaleCustomerPlaceOrder() {
 
       return await apiRequest("POST", "/api/wholesale/customer/orders", {
         notes: notes || undefined,
+        contactEmail: contactEmail.trim() || undefined,
         fulfillmentMethod,
         locationId:
           fulfillmentMethod === "delivery" && selectedLocationId && selectedLocationId !== "none"
@@ -662,7 +672,20 @@ export default function WholesaleCustomerPlaceOrder() {
                     <CardTitle>Order Notes</CardTitle>
                     <CardDescription>Add any special instructions (optional)</CardDescription>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <div className="text-sm font-medium mb-1.5">Email for this order</div>
+                      <Input
+                        type="email"
+                        value={contactEmail}
+                        onChange={(e) => setContactEmail(e.target.value)}
+                        placeholder="you@yourstore.com"
+                        data-testid="input-order-contact-email"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1.5">
+                        The order confirmation goes here — use a different address than your sign-in if someone else should get it.
+                      </p>
+                    </div>
                     <Textarea
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}

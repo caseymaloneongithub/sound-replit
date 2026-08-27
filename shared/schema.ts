@@ -473,6 +473,9 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   fulfilledAt: timestamp("fulfilled_at"),
   fulfilledByUserId: varchar("fulfilled_by_user_id").references(() => users.id),
   notes: text("notes"),
+  // Email the orderer gave at submission — the confirmation goes here. Often differs
+  // from the billing/primary contact (owner: floor staff order, office pays).
+  contactEmail: text("contact_email"),
   // Invoice payment tracking
   dueDate: timestamp("due_date"), // Payment due date (default 30 days from order)
   paidAt: timestamp("paid_at"), // When payment SETTLED (money actually received)
