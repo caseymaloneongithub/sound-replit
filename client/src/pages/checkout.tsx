@@ -65,7 +65,6 @@ function CheckoutForm({ planId, plan }: { planId: string; plan?: SubscriptionPla
         elements,
         confirmParams: {
           return_url: `${window.location.origin}/subscription-success`,
-          receipt_email: customerInfo.customerEmail,
         },
         redirect: 'if_required',
       });

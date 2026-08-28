@@ -299,7 +299,6 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
               },
             },
           },
-          receipt_email: customerInfo.customerEmail,
         }
       );
 
