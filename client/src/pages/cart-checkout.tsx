@@ -438,8 +438,7 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
 
           <div className="border-t pt-4 mt-4">
             {/* Billing only — retail is pickup, so there's no shipping address to collect. */}
-            <h3 className="font-medium mb-1">Billing Address</h3>
-            <p className="text-sm text-muted-foreground mb-4">The address on file with your card. Orders are picked up at the brewery — nothing ships.</p>
+            <h3 className="font-medium mb-4">Billing Address</h3>
             <Form {...form}>
               <AddressAutofillFields
                 addressValue={form.watch("address") || ""}
