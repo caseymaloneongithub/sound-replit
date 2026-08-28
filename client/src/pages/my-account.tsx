@@ -49,12 +49,19 @@ export default function MyAccount() {
   const [selectedNewQuantity, setSelectedNewQuantity] = useState<number>(1);
   const [selectedNewFlavor, setSelectedNewFlavor] = useState<string>("");
 
+  // Orders and subscriptions change server-side (webhooks, staff actions), so
+  // refetch on every visit — the app-wide staleTime: Infinity would otherwise
+  // show a stale list until a hard reload.
   const { data: subscriptions, isLoading: subscriptionsLoading } = useQuery<SubscriptionWithItems[]>({
     queryKey: ["/api/my-subscriptions"],
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const { data: orders, isLoading: ordersLoading } = useQuery<OrderWithDetails[]>({
     queryKey: ["/api/my-orders"],
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const { data: products } = useQuery<Product[]>({
@@ -482,15 +489,15 @@ export default function MyAccount() {
           </Button>
         </div>
 
-        <Tabs defaultValue="subscriptions" className="w-full" data-testid="tabs-my-account">
+        <Tabs defaultValue="orders" className="w-full" data-testid="tabs-my-account">
           <TabsList className="grid w-full grid-cols-2 max-w-md mb-8">
-            <TabsTrigger value="subscriptions" data-testid="tab-subscriptions">
-              <Repeat className="w-4 h-4 mr-2" />
-              Subscriptions
-            </TabsTrigger>
             <TabsTrigger value="orders" data-testid="tab-orders">
               <Package className="w-4 h-4 mr-2" />
               Order History
+            </TabsTrigger>
+            <TabsTrigger value="subscriptions" data-testid="tab-subscriptions">
+              <Repeat className="w-4 h-4 mr-2" />
+              Subscriptions
             </TabsTrigger>
           </TabsList>
 
