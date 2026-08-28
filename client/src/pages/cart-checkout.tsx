@@ -17,6 +17,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useUnifiedCart } from "@/hooks/use-unified-cart";
 import { useAuth } from "@/hooks/use-auth";
+import { Form } from "@/components/ui/form";
+import { AddressAutofillFields } from "@/components/address-autofill";
 
 const STRIPE_PUBLIC_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
 const stripePromise: Promise<Stripe | null> = STRIPE_PUBLIC_KEY 
@@ -163,6 +165,19 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
 
   const handleCustomerInfo = async (data: CustomerForm) => {
     try {
+      // Account holders: checkout is also where the saved billing address gets edited,
+      // so persist it to the profile. Best-effort — never blocks the purchase.
+      if (isLoggedIn) {
+        apiRequest("PATCH", "/api/update-profile", {
+          address: data.address,
+          city: data.city,
+          state: data.state,
+          zipCode: data.zipCode,
+        })
+          .then(() => queryClient.invalidateQueries({ queryKey: ["/api/user"] }))
+          .catch(() => {});
+      }
+
       // For subscriptions, we don't need to store customer info upfront
       if (isSubscription) {
         setCustomerInfo(data);
@@ -218,6 +233,13 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
             name: customerInfo.customerName,
             email: customerInfo.customerEmail,
             phone: customerInfo.customerPhone,
+            address: {
+              line1: customerInfo.address,
+              city: customerInfo.city,
+              state: customerInfo.state,
+              postal_code: customerInfo.zipCode,
+              country: 'US',
+            },
           },
         });
 
@@ -268,6 +290,13 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
               name: customerInfo.customerName,
               email: customerInfo.customerEmail,
               phone: customerInfo.customerPhone,
+              address: {
+                line1: customerInfo.address,
+                city: customerInfo.city,
+                state: customerInfo.state,
+                postal_code: customerInfo.zipCode,
+                country: 'US',
+              },
             },
           },
           receipt_email: customerInfo.customerEmail,
@@ -408,59 +437,33 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
           </div>
 
           <div className="border-t pt-4 mt-4">
-            <h3 className="font-medium mb-4">Shipping Address</h3>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="address">Street Address</Label>
-                <Input
-                  id="address"
-                  {...form.register("address")}
-                  placeholder="123 Main Street"
-                  data-testid="input-address"
-                />
-                {form.formState.errors.address && (
-                  <p className="text-sm text-destructive">{form.formState.errors.address.message}</p>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="city">City</Label>
-                  <Input
-                    id="city"
-                    {...form.register("city")}
-                    placeholder="Seattle"
-                    data-testid="input-city"
-                  />
-                  {form.formState.errors.city && (
-                    <p className="text-sm text-destructive">{form.formState.errors.city.message}</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="state">State</Label>
-                  <Input
-                    id="state"
-                    {...form.register("state")}
-                    placeholder="WA"
-                    data-testid="input-state"
-                  />
-                  {form.formState.errors.state && (
-                    <p className="text-sm text-destructive">{form.formState.errors.state.message}</p>
-                  )}
-                </div>
-              </div>
-              <div className="space-y-2 w-1/2">
-                <Label htmlFor="zipCode">ZIP Code</Label>
-                <Input
-                  id="zipCode"
-                  {...form.register("zipCode")}
-                  placeholder="98107"
-                  data-testid="input-zip-code"
-                />
-                {form.formState.errors.zipCode && (
-                  <p className="text-sm text-destructive">{form.formState.errors.zipCode.message}</p>
-                )}
-              </div>
-            </div>
+            {/* Billing only — retail is pickup, so there's no shipping address to collect. */}
+            <h3 className="font-medium mb-1">Billing Address</h3>
+            <p className="text-sm text-muted-foreground mb-4">The address on file with your card. Orders are picked up at the brewery — nothing ships.</p>
+            <Form {...form}>
+              <AddressAutofillFields
+                addressValue={form.watch("address") || ""}
+                cityValue={form.watch("city") || ""}
+                stateValue={form.watch("state") || ""}
+                zipCodeValue={form.watch("zipCode") || ""}
+                onAddressChange={(val) => form.setValue("address", val, { shouldDirty: true, shouldValidate: true })}
+                onCityChange={(val) => form.setValue("city", val, { shouldDirty: true, shouldValidate: true })}
+                onStateChange={(val) => form.setValue("state", val, { shouldDirty: true, shouldValidate: true })}
+                onZipCodeChange={(val) => form.setValue("zipCode", val, { shouldDirty: true, shouldValidate: true })}
+                addressPlaceholder="123 Main Street"
+                cityPlaceholder="Seattle"
+                statePlaceholder="WA"
+                zipPlaceholder="98107"
+                addressTestId="input-address"
+                cityTestId="input-city"
+                stateTestId="input-state"
+                zipTestId="input-zip-code"
+                addressError={form.formState.errors.address?.message}
+                cityError={form.formState.errors.city?.message}
+                stateError={form.formState.errors.state?.message}
+                zipError={form.formState.errors.zipCode?.message}
+              />
+            </Form>
           </div>
 
           {/* Only a mixed pack needs flavor preferences — single-flavor items already say

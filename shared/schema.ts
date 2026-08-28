@@ -722,6 +722,11 @@ export const updateProfileSchema = z.object({
   lastName: z.string().min(1, "Last name is required").optional(),
   email: z.string().email("Invalid email address").optional(),
   phoneNumber: z.string().min(10, "Phone number must be at least 10 digits").optional(),
+  // Billing address — retail is pickup-only, so this is the card's address, not shipping.
+  address: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  zipCode: z.string().optional(),
 });
 
 // Insert types - OLD SCHEMA
