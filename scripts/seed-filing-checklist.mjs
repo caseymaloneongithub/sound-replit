@@ -20,47 +20,47 @@ const pool = new Pool({ connectionString: url });
 const TASKS = [
   // ---- monthly ----
   { title: "File WA DOR excise return (B&O + sales tax)", recurrence: "monthly", dayOfMonth: 20,
-    description: "Due the 25th for the prior month. File in MyDOR (dor.wa.gov). Retailing vs wholesaling classifications + sales tax collected." },
+    description: "Due the 25th for the prior month. Grab the month's numbers from Filing Numbers (staff portal, Money). Sign in at https://secure.dor.wa.gov (MyDOR), File Return: retailing + wholesaling gross under B&O, retail gross under Retail Sales Tax, remit the sales tax collected." },
 
   // ---- quarterly (surface Jan/Apr/Jul/Oct; filings due end of those months) ----
   { title: "File L&I workers' comp quarterly report", recurrence: "quarterly", dayOfMonth: 25,
-    description: "QuickBooks does NOT file this one. Report hours by risk class 3702 and pay premiums at lni.wa.gov (QuickBooks' Workers' Comp report has the hours). Due the last day of the month." },
+    description: "QuickBooks does NOT file this one. Run QB's Workers' Compensation report for last quarter (hours by employee), then file at https://secure.lni.wa.gov (My L&I, Quarterly Reports) — account 624,191-00, risk class 3702-03: report hours worked and pay the premium. Due the last day of the month." },
   { title: "Verify QuickBooks filed payroll forms", recurrence: "quarterly", dayOfMonth: 25,
-    description: "Two-minute check: QuickBooks → Taxes → Payroll tax → Filings. Confirm 941, ESD unemployment, and PFML/WA Cares show as filed by Intuit for last quarter." },
+    description: "Two-minute check: QuickBooks, Taxes, Payroll tax, Filings. Confirm last quarter's 941 (IRS), ESD unemployment, and PFML/WA Cares all show as filed by QuickBooks. Chase anything marked as needing action." },
   { title: "File Seattle B&O return", recurrence: "quarterly", dayOfMonth: 25,
-    description: "City of Seattle business license tax via FileLocal. Due the last day of the month (skip the quarterly ones if the city has you on annual filing — then it's due Apr 30)." },
+    description: "Numbers: Filing Numbers page (staff portal, Money), quarter table. File at https://portal.filelocal-wa.gov — City of Seattle B&O, retailing + wholesaling classifications. Due the last day of the month. Skip the quarterly ones if the city has you on annual filing (then due Apr 30)." },
 
   // ---- federal estimated taxes (sole prop; due the 15th of Apr/Jun/Sep/Jan) ----
   { title: "Pay federal estimated tax (1040-ES) — Q1", recurrence: "yearly", monthOfYear: 4, dayOfMonth: 10,
-    description: "Due Apr 15. IRS Direct Pay or EFTPS." },
+    description: "Due Apr 15. Pay at https://www.irs.gov/payments (Direct Pay, reason: Estimated Tax 1040-ES) or EFTPS. Amount per the accountant's vouchers or safe-harbor plan." },
   { title: "Pay federal estimated tax (1040-ES) — Q2", recurrence: "yearly", monthOfYear: 6, dayOfMonth: 10,
-    description: "Due Jun 15. IRS Direct Pay or EFTPS." },
+    description: "Due Jun 15. Pay at https://www.irs.gov/payments (Direct Pay, reason: Estimated Tax 1040-ES) or EFTPS. Amount per the accountant's vouchers or safe-harbor plan." },
   { title: "Pay federal estimated tax (1040-ES) — Q3", recurrence: "yearly", monthOfYear: 9, dayOfMonth: 10,
-    description: "Due Sep 15. IRS Direct Pay or EFTPS." },
+    description: "Due Sep 15. Pay at https://www.irs.gov/payments (Direct Pay, reason: Estimated Tax 1040-ES) or EFTPS. Amount per the accountant's vouchers or safe-harbor plan." },
   { title: "Pay federal estimated tax (1040-ES) — Q4", recurrence: "yearly", monthOfYear: 1, dayOfMonth: 10,
-    description: "Due Jan 15. IRS Direct Pay or EFTPS." },
+    description: "Due Jan 15. Pay at https://www.irs.gov/payments (Direct Pay, reason: Estimated Tax 1040-ES) or EFTPS. Amount per the accountant's vouchers or safe-harbor plan." },
 
   // ---- annual ----
   { title: "Year-end payroll: W-2s, 1099s, Form 940", recurrence: "yearly", monthOfYear: 1, dayOfMonth: 26,
-    description: "Due Jan 31. Verify QuickBooks filed W-2s (SSA + employees) and 940; send 1099-NEC to any contractors yourself if not in QB." },
+    description: "Due Jan 31. Verify in QuickBooks (Taxes, Payroll tax, Filings) that W-2s and Form 940 show as filed — QB files them automatically — and employees have their W-2 copies. Send 1099-NEC to any contractors: QB, Payroll, Contractors, Prepare 1099s." },
   { title: "File federal income tax return (Schedule C on 1040)", recurrence: "yearly", monthOfYear: 4, dayOfMonth: 10,
-    description: "Due Apr 15 (sole proprietorship — business goes on Schedule C with the personal return)." },
+    description: "Due Apr 15 — business income goes on Schedule C with the personal 1040 (the LLC is a disregarded entity). Usually via the accountant; source data is the Filing Numbers page + QuickBooks P&L." },
   { title: "File King County personal property listing", recurrence: "yearly", monthOfYear: 4, dayOfMonth: 25,
-    description: "Due Apr 30 via eListing (kingcounty.gov) — business equipment (tanks, canning line, coolers). No extensions; 5%/month late penalty." },
+    description: "Due Apr 30 — no extensions, 5%/month late penalty. File the business asset listing (tanks, canning line, kegs, coolers, computers) via eListing at https://kingcounty.gov/en/dept/assessor — update last year's listing with additions and disposals." },
   { title: "Renew WSDA food processor license", recurrence: "yearly", monthOfYear: 6, dayOfMonth: 25,
-    description: "All WSDA food processor licenses expire Jun 30 regardless of issue date. agr.wa.gov / foodsafety@agr.wa.gov." },
+    description: "License expires Jun 30 regardless of issue date. Renew with WSDA — forms at https://agr.wa.gov/services/licenses-permits-and-certificates, or email foodsafety@agr.wa.gov if no renewal notice arrived." },
   { title: "Update L&I comp rates in QuickBooks", recurrence: "yearly", monthOfYear: 12, dayOfMonth: 15,
-    description: "New rate notice arrives in December. Pull the 'Risk class rate and payroll deduction calculation' page in L&I Claim & Account Center and update the composite rate + payroll deduction in QB Payroll settings, effective Jan 1." },
+    description: "When the December rate notice arrives: https://secure.lni.wa.gov, Claim & Account Center, Rates and Risk Classes, 'Risk class rate and payroll deduction calculation'. Copy the composite rate and payroll deduction into QuickBooks (gear, Payroll settings, Washington tax, WA Workers Compensation Tax), effective Jan 1. 2026 values were 0.8415 / 0.21605." },
   { title: "Renew Seattle business license", recurrence: "yearly", monthOfYear: 12, dayOfMonth: 26,
-    description: "Business license tax certificate expires Dec 31; renew before then (seattle.gov / FileLocal)." },
+    description: "Business license tax certificate expires Dec 31; renewal payment must arrive before then. Renew at https://portal.filelocal-wa.gov (City of Seattle)." },
   { title: "Renew WA business license endorsements", recurrence: "yearly", monthOfYear: 1, dayOfMonth: 26,
-    description: "State endorsements renew on the account's anniversary (LLC formed Jan 2015) — DOR mails/emails a notice. Due end of January." },
+    description: "State endorsements renew on the January anniversary (LLC formed Jan 2015) — DOR sends a notice. Renew in MyDOR at https://secure.dor.wa.gov (Renew business license). Due end of January." },
   { title: "File WA Secretary of State annual report", recurrence: "yearly", monthOfYear: 1, dayOfMonth: 26,
-    description: "LLC annual report, due Jan 31 (end of anniversary month — formed Jan 2015). File at ccfs.sos.wa.gov; missing it can get the LLC administratively dissolved." },
+    description: "LLC annual report due Jan 31 (anniversary month). File at https://ccfs.sos.wa.gov — search Sound Kombucha, Annual Report, small filing fee (~$60). Missing it risks administrative dissolution." },
 
   // ---- one-time (biennial; recreate in 2028) ----
   { title: "Renew FDA food facility registration (2026 window)", recurrence: "one-time", monthOfYear: 10, dayOfMonth: 15,
-    description: "Renewal window Oct 1 – Dec 31, 2026 (every even year; next in 2028). No fee, no grace period — an unrenewed facility's products are legally adulterated. fda.gov FURLS." },
+    description: "Window Oct 1 – Dec 31, 2026 (every even year — recreate this task in 2028). Renew at https://access.fda.gov (FURLS, Food Facility Registration Module) with the FDA account. No fee, no grace period — unrenewed facilities' products are legally adulterated." },
 ];
 
 const who = await pool.query(

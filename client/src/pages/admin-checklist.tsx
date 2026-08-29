@@ -104,6 +104,21 @@ const DAYS_OF_WEEK = [
   { value: 6, label: "Saturday" },
 ];
 
+// Task descriptions carry filing portals (MyDOR, FileLocal, L&I…) — make bare URLs
+// clickable. Plain string splitting, so no HTML from the description is ever rendered.
+function linkifyDescription(text: string) {
+  const parts = text.split(/(https?:\/\/[^\s)]+)/g);
+  return parts.map((part, i) =>
+    /^https?:\/\//.test(part) ? (
+      <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">
+        {part.replace(/^https?:\/\/(www\.)?/, "")}
+      </a>
+    ) : (
+      part
+    )
+  );
+}
+
 function getRecurrenceBadgeColor(recurrence: string): string {
   switch (recurrence) {
     case "daily": return "bg-blue-500";
@@ -780,7 +795,7 @@ export default function AdminChecklist() {
                             </Badge>
                           </div>
                           {task.description && (
-                            <p className="text-sm text-muted-foreground mt-1">{task.description}</p>
+                            <p className="text-sm text-muted-foreground mt-1">{linkifyDescription(task.description)}</p>
                           )}
                           {task.completion && (
                             <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
