@@ -1724,6 +1724,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Revenue numbers for tax filings, straight from our own orders (owner decision
+  // 2026-08-29: filings use our data, not QuickBooks). Returns the three months of
+  // the quarter containing ?month=YYYY-MM, bucketed by Pacific calendar month.
+  // Retail gross = subtotal (tax and refundable deposits excluded); wholesale gross =
+  // invoice totals (resale — no sales tax). Cancelled and soft-deleted orders excluded.
+  app.get("/api/admin/filing-numbers", isAdmin, async (req, res) => {
+    try {
+      const m = String(req.query.month ?? "");
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) {
+        return res.status(400).json({ message: "month must be YYYY-MM" });
+      }
+      const [year, month] = m.split("-").map(Number);
+      const qStartMonth = Math.floor((month - 1) / 3) * 3 + 1;
+      const start = `${year}-${String(qStartMonth).padStart(2, "0")}-01 00:00:00`;
+      const endYear = qStartMonth === 10 ? year + 1 : year;
+      const endMonth = qStartMonth === 10 ? 1 : qStartMonth + 3;
+      const end = `${endYear}-${String(endMonth).padStart(2, "0")}-01 00:00:00`;
+
+      const pacific = (col: string) => `(${col} at time zone 'UTC' at time zone 'America/Los_Angeles')`;
+      const retail = await pool.query(
+        `select to_char(${pacific("order_date")}, 'YYYY-MM') as month,
+                count(*)::int as orders,
+                coalesce(sum(subtotal), 0)::text as gross,
+                coalesce(sum(tax_amount), 0)::text as tax,
+                coalesce(sum(deposit_amount), 0)::text as deposits
+           from retail_orders
+          where status <> 'cancelled' and deleted_at is null
+            and ${pacific("order_date")} >= $1::timestamp and ${pacific("order_date")} < $2::timestamp
+          group by 1`,
+        [start, end]
+      );
+      const wholesale = await pool.query(
+        `select to_char(${pacific("order_date")}, 'YYYY-MM') as month,
+                count(*)::int as orders,
+                coalesce(sum(total_amount), 0)::text as gross
+           from wholesale_orders
+          where deleted_at is null
+            and ${pacific("order_date")} >= $1::timestamp and ${pacific("order_date")} < $2::timestamp
+          group by 1`,
+        [start, end]
+      );
+
+      const months = [];
+      for (let i = 0; i < 3; i++) {
+        const mm = qStartMonth + i;
+        const key = `${year}-${String(mm).padStart(2, "0")}`;
+        const r = retail.rows.find((x) => x.month === key);
+        const w = wholesale.rows.find((x) => x.month === key);
+        months.push({
+          month: key,
+          retail: { orders: r?.orders ?? 0, gross: r?.gross ?? "0", tax: r?.tax ?? "0", deposits: r?.deposits ?? "0" },
+          wholesale: { orders: w?.orders ?? 0, gross: w?.gross ?? "0" },
+        });
+      }
+      res.json({ quarter: `${year} Q${Math.ceil(qStartMonth / 3)}`, months });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error computing filing numbers: " + error.message });
+    }
+  });
+
   app.post("/api/products", isAdmin, async (req, res) => {
     try {
       const validatedData = insertProductSchema.parse(req.body);

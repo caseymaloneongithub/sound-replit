@@ -28,6 +28,7 @@ import {
   PackageCheck,
   LayoutDashboard,
   CalendarDays,
+  FileSpreadsheet,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useNewContactCount } from "@/components/staff/contact-requests-panel";
@@ -168,6 +169,7 @@ export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
       items: [
         { title: "Revenue", href: "/reports", icon: DollarSign },
         { title: "Accounting", href: "/admin/accounting", icon: Calculator, adminOnly: true },
+        { title: "Filing Numbers", href: "/admin/filing-numbers", icon: FileSpreadsheet, adminOnly: true },
         { title: "Transactions", href: "/admin/accounting/transactions", icon: Receipt, adminOnly: true },
         { title: "Categories", href: "/admin/accounting/categories", icon: Tags, adminOnly: true },
         { title: "Bank Connections", href: "/admin/accounting/banks", icon: Landmark, adminOnly: true },
