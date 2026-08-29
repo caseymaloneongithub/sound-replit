@@ -795,7 +795,7 @@ export default function AdminChecklist() {
                             </Badge>
                           </div>
                           {task.description && (
-                            <p className="text-sm text-muted-foreground mt-1">{linkifyDescription(task.description)}</p>
+                            <p className="text-sm text-muted-foreground mt-1 break-words">{linkifyDescription(task.description)}</p>
                           )}
                           {task.completion && (
                             <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
