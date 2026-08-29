@@ -53,8 +53,10 @@ const TASKS = [
     description: "New rate notice arrives in December. Pull the 'Risk class rate and payroll deduction calculation' page in L&I Claim & Account Center and update the composite rate + payroll deduction in QB Payroll settings, effective Jan 1." },
   { title: "Renew Seattle business license", recurrence: "yearly", monthOfYear: 12, dayOfMonth: 10,
     description: "Business license tax certificate expires Dec 31; renew before then (seattle.gov / FileLocal)." },
-  { title: "Renew WA business license endorsements", recurrence: "yearly", monthOfYear: 12, dayOfMonth: 10,
-    description: "State endorsements renew on the account's anniversary — DOR mails/emails a notice. If your anniversary isn't December, edit this task's month to match when the notice actually arrives." },
+  { title: "Renew WA business license endorsements", recurrence: "yearly", monthOfYear: 1, dayOfMonth: 10,
+    description: "State endorsements renew on the account's anniversary (LLC formed Jan 2015) — DOR mails/emails a notice. Due end of January." },
+  { title: "File WA Secretary of State annual report", recurrence: "yearly", monthOfYear: 1, dayOfMonth: 10,
+    description: "LLC annual report, due Jan 31 (end of anniversary month — formed Jan 2015). File at ccfs.sos.wa.gov; missing it can get the LLC administratively dissolved." },
 
   // ---- one-time (biennial; recreate in 2028) ----
   { title: "Renew FDA food facility registration (2026 window)", recurrence: "one-time", monthOfYear: 10, dayOfMonth: 15,
