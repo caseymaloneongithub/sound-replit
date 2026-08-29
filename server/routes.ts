@@ -12,7 +12,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
@@ -7951,6 +7951,38 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error("Error fetching users:", error);
       res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // Create a staff/admin account directly — no retail-customer detour. The invite
+  // email carries a 7-day set-password link and is gated by the same prod-only flag
+  // as the retail welcome, so dev and test never email real addresses.
+  app.post("/api/staff/users", isAuthenticated, isSuperAdmin, async (req, res) => {
+    try {
+      const schema = z.object({
+        firstName: z.string().trim().min(1),
+        lastName: z.string().trim().optional().default(''),
+        email: z.string().trim().email(),
+        role: z.enum(['staff', 'admin']),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid staff data", errors: parsed.error.errors });
+      const { firstName, lastName, email, role } = parsed.data;
+      const existing = await storage.getUserByEmail(email);
+      if (existing) return res.status(409).json({ message: `${email} already has an account — change their role in the list instead` });
+      const username = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_') + '-' + crypto.randomUUID().slice(0, 6);
+      // InsertUser deliberately has no role field (self-registration can't escalate),
+      // so create first and promote through the same path the role dropdown uses.
+      const created = await storage.createUser({ username, email, firstName, lastName: lastName || undefined });
+      const user = (await storage.updateUserRole(created.id, role)) ?? created;
+      const token = crypto.randomBytes(32).toString('hex');
+      await storage.createPasswordResetToken(user.id, token, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+      await sendStaffInviteEmail({ to: email, name: firstName, setPasswordUrl: `${getBaseUrl()}/reset-password?token=${token}`, role });
+      const invite = retailWelcomeEmailsEnabled() ? 'sent' : 'suppressed';
+      console.log(`[STAFF] ${role} account created for ${email} (invite: ${invite})`);
+      res.status(201).json({ user, invite });
+    } catch (e: any) {
+      res.status(500).json({ message: "Error adding staff member: " + e.message });
     }
   });
 

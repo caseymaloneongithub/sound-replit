@@ -142,6 +142,24 @@ export default function StaffPortal() {
   // roles only; All + search exist to find a customer account and promote it.
   const [userFilter, setUserFilter] = useState<'portal' | 'all'>('portal');
   const [userSearch, setUserSearch] = useState('');
+  const [addStaffOpen, setAddStaffOpen] = useState(false);
+  const [staffForm, setStaffForm] = useState({ firstName: '', lastName: '', email: '', role: 'staff' });
+
+  const addStaffMutation = useMutation({
+    mutationFn: async () => apiRequest('POST', '/api/staff/users', staffForm),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/staff/users'] });
+      setAddStaffOpen(false);
+      setStaffForm({ firstName: '', lastName: '', email: '', role: 'staff' });
+      toast({
+        title: 'Staff member added',
+        description: data.invite === 'sent'
+          ? 'An invite with a set-password link is on its way.'
+          : 'Invite email suppressed outside production — send them a password reset from the login page instead.',
+      });
+    },
+    onError: (e: any) => toast({ title: "Couldn't add staff member", description: e.message, variant: 'destructive' }),
+  });
 
   const roleRank: Record<string, number> = { super_admin: 0, admin: 1, staff: 2, wholesale_customer: 3, user: 4 };
 
@@ -769,6 +787,59 @@ export default function StaffPortal() {
                   className="max-w-xs h-9"
                   data-testid="input-user-search"
                 />
+                <Dialog open={addStaffOpen} onOpenChange={setAddStaffOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm" className="ml-auto" data-testid="button-add-staff">Add staff member</Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Add staff member</DialogTitle>
+                      <DialogDescription>
+                        Creates the account with portal access and emails a set-password link (good for 7 days).
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label htmlFor="staff-first">First name</Label>
+                          <Input id="staff-first" className="mt-1.5" value={staffForm.firstName}
+                            onChange={(e) => setStaffForm((f) => ({ ...f, firstName: e.target.value }))}
+                            data-testid="input-staff-first" />
+                        </div>
+                        <div>
+                          <Label htmlFor="staff-last">Last name</Label>
+                          <Input id="staff-last" className="mt-1.5" value={staffForm.lastName}
+                            onChange={(e) => setStaffForm((f) => ({ ...f, lastName: e.target.value }))}
+                            data-testid="input-staff-last" />
+                        </div>
+                      </div>
+                      <div>
+                        <Label htmlFor="staff-email">Email</Label>
+                        <Input id="staff-email" type="email" className="mt-1.5" value={staffForm.email}
+                          onChange={(e) => setStaffForm((f) => ({ ...f, email: e.target.value }))}
+                          data-testid="input-staff-email" />
+                      </div>
+                      <div>
+                        <Label>Role</Label>
+                        <Select value={staffForm.role} onValueChange={(v) => setStaffForm((f) => ({ ...f, role: v }))}>
+                          <SelectTrigger className="mt-1.5" data-testid="select-staff-role"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="staff">Staff — day-to-day pages only</SelectItem>
+                            <SelectItem value="admin">Admin — full portal</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        className="w-full"
+                        onClick={() => addStaffMutation.mutate()}
+                        disabled={addStaffMutation.isPending || !staffForm.firstName.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(staffForm.email)}
+                        data-testid="button-submit-staff"
+                      >
+                        {addStaffMutation.isPending ? 'Adding…' : 'Add & send invite'}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </div>
 
               <Card>

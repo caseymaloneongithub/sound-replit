@@ -2432,6 +2432,47 @@ export function retailWelcomeEmailsEnabled(): boolean {
   return process.env.RETAIL_WELCOME_EMAILS === 'true';
 }
 
+// Staff invite: same 7-day set-password link as the retail welcome, staff wording.
+// Gated by the same prod-only flag so dev/test never email real addresses.
+export async function sendStaffInviteEmail(params: { to: string; name: string; setPasswordUrl: string; role: string }): Promise<void> {
+  const transporter = createTransporter();
+  if (!retailWelcomeEmailsEnabled() || !transporter) {
+    console.log(`[EMAIL] (not sent — ${!retailWelcomeEmailsEnabled() ? 'RETAIL_WELCOME_EMAILS is not true' : 'mail not configured'}) staff invite to ${params.to}`);
+    return;
+  }
+  const roleLabel = params.role === 'admin' ? 'an admin' : 'a staff';
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.to,
+    subject: "You're on the Puget Sound Kombucha staff portal",
+    text: `Hi ${params.name},
+
+You've been added as ${roleLabel} user on the Puget Sound Kombucha portal. Set a password here (link is good for 7 days):
+${params.setPasswordUrl}
+
+Then sign in at ${process.env.APP_URL || ''}/staff/login for orders, deliveries, the weekly checklist, and the rest of the portal.
+
+Thank you,
+Puget Sound Kombucha Co.`,
+    html: `
+<!DOCTYPE html>
+<html><body style="margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:${BRAND_COLORS.backgroundGrey};">
+  <div style="max-width:600px; margin:0 auto; background:${BRAND_COLORS.white};">
+    ${getEmailHeader('Welcome to the team portal')}
+    <div style="padding: 32px 24px;">
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey}; font-size: 16px;">Hi ${params.name},</p>
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey};">You've been added as ${roleLabel} user on the Puget Sound Kombucha portal. Set a password to get started — the link is good for 7 days.</p>
+      <p style="margin: 0 0 24px;"><a href="${params.setPasswordUrl}" style="display:inline-block; background:${BRAND_COLORS.black}; color:${BRAND_COLORS.white}; text-decoration:none; padding: 12px 22px; border-radius: 6px; font-weight: 600;">Set your password</a></p>
+      <p style="margin: 0 0 8px; color: ${BRAND_COLORS.darkGrey};">Then sign in at the staff portal for orders, deliveries, and the weekly checklist.</p>
+      ${getEmailFooter()}
+    </div>
+  </div>
+</body></html>`,
+    attachments: getLogoAttachment(),
+  };
+  await transporter.sendMail(mailOptions);
+}
+
 export async function sendRetailWelcomeEmail(params: { to: string; name: string; setPasswordUrl: string }): Promise<void> {
   const transporter = createTransporter();
   if (!retailWelcomeEmailsEnabled() || !transporter) {
