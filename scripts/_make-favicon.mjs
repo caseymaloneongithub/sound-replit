@@ -1,5 +1,4 @@
-// Generate client/public/favicon.png: teal rounded square, white Puget Sound
-// waves, a few kombucha bubbles. Pure Node (hand-rolled PNG encoder) — no deps.
+// Generate client/public/favicon.png: teal rounded square with a white raindrop. Pure Node (hand-rolled PNG encoder) — no deps.
 import { writeFileSync } from "fs";
 import zlib from "zlib";
 
@@ -31,32 +30,27 @@ for (let y = 0; y < S; y++)
   for (let x = 0; x < S; x++)
     if (inRounded(x, y)) put(x, y, ...TEAL);
 
-// two white sine waves (Puget Sound)
-const wave = (baseY, amp, thick, phase) => {
-  for (let x = 10; x < S - 10; x++) {
-    const cy = baseY + amp * Math.sin((x / S) * Math.PI * 2.2 + phase);
-    for (let y = Math.floor(cy - thick); y <= Math.ceil(cy + thick); y++) {
-      const d = Math.abs(y - cy);
-      const a = d <= thick - 1 ? 255 : Math.max(0, Math.round(255 * (thick - d)));
-      if (inRounded(x, y)) put(x, y, 255, 255, 255, a);
-    }
+// white raindrop: convex hull of a tip point and a circle, 2x2 supersampled
+const TIP = { x: 64, y: 26 };
+const C = { x: 64, y: 80 }, R = 27;
+const d = C.y - TIP.y;
+const beta = Math.acos(R / d);
+const A = { x: C.x - R * Math.sin(beta), y: C.y - R * Math.cos(beta) };
+const B = { x: C.x + R * Math.sin(beta), y: C.y - R * Math.cos(beta) };
+const sign = (p, a, b) => (p.x - b.x) * (a.y - b.y) - (a.x - b.x) * (p.y - b.y);
+const inTriangle = (p) => {
+  const d1 = sign(p, TIP, A), d2 = sign(p, A, B), d3 = sign(p, B, TIP);
+  const neg = d1 < 0 || d2 < 0 || d3 < 0, pos = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(neg && pos);
+};
+const inDrop = (x, y) => (x - C.x) ** 2 + (y - C.y) ** 2 <= R * R || inTriangle({ x, y });
+for (let y = 0; y < S; y++)
+  for (let x = 0; x < S; x++) {
+    let hits = 0;
+    for (const [dx, dy] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]])
+      if (inDrop(x + dx, y + dy)) hits++;
+    if (hits && inRounded(x, y)) put(x, y, 255, 255, 255, Math.round((hits / 4) * 255));
   }
-};
-wave(78, 6, 4.5, 0.3);
-wave(100, 6, 4.5, 0.9);
-
-// kombucha bubbles rising above the waves
-const bubble = (cx, cy, r) => {
-  for (let y = Math.floor(cy - r - 1); y <= Math.ceil(cy + r + 1); y++)
-    for (let x = Math.floor(cx - r - 1); x <= Math.ceil(cx + r + 1); x++) {
-      const d = Math.hypot(x - cx, y - cy);
-      const a = d <= r - 0.5 ? 255 : d <= r + 0.5 ? Math.round(255 * (r + 0.5 - d)) : 0;
-      if (a && inRounded(x, y)) put(x, y, 255, 255, 255, a);
-    }
-};
-bubble(44, 46, 7);
-bubble(68, 30, 5);
-bubble(86, 48, 9);
 
 // ---- PNG encode ----
 const crcTable = [];
