@@ -328,7 +328,7 @@ export default function Account() {
               </p>
               <Button 
                 onClick={() => createBillingPortalMutation.mutate()}
-                disabled={createBillingPortalMutation.isPending || !user.stripeCustomerId}
+                disabled={createBillingPortalMutation.isPending}
                 data-testid="button-update-payment-method"
                 className="w-full"
               >
@@ -344,11 +344,6 @@ export default function Account() {
                   </>
                 )}
               </Button>
-              {!user.stripeCustomerId && (
-                <p className="text-sm text-muted-foreground mt-2">
-                  You need to have an active subscription to manage payment methods.
-                </p>
-              )}
             </CardContent>
           </Card>
         </div>
