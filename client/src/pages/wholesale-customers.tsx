@@ -60,7 +60,7 @@ export default function WholesaleCustomers() {
       email: "",
       phone: "",
       allowOnlinePayment: true,
-      allowCardPayment: true,
+      allowCardPayment: false,
     },
   });
 
@@ -139,7 +139,7 @@ export default function WholesaleCustomers() {
       email: "",
       phone: "",
       allowOnlinePayment: true,
-      allowCardPayment: true,
+      allowCardPayment: false,
     });
     setDialogOpen(true);
   };
