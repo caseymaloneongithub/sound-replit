@@ -266,7 +266,7 @@ function PrepGrid({ retail, wholesale, stock }: { retail: BoardItem[]; wholesale
   const dash = (n: number) => (n > 0 ? n : "—");
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="space-y-6">
       {unitGroups.map((g) => {
         const sum = (key: "wholesale" | "retail" | "total") => g.columns.reduce((acc, c) => acc + c[key], 0);
         const stockSum = g.columns.every((c) => c.stock === null)
