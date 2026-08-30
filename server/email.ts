@@ -1499,6 +1499,10 @@ ${itemsText}
 Total: $${params.totalAmount.toFixed(2)}
 ${params.notes ? `\nNotes: ${params.notes}` : ''}
 
+HOW TO PAY${dueDateFormatted ? ` (due ${dueDateFormatted})` : ''}
+Mail a check to: Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233
+Or pay online by bank transfer — the link is on your invoice.
+
 We will contact you to confirm delivery details.
 
 ---
@@ -1573,6 +1577,12 @@ emily@soundkombucha.com
     </div>
     ` : ''}
     
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin-top: 16px;">
+      <p style="margin: 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; font-weight: bold;">HOW TO PAY${dueDateFormatted ? ` &mdash; DUE ${dueDateFormatted.toUpperCase()}` : ''}</p>
+      <p style="margin: 8px 0 0 0; color: ${BRAND_COLORS.darkGrey}; font-size: 14px;"><strong>Mail a check:</strong> Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233</p>
+      <p style="margin: 6px 0 0 0; color: ${BRAND_COLORS.darkGrey}; font-size: 14px;"><strong>Or pay online</strong> by bank transfer &mdash; the link is on your invoice.</p>
+    </div>
+
     <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; margin: 24px 0 0 0;">
       If you have any questions about your order, please don't hesitate to contact us.
     </p>
