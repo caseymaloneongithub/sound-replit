@@ -338,8 +338,10 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
       let adopted = cust?.invoice_settings?.default_payment_method ?? null;
       if (adopted && typeof adopted !== 'string') adopted = adopted.id;
       if (!adopted) {
-        const pms = await stripe.paymentMethods.list({ customer: subscription.stripeCustomerId, type: 'card', limit: 1 });
-        adopted = pms.data[0]?.id ?? null;
+        // No type filter: portal-saved cards often arrive as type 'link', and ACH
+        // would be us_bank_account — any of them can carry an off-session charge.
+        const pms = await stripe.paymentMethods.list({ customer: subscription.stripeCustomerId, limit: 10 });
+        adopted = pms.data.find((pm) => pm.card || pm.link || pm.us_bank_account)?.id ?? null;
       }
       if (adopted) {
         subscription.stripePaymentMethodId = adopted;

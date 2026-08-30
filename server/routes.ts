@@ -5432,14 +5432,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw e;
       }
       const pms = await stripe.paymentMethods.list({ customer: user.stripeCustomerId, limit: 10 });
+      // Cards saved through the portal often arrive as type 'link' (Stripe's wallet
+      // wrapping the card) — count those as saved methods too, or people who just
+      // added a card get told they have none.
       const methods = pms.data
-        .filter((pm) => pm.card || pm.us_bank_account)
+        .filter((pm) => pm.card || pm.us_bank_account || pm.link)
         .map((pm) => ({
           id: pm.id,
-          kind: pm.card ? 'card' : 'bank',
+          kind: pm.card ? 'card' : pm.us_bank_account ? 'bank' : 'link',
           label: pm.card
             ? `${pm.card.brand.charAt(0).toUpperCase() + pm.card.brand.slice(1)} ···· ${pm.card.last4}`
-            : `${pm.us_bank_account!.bank_name ?? 'Bank'} ···· ${pm.us_bank_account!.last4}`,
+            : pm.us_bank_account
+              ? `${pm.us_bank_account.bank_name ?? 'Bank'} ···· ${pm.us_bank_account.last4}`
+              : `Link${pm.link?.email ? ` (${pm.link.email})` : ''}`,
           expires: pm.card ? `${pm.card.exp_month}/${pm.card.exp_year}` : null,
           isDefault: pm.id === defaultPm,
         }));
