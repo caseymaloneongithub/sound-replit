@@ -30,6 +30,9 @@ export const users = pgTable("users", {
   stripeCustomerId: text("stripe_customer_id"),
   wholesaleCustomerId: varchar("wholesale_customer_id"), // Links wholesale users to their business
   profileImageUrl: text("profile_image_url"),
+  // When the migration/welcome email went out — bulk send targets NULLs only, so it
+  // can be re-run safely and never double-emails anyone.
+  welcomeSentAt: timestamp("welcome_sent_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   deletedAt: timestamp("deleted_at"),

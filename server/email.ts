@@ -2432,6 +2432,57 @@ export function retailWelcomeEmailsEnabled(): boolean {
   return process.env.RETAIL_WELCOME_EMAILS === 'true';
 }
 
+// Migration email for the handful of subscribers carried over from Shopify: their
+// subscription moved, but the card could not — this asks for it, with their real
+// cadence, items, and first-charge deadline. Same prod-only gate as the welcome.
+export async function sendSubscriberMigrationEmail(params: { to: string; name: string; setPasswordUrl: string; cadence: string; items: string; deadline: string }): Promise<void> {
+  const transporter = createTransporter();
+  if (!retailWelcomeEmailsEnabled() || !transporter) {
+    console.log(`[EMAIL] (not sent — ${!retailWelcomeEmailsEnabled() ? 'RETAIL_WELCOME_EMAILS is not true' : 'mail not configured'}) subscriber migration to ${params.to}`);
+    return;
+  }
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.to,
+    subject: 'Your kombucha subscription moved — one quick step',
+    text: `Hi ${params.name},
+
+We've moved off Shopify onto our own ordering site, and your ${params.cadence.toLowerCase()} subscription (${params.items}) came with us — same price, same cadence, same pickup.
+
+One thing needs redoing: your card. Shopify couldn't hand it over, so —
+
+1. Set your password (link good for 7 days):
+${params.setPasswordUrl}
+
+2. In My Account, tap "Manage Payment Method" and add your card.
+
+Please do this before ${params.deadline} so your next case isn't interrupted. Your old Shopify subscription is cancelled — you won't be charged twice.
+
+Thank you for sticking with us,
+Puget Sound Kombucha Co.`,
+    html: `
+<!DOCTYPE html>
+<html><body style="margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:${BRAND_COLORS.backgroundGrey};">
+  <div style="max-width:600px; margin:0 auto; background:${BRAND_COLORS.white};">
+    ${getEmailHeader('Your subscription moved with us')}
+    <div style="padding: 32px 24px;">
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey}; font-size: 16px;">Hi ${params.name},</p>
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey};">We've moved off Shopify onto our own ordering site, and your ${params.cadence.toLowerCase()} subscription (${params.items}) came with us — same price, same cadence, same pickup.</p>
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey};">One thing needs redoing: your card. Shopify couldn't hand it over, so —</p>
+      <p style="margin: 0 0 8px; color: ${BRAND_COLORS.darkGrey};"><strong>1.</strong> Set your password (link good for 7 days):</p>
+      <p style="margin: 0 0 16px;"><a href="${params.setPasswordUrl}" style="display:inline-block; background:${BRAND_COLORS.black}; color:${BRAND_COLORS.white}; text-decoration:none; padding: 12px 22px; border-radius: 6px; font-weight: 600;">Set your password</a></p>
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey};"><strong>2.</strong> In My Account, tap <strong>Manage Payment Method</strong> and add your card.</p>
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey};">Please do this <strong>before ${params.deadline}</strong> so your next case isn't interrupted. Your old Shopify subscription is cancelled — you won't be charged twice.</p>
+      <p style="margin: 0 0 8px; color: ${BRAND_COLORS.darkGrey};">Thank you for sticking with us,</p>
+      ${getEmailFooter()}
+    </div>
+  </div>
+</body></html>`,
+    attachments: getLogoAttachment(),
+  };
+  await transporter.sendMail(mailOptions);
+}
+
 // Staff invite: same 7-day set-password link as the retail welcome, staff wording.
 // Gated by the same prod-only flag so dev/test never email real addresses.
 export async function sendStaffInviteEmail(params: { to: string; name: string; setPasswordUrl: string; role: string }): Promise<void> {
@@ -2482,13 +2533,17 @@ export async function sendRetailWelcomeEmail(params: { to: string; name: string;
   const mailOptions = {
     from: process.env.GMAIL_USER,
     to: params.to,
-    subject: 'Your Puget Sound Kombucha account is ready',
+    subject: 'Kombucha ordering has a new home',
     text: `Hi ${params.name},
 
-We've moved our ordering online, and your account is ready. Set a password here (link is good for 7 days):
+We've moved our online ordering off Shopify and onto our own site. Your account came along — same email, and your order history with us starts fresh.
+
+Set your password here (the link is good for 7 days):
 ${params.setPasswordUrl}
 
-Then order 12-packs and kegs for pickup at the brewery in Ballard, or set up Subscribe & Save.
+Then order 12-packs and kegs for pickup at the brewery in Ballard, or set up Subscribe & Save and skip the reordering entirely.
+
+Nothing else changes — same kombucha, same people, same place.
 
 Thank you,
 Puget Sound Kombucha Co.`,
@@ -2499,9 +2554,10 @@ Puget Sound Kombucha Co.`,
     ${getEmailHeader('Your account is ready')}
     <div style="padding: 32px 24px;">
       <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey}; font-size: 16px;">Hi ${params.name},</p>
-      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey};">We've moved our ordering online, and your account is ready. Set a password to get started — the link is good for 7 days.</p>
+      <p style="margin: 0 0 16px; color: ${BRAND_COLORS.darkGrey};">We've moved our online ordering off Shopify and onto our own site. Your account came along — same email, and your order history with us starts fresh. Set a password to get started — the link is good for 7 days.</p>
       <p style="margin: 0 0 24px;"><a href="${params.setPasswordUrl}" style="display:inline-block; background:${BRAND_COLORS.black}; color:${BRAND_COLORS.white}; text-decoration:none; padding: 12px 22px; border-radius: 6px; font-weight: 600;">Set your password</a></p>
-      <p style="margin: 0 0 8px; color: ${BRAND_COLORS.darkGrey};">Then order 12-packs and kegs for pickup at the brewery in Ballard, or set up Subscribe &amp; Save.</p>
+      <p style="margin: 0 0 8px; color: ${BRAND_COLORS.darkGrey};">Then order 12-packs and kegs for pickup at the brewery in Ballard, or set up Subscribe &amp; Save and skip the reordering entirely.</p>
+      <p style="margin: 0 0 8px; color: ${BRAND_COLORS.darkGrey};">Nothing else changes — same kombucha, same people, same place.</p>
       ${getEmailFooter()}
     </div>
   </div>

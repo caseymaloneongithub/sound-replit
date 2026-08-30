@@ -63,6 +63,29 @@ export default function RetailCustomers() {
     },
   });
 
+  // The migration send: dry-run first, confirm with real numbers, then commit.
+  const [sendAllPreview, setSendAllPreview] = useState<{ total: number; regulars: number; subscribers: string[]; emailsEnabled: boolean } | null>(null);
+  const sendAllDryRun = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/retail/customers/send-welcome-all", { dryRun: true }),
+    onSuccess: (res: any) => {
+      if (res.total === 0) toast({ title: "Nobody left to email", description: "Every retail customer has already been sent a welcome." });
+      else setSendAllPreview(res);
+    },
+    onError: (e: any) => toast({ title: "Couldn't check recipients", description: e.message, variant: "destructive" }),
+  });
+  const sendAllCommit = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/retail/customers/send-welcome-all", {}),
+    onSuccess: (res: any) => {
+      setSendAllPreview(null);
+      toast({
+        title: `Sent ${res.sent} welcome emails`,
+        description: `${res.subscriberVariant} subscriber version(s)` + (res.failed?.length ? ` — ${res.failed.length} FAILED: ${res.failed.join(", ")}` : "."),
+        ...(res.failed?.length ? { variant: "destructive" as const } : {}),
+      });
+    },
+    onError: (e: any) => toast({ title: "Send failed", description: e.message, variant: "destructive" }),
+  });
+
   const sendWelcome = useMutation({
     mutationFn: async (c: RetailCustomer) => apiRequest("POST", `/api/retail/customers/${c.id}/send-welcome`),
     onSuccess: (res: any, c) => toast(welcomeToastFor(res.welcome, c.email)),
@@ -80,6 +103,9 @@ export default function RetailCustomers() {
             <p className="text-muted-foreground">Add customers, import from Shopify, start orders</p>
           </div>
           <div className="flex gap-2">
+            <Button variant="outline" onClick={() => sendAllDryRun.mutate()} disabled={sendAllDryRun.isPending} data-testid="button-send-all-welcomes">
+              {sendAllDryRun.isPending ? "Checking…" : "Email everyone unsent"}
+            </Button>
             <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="button-import-customers">Import CSV</Button>
             <Button onClick={() => setAddOpen(true)} data-testid="button-add-retail-customer">Add customer</Button>
           </div>
@@ -182,6 +208,34 @@ export default function RetailCustomers() {
       <AddCustomerDialog open={addOpen} onOpenChange={setAddOpen} />
       <ImportCustomersDialog open={importOpen} onOpenChange={setImportOpen} />
       <NewOrderDialog customer={orderFor} onOpenChange={(o) => !o && setOrderFor(null)} />
+      <Dialog open={!!sendAllPreview} onOpenChange={(o) => !o && setSendAllPreview(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send the migration email?</DialogTitle>
+            <DialogDescription>
+              This emails every retail customer who hasn't been welcomed yet — each gets a set-password link good for 7 days.
+            </DialogDescription>
+          </DialogHeader>
+          {sendAllPreview && (
+            <div className="space-y-2 text-sm">
+              <p><strong>{sendAllPreview.regulars}</strong> get the standard migration email.</p>
+              <p><strong>{sendAllPreview.subscribers.length}</strong> get the subscriber version (asks for their card):</p>
+              <ul className="list-disc pl-5 text-muted-foreground">
+                {sendAllPreview.subscribers.map((e) => <li key={e}>{e}</li>)}
+              </ul>
+              {!sendAllPreview.emailsEnabled && (
+                <p className="text-destructive font-medium">RETAIL_WELCOME_EMAILS is off in this environment — the send will be refused.</p>
+              )}
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setSendAllPreview(null)} data-testid="button-cancel-send-all">Cancel</Button>
+            <Button onClick={() => sendAllCommit.mutate()} disabled={sendAllCommit.isPending || !sendAllPreview?.emailsEnabled} data-testid="button-confirm-send-all">
+              {sendAllCommit.isPending ? "Sending…" : `Send ${sendAllPreview?.total ?? 0} emails`}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </StaffLayout>
   );
 }

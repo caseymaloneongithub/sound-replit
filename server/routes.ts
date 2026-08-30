@@ -12,7 +12,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
@@ -5693,7 +5693,11 @@ If you have any questions, please don't hesitate to reach out!`,
       name: user.firstName || user.username,
       setPasswordUrl: `${getBaseUrl()}/reset-password?token=${token}`,
     });
-    return retailWelcomeEmailsEnabled() ? 'sent' : 'suppressed';
+    if (retailWelcomeEmailsEnabled()) {
+      await pool.query('update users set welcome_sent_at = now() where id = $1', [user.id]);
+      return 'sent';
+    }
+    return 'suppressed';
   }
 
   // Staff adds a retail customer; the welcome email (with its set-password link) is
@@ -5731,6 +5735,77 @@ If you have any questions, please don't hesitate to reach out!`,
       res.json({ welcome });
     } catch (e: any) {
       res.status(500).json({ message: "Error sending welcome: " + e.message });
+    }
+  });
+
+  // The migration send: one button emails every retail customer who hasn't gotten a
+  // welcome yet. Subscribers get the variant asking for their card (with their real
+  // cadence, items, and first-charge deadline); everyone else gets the standard
+  // welcome. Targets welcome_sent_at IS NULL, so re-running never double-emails.
+  app.post("/api/retail/customers/send-welcome-all", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun === true;
+      const pending = await pool.query(
+        `select u.id, u.email, u.first_name, u.username, rs.id as sub_id, rs.subscription_frequency, rs.next_charge_at
+           from users u
+           left join retail_subscriptions rs on rs.user_id = u.id and rs.status = 'active'
+          where u.role = 'user' and u.deleted_at is null and u.email is not null and u.welcome_sent_at is null
+          order by u.email`
+      );
+      const rows = pending.rows;
+      const subscribers = rows.filter((r: any) => r.sub_id);
+      if (dryRun) {
+        return res.json({
+          dryRun: true,
+          total: rows.length,
+          subscribers: subscribers.map((r: any) => r.email),
+          regulars: rows.length - subscribers.length,
+          emailsEnabled: retailWelcomeEmailsEnabled(),
+        });
+      }
+      if (!retailWelcomeEmailsEnabled()) {
+        return res.status(400).json({ message: "RETAIL_WELCOME_EMAILS is not enabled in this environment — nothing sent." });
+      }
+      const results = { sent: 0, subscriberVariant: 0, failed: [] as string[] };
+      for (const r of rows) {
+        try {
+          const token = crypto.randomBytes(32).toString('hex');
+          await storage.createPasswordResetToken(r.id, token, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+          const setPasswordUrl = `${getBaseUrl()}/reset-password?token=${token}`;
+          const name = r.first_name || r.username;
+          if (r.sub_id) {
+            const items = await pool.query(
+              `select rsi.quantity, coalesce(f.name, 'Mixed') as flavor
+                 from retail_subscription_items rsi
+                 join retail_products rp on rp.id = rsi.retail_product_id
+                 left join flavors f on f.id = rp.flavor_id
+                where rsi.subscription_id = $1`, [r.sub_id]);
+            const itemsLabel = items.rows
+              .map((i: any) => `${i.quantity > 1 ? i.quantity + 'x ' : ''}${i.flavor} case`)
+              .join(' + ');
+            const deadline = r.next_charge_at
+              ? new Date(r.next_charge_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'America/Los_Angeles' })
+              : 'your next charge date';
+            await sendSubscriberMigrationEmail({
+              to: r.email, name, setPasswordUrl,
+              cadence: frequencyLabel(r.subscription_frequency),
+              items: itemsLabel, deadline,
+            });
+            results.subscriberVariant++;
+          } else {
+            await sendRetailWelcomeEmail({ to: r.email, name, setPasswordUrl });
+          }
+          await pool.query('update users set welcome_sent_at = now() where id = $1', [r.id]);
+          results.sent++;
+        } catch (e: any) {
+          console.error(`[MIGRATION EMAIL] failed for ${r.email}: ${e.message}`);
+          results.failed.push(r.email);
+        }
+      }
+      console.log(`[MIGRATION EMAIL] sent ${results.sent} (${results.subscriberVariant} subscriber variant), ${results.failed.length} failed`);
+      res.json(results);
+    } catch (e: any) {
+      res.status(500).json({ message: "Error sending welcomes: " + e.message });
     }
   });
 
