@@ -307,7 +307,7 @@ export default function WholesaleCustomerOrders() {
                           <RotateCcw className="h-4 w-4 mr-2" />
                           Reorder
                         </Button>
-                        {customer?.allowOnlinePayment && !order.paidAt && !order.paymentInitiatedAt && (
+                        {(customer?.allowOnlinePayment || (customer as any)?.allowCardPayment) && !order.paidAt && !order.paymentInitiatedAt && (
                           <Button
                             size="sm"
                             onClick={() => window.location.href = `/wholesale-customer/invoice/${order.id}`}

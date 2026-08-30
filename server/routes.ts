@@ -429,14 +429,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     return await stripe.checkout.sessions.create({
       mode: 'payment',
-      // ACH always; credit card unless switched off for this account (large invoices,
-      // card fees). ACH is ASYNCHRONOUS — authorised here, funds settle days later via
-      // payment_intent.succeeded (see settleWholesaleInvoice); card settles instantly
-      // and checkout.session.completed marks it paid on the spot.
-      payment_method_types: customer.allowCardPayment !== false ? ['us_bank_account', 'card'] : ['us_bank_account'],
-      payment_method_options: {
-        us_bank_account: { verification_method: 'automatic' },
-      },
+      // Each method is an independent per-customer switch. ACH is ASYNCHRONOUS —
+      // authorised here, funds settle days later via payment_intent.succeeded (see
+      // settleWholesaleInvoice); card settles instantly and checkout.session.completed
+      // marks it paid on the spot. Callers must not create a session when both are off.
+      payment_method_types: [
+        ...(customer.allowOnlinePayment !== false ? ['us_bank_account' as const] : []),
+        ...(customer.allowCardPayment !== false ? ['card' as const] : []),
+      ],
+      ...(customer.allowOnlinePayment !== false ? {
+        payment_method_options: {
+          us_bank_account: { verification_method: 'automatic' },
+        },
+      } : {}),
       line_items: lineItems,
       customer_email: customer.email,
       metadata: paymentMetadata,
@@ -6589,7 +6594,7 @@ If you have any questions, please don't hesitate to reach out!`,
       let paymentUrl: string | null = null;
       // Don't email a payment link for an invoice that's already paid or has a debit in
       // flight — following it would start a second ACH debit for the same invoice.
-      if (customer.allowOnlinePayment && stripe && !order.paidAt && !order.paymentInitiatedAt) {
+      if ((customer.allowOnlinePayment || customer.allowCardPayment) && stripe && !order.paidAt && !order.paymentInitiatedAt) {
         const session = await createWholesaleCheckoutSession(order, customer, items);
         paymentUrl = session.url;
       }
@@ -6649,7 +6654,7 @@ If you have any questions, please don't hesitate to reach out!`,
         subtotal,
         notes: order.notes,
         location,
-        allowOnlinePayment: customer.allowOnlinePayment,
+        allowOnlinePayment: customer.allowOnlinePayment || customer.allowCardPayment,
         paymentUrl,
         paidAt: order.paidAt ? new Date(order.paidAt) : null,
       });
@@ -6894,8 +6899,8 @@ If you have any questions, please don't hesitate to reach out!`,
 
       const { order, customer } = orderDetails;
 
-      // Check if customer has online payment enabled
-      if (!customer.allowOnlinePayment) {
+      // Check if customer has any online payment method enabled
+      if (!customer.allowOnlinePayment && !customer.allowCardPayment) {
         return res.status(403).json({ message: "Online payment not enabled for this customer" });
       }
 

@@ -789,7 +789,7 @@ export default function WholesaleCustomers() {
                             <TableHead>Contact</TableHead>
                             <TableHead>Email</TableHead>
                             <TableHead>Phone</TableHead>
-                            <TableHead>Online Payment</TableHead>
+                            <TableHead>Bank (ACH)</TableHead>
                             <TableHead>Card</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
                           </TableRow>
@@ -827,7 +827,7 @@ export default function WholesaleCustomers() {
                                   onCheckedChange={(checked) => {
                                     togglePaymentMutation.mutate({ id: customer.id, allowCardPayment: checked });
                                   }}
-                                  disabled={togglePaymentMutation.isPending || !customer.allowOnlinePayment}
+                                  disabled={togglePaymentMutation.isPending}
                                   data-testid={`switch-card-${customer.id}`}
                                 />
                               </TableCell>

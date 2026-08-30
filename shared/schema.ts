@@ -340,13 +340,12 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   email: text("email").notNull().unique(), // Primary contact email (kept for backwards compatibility)
   emails: text("emails").array().notNull().default(sql`ARRAY[]::text[]`), // All authorized email addresses
   phone: text("phone").notNull(),
-  // Online payment = ACH bank transfer (wholesale does not pay by card). Defaults ON:
-  // ACH is the standard way wholesale pays, so a new account must be able to pay without
-  // someone remembering to flip a switch. Turn it off per-customer for invoice-only terms
-  // or a credit hold.
+  // Two independent payment-method switches (owner decision 2026-08-30): ACH bank
+  // transfer and credit card, each on by default. Both off = no online payment at all
+  // (invoice-only terms / credit hold). Card gets turned off where the ~3% fee bites
+  // (large-invoice accounts). Column name kept from when it meant "online payment at
+  // all" — it now specifically means ACH.
   allowOnlinePayment: boolean("allow_online_payment").notNull().default(true),
-  // Credit card at invoice checkout (owner decision 2026-08-30). Defaults ON; turned
-  // off per account where card fees bite (large-invoice accounts).
   allowCardPayment: boolean("allow_card_payment").notNull().default(true),
 });
 
