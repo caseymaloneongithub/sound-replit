@@ -29,7 +29,7 @@ type BoardData = {
   week: { mondayISO: string; startISO: string; endISO: string; offset: number };
   orders: BoardOrder[];
   totals: { retail: BoardItem[]; wholesale: BoardItem[] };
-  stock?: Record<string, number | null>;
+  stock?: Record<string, { quantity: number; productId: string } | null>;
   counts: { retail: number; wholesale: number };
 };
 
@@ -227,7 +227,7 @@ export default function OrdersBoard() {
  * Wholesale / Retail / Total rows, and In Stock (shelf count) under the total —
  * red when the shelf can't cover the week. Item labels arrive as "Flavor — Unit".
  */
-function PrepGrid({ retail, wholesale, stock }: { retail: BoardItem[]; wholesale: BoardItem[]; stock: Record<string, number | null> }) {
+function PrepGrid({ retail, wholesale, stock }: { retail: BoardItem[]; wholesale: BoardItem[]; stock: Record<string, { quantity: number; productId: string } | null> }) {
   const parse = (label: string) => {
     const idx = label.lastIndexOf(" — ");
     return idx === -1
@@ -235,15 +235,16 @@ function PrepGrid({ retail, wholesale, stock }: { retail: BoardItem[]; wholesale
       : { flavor: label.slice(0, idx), unit: label.slice(idx + 3) };
   };
 
-  // unit -> flavor -> { wholesale, retail, stock }
-  const units = new Map<string, Map<string, { wholesale: number; retail: number; stock: number | null }>>();
+  // unit -> flavor -> { wholesale, retail, stock, productId }
+  const units = new Map<string, Map<string, { wholesale: number; retail: number; stock: number | null; productId: string | null }>>();
   const add = (items: BoardItem[], channel: "wholesale" | "retail") => {
     for (const it of items) {
       const { flavor, unit } = parse(it.label);
       const flavors = units.get(unit) ?? new Map();
-      const cell = flavors.get(flavor) ?? { wholesale: 0, retail: 0, stock: null };
+      const cell = flavors.get(flavor) ?? { wholesale: 0, retail: 0, stock: null, productId: null };
       cell[channel] += it.quantity;
-      if (cell.stock === null && stock[it.label] != null) cell.stock = stock[it.label];
+      const entry = stock[it.label];
+      if (cell.stock === null && entry != null) { cell.stock = entry.quantity; cell.productId = entry.productId; }
       flavors.set(flavor, cell);
       units.set(unit, flavors);
     }
@@ -314,7 +315,7 @@ function PrepGrid({ retail, wholesale, stock }: { retail: BoardItem[]; wholesale
                   <td className="py-2 pr-3 whitespace-nowrap">In Stock</td>
                   {g.columns.map((c, i) => (
                     <td key={i} className={`px-3 py-2 text-center text-lg ${c.stock !== null && c.stock < c.total ? "text-destructive font-semibold" : ""}`}>
-                      {c.stock === null ? "—" : c.stock}
+                      {c.productId ? <StockCell productId={c.productId} quantity={c.stock ?? 0} /> : (c.stock === null ? "—" : c.stock)}
                     </td>
                   ))}
                   <td className={`px-3 py-2 text-center text-lg ${stockSum !== null && stockSum < sum("total") ? "text-destructive font-semibold" : ""}`}>
@@ -327,6 +328,53 @@ function PrepGrid({ retail, wholesale, stock }: { retail: BoardItem[]; wholesale
         );
       })}
     </div>
+  );
+}
+
+// In-place shelf-count editing on the board (same field the inventory dashboard
+// edits). Tap the number, type the count, save — big targets for the wall tablet.
+function StockCell({ productId, quantity }: { productId: string; quantity: number }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(quantity));
+  const save = useMutation({
+    mutationFn: async () => {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) throw new Error("bad value");
+      return apiRequest("PATCH", `/api/inventory/${productId}`, { stockQuantity: Math.round(n) });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/staff/orders-board"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/finished-goods"] });
+      setEditing(false);
+    },
+  });
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        inputMode="numeric"
+        className="w-16 rounded border bg-background px-1.5 py-1 text-center tabular-nums text-lg"
+        value={value}
+        onChange={(e) => setValue(e.target.value.replace(/[^0-9]/g, ""))}
+        onBlur={() => save.mutate()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") save.mutate();
+          if (e.key === "Escape") { setEditing(false); setValue(String(quantity)); }
+        }}
+        data-testid={`board-stock-input-${productId}`}
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => { setValue(String(quantity)); setEditing(true); }}
+      className="underline decoration-dotted underline-offset-4 hover:text-primary tabular-nums"
+      title="Tap to set the count"
+      data-testid={`board-stock-${productId}`}
+    >
+      {quantity}
+    </button>
   );
 }
 

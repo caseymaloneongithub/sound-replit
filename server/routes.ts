@@ -6447,21 +6447,21 @@ If you have any questions, please don't hesitate to reach out!`,
       // labels resolve via unit type -> container -> finished product; retail labels via
       // retail_products.finished_product_id. Unlinked labels stay null (shown as a dash).
       const stockRows = (await pool.query(
-        'select f.name as flavor, p.container, p.stock_quantity from products p join flavors f on f.id = p.flavor_id'
+        'select p.id, f.name as flavor, p.container, p.stock_quantity from products p join flavors f on f.id = p.flavor_id'
       )).rows;
       const unitRows = (await pool.query('select name, container from wholesale_unit_types')).rows;
       const retailStockRows = (await pool.query(
-        'select rp.unit_description, f.name as flavor, p.stock_quantity from retail_products rp left join flavors f on f.id = rp.flavor_id left join products p on p.id = rp.finished_product_id'
+        'select p.id, rp.unit_description, f.name as flavor, p.stock_quantity from retail_products rp left join flavors f on f.id = rp.flavor_id left join products p on p.id = rp.finished_product_id'
       )).rows;
       const containerByUnit = new Map(unitRows.map((u: any) => [u.name, u.container]));
-      const shelfByFlavorContainer = new Map(stockRows.map((r: any) => [`${r.flavor}|${r.container}`, r.stock_quantity]));
-      const shelfByRetailLabel = new Map(retailStockRows.filter((r: any) => r.flavor && r.unit_description)
-        .map((r: any) => [`${r.flavor} — ${r.unit_description}`, r.stock_quantity]));
+      const shelfByFlavorContainer = new Map(stockRows.map((r: any) => [`${r.flavor}|${r.container}`, { quantity: r.stock_quantity, productId: r.id }]));
+      const shelfByRetailLabel = new Map(retailStockRows.filter((r: any) => r.flavor && r.unit_description && r.id)
+        .map((r: any) => [`${r.flavor} — ${r.unit_description}`, { quantity: r.stock_quantity, productId: r.id }]));
       const splitLabel = (label: string) => {
         const idx = label.lastIndexOf(' — ');
         return idx === -1 ? null : { flavor: label.slice(0, idx), unit: label.slice(idx + 3) };
       };
-      const stock: Record<string, number | null> = {};
+      const stock: Record<string, { quantity: number; productId: string } | null> = {};
       for (const it of totals.wholesale) {
         const parts = splitLabel(it.label);
         const container = parts ? containerByUnit.get(parts.unit) : null;
