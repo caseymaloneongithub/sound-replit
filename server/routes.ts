@@ -12,7 +12,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail, sendPaymentMethodAddedNotification } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
@@ -4166,6 +4166,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           break;
         }
+        case 'payment_method.attached': {
+          // Staff heads-up that a customer saved a card/bank — the migration-window
+          // signal that a subscriber is ready to bill. Requires the event to be
+          // enabled on the Stripe webhook endpoint.
+          const pm = event.data.object as Stripe.PaymentMethod;
+          try {
+            const customerId = typeof pm.customer === 'string' ? pm.customer : pm.customer?.id;
+            if (!customerId) break;
+            const [owner] = await db.select().from(users).where(eq(users.stripeCustomerId, customerId)).limit(1);
+            const label = owner?.email ?? `Stripe customer ${customerId}`;
+            const methodLabel = pm.card ? `${pm.card.brand} ···· ${pm.card.last4}` : pm.us_bank_account ? `bank ···· ${pm.us_bank_account.last4}` : pm.type;
+            const admins = await storage.getUsersByRole('admin');
+            const superAdmins = await storage.getUsersByRole('super_admin');
+            const staffEmails = [...admins, ...superAdmins].map(u => u.email).filter((e): e is string => !!e);
+            await sendPaymentMethodAddedNotification({ staffEmails, customerLabel: label, methodLabel });
+            console.log(`[WEBHOOK] Payment method attached for ${label} (${methodLabel})`);
+          } catch (e: any) {
+            console.error('[WEBHOOK] payment_method.attached handling failed:', e.message);
+          }
+          break;
+        }
+
         case 'payment_intent.succeeded': {
           const paymentIntent = event.data.object as Stripe.PaymentIntent;
 
@@ -4961,6 +4983,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const nextDeliveryDate = normalizeToAllowedPickupDay(target);
     return { nextDeliveryDate, nextChargeAt: getBillingDateForPickup(nextDeliveryDate) };
   }
+
+  // "I fixed my card — charge it now." Only valid on a failed/retrying payment;
+  // double-charge-safe (idempotency key is the billing period, unchanged here).
+  app.post("/api/my-subscriptions/:id/retry-charge", isAuthenticated, async (req: any, res) => {
+    try {
+      const sub = await loadOwnedSubscription(req.params.id, req.user.id);
+      if (!sub) return res.status(404).json({ message: "Subscription not found" });
+      const { chargeSubscriptionNow } = await import('./billing-cron');
+      const result = await chargeSubscriptionNow(sub.id);
+      res.status(result.ok ? 200 : 400).json({ message: result.message });
+    } catch (error: any) {
+      res.status(500).json({ message: "Retry failed: " + error.message });
+    }
+  });
 
   app.post("/api/my-subscriptions/:id/pause", isAuthenticated, async (req: any, res) => {
     try {

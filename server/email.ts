@@ -238,6 +238,23 @@ Puget Sound Kombucha Co.
   }
 }
 
+// Staff heads-up when a customer adds/updates a payment method — during the
+// migration window this is the "Kristina added her card" signal. Transactional,
+// so gated only on mail being configured.
+export async function sendPaymentMethodAddedNotification(params: { staffEmails: string[]; customerLabel: string; methodLabel: string }): Promise<void> {
+  const transporter = createTransporter();
+  if (!transporter || params.staffEmails.length === 0) {
+    console.log(`[EMAIL] (not sent — mail not configured) payment method added: ${params.customerLabel}`);
+    return;
+  }
+  await transporter.sendMail({
+    from: process.env.GMAIL_USER,
+    to: params.staffEmails.join(', '),
+    subject: `Payment method added — ${params.customerLabel}`,
+    text: `${params.customerLabel} just saved a payment method (${params.methodLabel}). If they have a subscription waiting on a card, it will bill on its scheduled date — or they can use "Try payment again" for an immediate charge.`,
+  });
+}
+
 export async function sendStaffPaymentFailureNotification(params: PaymentFailureEmailParams): Promise<void> {
   const transporter = createTransporter();
   

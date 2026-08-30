@@ -501,6 +501,57 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
   }
 }
 
+/**
+ * Customer-initiated immediate retry after a failed payment ("I fixed my card,
+ * charge it now"). Safe against double-charges: the idempotency key derives from
+ * nextChargeAt, which this does not change, so re-presenting the same billing
+ * period returns the original PaymentIntent. retryCount is deliberately kept —
+ * repeated failed retries still march toward the pause.
+ */
+export async function chargeSubscriptionNow(subscriptionId: string): Promise<{ ok: boolean; message: string }> {
+  if (!stripe) return { ok: false, message: "Billing isn't configured" };
+  const [sub] = await db.select().from(retailSubscriptions).where(eq(retailSubscriptions.id, subscriptionId));
+  if (!sub) return { ok: false, message: 'Subscription not found' };
+  if (sub.status === 'cancelled') return { ok: false, message: 'This subscription is cancelled' };
+  if (!['retrying', 'payment_failed', 'awaiting_auth'].includes(sub.billingStatus)) {
+    return { ok: false, message: 'There is no failed payment to retry on this subscription' };
+  }
+  const lock = await db.update(retailSubscriptions)
+    .set({ processingLock: true, processingLockedAt: new Date() })
+    .where(and(eq(retailSubscriptions.id, subscriptionId), eq(retailSubscriptions.processingLock, false)))
+    .returning({ id: retailSubscriptions.id });
+  if (lock.length === 0) return { ok: false, message: 'A payment attempt is already in progress — check back in a minute' };
+  try {
+    // Back to active so the charge and its bookkeeping run the normal path.
+    await db.update(retailSubscriptions)
+      .set({ status: 'active', billingStatus: 'active' })
+      .where(eq(retailSubscriptions.id, subscriptionId));
+    const items = await db
+      .select({
+        id: retailSubscriptionItems.id,
+        subscriptionId: retailSubscriptionItems.subscriptionId,
+        retailProductId: retailSubscriptionItems.retailProductId,
+        selectedFlavorId: retailSubscriptionItems.selectedFlavorId,
+        quantity: retailSubscriptionItems.quantity,
+        unitPriceAtSignup: retailSubscriptionItems.unitPriceAtSignup,
+        retailProduct: retailProducts,
+      })
+      .from(retailSubscriptionItems)
+      .leftJoin(retailProducts, eq(retailSubscriptionItems.retailProductId, retailProducts.id))
+      .where(eq(retailSubscriptionItems.subscriptionId, subscriptionId));
+    if (items.length === 0) return { ok: false, message: 'This subscription has no items' };
+    console.log(`[BILLING] Customer-initiated retry for ${subscriptionId}`);
+    const ok = await processRetailSubscriptionBilling({ ...sub, status: 'active', billingStatus: 'active' }, items);
+    return ok
+      ? { ok: true, message: 'Payment went through — your next case is on the schedule.' }
+      : { ok: false, message: "The charge didn't go through — double-check your payment method and try again." };
+  } finally {
+    await db.update(retailSubscriptions)
+      .set({ processingLock: false, processingLockedAt: null })
+      .where(eq(retailSubscriptions.id, subscriptionId));
+  }
+}
+
 export async function runDailyBilling() {
   console.log('[BILLING] Starting daily billing process...');
 

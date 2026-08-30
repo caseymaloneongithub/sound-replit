@@ -174,6 +174,16 @@ export default function MyAccount() {
    * four since they share a shape; the toast explains what actually changed, because
    * previously every action produced the same generic "updated successfully".
    */
+  const retryChargeMutation = useMutation({
+    mutationFn: async (subscriptionId: string) => apiRequest("POST", `/api/my-subscriptions/${subscriptionId}/retry-charge`),
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/my-subscriptions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-orders"] });
+      toast({ title: "Payment retried", description: res.message });
+    },
+    onError: (e: any) => toast({ title: "Payment didn't go through", description: e.message, variant: "destructive" }),
+  });
+
   const lifecycleMutation = useMutation({
     mutationFn: async ({ subscriptionId, action }: { subscriptionId: string; action: 'pause' | 'resume' | 'skip' | 'reactivate' }) => {
       return await apiRequest("POST", `/api/my-subscriptions/${subscriptionId}/${action}`);
@@ -850,6 +860,17 @@ export default function MyAccount() {
                               purpose — a customer who just wants a break shouldn't have
                               to cancel to get one. */}
                           <div className="pt-4 border-t flex flex-wrap gap-2">
+                            {['retrying', 'payment_failed', 'awaiting_auth'].includes((subscription as any).billingStatus) && (
+                              <Button
+                                size="sm"
+                                onClick={() => retryChargeMutation.mutate(subscription.id)}
+                                disabled={retryChargeMutation.isPending}
+                                data-testid={`button-retry-charge-${subscription.id}`}
+                              >
+                                <CreditCard className="w-4 h-4 mr-2" />
+                                {retryChargeMutation.isPending ? "Charging…" : "Try payment again"}
+                              </Button>
+                            )}
                             {isActive && (
                               <>
                                 <Button
