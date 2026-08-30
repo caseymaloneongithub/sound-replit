@@ -347,6 +347,10 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   // all" — it now specifically means ACH.
   allowOnlinePayment: boolean("allow_online_payment").notNull().default(true),
   allowCardPayment: boolean("allow_card_payment").notNull().default(true),
+  // Stripe customer for this business, created lazily at first invoice checkout so
+  // Stripe can remember their bank account/card and re-offer it one-click on the
+  // next invoice (entering ACH details every time was the pain point).
+  stripeCustomerId: text("stripe_customer_id"),
 });
 
 export const wholesaleLocations = pgTable("wholesale_locations", {

@@ -403,6 +403,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * and when the button was switched to ACH the emailed link stayed on cards, quietly
    * leaving a way to pay by card. Anything about how wholesale pays belongs here.
    */
+  /** Stripe customer per wholesale business, created on first use, so Checkout can
+   *  remember their bank/card between invoices. Self-heals stale ids. */
+  async function ensureWholesaleStripeCustomer(customer: any, forceNew = false): Promise<string> {
+    if (customer.stripeCustomerId && !forceNew) return customer.stripeCustomerId;
+    const created = await stripe!.customers.create({
+      name: customer.businessName,
+      email: customer.email,
+      metadata: { wholesaleCustomerId: customer.id, type: 'wholesale' },
+    });
+    await storage.updateWholesaleCustomer(customer.id, { stripeCustomerId: created.id } as any);
+    customer.stripeCustomerId = created.id;
+    return created.id;
+  }
+
   async function createWholesaleCheckoutSession(order: any, customer: any, items: any[]) {
     if (!stripe) throw new Error("Stripe is not configured");
     const baseUrl = getBaseUrl();
@@ -427,7 +441,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: 'wholesale_invoice_payment',
     };
 
-    return await stripe.checkout.sessions.create({
+    const buildParams = (stripeCustomerId: string): Stripe.Checkout.SessionCreateParams => ({
       mode: 'payment',
       // Each method is an independent per-customer switch. ACH is ASYNCHRONOUS —
       // authorised here, funds settle days later via payment_intent.succeeded (see
@@ -443,7 +457,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       } : {}),
       line_items: lineItems,
-      customer_email: customer.email,
+      // Attach the business's Stripe customer and let Checkout SAVE the payment
+      // method: next invoice, Stripe re-offers "Bank ····1234" one-click instead of
+      // a fresh bank login every time.
+      customer: stripeCustomerId,
+      saved_payment_method_options: { payment_method_save: 'enabled' },
       metadata: paymentMetadata,
       // Repeated on the PaymentIntent: settlement events fire against the intent, not the
       // session, and would otherwise have no way to identify the order.
@@ -454,6 +472,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       success_url: `${baseUrl}/wholesale-customer/invoice/${order.id}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${baseUrl}/wholesale-customer/invoice/${order.id}`,
     });
+
+    try {
+      return await stripe.checkout.sessions.create(buildParams(await ensureWholesaleStripeCustomer(customer)));
+    } catch (e: any) {
+      // Stale reference (deleted in Stripe, or from another mode) — mint fresh, retry.
+      if (e?.code !== 'resource_missing') throw e;
+      console.warn(`[WHOLESALE PAY] Stale Stripe customer for ${customer.businessName} — recreating`);
+      return await stripe.checkout.sessions.create(buildParams(await ensureWholesaleStripeCustomer(customer, true)));
+    }
   }
 
   /**
