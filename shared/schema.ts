@@ -341,12 +341,13 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   emails: text("emails").array().notNull().default(sql`ARRAY[]::text[]`), // All authorized email addresses
   phone: text("phone").notNull(),
   // Two independent payment-method switches (owner decision 2026-08-30): ACH bank
-  // transfer and credit card, each on by default. Both off = no online payment at all
-  // (invoice-only terms / credit hold). Card gets turned off where the ~3% fee bites
-  // (large-invoice accounts). Column name kept from when it meant "online payment at
-  // all" — it now specifically means ACH.
+  // transfer (on by default) and credit card (OFF by default — owner decision
+  // 2026-08-31: ACH-only is the starting point; card gets enabled per account on
+  // purpose, since the ~3% fee is real money on big invoices). Both off = no online
+  // payment at all (invoice-only terms / credit hold). Column name kept from when it
+  // meant "online payment at all" — it now specifically means ACH.
   allowOnlinePayment: boolean("allow_online_payment").notNull().default(true),
-  allowCardPayment: boolean("allow_card_payment").notNull().default(true),
+  allowCardPayment: boolean("allow_card_payment").notNull().default(false),
   // Stripe customer for this business, created lazily at first invoice checkout so
   // Stripe can remember their bank account/card and re-offer it one-click on the
   // next invoice (entering ACH details every time was the pain point).
