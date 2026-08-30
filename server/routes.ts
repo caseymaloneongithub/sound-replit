@@ -6869,11 +6869,23 @@ If you have any questions, please don't hesitate to reach out!`,
           (req as any).user?.id
         );
         stockWarnings = stock.warnings;
+        // Delivered with no delivery date on file (orders-board tap): today IS the
+        // delivery date, and net-30 runs from it.
+        if (status === 'delivered' && !updated.deliveryDate) {
+          const now = new Date();
+          updated = await storage.updateWholesaleOrderDeliveryDate(req.params.id, now) || updated;
+          updated = await storage.updateWholesaleOrder(req.params.id, { dueDate: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) }) || updated;
+        }
       }
 
       if (deliveryDate !== undefined) {
         const dateValue = deliveryDate ? new Date(deliveryDate) : null;
         updated = await storage.updateWholesaleOrderDeliveryDate(req.params.id, dateValue) || updated;
+        // Net-30 runs from DELIVERY (owner, 2026-08-31): setting or moving the delivery
+        // date re-anchors the due date. Staff can still override via Set Due Date after.
+        if (dateValue) {
+          updated = await storage.updateWholesaleOrder(req.params.id, { dueDate: new Date(dateValue.getTime() + 30 * 24 * 60 * 60 * 1000) }) || updated;
+        }
       }
 
       // Handle notes update

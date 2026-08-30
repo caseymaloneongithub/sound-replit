@@ -1799,177 +1799,138 @@ function renderAddressBlock(
   return currentY;
 }
 
-// Generate PDF invoice buffer
+// Generate PDF invoice buffer — laid out to match the Wave invoices customers have
+// received for years (logo left, INVOICE right, remit address, meta rows, banded
+// items table, Notes/Terms), with our extras kept: deliver-to, pay-online, PAID mark.
 export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     const doc = new PDFDocument({ margin: PDF_MARGIN, size: 'LETTER' });
-
     doc.on('data', (chunk) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // ===== PAID WATERMARK (if paid) =====
+    const RIGHT = PDF_WIDTH - PDF_MARGIN;
+    const money = (n: number) => `$${n.toFixed(2)}`;
+
+    // ===== PAID WATERMARK =====
     if (params.paidAt) {
       doc.save();
-      // Large diagonal watermark across the page
-      doc.translate(PDF_WIDTH / 2, 400);
-      doc.rotate(-45);
-      doc.fontSize(120).font('Helvetica-Bold').fillColor('#22c55e').opacity(0.15);
-      doc.text('PAID', -150, -50, { width: 300, align: 'center' });
-      doc.restore();
-      doc.opacity(1); // Reset opacity
+      doc.rotate(-30, { origin: [PDF_WIDTH / 2, 396] });
+      doc.fontSize(110).font('Helvetica-Bold').fillColor('#16a34a').opacity(0.12);
+      doc.text('PAID', 0, 340, { width: PDF_WIDTH, align: 'center' });
+      doc.restore().opacity(1);
     }
 
-    // ===== HEADER SECTION =====
-    doc.fontSize(22).font('Helvetica-Bold').fillColor(TEXT_COLOR);
-    doc.text('INVOICE', PDF_MARGIN, PDF_MARGIN);
-    
-    // Paid badge if paid
-    if (params.paidAt) {
-      doc.save();
-      const paidBadgeX = PDF_WIDTH - PDF_MARGIN - 120;
-      const paidBadgeY = PDF_MARGIN - 5;
-      doc.fillColor('#dcfce7').roundedRect(paidBadgeX, paidBadgeY, 120, 22, 4).fill();
-      doc.fillColor('#166534').fontSize(9).font('Helvetica-Bold');
-      doc.text(`PAID - ${format(params.paidAt, 'MMM dd, yyyy')}`, paidBadgeX + 8, paidBadgeY + 7, { width: 104, align: 'center' });
-      doc.restore();
+    // ===== HEADER: logo left, INVOICE + company block right =====
+    try {
+      doc.image('attached_assets/invoice-logo.png', PDF_MARGIN, PDF_MARGIN, { width: 62 });
+    } catch {
+      doc.fontSize(13).font('Helvetica-Bold').fillColor(TEXT_COLOR)
+        .text('Puget Sound Kombucha Co.', PDF_MARGIN, PDF_MARGIN);
     }
-    
-    // Invoice meta info (right aligned)
-    const metaX = PDF_WIDTH - PDF_MARGIN - 160;
-    let metaY = PDF_MARGIN;
-    doc.fontSize(9).font('Helvetica').fillColor(LABEL_COLOR);
-    doc.text(`Invoice #: `, metaX, metaY, { continued: true });
-    doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(params.invoiceNumber);
-    metaY += LINE_HEIGHT;
-    
+    doc.fontSize(26).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+    doc.text('INVOICE', PDF_MARGIN, PDF_MARGIN, { width: PDF_CONTENT_WIDTH, align: 'right' });
+
+    let y = PDF_MARGIN + 34;
+    doc.fontSize(9).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+    doc.text('Puget Sound Kombucha Co.', PDF_MARGIN, y, { width: PDF_CONTENT_WIDTH, align: 'right' });
     doc.font('Helvetica').fillColor(LABEL_COLOR);
-    doc.text(`Date: `, metaX, metaY, { continued: true });
-    doc.fillColor(TEXT_COLOR).text(format(params.orderDate, 'MMM dd, yyyy'));
-    metaY += LINE_HEIGHT;
-    
-    if (params.deliveryDate) {
-      doc.fillColor(LABEL_COLOR).text(`Delivery: `, metaX, metaY, { continued: true });
-      doc.fillColor(TEXT_COLOR).text(format(params.deliveryDate, 'MMM dd, yyyy'));
-      metaY += LINE_HEIGHT;
-    }
-    
-    if (params.dueDate) {
-      doc.fillColor(LABEL_COLOR).text(`Due: `, metaX, metaY, { continued: true });
-      doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(format(params.dueDate, 'MMM dd, yyyy'));
-      metaY += LINE_HEIGHT;
+    for (const line of ['Please remit checks to:', '1008 West Sherri Drive', 'Gilbert, Arizona 85233', 'United States', '(206) 789-5219', 'www.soundkombucha.com']) {
+      y += 11;
+      doc.text(line, PDF_MARGIN, y, { width: PDF_CONTENT_WIDTH, align: 'right' });
     }
 
-    // ===== ADDRESS SECTION =====
-    let addressY = PDF_MARGIN + 50;
-    const halfWidth = (PDF_CONTENT_WIDTH - 30) / 2; // columns with 30px gap
-    
-    // Row 1: FROM and BILL TO side by side
-    const fromLines = [
-      'Puget Sound Kombucha Co.',
-      '4501 Shilshole Ave NW',
-      'Seattle, WA 98107',
-      'emily@soundkombucha.com',
-      '(206) 789-5219'
-    ];
-    
-    const billToLines = [
-      params.businessName,
-      params.contactName,
-      params.customerAddress,
-      params.customerEmail,
-      params.customerPhone
-    ];
-    
-    const fromEndY = renderAddressBlock(doc, 'FROM', fromLines, PDF_MARGIN, addressY, halfWidth);
-    const billToEndY = renderAddressBlock(doc, 'BILL TO', billToLines, PDF_MARGIN + halfWidth + 30, addressY, halfWidth);
-    
-    let currentY = Math.max(fromEndY, billToEndY) + SECTION_GAP;
-    
-    // Row 2: DELIVER TO (full width, if location provided)
-    if (params.location) {
-      const deliverLines = [
-        params.location.locationName,
-        params.location.address,
-        `${params.location.city}, ${params.location.state} ${params.location.zipCode}`,
-        params.location.contactName || '',
-        params.location.contactPhone || ''
-      ].filter(line => line); // Remove empty lines
-      
-      currentY = renderAddressBlock(doc, 'DELIVER TO', deliverLines, PDF_MARGIN, currentY, PDF_CONTENT_WIDTH);
-      currentY += SECTION_GAP;
+    // ===== BILL TO (left) =====
+    let leftY = PDF_MARGIN + 96;
+    doc.fontSize(9).font('Helvetica-Bold').fillColor(LABEL_COLOR).text('Bill to', PDF_MARGIN, leftY);
+    leftY += 12;
+    doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(params.businessName, PDF_MARGIN, leftY, { width: 260 });
+    leftY = doc.y + 1;
+    doc.font('Helvetica').fillColor(LABEL_COLOR);
+    for (const line of [params.customerAddress, params.contactName, params.customerEmail, params.customerPhone]) {
+      if (line) { doc.text(line, PDF_MARGIN, leftY, { width: 260 }); leftY = doc.y + 1; }
     }
+    if (params.location) {
+      leftY += 6;
+      doc.font('Helvetica-Bold').fillColor(LABEL_COLOR).text('Deliver to', PDF_MARGIN, leftY);
+      leftY += 12;
+      doc.font('Helvetica').fillColor(LABEL_COLOR);
+      doc.text(`${params.location.locationName} — ${params.location.address}, ${params.location.city}, ${params.location.state} ${params.location.zipCode}`, PDF_MARGIN, leftY, { width: 300 });
+      leftY = doc.y + 1;
+    }
+
+    // ===== META (right): number / dates / amount due =====
+    const total = params.items.reduce((sum, it) => sum + Number(it.unitPrice) * it.quantity, 0);
+    let metaY = Math.max(PDF_MARGIN + 118, y + 20);
+    const metaRow = (label: string, value: string, bold = false) => {
+      doc.fontSize(9).font('Helvetica').fillColor(LABEL_COLOR);
+      doc.text(label, RIGHT - 260, metaY, { width: 150, align: 'right' });
+      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fillColor(TEXT_COLOR);
+      doc.text(value, RIGHT - 105, metaY, { width: 105, align: 'right' });
+      metaY += 14;
+    };
+    metaRow('Invoice Number:', params.invoiceNumber);
+    metaRow('Invoice Date:', format(params.orderDate, 'MMMM d, yyyy'));
+    if (params.deliveryDate) metaRow('Delivery Date:', format(params.deliveryDate, 'MMMM d, yyyy'));
+    if (params.dueDate) metaRow('Payment Due:', format(params.dueDate, 'MMMM d, yyyy'));
+    doc.rect(RIGHT - 265, metaY - 3, 265, 18).fill(HEADER_BG);
+    doc.fillColor(TEXT_COLOR);
+    metaY += 1;
+    metaRow('Amount Due (USD):', money(total), true);
 
     // ===== ITEMS TABLE =====
-    currentY += 8;
-    
-    // Table header
-    doc.fillColor(HEADER_BG).rect(PDF_MARGIN, currentY, PDF_CONTENT_WIDTH, 20).fill();
-    doc.fillColor(TEXT_COLOR).fontSize(8).font('Helvetica-Bold');
-    doc.text('ITEM', PDF_MARGIN + 8, currentY + 6, { width: 300 });
-    doc.text('QTY', 380, currentY + 6, { width: 40, align: 'center' });
-    doc.text('PRICE', 430, currentY + 6, { width: 55, align: 'right' });
-    doc.text('TOTAL', 495, currentY + 6, { width: 55, align: 'right' });
-    
-    currentY += 22;
-    
-    // Table rows
-    doc.font('Helvetica').fontSize(9);
+    let tableY = Math.max(leftY, metaY) + 24;
+    const COL_QTY = RIGHT - 210, COL_PRICE = RIGHT - 140, COL_AMT = RIGHT - 70;
+    doc.rect(PDF_MARGIN, tableY - 5, PDF_CONTENT_WIDTH, 19).fill(HEADER_BG);
+    doc.fontSize(9).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+    doc.text('Items', PDF_MARGIN + 6, tableY);
+    doc.text('Quantity', COL_QTY - 40, tableY, { width: 60, align: 'right' });
+    doc.text('Price', COL_PRICE - 30, tableY, { width: 60, align: 'right' });
+    doc.text('Amount', COL_AMT - 10, tableY, { width: 80, align: 'right' });
+    tableY += 20;
+    doc.font('Helvetica');
     for (const item of params.items) {
-      const lineTotal = parseFloat(item.unitPrice) * item.quantity;
-      
-      doc.fillColor(TEXT_COLOR);
-      doc.text(item.productName, PDF_MARGIN + 8, currentY, { width: 300 });
-      doc.text(item.quantity.toString(), 380, currentY, { width: 40, align: 'center' });
-      doc.text(`$${parseFloat(item.unitPrice).toFixed(2)}`, 430, currentY, { width: 55, align: 'right' });
-      doc.text(`$${lineTotal.toFixed(2)}`, 495, currentY, { width: 55, align: 'right' });
-      
-      currentY += 16;
-      
-      // Row divider
-      doc.strokeColor('#e0e0e0').lineWidth(0.5);
-      doc.moveTo(PDF_MARGIN, currentY).lineTo(PDF_WIDTH - PDF_MARGIN, currentY).stroke();
-      currentY += 4;
+      doc.fillColor(TEXT_COLOR).text(item.productName, PDF_MARGIN + 6, tableY, { width: COL_QTY - PDF_MARGIN - 60 });
+      const rowBottom = doc.y;
+      doc.text(String(item.quantity), COL_QTY - 40, tableY, { width: 60, align: 'right' });
+      doc.text(money(Number(item.unitPrice)), COL_PRICE - 30, tableY, { width: 60, align: 'right' });
+      doc.text(money(Number(item.unitPrice) * item.quantity), COL_AMT - 10, tableY, { width: 80, align: 'right' });
+      tableY = Math.max(rowBottom, doc.y) + 6;
+      doc.moveTo(PDF_MARGIN, tableY - 3).lineTo(RIGHT, tableY - 3).lineWidth(0.5).strokeColor('#e5e5e5').stroke();
     }
 
-    // ===== TOTAL SECTION =====
-    currentY += 8;
-    doc.fillColor(HEADER_BG).rect(420, currentY, 132, 24).fill();
-    doc.fillColor(TEXT_COLOR).font('Helvetica-Bold').fontSize(10);
-    doc.text('TOTAL', 428, currentY + 6);
-    doc.text(`$${params.subtotal.toFixed(2)}`, 495, currentY + 6, { width: 55, align: 'right' });
-    
-    currentY += 35;
+    // ===== TOTALS =====
+    tableY += 6;
+    doc.fontSize(9).font('Helvetica').fillColor(LABEL_COLOR).text('Total:', COL_PRICE - 60, tableY, { width: 90, align: 'right' });
+    doc.fillColor(TEXT_COLOR).text(money(total), COL_AMT - 10, tableY, { width: 80, align: 'right' });
+    tableY += 16;
+    doc.rect(COL_PRICE - 70, tableY - 4, RIGHT - (COL_PRICE - 70), 18).fill(HEADER_BG);
+    doc.fontSize(9).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+    doc.text('Amount Due (USD):', COL_PRICE - 65, tableY, { width: 95, align: 'right' });
+    doc.text(money(total), COL_AMT - 10, tableY, { width: 80, align: 'right' });
 
-    // ===== NOTES SECTION =====
+    // ===== NOTES / TERMS =====
+    let notesY = tableY + 36;
+    doc.fontSize(9).font('Helvetica-Bold').fillColor(LABEL_COLOR).text('Notes / Terms', PDF_MARGIN, notesY);
+    notesY += 13;
+    doc.font('Helvetica').fillColor(TEXT_COLOR);
+    doc.text('Thanks again! Let us know when you need more kombucha!', PDF_MARGIN, notesY, { width: PDF_CONTENT_WIDTH });
+    notesY = doc.y + 4;
     if (params.notes) {
-      doc.font('Helvetica-Bold').fontSize(8).fillColor(LABEL_COLOR);
-      doc.text('Notes:', PDF_MARGIN, currentY);
-      currentY += 10;
-      doc.font('Helvetica').fontSize(8).fillColor(TEXT_COLOR);
-      doc.text(params.notes, PDF_MARGIN, currentY, { width: PDF_CONTENT_WIDTH });
+      doc.fillColor(LABEL_COLOR).text(params.notes, PDF_MARGIN, notesY, { width: PDF_CONTENT_WIDTH });
     }
 
-    // ===== FOOTER =====
+    // ===== FOOTER: how to pay =====
     const footerY = doc.page.height - 60;
     doc.fontSize(8).fillColor(LABEL_COLOR);
-    
     if (params.paidAt) {
-      // Invoice is paid - no payment link needed
       doc.text(`Paid on ${format(params.paidAt, 'MMM dd, yyyy')} - Thank you!`, PDF_MARGIN, footerY);
     } else if (params.allowOnlinePayment && params.paymentUrl) {
-      doc.text('Pay online at:', PDF_MARGIN, footerY);
-      doc.fillColor(TEXT_COLOR).text(params.paymentUrl, PDF_MARGIN, footerY + 10, { width: PDF_CONTENT_WIDTH });
-      // Checks go to the mailing address, not the brewery.
-      doc.fillColor(LABEL_COLOR).text('Or mail a check to: Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233', PDF_MARGIN, footerY + 22, { width: PDF_CONTENT_WIDTH });
+      doc.fillColor(TEXT_COLOR).text(`Pay online: ${params.paymentUrl} — or mail a check to the address above.`, PDF_MARGIN, footerY, { width: PDF_CONTENT_WIDTH, lineBreak: false });
     } else {
-      doc.text('Payment Terms: Net 30', PDF_MARGIN, footerY);
-      doc.text('Mail checks to: Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233', PDF_MARGIN, footerY + 10, { width: PDF_CONTENT_WIDTH });
+      doc.text('Payment Terms: Net 30 — please mail a check to the address above.', PDF_MARGIN, footerY, { width: PDF_CONTENT_WIDTH });
     }
-
-    doc.fillColor(LABEL_COLOR);
-    doc.text('Thank you for your business!', PDF_MARGIN, footerY + 36);
 
     doc.end();
   });
