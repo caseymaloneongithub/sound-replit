@@ -5414,6 +5414,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create Stripe billing portal session for payment method updates
+  // What's on file, so the account page can show "Visa ···· 4242" instead of
+  // leaving people wondering whether the portal actually saved anything.
+  app.get("/api/my-payment-methods", isAuthenticated, async (req: any, res) => {
+    try {
+      if (!stripe) return res.json({ methods: [] });
+      const user = await storage.getUser(req.user.id);
+      if (!user?.stripeCustomerId) return res.json({ methods: [] });
+      let defaultPm: string | null = null;
+      try {
+        const cust: any = await stripe.customers.retrieve(user.stripeCustomerId);
+        defaultPm = typeof cust?.invoice_settings?.default_payment_method === 'string'
+          ? cust.invoice_settings.default_payment_method
+          : cust?.invoice_settings?.default_payment_method?.id ?? null;
+      } catch (e: any) {
+        if (e?.code === 'resource_missing') return res.json({ methods: [] });
+        throw e;
+      }
+      const pms = await stripe.paymentMethods.list({ customer: user.stripeCustomerId, limit: 10 });
+      const methods = pms.data
+        .filter((pm) => pm.card || pm.us_bank_account)
+        .map((pm) => ({
+          id: pm.id,
+          kind: pm.card ? 'card' : 'bank',
+          label: pm.card
+            ? `${pm.card.brand.charAt(0).toUpperCase() + pm.card.brand.slice(1)} ···· ${pm.card.last4}`
+            : `${pm.us_bank_account!.bank_name ?? 'Bank'} ···· ${pm.us_bank_account!.last4}`,
+          expires: pm.card ? `${pm.card.exp_month}/${pm.card.exp_year}` : null,
+          isDefault: pm.id === defaultPm,
+        }));
+      res.json({ methods });
+    } catch (e: any) {
+      res.status(500).json({ message: "Couldn't load payment methods: " + e.message });
+    }
+  });
+
   app.post("/api/create-billing-portal", isAuthenticated, async (req: any, res) => {
     try {
       if (!stripe) {

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PaymentMethodsOnFile } from "@/pages/account";
 import { Package, Repeat, Plus, Trash2, X, CreditCard, ShoppingCart, Mail, SkipForward, PauseCircle, PlayCircle } from "lucide-react";
 import { format, startOfWeek } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -487,6 +488,9 @@ export default function MyAccount() {
             <CreditCard className="w-4 h-4 mr-2" />
             {createBillingPortalMutation.isPending ? "Opening..." : "Manage Payment Method"}
           </Button>
+        </div>
+        <div className="mb-6 -mt-2">
+          <PaymentMethodsOnFile />
         </div>
 
         <Tabs defaultValue="orders" className="w-full" data-testid="tabs-my-account">

@@ -323,6 +323,7 @@ export default function Account() {
               </CardTitle>
             </CardHeader>
             <CardContent>
+              <PaymentMethodsOnFile />
               <p className="text-sm text-muted-foreground mb-4">
                 Manage your payment methods and billing information through Stripe's secure portal.
               </p>
@@ -355,6 +356,31 @@ export default function Account() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Shows what Stripe has on file so "did it save?" answers itself.
+export function PaymentMethodsOnFile() {
+  const { data } = useQuery<{ methods: Array<{ id: string; kind: string; label: string; expires: string | null; isDefault: boolean }> }>({
+    queryKey: ["/api/my-payment-methods"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  if (!data) return null;
+  if (data.methods.length === 0) {
+    return <p className="text-sm text-muted-foreground mb-3" data-testid="text-no-payment-methods">No payment method saved yet.</p>;
+  }
+  return (
+    <div className="space-y-1.5 mb-4" data-testid="list-payment-methods">
+      {data.methods.map((m) => (
+        <div key={m.id} className="flex items-center gap-2 text-sm">
+          <CreditCard className="w-4 h-4 text-muted-foreground" />
+          <span className="font-medium">{m.label}</span>
+          {m.expires && <span className="text-muted-foreground">exp {m.expires}</span>}
+          {m.isDefault && <span className="text-xs rounded-full bg-muted px-2 py-0.5">Default</span>}
+        </div>
+      ))}
     </div>
   );
 }
