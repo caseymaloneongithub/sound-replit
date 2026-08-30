@@ -199,6 +199,16 @@ export default function WholesaleInvoices() {
     return { label: "Pending", variant: "outline" as const };
   };
 
+  // Whether the goods have actually gone out — payment status alone hides that an
+  // unpaid invoice may simply be undelivered.
+  const getDeliveryStatus = (order: WholesaleOrderWithPayment) => {
+    if (order.status === 'delivered') {
+      return { label: order.fulfillmentMethod === 'pickup' ? 'Picked up' : 'Delivered', cls: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 border-0' };
+    }
+    if (order.status === 'packaged') return { label: 'Packaged', cls: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border-0' };
+    return { label: 'Not delivered', cls: 'bg-muted text-muted-foreground border-0' };
+  };
+
   const renderInvoiceRow = (order: WholesaleOrderWithPayment) => {
     const paymentStatus = getPaymentStatus(order);
     const customer = getCustomer(order.customerId);
@@ -214,6 +224,11 @@ export default function WholesaleInvoices() {
         </TableCell>
         <TableCell>{getCustomerName(order.customerId)}</TableCell>
         <TableCell>{format(new Date(order.orderDate), "MMM dd, yyyy")}</TableCell>
+        <TableCell>
+          {(() => { const d = getDeliveryStatus(order); return (
+            <Badge className={d.cls} data-testid={`badge-delivery-${order.id}`}>{d.label}</Badge>
+          ); })()}
+        </TableCell>
         <TableCell>
           {order.dueDate ? format(new Date(order.dueDate), "MMM dd, yyyy") : "Not set"}
         </TableCell>
@@ -406,6 +421,7 @@ export default function WholesaleInvoices() {
                           <TableHead>Invoice #</TableHead>
                           <TableHead>Customer</TableHead>
                           <TableHead>Order Date</TableHead>
+                          <TableHead>Delivery</TableHead>
                           <TableHead>Due Date</TableHead>
                           <TableHead className="text-right">Amount</TableHead>
                           <TableHead>Status</TableHead>
@@ -436,6 +452,7 @@ export default function WholesaleInvoices() {
                           <TableHead>Invoice #</TableHead>
                           <TableHead>Customer</TableHead>
                           <TableHead>Order Date</TableHead>
+                          <TableHead>Delivery</TableHead>
                           <TableHead>Due Date</TableHead>
                           <TableHead className="text-right">Amount</TableHead>
                           <TableHead>Status</TableHead>
@@ -466,6 +483,7 @@ export default function WholesaleInvoices() {
                           <TableHead>Invoice #</TableHead>
                           <TableHead>Customer</TableHead>
                           <TableHead>Order Date</TableHead>
+                          <TableHead>Delivery</TableHead>
                           <TableHead>Due Date</TableHead>
                           <TableHead className="text-right">Amount</TableHead>
                           <TableHead>Status</TableHead>
@@ -496,6 +514,7 @@ export default function WholesaleInvoices() {
                           <TableHead>Invoice #</TableHead>
                           <TableHead>Customer</TableHead>
                           <TableHead>Order Date</TableHead>
+                          <TableHead>Delivery</TableHead>
                           <TableHead>Due Date</TableHead>
                           <TableHead className="text-right">Amount</TableHead>
                           <TableHead>Status</TableHead>
