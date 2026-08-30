@@ -13,7 +13,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail, sendPaymentMethodAddedNotification } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail, sendPaymentMethodAddedNotification, sendWholesaleWelcomeEmail } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
@@ -5618,10 +5618,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (customer.phone) customer.phone = formatPhoneNumber(customer.phone);
       const created = await storage.createWholesaleCustomer(customer);
 
-      // POLICY (2026-08-19): no automatic emails to wholesale customers except order
-      // confirmations, for now. sendWholesaleWelcomeEmail exists in email.ts, fully
-      // built, deliberately unwired — reconnect here when that changes. Until then,
-      // telling the customer their account is ready is a manual step.
+      // Welcome email with the order-online link (owner decision 2026-08-31, replacing
+      // the 2026-08-19 no-auto-email policy). Prod-only via WHOLESALE_APPROVAL_EMAILS;
+      // best-effort — a mail hiccup must not fail account creation.
+      try {
+        await sendWholesaleWelcomeEmail({
+          email: created.email,
+          contactName: created.contactName,
+          businessName: created.businessName,
+          loginUrl: `${getBaseUrl()}/wholesale/login`,
+          alreadyExisted: false,
+        });
+      } catch (e: any) {
+        console.error(`[WHOLESALE] Welcome email failed for ${created.email}: ${e.message}`);
+      }
 
       res.json(created);
     } catch (error: any) {

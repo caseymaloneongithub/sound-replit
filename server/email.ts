@@ -2302,6 +2302,11 @@ interface WholesaleWelcomeParams {
  */
 export async function sendWholesaleWelcomeEmail(params: WholesaleWelcomeParams): Promise<void> {
   const transporter = createTransporter();
+  // Same prod-only gate as the other wholesale emails — dev/test hold real addresses.
+  if (process.env.WHOLESALE_APPROVAL_EMAILS !== 'true') {
+    console.log(`[EMAIL] (not sent — WHOLESALE_APPROVAL_EMAILS is not true) wholesale welcome to ${params.email}`);
+    return;
+  }
 
   const heading = params.alreadyExisted ? 'You already have an account' : 'Your wholesale account is ready';
   const intro = params.alreadyExisted
@@ -2323,14 +2328,13 @@ Hi ${params.contactName},
 
 ${intro}
 
-Sign in with just your email — no password to remember:
+Order online any time — no password, no account setup:
 ${params.loginUrl}
 
 How ordering works:
-- Enter your email on that page and we'll send you a sign-in link.
-- Place your order online; reorder your usual in a couple of clicks after the first one.
+- Type your store name on that page, pick your location, build the order.
 - Choose delivery to your address or pickup at the brewery.
-- Invoices are net-30, payable online by bank transfer.
+- Billing contacts can also sign in with just their email to see order history and invoices.
 
 Questions? Just reply to this email or call ${'(206) 789-5219'}.
 
@@ -2355,20 +2359,20 @@ Puget Sound Kombucha Co.
                 font-size: 16px;
                 font-weight: bold;
                 text-decoration: none;">
-        Sign in &amp; place an order
+        Place an order
       </a>
     </div>
 
     <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; text-align: center;">
-      No password needed — enter your email on that page and we'll send you a sign-in link.
+      No password, no account setup — type your store name and order.
     </p>
 
     <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 8px; margin-top: 24px;">
       <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.black}; font-weight: 600;">How ordering works</p>
       <ul style="margin: 0; padding-left: 18px; color: ${BRAND_COLORS.darkGrey}; font-size: 14px; line-height: 1.7;">
-        <li>Order online any time; reorder your usual in a couple of clicks.</li>
-        <li>Delivery to your address, or pickup at the brewery (Mon&ndash;Thu).</li>
-        <li>Invoices are net-30, payable online by bank transfer.</li>
+        <li>Type your store name, pick your location, build the order.</li>
+        <li>Delivery to your address, or pickup at the brewery.</li>
+        <li>Billing contacts can sign in with just their email for order history and invoices.</li>
       </ul>
     </div>
 
