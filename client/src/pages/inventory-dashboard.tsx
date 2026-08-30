@@ -1,7 +1,8 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { StaffLayout } from "@/components/staff/staff-layout";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -264,12 +265,7 @@ export default function InventoryDashboard() {
                       <div className="text-sm font-semibold mb-2">{title}</div>
                       <div className="rounded-md border divide-y">
                         {rows.map((p) => (
-                          <div key={p.id} className="flex items-center justify-between px-3 py-1.5 text-sm" data-testid={`finished-${p.id}`}>
-                            <span>{p.flavor ?? p.name}</span>
-                            <span className={`font-medium tabular-nums ${p.stockQuantity < 0 ? "text-red-600 dark:text-red-400" : p.stockQuantity === 0 ? "text-muted-foreground" : ""}`}>
-                              {p.stockQuantity}
-                            </span>
-                          </div>
+                          <StockRow key={p.id} product={p} />
                         ))}
                       </div>
                     </div>
@@ -395,5 +391,59 @@ export default function InventoryDashboard() {
         </div>
       </div>
     </StaffLayout>
+  );
+}
+
+// One finished-goods row with an editable count — THE place to correct shelf stock
+// after a physical count (the old Products tab is unreachable from the new nav).
+function StockRow({ product }: { product: { id: string; name: string; container: string; stockQuantity: number; flavor: string | null } }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(product.stockQuantity));
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) throw new Error("Enter a whole number, 0 or more");
+      return apiRequest("PATCH", `/api/inventory/${product.id}`, { stockQuantity: Math.round(n) });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/finished-goods"] });
+      setEditing(false);
+    },
+  });
+
+  return (
+    <div className="flex items-center justify-between px-3 py-1.5 text-sm" data-testid={`finished-${product.id}`}>
+      <span>{product.flavor ?? product.name}</span>
+      {editing ? (
+        <span className="flex items-center gap-1">
+          <input
+            autoFocus
+            inputMode="numeric"
+            className="w-16 rounded border bg-background px-1.5 py-0.5 text-right tabular-nums"
+            value={value}
+            onChange={(e) => setValue(e.target.value.replace(/[^0-9]/g, ""))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") save.mutate();
+              if (e.key === "Escape") { setEditing(false); setValue(String(product.stockQuantity)); }
+            }}
+            data-testid={`input-stock-${product.id}`}
+          />
+          <Button size="sm" variant="ghost" className="h-6 px-2" disabled={save.isPending} onClick={() => save.mutate()} data-testid={`save-stock-${product.id}`}>
+            {save.isPending ? "…" : "Save"}
+          </Button>
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => { setValue(String(product.stockQuantity)); setEditing(true); }}
+          className={`font-medium tabular-nums underline decoration-dotted underline-offset-4 hover:text-primary ${product.stockQuantity < 0 ? "text-red-600 dark:text-red-400" : product.stockQuantity === 0 ? "text-muted-foreground" : ""}`}
+          title="Click to set the count"
+          data-testid={`edit-stock-${product.id}`}
+        >
+          {product.stockQuantity}
+        </button>
+      )}
+    </div>
   );
 }
