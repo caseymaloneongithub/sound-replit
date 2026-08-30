@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import Stripe from 'stripe';
 import { db } from './db';
 import { pool } from './storage';
-import { retailOrders, retailOrderItemsV2, retailSubscriptions, retailSubscriptionItems, retailProducts, flavors } from '../shared/schema';
+import { retailOrders, retailOrderItemsV2, retailSubscriptions, retailSubscriptionItems, retailProducts, flavors, users } from '../shared/schema';
 import { eq, and, lte, sql, gte, lt, or, isNull } from 'drizzle-orm';
 import { normalizeToAllowedPickupDay, getBillingDateForPickup, PICKUP_POLICY } from '../shared/pickup-policy';
 import { frequencyToDays } from '../shared/subscription-frequency';
@@ -323,7 +323,49 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
       : String(subscription.nextChargeAt)
   }`;
 
+  // Migrated subscriptions start with no Stripe ids on the row: the customer record
+  // appears when they first open the billing portal (saved on the USER), and the card
+  // they add lives on that customer. Resolve both here and remember them on the
+  // subscription so this lookup runs once. No card yet -> throw the same shape as a
+  // decline, so the existing dunning email + 2/4/7-day retry backoff take over.
+  if (!subscription.stripeCustomerId && subscription.userId) {
+    const [owner] = await db.select().from(users).where(eq(users.id, subscription.userId)).limit(1);
+    if (owner?.stripeCustomerId) subscription.stripeCustomerId = owner.stripeCustomerId;
+  }
+  if (!subscription.stripePaymentMethodId && subscription.stripeCustomerId) {
+    try {
+      const cust: any = await stripe.customers.retrieve(subscription.stripeCustomerId);
+      let adopted = cust?.invoice_settings?.default_payment_method ?? null;
+      if (adopted && typeof adopted !== 'string') adopted = adopted.id;
+      if (!adopted) {
+        const pms = await stripe.paymentMethods.list({ customer: subscription.stripeCustomerId, type: 'card', limit: 1 });
+        adopted = pms.data[0]?.id ?? null;
+      }
+      if (adopted) {
+        subscription.stripePaymentMethodId = adopted;
+        console.log(`[BILLING] Adopted card ${adopted} for subscription ${subscription.id} from the customer's Stripe profile`);
+      }
+    } catch (e: any) {
+      console.warn(`[BILLING] Payment-method lookup failed for ${subscription.id}: ${e.message}`);
+    }
+  }
+  if (subscription.stripeCustomerId || subscription.stripePaymentMethodId) {
+    await db.update(retailSubscriptions)
+      .set({
+        ...(subscription.stripeCustomerId ? { stripeCustomerId: subscription.stripeCustomerId } : {}),
+        ...(subscription.stripePaymentMethodId ? { stripePaymentMethodId: subscription.stripePaymentMethodId } : {}),
+      })
+      .where(eq(retailSubscriptions.id, subscription.id));
+  }
+
   try {
+    if (!subscription.stripeCustomerId || !subscription.stripePaymentMethodId) {
+      const err: any = new Error('No payment method on file — the customer needs to add a card in My Account');
+      err.type = 'StripeCardError';
+      err.code = 'no_payment_method';
+      throw err;
+    }
+
     // Create PaymentIntent
     const paymentIntent = await stripe.paymentIntents.create({
       amount: amountInCents,

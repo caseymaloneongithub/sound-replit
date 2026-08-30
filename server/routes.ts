@@ -5380,14 +5380,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const userId = req.user.id;
       const user = await storage.getUser(userId);
-      
-      if (!user || !user.stripeCustomerId) {
-        return res.status(400).json({ message: "No Stripe customer found. Please contact support." });
+
+      if (!user) {
+        return res.status(400).json({ message: "User not found" });
+      }
+
+      // Migrated accounts start with NO Stripe record (clean-slate migration off
+      // Shopify's duplicate-ridden account) — create one on first visit so the
+      // portal can take their card instead of telling them to contact support.
+      let portalCustomerId = user.stripeCustomerId;
+      if (!portalCustomerId) {
+        portalCustomerId = await createStripeCustomer({
+          userId: user.id,
+          email: user.email,
+          phoneNumber: user.phoneNumber,
+          firstName: user.firstName ?? undefined,
+          lastName: user.lastName ?? undefined,
+        });
+        if (!portalCustomerId) {
+          return res.status(500).json({ message: "Couldn't set up billing for this account — try again or contact us." });
+        }
       }
 
       // Create billing portal session
       const session = await stripe.billingPortal.sessions.create({
-        customer: user.stripeCustomerId,
+        customer: portalCustomerId,
         // /my-subscriptions only redirects to /my-account — send them straight there
         return_url: `${getBaseUrl()}/my-account` // Origin is client-supplied and proxies may strip it,
       });
