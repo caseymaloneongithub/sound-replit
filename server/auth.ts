@@ -149,7 +149,11 @@ export function setupAuth(app: Express) {
       // Check if email already registered
       const existingEmailUser = await storage.getUserByEmail(email);
       if (existingEmailUser) {
-        return res.status(400).send("Email already registered");
+        if (!existingEmailUser.password && existingEmailUser.role === 'user') {
+          await offerMigratedSetPassword(existingEmailUser, req);
+          return res.status(400).send("Good news — you already have an account from our move to the new site. We've emailed you a link to set your password instead.");
+        }
+        return res.status(400).send("Email already registered — try signing in, or use Forgot Password.");
       }
 
       // Create user — whitelist fields explicitly. NEVER spread req.body here:
@@ -234,10 +238,41 @@ export function setupAuth(app: Express) {
     }
   });
 
+  // Migrated accounts (created from the Shopify export) have NO password. When one of
+  // those emails shows up at login or registration, don't dead-end them with a generic
+  // error — email a set-password link and say exactly what happened. Uses the same
+  // per-address limiter as email codes so this can't be used to email-bomb someone;
+  // when throttled we still show the explanatory message, just without resending.
+  async function offerMigratedSetPassword(user: SelectUser, req: any): Promise<void> {
+    if (user.password || !user.email) return;
+    if (!checkEmailCodeRateLimit(`migrated-setpw:${user.email}`)) return;
+    const token = randomBytes(32).toString('hex');
+    await storage.createPasswordResetToken(user.id, token, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    const resetUrl = `${req.protocol}://${req.get('host')}/reset-password?token=${token}`;
+    try {
+      await sendPasswordResetEmail({ email: user.email, name: user.firstName || user.username, resetUrl });
+      console.log(`[MIGRATED LOGIN] Set-password link sent to ${user.email}`);
+    } catch (e: any) {
+      console.error(`[MIGRATED LOGIN] Set-password email failed for ${user.email}: ${e.message}`);
+    }
+  }
+
   app.post("/api/login", async (req, res, next) => {
     passport.authenticate("local", async (err: any, user: SelectUser | false, info: any) => {
       if (err) return next(err);
       if (!user) {
+        // A real account with no password isn't a wrong guess — it's a migrated
+        // customer (or a wholesale contact on the wrong door). Say so.
+        const attempted = req.body?.username
+          ? await storage.getUserByEmailOrUsername(String(req.body.username))
+          : null;
+        if (attempted && !attempted.password) {
+          if (attempted.role === 'wholesale_customer') {
+            return res.status(401).send("Wholesale accounts sign in with an email link — use the wholesale ordering page instead.");
+          }
+          await offerMigratedSetPassword(attempted, req);
+          return res.status(401).send("Your account is ready, but it doesn't have a password yet — we've emailed you a link to set one (good for 7 days). Check your inbox.");
+        }
         return res.status(401).send(info?.message || "Authentication failed");
       }
       
