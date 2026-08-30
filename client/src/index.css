@@ -32,7 +32,7 @@
 
   --sidebar-border:189 13% 89%;
 
-  --sidebar-primary:189 56% 27%;
+  --sidebar-primary:23 62% 42%;
 
   --sidebar-primary-foreground:0 0% 100%;
 
@@ -40,7 +40,7 @@
 
   --sidebar-accent-foreground:200 23% 15%;
 
-  --sidebar-ring:189 56% 27%;
+  --sidebar-ring:23 62% 42%;
 
   --popover:0 0% 100%;
 
@@ -48,7 +48,7 @@
 
   --popover-border:192 16% 84%;
 
-  --primary:189 56% 27%;
+  --primary:23 62% 42%;
 
   --primary-foreground:0 0% 100%;
 
@@ -69,7 +69,7 @@
   --destructive-foreground: 0 72% 98%;
 
   --input:192 14% 76%;
-  --ring:189 56% 27%;
+  --ring:23 62% 42%;
   --cedar: 23 50% 47%; /* the one warm note: small labels only, never a button */
   --chart-1:189 56% 32%;
   --chart-2:23 50% 47%;
@@ -154,7 +154,7 @@
 
   --sidebar-border:200 14% 18%;
 
-  --sidebar-primary:189 45% 55%;
+  --sidebar-primary:23 60% 58%;
 
   --sidebar-primary-foreground:200 30% 8%;
 
@@ -162,7 +162,7 @@
 
   --sidebar-accent-foreground:190 15% 88%;
 
-  --sidebar-ring:189 45% 55%;
+  --sidebar-ring:23 60% 58%;
 
   --popover:200 18% 14%;
 
@@ -170,7 +170,7 @@
 
   --popover-border:200 14% 24%;
 
-  --primary:189 45% 55%;
+  --primary:23 60% 58%;
 
   --primary-foreground:200 30% 8%;
 
@@ -191,7 +191,7 @@
   --destructive-foreground: 0 62% 96%;
 
   --input:200 12% 32%;
-  --ring:189 45% 55%;
+  --ring:23 60% 58%;
   --cedar: 23 55% 62%;
   --chart-1:189 45% 62%;
   --chart-2:23 55% 65%;
