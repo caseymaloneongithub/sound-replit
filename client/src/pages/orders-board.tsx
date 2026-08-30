@@ -29,6 +29,7 @@ type BoardData = {
   week: { mondayISO: string; startISO: string; endISO: string; offset: number };
   orders: BoardOrder[];
   totals: { retail: BoardItem[]; wholesale: BoardItem[] };
+  stock?: Record<string, number | null>;
   counts: { retail: number; wholesale: number };
 };
 
@@ -168,7 +169,7 @@ export default function OrdersBoard() {
             ) : totalItems === 0 ? (
               <p className="text-muted-foreground">Nothing scheduled this week.</p>
             ) : (
-              <PrepGrid retail={data!.totals.retail} wholesale={data!.totals.wholesale} />
+              <PrepGrid retail={data!.totals.retail} wholesale={data!.totals.wholesale} stock={data!.stock ?? {}} />
             )}
           </CardContent>
         </Card>
@@ -222,11 +223,11 @@ export default function OrdersBoard() {
 }
 
 /**
- * The prepare-this-week matrix: flavor columns grouped under their unit type,
- * Wholesale / Retail / Total rows — the pack sheet the owner keeps in Excel,
- * on the board. Item labels arrive as "Flavor — Unit".
+ * The prepare-this-week pack sheet: one table PER UNIT TYPE, flavor columns,
+ * Wholesale / Retail / Total rows, and In Stock (shelf count) under the total —
+ * red when the shelf can't cover the week. Item labels arrive as "Flavor — Unit".
  */
-function PrepGrid({ retail, wholesale }: { retail: BoardItem[]; wholesale: BoardItem[] }) {
+function PrepGrid({ retail, wholesale, stock }: { retail: BoardItem[]; wholesale: BoardItem[]; stock: Record<string, number | null> }) {
   const parse = (label: string) => {
     const idx = label.lastIndexOf(" — ");
     return idx === -1
@@ -234,14 +235,15 @@ function PrepGrid({ retail, wholesale }: { retail: BoardItem[]; wholesale: Board
       : { flavor: label.slice(0, idx), unit: label.slice(idx + 3) };
   };
 
-  // unit -> flavor -> { wholesale, retail }
-  const units = new Map<string, Map<string, { wholesale: number; retail: number }>>();
+  // unit -> flavor -> { wholesale, retail, stock }
+  const units = new Map<string, Map<string, { wholesale: number; retail: number; stock: number | null }>>();
   const add = (items: BoardItem[], channel: "wholesale" | "retail") => {
     for (const it of items) {
       const { flavor, unit } = parse(it.label);
       const flavors = units.get(unit) ?? new Map();
-      const cell = flavors.get(flavor) ?? { wholesale: 0, retail: 0 };
+      const cell = flavors.get(flavor) ?? { wholesale: 0, retail: 0, stock: null };
       cell[channel] += it.quantity;
+      if (cell.stock === null && stock[it.label] != null) cell.stock = stock[it.label];
       flavors.set(flavor, cell);
       units.set(unit, flavors);
     }
@@ -257,72 +259,73 @@ function PrepGrid({ retail, wholesale }: { retail: BoardItem[]; wholesale: Board
         .sort((a, b) => b.total - a.total),
     }))
     .sort((a, b) =>
-      b.columns.reduce((s, c) => s + c.total, 0) - a.columns.reduce((s, c) => s + c.total, 0)
+      b.columns.reduce((sum, c) => sum + c.total, 0) - a.columns.reduce((sum, c) => sum + c.total, 0)
     );
 
-  const allColumns = unitGroups.flatMap((g) => g.columns);
-  const cellValue = (n: number) => (n > 0 ? n : "—");
-  const rowSum = (key: "wholesale" | "retail" | "total") =>
-    allColumns.reduce((s, c) => s + c[key], 0);
+  const dash = (n: number) => (n > 0 ? n : "—");
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm border-separate border-spacing-0" data-testid="prep-grid">
-        <thead>
-          <tr>
-            <th className="sticky left-0 bg-card"></th>
-            {unitGroups.map((g) => (
-              <th
-                key={g.unit}
-                colSpan={g.columns.length}
-                className="px-2 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground text-center border-b"
-              >
-                {g.unit}
-              </th>
-            ))}
-            <th className="px-2 pb-1 border-b"></th>
-          </tr>
-          <tr>
-            <th className="sticky left-0 bg-card text-left font-medium text-muted-foreground py-2 pr-3 border-b">
-            </th>
-            {unitGroups.flatMap((g) =>
-              g.columns.map((c) => (
-                <th key={`${g.unit}|${c.flavor}`} className="px-3 py-2 text-center font-medium border-b whitespace-nowrap">
-                  {c.flavor}
-                </th>
-              ))
-            )}
-            <th className="px-3 py-2 text-center font-semibold border-b">All</th>
-          </tr>
-        </thead>
-        <tbody className="tabular-nums">
-          <tr data-testid="prep-row-wholesale">
-            <td className="sticky left-0 bg-card py-2 pr-3 font-medium whitespace-nowrap">
-              <span className="inline-block w-2 h-2 rounded-full bg-violet-500 mr-2" aria-hidden />Wholesale
-            </td>
-            {allColumns.map((c, i) => (
-              <td key={i} className="px-3 py-2 text-center text-lg">{cellValue(c.wholesale)}</td>
-            ))}
-            <td className="px-3 py-2 text-center text-lg font-semibold">{cellValue(rowSum("wholesale"))}</td>
-          </tr>
-          <tr data-testid="prep-row-retail">
-            <td className="sticky left-0 bg-card py-2 pr-3 font-medium whitespace-nowrap">
-              <span className="inline-block w-2 h-2 rounded-full bg-sky-500 mr-2" aria-hidden />Retail
-            </td>
-            {allColumns.map((c, i) => (
-              <td key={i} className="px-3 py-2 text-center text-lg">{cellValue(c.retail)}</td>
-            ))}
-            <td className="px-3 py-2 text-center text-lg font-semibold">{cellValue(rowSum("retail"))}</td>
-          </tr>
-          <tr className="font-bold" data-testid="prep-row-total">
-            <td className="sticky left-0 bg-card py-2 pr-3 border-t">Total</td>
-            {allColumns.map((c, i) => (
-              <td key={i} className="px-3 py-2 text-center text-lg border-t">{cellValue(c.total)}</td>
-            ))}
-            <td className="px-3 py-2 text-center text-lg border-t">{rowSum("total")}</td>
-          </tr>
-        </tbody>
-      </table>
+    <div className="grid gap-6 lg:grid-cols-2">
+      {unitGroups.map((g) => {
+        const sum = (key: "wholesale" | "retail" | "total") => g.columns.reduce((acc, c) => acc + c[key], 0);
+        const stockSum = g.columns.every((c) => c.stock === null)
+          ? null
+          : g.columns.reduce((acc, c) => acc + (c.stock ?? 0), 0);
+        return (
+          <div key={g.unit} className="overflow-x-auto" data-testid={`prep-table-${g.unit}`}>
+            <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{g.unit}</div>
+            <table className="w-full text-sm border-separate border-spacing-0">
+              <thead>
+                <tr>
+                  <th className="text-left font-medium text-muted-foreground py-2 pr-3 border-b w-28"></th>
+                  {g.columns.map((c) => (
+                    <th key={c.flavor} className="px-3 py-2 text-center font-medium border-b whitespace-nowrap">{c.flavor}</th>
+                  ))}
+                  <th className="px-3 py-2 text-center font-semibold border-b">All</th>
+                </tr>
+              </thead>
+              <tbody className="tabular-nums">
+                <tr>
+                  <td className="py-2 pr-3 font-medium whitespace-nowrap">
+                    <span className="inline-block w-2 h-2 rounded-full bg-violet-500 mr-2" aria-hidden />Wholesale
+                  </td>
+                  {g.columns.map((c, i) => (
+                    <td key={i} className="px-3 py-2 text-center text-lg">{dash(c.wholesale)}</td>
+                  ))}
+                  <td className="px-3 py-2 text-center text-lg font-semibold">{dash(sum("wholesale"))}</td>
+                </tr>
+                <tr>
+                  <td className="py-2 pr-3 font-medium whitespace-nowrap">
+                    <span className="inline-block w-2 h-2 rounded-full bg-sky-500 mr-2" aria-hidden />Retail
+                  </td>
+                  {g.columns.map((c, i) => (
+                    <td key={i} className="px-3 py-2 text-center text-lg">{dash(c.retail)}</td>
+                  ))}
+                  <td className="px-3 py-2 text-center text-lg font-semibold">{dash(sum("retail"))}</td>
+                </tr>
+                <tr className="font-bold">
+                  <td className="py-2 pr-3 border-t">Total</td>
+                  {g.columns.map((c, i) => (
+                    <td key={i} className="px-3 py-2 text-center text-lg border-t">{dash(c.total)}</td>
+                  ))}
+                  <td className="px-3 py-2 text-center text-lg border-t">{sum("total")}</td>
+                </tr>
+                <tr className="text-muted-foreground">
+                  <td className="py-2 pr-3 whitespace-nowrap">In Stock</td>
+                  {g.columns.map((c, i) => (
+                    <td key={i} className={`px-3 py-2 text-center text-lg ${c.stock !== null && c.stock < c.total ? "text-destructive font-semibold" : ""}`}>
+                      {c.stock === null ? "—" : c.stock}
+                    </td>
+                  ))}
+                  <td className={`px-3 py-2 text-center text-lg ${stockSum !== null && stockSum < sum("total") ? "text-destructive font-semibold" : ""}`}>
+                    {stockSum === null ? "—" : stockSum}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
     </div>
   );
 }
