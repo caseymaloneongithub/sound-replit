@@ -37,6 +37,7 @@ export default function WholesaleGuestOrder() {
   const [fulfillment, setFulfillment] = useState<"delivery" | "pickup">("delivery");
   const [locationId, setLocationId] = useState(initialLocationId);
   const [contactEmail, setContactEmail] = useState("");
+  const [poNumber, setPoNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [website, setWebsite] = useState(""); // honeypot — humans never see it
   const [placed, setPlaced] = useState<{ invoiceNumber: string } | null>(null);
@@ -81,6 +82,7 @@ export default function WholesaleGuestOrder() {
         fulfillmentMethod: fulfillment,
         locationId: fulfillment === "delivery" ? locationId : undefined,
         contactEmail: contactEmail.trim(),
+        poNumber: poNumber.trim() || undefined,
         notes: notes.trim() || undefined,
         website, // honeypot
       }),
@@ -235,6 +237,10 @@ export default function WholesaleGuestOrder() {
               <p className="text-xs text-muted-foreground mt-1.5">The order confirmation goes here.</p>
             </div>
             <div>
+              <Label htmlFor="guest-po">PO # (optional)</Label>
+              <Input id="guest-po" className="mt-1.5" placeholder="Your purchase order number" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} data-testid="input-guest-po" />
+            </div>
+            <div className="sm:col-span-2">
               <Label htmlFor="guest-notes">Notes</Label>
               <Textarea id="guest-notes" className="mt-1.5" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} data-testid="input-guest-notes" />
             </div>

@@ -25,6 +25,7 @@ export default function WholesalePlaceOrder() {
   const [fulfillmentMethod, setFulfillmentMethod] = useState<"delivery" | "pickup">("delivery");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState("");
+  const [poNumber, setPoNumber] = useState("");
   const [selectedUnitTypeId, setSelectedUnitTypeId] = useState<string>("");
   const [selectedFlavorId, setSelectedFlavorId] = useState<string>("");
   const [quantity, setQuantity] = useState<number>(1);
@@ -98,6 +99,7 @@ export default function WholesalePlaceOrder() {
       return await apiRequest("POST", "/api/wholesale/orders", {
         order: {
           customerId: selectedCustomerId,
+          poNumber: poNumber.trim() || undefined,
           fulfillmentMethod,
           locationId: fulfillmentMethod === "delivery" ? selectedLocationId || undefined : undefined,
           notes: notes || undefined,
@@ -113,6 +115,7 @@ export default function WholesalePlaceOrder() {
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
       setCart([]);
       setNotes("");
+      setPoNumber("");
       setSelectedCustomerId("");
       setSelectedLocationId("");
       setSelectedUnitTypeId("");
@@ -510,7 +513,7 @@ export default function WholesalePlaceOrder() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>Order Notes</CardTitle>
+                    <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>PO # &amp; Order Notes</CardTitle>
                     <CardDescription>Add any special instructions</CardDescription>
                   </CardHeader>
                   <CardContent>

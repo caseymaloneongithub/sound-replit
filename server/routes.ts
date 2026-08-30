@@ -1470,6 +1470,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     opts: { placedByUserId: string | null }
   ) {
       const { items, notes, locationId } = body;
+      const poNumber = typeof body.poNumber === 'string' && body.poNumber.trim()
+        ? body.poNumber.trim().slice(0, 50)
+        : undefined;
       // Email the orderer gave at submission — the confirmation goes here. May differ
       // from the billing/primary contact (floor staff order; the office pays).
       const contactEmail =
@@ -1565,6 +1568,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fulfillmentMethod,
         dueDate,
         contactEmail: contactEmail || undefined,
+        poNumber,
       };
 
       const createdOrder = await storage.createWholesaleOrder(orderData);
@@ -6758,6 +6762,7 @@ If you have any questions, please don't hesitate to reach out!`,
 
       // Send the invoice email
       await sendWholesaleInvoiceEmail({
+        poNumber: (order as any).poNumber ?? null,
         customerEmail: customer.email,
         businessName: customer.businessName,
         contactName: customer.contactName,
@@ -6846,7 +6851,7 @@ If you have any questions, please don't hesitate to reach out!`,
 
   app.patch("/api/wholesale/orders/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const { status, deliveryDate, notes, items } = req.body;
+      const { status, deliveryDate, notes, items, poNumber } = req.body;
       
       const order = await storage.getWholesaleOrder(req.params.id);
       if (!order) {
@@ -6886,6 +6891,12 @@ If you have any questions, please don't hesitate to reach out!`,
         if (dateValue) {
           updated = await storage.updateWholesaleOrder(req.params.id, { dueDate: new Date(dateValue.getTime() + 30 * 24 * 60 * 60 * 1000) }) || updated;
         }
+      }
+
+      // PO number is editable after the fact — accounts often supply it late.
+      if (poNumber !== undefined) {
+        const value = typeof poNumber === 'string' && poNumber.trim() ? poNumber.trim().slice(0, 50) : null;
+        updated = await storage.updateWholesaleOrder(req.params.id, { poNumber: value }) || updated;
       }
 
       // Handle notes update
@@ -9658,6 +9669,7 @@ If you have any questions, please don't hesitate to reach out!`,
             paid: !!order.paidAt,
           });
           invoices.push({
+            poNumber: (order as any).poNumber ?? null,
             customerEmail: customer.email,
             businessName: customer.businessName,
             contactName: customer.contactName,

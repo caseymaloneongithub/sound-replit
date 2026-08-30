@@ -57,6 +57,7 @@ export default function WholesaleOrders() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [editItems, setEditItems] = useState<EditItem[]>([]);
   const [editNotes, setEditNotes] = useState('');
+  const [editPoNumber, setEditPoNumber] = useState('');
   const { toast } = useToast();
 
   const { data: ordersData, isLoading } = useQuery<{ orders: WholesaleOrder[]; total: number }>({
@@ -133,10 +134,11 @@ export default function WholesaleOrders() {
   });
 
   const updateOrderMutation = useMutation({
-    mutationFn: async ({ orderId, items, notes }: { orderId: string; items: EditItem[]; notes: string }) => {
+    mutationFn: async ({ orderId, items, notes, poNumber }: { orderId: string; items: EditItem[]; notes: string; poNumber: string }) => {
       return await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, { 
         items,
-        notes: notes || null
+        notes: notes || null,
+        poNumber: poNumber.trim() || null,
       });
     },
     onSuccess: () => {
@@ -188,6 +190,7 @@ export default function WholesaleOrders() {
         quantity: item.quantity,
       })));
       setEditNotes(selectedOrder.notes || '');
+      setEditPoNumber((selectedOrder as any).poNumber || '');
       setIsEditMode(true);
     }
   };
@@ -225,6 +228,7 @@ export default function WholesaleOrders() {
       orderId: selectedOrderId,
       items: validItems,
       notes: editNotes,
+      poNumber: editPoNumber,
     });
   };
 
@@ -770,6 +774,11 @@ export default function WholesaleOrders() {
                   )}
                   <div><strong>Total:</strong> ${Number(selectedOrder.totalAmount).toFixed(2)}</div>
                 </div>
+                {!isEditMode && (selectedOrder as any).poNumber && (
+                  <div className="mb-2">
+                    <strong>PO #:</strong> <span data-testid="text-po-number">{(selectedOrder as any).poNumber}</span>
+                  </div>
+                )}
                 {!isEditMode && selectedOrder.notes && (
                   <div className="mt-2">
                     <strong>Notes:</strong> <span className="italic">{selectedOrder.notes}</span>
@@ -854,6 +863,18 @@ export default function WholesaleOrders() {
                         </div>
                       ))}
                     </div>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="edit-po">PO #</Label>
+                    <Input
+                      id="edit-po"
+                      value={editPoNumber}
+                      onChange={(e) => setEditPoNumber(e.target.value)}
+                      placeholder="Customer's purchase order number"
+                      className="mt-1"
+                      data-testid="input-edit-po"
+                    />
                   </div>
 
                   <div>

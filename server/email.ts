@@ -1298,6 +1298,7 @@ Puget Sound Kombucha Co.
 
 // Wholesale Invoice Payment Receipt - sent to customer when they pay online
 interface WholesalePaymentReceiptParams {
+  poNumber?: string | null;
   customerEmail: string;
   businessName: string;
   contactName: string;
@@ -1387,6 +1388,12 @@ emily@soundkombucha.com
         <td style="padding: 8px 0; color: ${BRAND_COLORS.mediumGrey}; width: 120px;">Invoice #</td>
         <td style="padding: 8px 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.invoiceNumber}</td>
       </tr>
+      ${params.poNumber ? `
+      <tr>
+        <td style="padding: 8px 0; color: ${BRAND_COLORS.mediumGrey};">PO #</td>
+        <td style="padding: 8px 0; color: ${BRAND_COLORS.darkGrey};">${params.poNumber}</td>
+      </tr>
+      ` : ''}
       <tr>
         <td style="padding: 8px 0; color: ${BRAND_COLORS.mediumGrey};">Business</td>
         <td style="padding: 8px 0; color: ${BRAND_COLORS.darkGrey};">${params.businessName}</td>
@@ -1437,6 +1444,7 @@ emily@soundkombucha.com
 
 // Wholesale Order Confirmation - sent to customer when order is placed
 interface WholesaleOrderConfirmationParams {
+  poNumber?: string | null;
   customerEmail: string;
   businessName: string;
   contactName: string;
@@ -1489,7 +1497,7 @@ Order Confirmation
 Thank you for your order!
 
 Invoice #: ${params.invoiceNumber}
-Order Date: ${orderDateFormatted}
+${params.poNumber ? `PO #: ${params.poNumber}\n` : ''}Order Date: ${orderDateFormatted}
 ${deliveryDateFormatted ? `Delivery Date: ${deliveryDateFormatted}` : ''}
 ${dueDateFormatted ? `Payment Due: ${dueDateFormatted}` : ''}
 
@@ -1531,6 +1539,12 @@ emily@soundkombucha.com
           <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey}; width: 120px;">Invoice #</td>
           <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.invoiceNumber}</td>
         </tr>
+        ${params.poNumber ? `
+        <tr>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey};">PO #</td>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey};">${params.poNumber}</td>
+        </tr>
+        ` : ''}
         <tr>
           <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey};">Order Date</td>
           <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey};">${orderDateFormatted}</td>
@@ -1746,6 +1760,7 @@ interface WholesaleInvoiceLocation {
 }
 
 export interface WholesaleInvoiceEmailParams {
+  poNumber?: string | null;
   customerEmail: string;
   businessName: string;
   contactName: string;
@@ -1889,6 +1904,7 @@ export function renderInvoicePage(doc: PDFKit.PDFDocument, params: WholesaleInvo
       metaY += 14;
     };
     metaRow('Invoice Number:', params.invoiceNumber);
+    if (params.poNumber) metaRow('PO Number:', params.poNumber);
     metaRow('Invoice Date:', format(params.orderDate, 'MMMM d, yyyy'));
     if (params.deliveryDate) metaRow('Delivery Date:', format(params.deliveryDate, 'MMMM d, yyyy'));
     if (params.dueDate) metaRow('Payment Due:', format(params.dueDate, 'MMMM d, yyyy'));

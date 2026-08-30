@@ -486,6 +486,9 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   // Email the orderer gave at submission — the confirmation goes here. Often differs
   // from the billing/primary contact (owner: floor staff order, office pays).
   contactEmail: text("contact_email"),
+  // Customer's purchase-order number — optional, but some accounts require it on the
+  // invoice before they'll pay it.
+  poNumber: text("po_number"),
   // Invoice payment tracking
   dueDate: timestamp("due_date"), // Payment due date (default 30 days from order)
   paidAt: timestamp("paid_at"), // When payment SETTLED (money actually received)

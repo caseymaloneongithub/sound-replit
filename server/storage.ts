@@ -254,6 +254,7 @@ export interface IStorage {
   deleteWholesaleOrder(id: string): Promise<void>;
   updateWholesaleOrder(id: string, updates: { 
     totalAmount?: string; 
+    poNumber?: string | null;
     notes?: string | null;
     dueDate?: Date | null;
     paidAt?: Date | null;
@@ -2888,6 +2889,7 @@ export class PostgresStorage implements IStorage {
 
   async updateWholesaleOrder(id: string, updates: {
     totalAmount?: string;
+    poNumber?: string | null;
     notes?: string | null;
     dueDate?: Date | null;
     paidAt?: Date | null;

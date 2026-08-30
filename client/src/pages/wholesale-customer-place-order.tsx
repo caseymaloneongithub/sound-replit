@@ -27,6 +27,7 @@ interface CartItem {
 export default function WholesaleCustomerPlaceOrder() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState("");
+  const [poNumber, setPoNumber] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState<string>("");
   // Delivery or collect from the brewery. Pickup carries no address, so it's also the way
@@ -144,6 +145,7 @@ export default function WholesaleCustomerPlaceOrder() {
 
       return await apiRequest("POST", "/api/wholesale/customer/orders", {
         notes: notes || undefined,
+        poNumber: poNumber.trim() || undefined,
         contactEmail: contactEmail.trim() || undefined,
         fulfillmentMethod,
         locationId:
@@ -685,6 +687,17 @@ export default function WholesaleCustomerPlaceOrder() {
                       <p className="text-xs text-muted-foreground mt-1.5">
                         The order confirmation goes here — use a different address than your sign-in if someone else should get it.
                       </p>
+                    </div>
+                    <div className="mb-3">
+                      <Label htmlFor="order-po">PO # (optional)</Label>
+                      <Input
+                        id="order-po"
+                        className="mt-1.5"
+                        placeholder="Your purchase order number"
+                        value={poNumber}
+                        onChange={(e) => setPoNumber(e.target.value)}
+                        data-testid="input-order-po"
+                      />
                     </div>
                     <Textarea
                       value={notes}
