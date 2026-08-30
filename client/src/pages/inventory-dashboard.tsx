@@ -110,6 +110,39 @@ export default function InventoryDashboard() {
           <StatCard label="Cases — last 30d" value={dash.casesLast30.toLocaleString()} />
         </div>
 
+        {/* Finished goods — what's packaged and on the shelf right now. Productions add
+            to it; packaging a wholesale order or fulfilling a retail pickup subtracts.
+            Negative means more left the shelf than the system saw arrive — the monthly
+            count reconciles it. */}
+        {finished.length > 0 && (
+          <Card className="mb-6" data-testid="card-finished-goods">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Finished goods on the shelf</CardTitle>
+              <CardDescription>
+                Productions add to these; packaging an order subtracts. Negative numbers need a look.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-6 md:grid-cols-3">
+                {([["bottle-case", "Bottle cases"], ["can-case", "Can cases"], ["keg-sixth", "1/6 kegs"]] as const).map(([key, title]) => {
+                  const rows = finished.filter((p) => p.container === key);
+                  if (rows.length === 0) return null;
+                  return (
+                    <div key={key}>
+                      <div className="text-sm font-semibold mb-2">{title}</div>
+                      <div className="rounded-md border divide-y">
+                        {rows.map((p) => (
+                          <StockRow key={p.id} product={p} />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Negative stock = the number is wrong. Usually a delivery never marked received. */}
         {dash.negativeStock?.length > 0 && (
           <Card className="mb-6 border-red-300 dark:border-red-900">
@@ -242,39 +275,6 @@ export default function InventoryDashboard() {
             </CardContent>
           </Card>
         </div>
-
-        {/* Finished goods — what's packaged and on the shelf right now. Productions add
-            to it; packaging a wholesale order or fulfilling a retail pickup subtracts.
-            Negative means more left the shelf than the system saw arrive — the monthly
-            count reconciles it. */}
-        {finished.length > 0 && (
-          <Card className="mt-6" data-testid="card-finished-goods">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg">Finished goods on the shelf</CardTitle>
-              <CardDescription>
-                Productions add to these; packaging an order subtracts. Negative numbers need a look.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-6 md:grid-cols-3">
-                {([["bottle-case", "Bottle cases"], ["can-case", "Can cases"], ["keg-sixth", "1/6 kegs"]] as const).map(([key, title]) => {
-                  const rows = finished.filter((p) => p.container === key);
-                  if (rows.length === 0) return null;
-                  return (
-                    <div key={key}>
-                      <div className="text-sm font-semibold mb-2">{title}</div>
-                      <div className="rounded-md border divide-y">
-                        {rows.map((p) => (
-                          <StockRow key={p.id} product={p} />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
         {/* Production limits — what can we actually make with what's on the shelf */}
         {limits.length > 0 && (
