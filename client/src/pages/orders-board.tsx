@@ -168,10 +168,7 @@ export default function OrdersBoard() {
             ) : totalItems === 0 ? (
               <p className="text-muted-foreground">Nothing scheduled this week.</p>
             ) : (
-              <div className="grid gap-6 sm:grid-cols-2">
-                <SummaryColumn title="Retail pickups" items={data!.totals.retail} />
-                <SummaryColumn title="Wholesale deliveries" items={data!.totals.wholesale} />
-              </div>
+              <PrepGrid retail={data!.totals.retail} wholesale={data!.totals.wholesale} />
             )}
           </CardContent>
         </Card>
@@ -224,22 +221,108 @@ export default function OrdersBoard() {
   );
 }
 
-function SummaryColumn({ title, items }: { title: string; items: BoardItem[] }) {
+/**
+ * The prepare-this-week matrix: flavor columns grouped under their unit type,
+ * Wholesale / Retail / Total rows — the pack sheet the owner keeps in Excel,
+ * on the board. Item labels arrive as "Flavor — Unit".
+ */
+function PrepGrid({ retail, wholesale }: { retail: BoardItem[]; wholesale: BoardItem[] }) {
+  const parse = (label: string) => {
+    const idx = label.lastIndexOf(" — ");
+    return idx === -1
+      ? { flavor: label, unit: "Other" }
+      : { flavor: label.slice(0, idx), unit: label.slice(idx + 3) };
+  };
+
+  // unit -> flavor -> { wholesale, retail }
+  const units = new Map<string, Map<string, { wholesale: number; retail: number }>>();
+  const add = (items: BoardItem[], channel: "wholesale" | "retail") => {
+    for (const it of items) {
+      const { flavor, unit } = parse(it.label);
+      const flavors = units.get(unit) ?? new Map();
+      const cell = flavors.get(flavor) ?? { wholesale: 0, retail: 0 };
+      cell[channel] += it.quantity;
+      flavors.set(flavor, cell);
+      units.set(unit, flavors);
+    }
+  };
+  add(wholesale, "wholesale");
+  add(retail, "retail");
+
+  const unitGroups = Array.from(units.entries())
+    .map(([unit, flavors]) => ({
+      unit,
+      columns: Array.from(flavors.entries())
+        .map(([flavor, cell]) => ({ flavor, ...cell, total: cell.wholesale + cell.retail }))
+        .sort((a, b) => b.total - a.total),
+    }))
+    .sort((a, b) =>
+      b.columns.reduce((s, c) => s + c.total, 0) - a.columns.reduce((s, c) => s + c.total, 0)
+    );
+
+  const allColumns = unitGroups.flatMap((g) => g.columns);
+  const cellValue = (n: number) => (n > 0 ? n : "—");
+  const rowSum = (key: "wholesale" | "retail" | "total") =>
+    allColumns.reduce((s, c) => s + c[key], 0);
+
   return (
-    <div>
-      <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-2">{title}</div>
-      {items.length === 0 ? (
-        <p className="text-sm text-muted-foreground">—</p>
-      ) : (
-        <ul className="space-y-1">
-          {items.map((it) => (
-            <li key={it.label} className="flex items-baseline gap-2">
-              <span className="text-2xl font-bold tabular-nums w-12 text-right">{it.quantity}</span>
-              <span className="text-base">{it.label}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm border-separate border-spacing-0" data-testid="prep-grid">
+        <thead>
+          <tr>
+            <th className="sticky left-0 bg-card"></th>
+            {unitGroups.map((g) => (
+              <th
+                key={g.unit}
+                colSpan={g.columns.length}
+                className="px-2 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground text-center border-b"
+              >
+                {g.unit}
+              </th>
+            ))}
+            <th className="px-2 pb-1 border-b"></th>
+          </tr>
+          <tr>
+            <th className="sticky left-0 bg-card text-left font-medium text-muted-foreground py-2 pr-3 border-b">
+            </th>
+            {unitGroups.flatMap((g) =>
+              g.columns.map((c) => (
+                <th key={`${g.unit}|${c.flavor}`} className="px-3 py-2 text-center font-medium border-b whitespace-nowrap">
+                  {c.flavor}
+                </th>
+              ))
+            )}
+            <th className="px-3 py-2 text-center font-semibold border-b">All</th>
+          </tr>
+        </thead>
+        <tbody className="tabular-nums">
+          <tr data-testid="prep-row-wholesale">
+            <td className="sticky left-0 bg-card py-2 pr-3 font-medium whitespace-nowrap">
+              <span className="inline-block w-2 h-2 rounded-full bg-violet-500 mr-2" aria-hidden />Wholesale
+            </td>
+            {allColumns.map((c, i) => (
+              <td key={i} className="px-3 py-2 text-center text-lg">{cellValue(c.wholesale)}</td>
+            ))}
+            <td className="px-3 py-2 text-center text-lg font-semibold">{cellValue(rowSum("wholesale"))}</td>
+          </tr>
+          <tr data-testid="prep-row-retail">
+            <td className="sticky left-0 bg-card py-2 pr-3 font-medium whitespace-nowrap">
+              <span className="inline-block w-2 h-2 rounded-full bg-sky-500 mr-2" aria-hidden />Retail
+            </td>
+            {allColumns.map((c, i) => (
+              <td key={i} className="px-3 py-2 text-center text-lg">{cellValue(c.retail)}</td>
+            ))}
+            <td className="px-3 py-2 text-center text-lg font-semibold">{cellValue(rowSum("retail"))}</td>
+          </tr>
+          <tr className="font-bold" data-testid="prep-row-total">
+            <td className="sticky left-0 bg-card py-2 pr-3 border-t">Total</td>
+            {allColumns.map((c, i) => (
+              <td key={i} className="px-3 py-2 text-center text-lg border-t">{cellValue(c.total)}</td>
+            ))}
+            <td className="px-3 py-2 text-center text-lg border-t">{rowSum("total")}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }
