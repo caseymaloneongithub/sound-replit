@@ -5,6 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Minus, Trash2 } from "lucide-react";
@@ -26,6 +28,9 @@ export default function WholesalePlaceOrder() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState("");
   const [poNumber, setPoNumber] = useState("");
+  // Customer-placed orders always email a confirmation; staff-entered ones make it a
+  // choice (historical entries and corrections shouldn't surprise the customer).
+  const [sendConfirmation, setSendConfirmation] = useState(true);
   const [selectedUnitTypeId, setSelectedUnitTypeId] = useState<string>("");
   const [selectedFlavorId, setSelectedFlavorId] = useState<string>("");
   const [quantity, setQuantity] = useState<number>(1);
@@ -97,6 +102,7 @@ export default function WholesalePlaceOrder() {
       }
 
       return await apiRequest("POST", "/api/wholesale/orders", {
+        sendConfirmation,
         order: {
           customerId: selectedCustomerId,
           poNumber: poNumber.trim() || undefined,
@@ -516,7 +522,18 @@ export default function WholesalePlaceOrder() {
                     <CardTitle style={{ fontFamily: 'var(--font-heading)' }}>PO # &amp; Order Notes</CardTitle>
                     <CardDescription>Add any special instructions</CardDescription>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <Label htmlFor="staff-po">PO # (optional)</Label>
+                      <Input
+                        id="staff-po"
+                        className="mt-1.5"
+                        placeholder="Customer's purchase order number"
+                        value={poNumber}
+                        onChange={(e) => setPoNumber(e.target.value)}
+                        data-testid="input-staff-po"
+                      />
+                    </div>
                     <Textarea
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
@@ -524,6 +541,20 @@ export default function WholesalePlaceOrder() {
                       placeholder="Enter any special instructions or notes..."
                       data-testid="input-notes"
                     />
+                    <div className="flex items-center justify-between rounded-lg border p-3">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="send-confirmation">Email the customer a confirmation</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Turn off for historical entries or corrections the customer shouldn't be re-notified about.
+                        </p>
+                      </div>
+                      <Switch
+                        id="send-confirmation"
+                        checked={sendConfirmation}
+                        onCheckedChange={setSendConfirmation}
+                        data-testid="switch-send-confirmation"
+                      />
+                    </div>
                   </CardContent>
                 </Card>
 

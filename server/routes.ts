@@ -6551,8 +6551,15 @@ If you have any questions, please don't hesitate to reach out!`,
           };
         }));
 
+        // Customer confirmation is a CHOICE on staff-entered orders (owner, 2026-08-31):
+        // historical entries and corrections shouldn't surprise the customer. Defaults
+        // on; customer-placed orders always send (their path is placeCustomerOrder).
+        const sendConfirmation = req.body?.sendConfirmation !== false;
+        if (!sendConfirmation) {
+          console.log(`[ORDER] Confirmation email skipped by staff for ${invoiceNumber}`);
+        }
         // Send emails in the background (don't block the response)
-        sendWholesaleOrderConfirmation({
+        if (sendConfirmation) sendWholesaleOrderConfirmation({
           customerEmail: customer.email,
           businessName: customer.businessName,
           contactName: customer.contactName,
