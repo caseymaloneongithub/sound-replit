@@ -1,3 +1,4 @@
+import { formatPhoneNumber } from "../shared/phone";
 import { 
   type Flavor, type InsertFlavor,
   type RetailProduct, type InsertRetailProduct,
@@ -438,7 +439,11 @@ export class PostgresStorage implements IStorage {
   }
 
   async createUser(userData: InsertUser): Promise<User> {
-    const result = await db.insert(users).values(userData).returning();
+    // One phone format everywhere — normalize at the door, not at every caller.
+    const result = await db.insert(users).values({
+      ...userData,
+      ...(userData.phoneNumber ? { phoneNumber: formatPhoneNumber(userData.phoneNumber) } : {}),
+    }).returning();
     return result[0];
   }
 

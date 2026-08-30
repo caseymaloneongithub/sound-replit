@@ -1,4 +1,5 @@
 import express, { type Express } from "express";
+import { formatPhoneNumber } from "../shared/phone";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import Stripe from "stripe";
@@ -1049,6 +1050,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const updates = validationResult.data;
+      if (updates.phoneNumber) updates.phoneNumber = formatPhoneNumber(updates.phoneNumber);
 
       // Check if email is already taken by another user
       if (updates.email && updates.email !== user.email) {
@@ -3246,7 +3248,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentIntentId: validated.paymentIntentId || null,
         customerName: validated.customerName,
         customerEmail: validated.customerEmail,
-        customerPhone: validated.customerPhone,
+        customerPhone: formatPhoneNumber(validated.customerPhone),
         userId: req.user?.id || null,
         taxMode,
         taxRateBps,
@@ -3593,7 +3595,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               userId: user.id,
               customerName: validated.customerName,
               customerEmail: validated.customerEmail,
-              customerPhone: validated.customerPhone,
+              customerPhone: formatPhoneNumber(validated.customerPhone),
               subscriptionFrequency: item.subscriptionFrequency || 'weekly',
               nextChargeAt: nextBillingDate, // Billing on Monday of pickup week
               nextDeliveryDate: normalizedNextPickupDate,
@@ -3646,7 +3648,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               orderNumber,
               customerName: validated.customerName,
               customerEmail: validated.customerEmail,
-              customerPhone: validated.customerPhone,
+              customerPhone: formatPhoneNumber(validated.customerPhone),
               status: 'pending',
               subtotal: subtotal.toFixed(2),
               taxAmount: taxAmount.toFixed(2),
@@ -5613,6 +5615,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/wholesale/customers", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const customer = insertWholesaleCustomerSchema.parse(req.body);
+      if (customer.phone) customer.phone = formatPhoneNumber(customer.phone);
       const created = await storage.createWholesaleCustomer(customer);
 
       // POLICY (2026-08-19): no automatic emails to wholesale customers except order
@@ -5629,6 +5632,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/wholesale/customers/:id", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const updates = insertWholesaleCustomerSchema.partial().parse(req.body);
+      if (updates.phone) updates.phone = formatPhoneNumber(updates.phone);
       const updated = await storage.updateWholesaleCustomer(req.params.id, updates);
       if (!updated) {
         return res.status(404).json({ message: "Customer not found" });
@@ -7785,7 +7789,7 @@ If you have any questions, please don't hesitate to reach out!`,
         .values({
           customerName: validated.customerName,
           customerEmail: validated.customerEmail,
-          customerPhone: validated.customerPhone,
+          customerPhone: formatPhoneNumber(validated.customerPhone),
           subscriptionFrequency: validated.subscriptionFrequency,
           status: validated.status,
           billingType: 'local_managed',
