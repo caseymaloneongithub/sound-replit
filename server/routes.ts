@@ -6904,11 +6904,12 @@ If you have any questions, please don't hesitate to reach out!`,
           return res.status(400).json({ message: "Invalid status" });
         }
         updated = await storage.updateWholesaleOrderStatus(req.params.id, status);
-        // Packaged = it's in bottles/cans/kegs on the shelf, and this order's share leaves
-        // it. Walking the order back before packaged puts the stock back. Idempotent.
+        // DELIVERED is when the cases physically leave the shelf (owner, 2026-08-31):
+        // packaging materials were already consumed when the production was logged, so
+        // the order's Packaged status is just staging. Walking back restores. Idempotent.
         const stock = await storage.applyWholesaleOrderStock(
           req.params.id,
-          ['packaged', 'shipped', 'delivered', 'fulfilled'].includes(status) ? 'apply' : 'restore',
+          ['delivered', 'fulfilled'].includes(status) ? 'apply' : 'restore',
           (req as any).user?.id
         );
         stockWarnings = stock.warnings;
@@ -8150,7 +8151,7 @@ If you have any questions, please don't hesitate to reach out!`,
       }
       const stock = await storage.applyWholesaleOrderStock(
         req.params.id,
-        ['packaged', 'shipped', 'delivered'].includes(parsed.data.status) ? 'apply' : 'restore',
+        ['delivered'].includes(parsed.data.status) ? 'apply' : 'restore',
         req.user?.id
       );
 

@@ -166,6 +166,9 @@ export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
     },
     {
       title: "Money",
+      // Money is admin-and-up territory (owner, 2026-08-31) — staff see operations,
+      // not revenue.
+      adminOnly: true,
       items: [
         { title: "Revenue", href: "/reports", icon: DollarSign },
         { title: "Accounting", href: "/admin/accounting", icon: Calculator, adminOnly: true },

@@ -111,7 +111,7 @@ export default function InventoryDashboard() {
         </div>
 
         {/* Finished goods — what's packaged and on the shelf right now. Productions add
-            to it; packaging a wholesale order or fulfilling a retail pickup subtracts.
+            to it; delivering a wholesale order or fulfilling a retail pickup subtracts.
             Negative means more left the shelf than the system saw arrive — the monthly
             count reconciles it. */}
         {finished.length > 0 && (
@@ -119,7 +119,7 @@ export default function InventoryDashboard() {
             <CardHeader className="pb-3">
               <CardTitle className="text-lg">Finished goods on the shelf</CardTitle>
               <CardDescription>
-                Productions add to these; packaging an order subtracts. Negative numbers need a look.
+                Productions add to these; delivering an order subtracts. Negative numbers need a look.
               </CardDescription>
             </CardHeader>
             <CardContent>

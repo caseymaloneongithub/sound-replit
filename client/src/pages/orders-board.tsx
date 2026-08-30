@@ -84,7 +84,7 @@ export default function OrdersBoard() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/staff/orders-board", weekOffset] });
-      // Packaging moves finished-goods stock; if that drove anything below zero (or a
+      // Delivery moves finished-goods stock; if that drove anything below zero (or a
       // line had no product to draw from), say so — but never block the tap.
       if (data?.stockWarnings?.length) {
         toast({ title: "Stock heads-up", description: data.stockWarnings.join(" · ") });
