@@ -70,6 +70,14 @@ export default function WholesalePlaceOrder() {
     setQuantity(1);
   }, [selectedCustomerId]);
 
+  // Most customers have exactly one location — pre-select it so staff never
+  // click through a one-option dropdown.
+  useEffect(() => {
+    if (customerLocations.length === 1 && !selectedLocationId) {
+      setSelectedLocationId(customerLocations[0].id);
+    }
+  }, [customerLocations, selectedLocationId]);
+
   useEffect(() => {
     setSelectedFlavorId("");
   }, [selectedUnitTypeId]);
