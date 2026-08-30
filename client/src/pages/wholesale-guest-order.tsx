@@ -31,7 +31,10 @@ export default function WholesaleGuestOrder() {
   const initialLocationId = params.get("location") ?? "";
 
   const [lines, setLines] = useState<Line[]>([{ unitTypeId: "", flavorId: "", quantity: 1 }]);
-  const [fulfillment, setFulfillment] = useState<"delivery" | "pickup">(initialLocationId ? "delivery" : "pickup");
+  // Delivery is ALWAYS the default (owner decision 2026-08-31): pickup must be a
+  // deliberate choice, never something a customer slides into by not noticing.
+  // With no location picked yet, submit stays disabled until they choose one.
+  const [fulfillment, setFulfillment] = useState<"delivery" | "pickup">("delivery");
   const [locationId, setLocationId] = useState(initialLocationId);
   const [contactEmail, setContactEmail] = useState("");
   const [notes, setNotes] = useState("");
@@ -52,10 +55,7 @@ export default function WholesaleGuestOrder() {
   // address is shown for comfort. The picker only exists for the Evergreens of the world.
   const soleLocation = storeInfo?.locations.length === 1 ? storeInfo.locations[0] : null;
   useEffect(() => {
-    if (soleLocation && !locationId) {
-      setLocationId(soleLocation.id);
-      setFulfillment("delivery");
-    }
+    if (soleLocation && !locationId) setLocationId(soleLocation.id);
   }, [soleLocation, locationId]);
 
   const { data: unitTypes = [] } = useQuery<UnitType[]>({ queryKey: ["/api/wholesale/guest/unit-types"] });
