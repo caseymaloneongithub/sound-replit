@@ -268,9 +268,11 @@ export default function WholesaleCustomers() {
     enabled: !!selectedCustomer && locationDialogOpen,
   });
 
-  // Extended validation schema for location form - require key fields
+  // Extended validation schema for location form - require key fields.
+  // Location name is OPTIONAL: most customers are single-location, and naming their
+  // only site is busywork — blank becomes "Main Location".
   const locationFormSchema = insertWholesaleLocationSchema.extend({
-    locationName: z.string().min(1, "Location name is required"),
+    locationName: z.string().optional().default(""),
     address: z.string().min(1, "Street address is required"),
     city: z.string().min(1, "City is required"),
     state: z.string().min(1, "State is required").max(2, "Use 2-letter state code"),
@@ -359,6 +361,7 @@ export default function WholesaleCustomers() {
   });
 
   const handleLocationSubmit = (data: z.infer<typeof insertWholesaleLocationSchema>) => {
+    data = { ...data, locationName: (data.locationName || "").trim() || "Main Location" };
     if (editingLocation) {
       updateLocationMutation.mutate({ id: editingLocation.id, data });
     } else {
@@ -1036,9 +1039,9 @@ export default function WholesaleCustomers() {
                     name="locationName"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Location Name</FormLabel>
+                        <FormLabel>Location Name (optional — for multi-location customers)</FormLabel>
                         <FormControl>
-                          <Input {...field} placeholder="Main Warehouse" data-testid="input-location-name" />
+                          <Input {...field} placeholder="Leave blank for a single location" data-testid="input-location-name" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>

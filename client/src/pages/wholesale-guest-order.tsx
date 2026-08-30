@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,16 @@ export default function WholesaleGuestOrder() {
     },
     enabled: !!customerId,
   });
+
+  // Single-location customers never pick a location — it's chosen for them and the
+  // address is shown for comfort. The picker only exists for the Evergreens of the world.
+  const soleLocation = storeInfo?.locations.length === 1 ? storeInfo.locations[0] : null;
+  useEffect(() => {
+    if (soleLocation && !locationId) {
+      setLocationId(soleLocation.id);
+      setFulfillment("delivery");
+    }
+  }, [soleLocation, locationId]);
 
   const { data: unitTypes = [] } = useQuery<UnitType[]>({ queryKey: ["/api/wholesale/guest/unit-types"] });
   const { data: minOrder } = useQuery<{ value: number }>({ queryKey: ["/api/settings/wholesale-minimum-order"] });
@@ -187,7 +197,15 @@ export default function WholesaleGuestOrder() {
                 </SelectContent>
               </Select>
             </div>
-            {fulfillment === "delivery" && (
+            {fulfillment === "delivery" && soleLocation && (
+              <div>
+                <Label>Deliver to</Label>
+                <p className="mt-2.5 text-sm" data-testid="text-sole-location">
+                  {[soleLocation.street, soleLocation.city].filter(Boolean).join(", ")}
+                </p>
+              </div>
+            )}
+            {fulfillment === "delivery" && !soleLocation && (
               <div>
                 <Label>Deliver to</Label>
                 <Select value={locationId} onValueChange={setLocationId}>
