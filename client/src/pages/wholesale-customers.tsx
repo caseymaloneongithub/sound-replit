@@ -60,6 +60,7 @@ export default function WholesaleCustomers() {
       email: "",
       phone: "",
       allowOnlinePayment: true,
+      allowCardPayment: true,
     },
   });
 
@@ -125,6 +126,7 @@ export default function WholesaleCustomers() {
       email: customer.email,
       phone: customer.phone,
       allowOnlinePayment: customer.allowOnlinePayment,
+      allowCardPayment: customer.allowCardPayment ?? true,
     });
     setDialogOpen(true);
   };
@@ -137,6 +139,7 @@ export default function WholesaleCustomers() {
       email: "",
       phone: "",
       allowOnlinePayment: true,
+      allowCardPayment: true,
     });
     setDialogOpen(true);
   };
@@ -718,10 +721,10 @@ export default function WholesaleCustomers() {
                       render={({ field }) => (
                         <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
                           <div className="space-y-0.5">
-                            <FormLabel>Allow Online Payment (ACH)</FormLabel>
+                            <FormLabel>Bank transfer (ACH)</FormLabel>
                             <p className="text-sm text-muted-foreground">
-                              Let this customer pay invoices by bank transfer. On by default —
-                              turn off for invoice-only terms or a credit hold.
+                              Pay invoices online by bank transfer. Turn both methods off
+                              for invoice-only terms or a credit hold.
                             </p>
                           </div>
                           <FormControl>
@@ -729,6 +732,28 @@ export default function WholesaleCustomers() {
                               checked={field.value}
                               onCheckedChange={field.onChange}
                               data-testid="switch-allow-online-payment"
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="allowCardPayment"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                          <div className="space-y-0.5">
+                            <FormLabel>Credit card</FormLabel>
+                            <p className="text-sm text-muted-foreground">
+                              Pay invoices online by card. Turn off where the card fee
+                              isn't worth it on big invoices.
+                            </p>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value !== false}
+                              onCheckedChange={field.onChange}
+                              data-testid="switch-allow-card-payment"
                             />
                           </FormControl>
                         </FormItem>
