@@ -1745,7 +1745,7 @@ interface WholesaleInvoiceLocation {
   contactPhone?: string | null;
 }
 
-interface WholesaleInvoiceEmailParams {
+export interface WholesaleInvoiceEmailParams {
   customerEmail: string;
   businessName: string;
   contactName: string;
@@ -1819,7 +1819,15 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
     doc.on('data', (chunk) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
+    renderInvoicePage(doc, params);
+    doc.end();
+  });
+}
 
+// Draw one Wave-style invoice onto the CURRENT page of an existing document —
+// shared by the emailed single-invoice PDF and the driver's delivery packet.
+export function renderInvoicePage(doc: PDFKit.PDFDocument, params: WholesaleInvoiceEmailParams): void {
+  {
     const RIGHT = PDF_WIDTH - PDF_MARGIN;
     const money = (n: number) => `$${n.toFixed(2)}`;
 
@@ -1940,6 +1948,104 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
       doc.fillColor(TEXT_COLOR).text(`Pay online: ${params.paymentUrl} — or mail a check to the address above.`, PDF_MARGIN, footerY, { width: PDF_CONTENT_WIDTH, lineBreak: false });
     } else {
       doc.text('Payment Terms: Net 30 — please mail a check to the address above.', PDF_MARGIN, footerY, { width: PDF_CONTENT_WIDTH });
+    }
+  }
+}
+
+// Driver's delivery packet: page 1 is the route in drive order, then each stop's
+// invoice on its own page — one print job hands the driver everything.
+export async function generateDeliveryPacketPDF(input: {
+  routeDate: Date;
+  totalDistanceMeters?: number | null;
+  totalDurationSeconds?: number | null;
+  stops: Array<{ order: number; label: string; address: string; arrival?: Date | null; invoiceNumber?: string | null; totalAmount?: string | null; notes?: string | null; paid?: boolean }>;
+  // Aggregated across all deliveries (real products only, no invoice adjustments) —
+  // what to load on the truck.
+  packingList: Array<{ productName: string; quantity: number }>;
+  invoices: WholesaleInvoiceEmailParams[];
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const doc = new PDFDocument({ margin: PDF_MARGIN, size: 'LETTER' });
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    // ===== PAGE 1: THE ROUTE =====
+    try {
+      doc.image('attached_assets/invoice-logo.png', PDF_MARGIN, PDF_MARGIN, { width: 48 });
+    } catch { /* wordmark below carries it */ }
+    doc.fontSize(22).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+    doc.text('Delivery Route', PDF_MARGIN, PDF_MARGIN + 4, { width: PDF_CONTENT_WIDTH, align: 'right' });
+    doc.fontSize(11).font('Helvetica').fillColor(LABEL_COLOR);
+    doc.text(format(input.routeDate, 'EEEE, MMMM d, yyyy'), PDF_MARGIN, PDF_MARGIN + 32, { width: PDF_CONTENT_WIDTH, align: 'right' });
+
+    const miles = input.totalDistanceMeters ? (input.totalDistanceMeters / 1609.34).toFixed(1) + ' mi' : null;
+    const mins = input.totalDurationSeconds ? Math.round(input.totalDurationSeconds / 60) : null;
+    const duration = mins != null ? (mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins} min`) : null;
+    const summary = [`${input.stops.length} stops`, miles, duration ? `about ${duration} driving` : null].filter(Boolean).join('  ·  ');
+    doc.text(summary, PDF_MARGIN, PDF_MARGIN + 46, { width: PDF_CONTENT_WIDTH, align: 'right' });
+
+    let y = PDF_MARGIN + 78;
+    doc.moveTo(PDF_MARGIN, y).lineTo(PDF_WIDTH - PDF_MARGIN, y).lineWidth(1).strokeColor('#dddddd').stroke();
+    y += 12;
+
+    for (const stop of input.stops) {
+      if (y > doc.page.height - 90) { doc.addPage(); y = PDF_MARGIN; }
+      doc.fontSize(11).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+      doc.text(`${stop.order}.  ${stop.label}`, PDF_MARGIN, y, { width: PDF_CONTENT_WIDTH - 110 });
+      if (stop.arrival) {
+        doc.fontSize(10).font('Helvetica').fillColor(LABEL_COLOR);
+        doc.text(`ETA ${format(stop.arrival, 'h:mm a')}`, PDF_WIDTH - PDF_MARGIN - 100, y, { width: 100, align: 'right' });
+      }
+      y = doc.y + 2;
+      doc.fontSize(9).font('Helvetica').fillColor(LABEL_COLOR);
+      if (stop.address) { doc.text(stop.address, PDF_MARGIN + 18, y, { width: PDF_CONTENT_WIDTH - 18 }); y = doc.y + 1; }
+      const bits = [
+        stop.invoiceNumber ? `${stop.invoiceNumber} · $${Number(stop.totalAmount ?? 0).toFixed(2)}${stop.paid ? ' · PAID' : ''}` : null,
+        stop.notes ? `Note: ${stop.notes}` : null,
+      ].filter(Boolean);
+      if (bits.length) { doc.fillColor(TEXT_COLOR).text(bits.join('   —   '), PDF_MARGIN + 18, y, { width: PDF_CONTENT_WIDTH - 18 }); y = doc.y + 1; }
+      y += 7;
+      doc.moveTo(PDF_MARGIN, y).lineTo(PDF_WIDTH - PDF_MARGIN, y).lineWidth(0.5).strokeColor('#eeeeee').stroke();
+      y += 10;
+    }
+
+    // ===== PACKING LIST: what to load on the truck =====
+    if (input.packingList.length > 0) {
+      doc.addPage();
+      doc.fontSize(22).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+      doc.text('Packing List', PDF_MARGIN, PDF_MARGIN);
+      doc.fontSize(10).font('Helvetica').fillColor(LABEL_COLOR);
+      doc.text(`Everything across all ${input.invoices.length} deliveries on ${format(input.routeDate, 'MMMM d')}`, PDF_MARGIN, PDF_MARGIN + 28);
+
+      let py = PDF_MARGIN + 56;
+      doc.rect(PDF_MARGIN, py - 5, PDF_CONTENT_WIDTH, 19).fill(HEADER_BG);
+      doc.fontSize(10).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+      doc.text('Product', PDF_MARGIN + 6, py);
+      doc.text('Total', PDF_WIDTH - PDF_MARGIN - 80, py, { width: 74, align: 'right' });
+      py += 22;
+      doc.fontSize(11).font('Helvetica');
+      let grandTotal = 0;
+      for (const line of input.packingList) {
+        if (py > doc.page.height - 70) { doc.addPage(); py = PDF_MARGIN; }
+        doc.fillColor(TEXT_COLOR).text(line.productName, PDF_MARGIN + 6, py, { width: PDF_CONTENT_WIDTH - 110 });
+        doc.text(String(line.quantity), PDF_WIDTH - PDF_MARGIN - 80, py, { width: 74, align: 'right' });
+        grandTotal += line.quantity;
+        py = doc.y + 5;
+        doc.moveTo(PDF_MARGIN, py - 2).lineTo(PDF_WIDTH - PDF_MARGIN, py - 2).lineWidth(0.5).strokeColor('#eeeeee').stroke();
+        py += 4;
+      }
+      py += 4;
+      doc.font('Helvetica-Bold').fillColor(TEXT_COLOR);
+      doc.text('Total units', PDF_MARGIN + 6, py);
+      doc.text(String(grandTotal), PDF_WIDTH - PDF_MARGIN - 80, py, { width: 74, align: 'right' });
+    }
+
+    // ===== INVOICES, IN DRIVE ORDER =====
+    for (const inv of input.invoices) {
+      doc.addPage();
+      renderInvoicePage(doc, inv);
     }
 
     doc.end();

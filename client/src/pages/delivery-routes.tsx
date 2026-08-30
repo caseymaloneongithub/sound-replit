@@ -400,6 +400,17 @@ export default function DeliveryRoutes() {
                   <CardDescription>
                     Total: {formatDistance(optimizedRoute.totalDistance)} -{" "}
                     {formatDuration(optimizedRoute.totalDuration)}
+                    {optimizedRoute.route?.id && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="ml-3"
+                        onClick={() => window.open(`/api/delivery/routes/${optimizedRoute.route!.id}/packet`, "_blank")}
+                        data-testid="button-print-packet"
+                      >
+                        Print delivery packet
+                      </Button>
+                    )}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>

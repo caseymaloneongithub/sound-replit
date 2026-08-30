@@ -13,7 +13,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail, sendPaymentMethodAddedNotification, sendWholesaleWelcomeEmail } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail, sendPaymentMethodAddedNotification, sendWholesaleWelcomeEmail, generateDeliveryPacketPDF } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
@@ -9620,6 +9620,104 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error("Error fetching routes:", error);
       res.status(500).json({ message: "Error fetching routes: " + error.message });
+    }
+  });
+
+  // Printable delivery packet: page 1 is the route in drive order, then each
+  // order-stop's invoice — one print job hands the driver everything.
+  app.get("/api/delivery/routes/:id/packet", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const route = await storage.getDeliveryRoute(req.params.id);
+      if (!route) return res.status(404).json({ message: "Route not found" });
+      const stops = await storage.getDeliveryRouteStops(req.params.id);
+      const customStops = await storage.getDeliveryStops();
+      const customById = new Map(customStops.map((c: any) => [c.id, c]));
+
+      const stopLines: any[] = [];
+      const invoices: any[] = [];
+      for (const stop of [...stops].sort((a, b) => a.stopOrder - b.stopOrder)) {
+        if (stop.stopType === 'order' && stop.wholesaleOrderId) {
+          const details = await storage.getWholesaleOrderWithDetails(stop.wholesaleOrderId);
+          if (!details) continue;
+          const { order, customer, items } = details;
+          const adjustments = await storage.getWholesaleOrderAdjustments(order.id);
+          const invoiceItems = [
+            ...items.map((item: any) => ({ productName: item.product.name, quantity: item.quantity, unitPrice: item.unitPrice })),
+            ...adjustments.map((a) => ({ productName: a.label, quantity: 1, unitPrice: a.amount })),
+          ];
+          const location = order.location ?? null;
+          const customerAddress = location ? `${location.address}, ${location.city}, ${location.state} ${location.zipCode}` : '';
+          stopLines.push({
+            order: stop.stopOrder,
+            label: `${customer.businessName}${location && location.locationName !== 'Main Location' ? ` — ${location.locationName}` : ''}`,
+            address: customerAddress,
+            arrival: stop.arrivalEstimate ? new Date(stop.arrivalEstimate) : null,
+            invoiceNumber: order.invoiceNumber,
+            totalAmount: order.totalAmount,
+            notes: order.notes,
+            paid: !!order.paidAt,
+          });
+          invoices.push({
+            customerEmail: customer.email,
+            businessName: customer.businessName,
+            contactName: customer.contactName,
+            customerAddress,
+            customerPhone: customer.phone,
+            invoiceNumber: order.invoiceNumber,
+            orderDate: new Date(order.orderDate),
+            deliveryDate: order.deliveryDate ? new Date(order.deliveryDate) : new Date(route.routeDate),
+            dueDate: order.dueDate ? new Date(order.dueDate) : null,
+            items: invoiceItems,
+            subtotal: Number(order.totalAmount),
+            notes: order.notes,
+            location,
+            // Print copies never carry a payment link — the footer falls back to
+            // "Net 30, mail a check".
+            allowOnlinePayment: false,
+            paymentUrl: null,
+            paidAt: order.paidAt ? new Date(order.paidAt) : null,
+          });
+        } else if (stop.deliveryStopId) {
+          const c: any = customById.get(stop.deliveryStopId);
+          stopLines.push({
+            order: stop.stopOrder,
+            label: c?.name ?? 'Custom stop',
+            address: c ? [c.address, c.city, c.state, c.zipCode].filter(Boolean).join(', ') : '',
+            arrival: stop.arrivalEstimate ? new Date(stop.arrivalEstimate) : null,
+            notes: c?.notes ?? null,
+          });
+        }
+      }
+
+      // Packing list: real products aggregated across every delivery on the route.
+      // Adjustments (pallet fees, credits) are invoice lines, not things on a truck.
+      const packing = new Map<string, number>();
+      for (const stop of [...stops].sort((a, b) => a.stopOrder - b.stopOrder)) {
+        if (stop.stopType !== 'order' || !stop.wholesaleOrderId) continue;
+        const details = await storage.getWholesaleOrderWithDetails(stop.wholesaleOrderId);
+        for (const item of details?.items ?? []) {
+          const name = (item as any).product.name;
+          packing.set(name, (packing.get(name) ?? 0) + item.quantity);
+        }
+      }
+      const packingList = Array.from(packing.entries())
+        .map(([productName, quantity]) => ({ productName, quantity }))
+        .sort((a, b) => a.productName.localeCompare(b.productName));
+
+      const pdf = await generateDeliveryPacketPDF({
+        routeDate: new Date(route.routeDate),
+        totalDistanceMeters: route.totalDistanceMeters,
+        totalDurationSeconds: route.totalDurationSeconds,
+        stops: stopLines,
+        packingList,
+        invoices,
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="delivery-packet-${format(new Date(route.routeDate), 'yyyy-MM-dd')}.pdf"`);
+      res.send(pdf);
+    } catch (error: any) {
+      console.error("Error building delivery packet:", error);
+      res.status(500).json({ message: "Error building delivery packet: " + error.message });
     }
   });
 
