@@ -314,7 +314,7 @@ export default function WholesaleCustomerOrders() {
                             data-testid={`button-pay-now-${order.id}`}
                           >
                             <Landmark className="h-4 w-4 mr-2" />
-                            Pay by bank
+                            Pay online
                           </Button>
                         )}
                         <Button

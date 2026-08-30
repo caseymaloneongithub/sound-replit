@@ -345,6 +345,9 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   // someone remembering to flip a switch. Turn it off per-customer for invoice-only terms
   // or a credit hold.
   allowOnlinePayment: boolean("allow_online_payment").notNull().default(true),
+  // Credit card at invoice checkout (owner decision 2026-08-30). Defaults ON; turned
+  // off per account where card fees bite (large-invoice accounts).
+  allowCardPayment: boolean("allow_card_payment").notNull().default(true),
 });
 
 export const wholesaleLocations = pgTable("wholesale_locations", {

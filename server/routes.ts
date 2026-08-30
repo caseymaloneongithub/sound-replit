@@ -429,10 +429,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     return await stripe.checkout.sessions.create({
       mode: 'payment',
-      // ACH Direct Debit only — wholesale does not pay by card. Note this makes payment
-      // ASYNCHRONOUS: the customer authorises here, funds settle days later. See
-      // settleWholesaleInvoice, which waits for payment_intent.succeeded.
-      payment_method_types: ['us_bank_account'],
+      // ACH always; credit card unless switched off for this account (large invoices,
+      // card fees). ACH is ASYNCHRONOUS — authorised here, funds settle days later via
+      // payment_intent.succeeded (see settleWholesaleInvoice); card settles instantly
+      // and checkout.session.completed marks it paid on the spot.
+      payment_method_types: customer.allowCardPayment !== false ? ['us_bank_account', 'card'] : ['us_bank_account'],
       payment_method_options: {
         us_bank_account: { verification_method: 'automatic' },
       },

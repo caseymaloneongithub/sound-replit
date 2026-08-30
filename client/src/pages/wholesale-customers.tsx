@@ -142,8 +142,8 @@ export default function WholesaleCustomers() {
   };
 
   const togglePaymentMutation = useMutation({
-    mutationFn: async ({ id, allowOnlinePayment }: { id: string; allowOnlinePayment: boolean }) => {
-      return await apiRequest("PATCH", `/api/wholesale/customers/${id}`, { allowOnlinePayment });
+    mutationFn: async ({ id, ...flags }: { id: string; allowOnlinePayment?: boolean; allowCardPayment?: boolean }) => {
+      return await apiRequest("PATCH", `/api/wholesale/customers/${id}`, flags);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/customers"] });
@@ -790,6 +790,7 @@ export default function WholesaleCustomers() {
                             <TableHead>Email</TableHead>
                             <TableHead>Phone</TableHead>
                             <TableHead>Online Payment</TableHead>
+                            <TableHead>Card</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -817,6 +818,17 @@ export default function WholesaleCustomers() {
                                   }}
                                   disabled={togglePaymentMutation.isPending}
                                   data-testid={`switch-payment-${customer.id}`}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Switch
+                                  id={`card-${customer.id}`}
+                                  checked={customer.allowCardPayment !== false}
+                                  onCheckedChange={(checked) => {
+                                    togglePaymentMutation.mutate({ id: customer.id, allowCardPayment: checked });
+                                  }}
+                                  disabled={togglePaymentMutation.isPending || !customer.allowOnlinePayment}
+                                  data-testid={`switch-card-${customer.id}`}
                                 />
                               </TableCell>
                               <TableCell className="text-right">
