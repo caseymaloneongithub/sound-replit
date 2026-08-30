@@ -267,6 +267,14 @@ export default function WholesaleInvoice() {
                   <div className="text-sm text-muted-foreground">Seattle, WA 98107</div>
                   <div className="text-sm text-muted-foreground">emily@soundkombucha.com</div>
                   <div className="text-sm text-muted-foreground">(206) 789-5219</div>
+                  {/* Checks go to the mailing address, not the brewery. */}
+                  {!order.paidAt && (
+                    <div className="text-sm text-muted-foreground mt-3" data-testid="text-remit-address">
+                      <div className="font-medium text-foreground">Mail checks to</div>
+                      <div>1008 W Sherri Dr</div>
+                      <div>Gilbert, AZ 85233</div>
+                    </div>
+                  )}
                 </div>
               </div>
 

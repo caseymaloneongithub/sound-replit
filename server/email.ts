@@ -1961,12 +1961,15 @@ export async function generateInvoicePDF(params: WholesaleInvoiceEmailParams): P
     } else if (params.allowOnlinePayment && params.paymentUrl) {
       doc.text('Pay online at:', PDF_MARGIN, footerY);
       doc.fillColor(TEXT_COLOR).text(params.paymentUrl, PDF_MARGIN, footerY + 10, { width: PDF_CONTENT_WIDTH });
+      // Checks go to the mailing address, not the brewery.
+      doc.fillColor(LABEL_COLOR).text('Or mail a check to: Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233', PDF_MARGIN, footerY + 22, { width: PDF_CONTENT_WIDTH });
     } else {
       doc.text('Payment Terms: Net 30', PDF_MARGIN, footerY);
+      doc.text('Mail checks to: Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233', PDF_MARGIN, footerY + 10, { width: PDF_CONTENT_WIDTH });
     }
-    
+
     doc.fillColor(LABEL_COLOR);
-    doc.text('Thank you for your business!', PDF_MARGIN, footerY + 25);
+    doc.text('Thank you for your business!', PDF_MARGIN, footerY + 36);
 
     doc.end();
   });
@@ -2036,17 +2039,21 @@ export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailPar
     <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 13px; text-align: center; margin: 12px 0 0 0;">
       Bank transfers take 4&ndash;5 business days to clear.
     </p>
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 13px; text-align: center; margin: 8px 0 0 0;">
+      Prefer to mail a check? Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233
+    </p>
   ` : `
     <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin: 24px 0;">
       <p style="margin: 0; color: ${BRAND_COLORS.darkGrey};"><strong>Payment Terms:</strong> Net 30</p>
+      <p style="margin: 8px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">Mail checks to: Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233</p>
     </div>
   `;
 
   const paymentText = params.paidAt 
     ? `\nPAID - ${paidDateFormatted}\nThank you for your payment!\n`
-    : params.allowOnlinePayment && params.paymentUrl 
-      ? `\nPay by bank transfer: ${params.paymentUrl}\n(Bank transfers take 4-5 business days to clear.)\n`
-      : '\nPayment Terms: Net 30\n';
+    : params.allowOnlinePayment && params.paymentUrl
+      ? `\nPay by bank transfer: ${params.paymentUrl}\n(Bank transfers take 4-5 business days to clear.)\nOr mail a check to: Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233\n`
+      : '\nPayment Terms: Net 30\nMail checks to: Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233\n';
 
   // Delivery location section
   const locationHtml = params.location ? `
