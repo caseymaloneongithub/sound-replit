@@ -6471,11 +6471,28 @@ If you have any questions, please don't hesitate to reach out!`,
         stock[it.label] = shelfByRetailLabel.get(it.label) ?? null;
       }
 
+      // Full flavor catalog per unit so the prep grid shows every flavor, zeros
+      // included: wholesale unit types expand to every product of their container;
+      // retail unit descriptions expand to their linked finished products.
+      const catalog: Record<string, Array<{ flavor: string; quantity: number; productId: string }>> = {};
+      for (const u of unitRows as any[]) {
+        if (!u.container) continue;
+        catalog[u.name] = (stockRows as any[])
+          .filter((r) => r.container === u.container)
+          .map((r) => ({ flavor: r.flavor, quantity: r.stock_quantity, productId: r.id }))
+          .sort((a, b) => a.flavor.localeCompare(b.flavor));
+      }
+      for (const r of retailStockRows as any[]) {
+        if (!r.flavor || !r.unit_description || !r.id) continue;
+        (catalog[r.unit_description] ??= []).push({ flavor: r.flavor, quantity: r.stock_quantity, productId: r.id });
+      }
+
       res.json({
         week: { mondayISO, startISO: start.toISOString(), endISO: end.toISOString(), offset: weekOffset },
         orders,
         totals,
         stock,
+        catalog,
         counts: { retail: retail.length, wholesale: wholesale.length },
       });
     } catch (error: any) {

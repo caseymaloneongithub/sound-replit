@@ -30,6 +30,7 @@ type BoardData = {
   orders: BoardOrder[];
   totals: { retail: BoardItem[]; wholesale: BoardItem[] };
   stock?: Record<string, { quantity: number; productId: string } | null>;
+  catalog?: Record<string, Array<{ flavor: string; quantity: number; productId: string }>>;
   counts: { retail: number; wholesale: number };
 };
 
@@ -169,7 +170,7 @@ export default function OrdersBoard() {
             ) : totalItems === 0 ? (
               <p className="text-muted-foreground">Nothing scheduled this week.</p>
             ) : (
-              <PrepGrid retail={data!.totals.retail} wholesale={data!.totals.wholesale} stock={data!.stock ?? {}} />
+              <PrepGrid retail={data!.totals.retail} wholesale={data!.totals.wholesale} stock={data!.stock ?? {}} catalog={data!.catalog ?? {}} />
             )}
           </CardContent>
         </Card>
@@ -227,7 +228,7 @@ export default function OrdersBoard() {
  * Wholesale / Retail / Total rows, and In Stock (shelf count) under the total —
  * red when the shelf can't cover the week. Item labels arrive as "Flavor — Unit".
  */
-function PrepGrid({ retail, wholesale, stock }: { retail: BoardItem[]; wholesale: BoardItem[]; stock: Record<string, { quantity: number; productId: string } | null> }) {
+function PrepGrid({ retail, wholesale, stock, catalog }: { retail: BoardItem[]; wholesale: BoardItem[]; stock: Record<string, { quantity: number; productId: string } | null>; catalog: Record<string, Array<{ flavor: string; quantity: number; productId: string }>> }) {
   const parse = (label: string) => {
     const idx = label.lastIndexOf(" — ");
     return idx === -1
@@ -251,6 +252,16 @@ function PrepGrid({ retail, wholesale, stock }: { retail: BoardItem[]; wholesale
   };
   add(wholesale, "wholesale");
   add(retail, "retail");
+
+  // Every flavor shows, zeros included — but only for units that have SOME activity
+  // this week (an all-zero unit table is noise, an all-zero flavor column is signal).
+  for (const [unit, flavors] of Array.from(units.entries())) {
+    for (const entry of catalog[unit] ?? []) {
+      if (!flavors.has(entry.flavor)) {
+        flavors.set(entry.flavor, { wholesale: 0, retail: 0, stock: entry.quantity, productId: entry.productId });
+      }
+    }
+  }
 
   const unitGroups = Array.from(units.entries())
     .map(([unit, flavors]) => ({
