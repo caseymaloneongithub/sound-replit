@@ -3487,8 +3487,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const existingUser = await storage.getUser(user.id);
         
         if (existingUser?.stripeCustomerId) {
-          stripeCustomer = await stripe.customers.retrieve(existingUser.stripeCustomerId);
-        } else {
+          try {
+            stripeCustomer = await stripe.customers.retrieve(existingUser.stripeCustomerId);
+            // retrieve() returns rather than throws for deleted customers
+            if ((stripeCustomer as any)?.deleted) stripeCustomer = undefined;
+          } catch (e: any) {
+            // Stale id from the test-mode era — fall through and mint a fresh one
+            if (e?.code !== 'resource_missing') throw e;
+            console.warn(`[CHECKOUT] Stale Stripe customer ${existingUser.stripeCustomerId} for user ${user.id} — recreating`);
+          }
+        }
+        if (!stripeCustomer) {
           stripeCustomer = await stripe.customers.create({
             email: validated.customerEmail,
             name: validated.customerName,
@@ -5402,12 +5411,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Create billing portal session
-      const session = await stripe.billingPortal.sessions.create({
-        customer: portalCustomerId,
+      // Create billing portal session. A stored customer id can be stale — minted
+      // under the old test keys or the pre-migration Stripe account — in which case
+      // live Stripe answers "No such customer": mint a fresh one and retry, exactly
+      // like the id had never existed. createStripeCustomer persists the new id.
+      const makePortalSession = (customerId: string) => stripe!.billingPortal.sessions.create({
+        customer: customerId,
         // /my-subscriptions only redirects to /my-account — send them straight there
         return_url: `${getBaseUrl()}/my-account` // Origin is client-supplied and proxies may strip it,
       });
+      let session;
+      try {
+        session = await makePortalSession(portalCustomerId);
+      } catch (portalError: any) {
+        if (portalError?.code !== 'resource_missing') throw portalError;
+        console.warn(`[BILLING PORTAL] Stale Stripe customer ${portalCustomerId} for ${user.email} — recreating`);
+        const freshId = await createStripeCustomer({
+          userId: user.id,
+          email: user.email,
+          phoneNumber: user.phoneNumber,
+          firstName: user.firstName ?? undefined,
+          lastName: user.lastName ?? undefined,
+        });
+        if (!freshId) {
+          return res.status(500).json({ message: "Couldn't set up billing for this account — try again or contact us." });
+        }
+        session = await makePortalSession(freshId);
+      }
 
       res.json({ url: session.url });
     } catch (error: any) {
