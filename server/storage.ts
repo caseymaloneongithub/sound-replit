@@ -232,7 +232,7 @@ export interface IStorage {
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
   getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
   getWholesaleOrdersByDeliveryDateRange(startDate: Date, endDate: Date): Promise<WholesaleOrder[]>;
-  getWeeklyBoardOrders(start: Date, end: Date): Promise<{
+  getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean }): Promise<{
     retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; items: Array<{ flavorName: string; unitDescription: string; quantity: number }> }>;
     wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
   }>;
@@ -2611,19 +2611,30 @@ export class PostgresStorage implements IStorage {
    * scheduled on. Items carry human names so the board can show and total them. Cancelled
    * retail orders are excluded (nothing to prepare); soft-deleted rows are always excluded.
    */
-  async getWeeklyBoardOrders(start: Date, end: Date): Promise<{
+  async getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean }): Promise<{
     retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; items: Array<{ flavorName: string; unitDescription: string; quantity: number }> }>;
     wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
   }> {
     // --- Retail (by pickupDate) ---
+    // On the ACTIVE week (retailBacklog), open orders never fall off the board: anything
+    // not yet fulfilled rides along even if its pickup date slipped past a prior week or
+    // was never set (owner decision 2026-08-30). Historical weeks stay date-bucketed.
+    const inWindow = and(gte(retailOrders.pickupDate, start), lt(retailOrders.pickupDate, end));
     const retailRows = await db
       .select()
       .from(retailOrders)
       .where(and(
         isNull(retailOrders.deletedAt),
         sql`${retailOrders.status} <> 'cancelled'`,
-        gte(retailOrders.pickupDate, start),
-        lt(retailOrders.pickupDate, end),
+        opts?.retailBacklog
+          ? or(
+              inWindow,
+              and(
+                sql`${retailOrders.status} <> 'fulfilled'`,
+                or(isNull(retailOrders.pickupDate), lt(retailOrders.pickupDate, end)),
+              ),
+            )
+          : inWindow,
       ))
       .orderBy(asc(retailOrders.pickupDate));
 

@@ -6389,7 +6389,12 @@ If you have any questions, please don't hesitate to reach out!`,
       const weekOffset = Number.isFinite(rawOffset) ? Math.max(-26, Math.min(26, rawOffset)) : 0;
       const { start, end, mondayISO } = getPacificWeekRange(weekOffset);
 
-      const { retail, wholesale } = await storage.getWeeklyBoardOrders(start, end);
+      // The "active" week matches the client's default view (next week once Sunday hits).
+      // Only there does the open retail backlog ride along; history stays date-bucketed.
+      const pacificDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }).format(new Date());
+      const retailBacklog = weekOffset === (pacificDay === 'Sun' ? 1 : 0);
+
+      const { retail, wholesale } = await storage.getWeeklyBoardOrders(start, end, { retailBacklog });
 
       // Normalise both channels to one card shape. The client maps status→stage per kind.
       const orders = [
