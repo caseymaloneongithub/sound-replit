@@ -370,6 +370,9 @@ export const wholesaleLocations = pgTable("wholesale_locations", {
   zipCode: text("zip_code").notNull(),
   contactName: text("contact_name"),
   contactPhone: text("contact_phone"),
+  // Invoices go to the store when set (e.g. each Evergreens location bills its own
+  // inbox); the account email is the fallback.
+  contactEmail: text("contact_email"),
   deliveryInstructions: text("delivery_instructions"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),

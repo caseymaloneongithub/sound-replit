@@ -27,6 +27,7 @@ const EMPTY = {
   zipCode: "",
   contactName: "",
   contactPhone: "",
+  contactEmail: "",
   deliveryInstructions: "",
 };
 
@@ -64,6 +65,7 @@ export default function WholesaleCustomerLocations() {
         ...form,
         contactName: form.contactName || undefined,
         contactPhone: form.contactPhone || undefined,
+        contactEmail: form.contactEmail || undefined,
         deliveryInstructions: form.deliveryInstructions || undefined,
       };
       return editing
@@ -108,6 +110,7 @@ export default function WholesaleCustomerLocations() {
       zipCode: loc.zipCode,
       contactName: loc.contactName ?? "",
       contactPhone: loc.contactPhone ?? "",
+      contactEmail: (loc as any).contactEmail ?? "",
       deliveryInstructions: loc.deliveryInstructions ?? "",
     });
   };
@@ -264,6 +267,13 @@ export default function WholesaleCustomerLocations() {
                   <Label htmlFor="contactPhone">Contact phone</Label>
                   <Input id="contactPhone" type="tel" value={form.contactPhone} onChange={set("contactPhone")} data-testid="input-contact-phone" />
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="contactEmail">Invoice email</Label>
+                <Input id="contactEmail" type="email" value={form.contactEmail} onChange={set("contactEmail")}
+                  placeholder="Invoices for this location go here (account email otherwise)"
+                  data-testid="input-contact-email" />
               </div>
 
               <div className="space-y-2">

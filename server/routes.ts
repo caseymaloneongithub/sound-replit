@@ -6835,10 +6835,14 @@ If you have any questions, please don't hesitate to reach out!`,
         }
       }
 
+      // Invoices go to the delivery location's own inbox when it has one — each
+      // Evergreens store bills separately (owner, 2026-08-31). Account email otherwise.
+      const invoiceRecipient = (order.location as any)?.contactEmail || customer.email;
+
       // Send the invoice email
       await sendWholesaleInvoiceEmail({
         poNumber: (order as any).poNumber ?? null,
-        customerEmail: customer.email,
+        customerEmail: invoiceRecipient,
         businessName: customer.businessName,
         contactName: customer.contactName,
         customerAddress,
@@ -6856,9 +6860,9 @@ If you have any questions, please don't hesitate to reach out!`,
         paidAt: order.paidAt ? new Date(order.paidAt) : null,
       });
 
-      res.json({ 
-        success: true, 
-        message: `Invoice sent to ${customer.email}`,
+      res.json({
+        success: true,
+        message: `Invoice sent to ${invoiceRecipient}`,
         hasPaymentLink: !!paymentUrl,
       });
     } catch (error: any) {

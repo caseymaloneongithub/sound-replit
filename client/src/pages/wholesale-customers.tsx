@@ -290,6 +290,7 @@ export default function WholesaleCustomers() {
       zipCode: "",
       contactName: "",
       contactPhone: "",
+      contactEmail: "",
     },
   });
 
@@ -380,6 +381,7 @@ export default function WholesaleCustomers() {
       zipCode: location.zipCode,
       contactName: location.contactName || "",
       contactPhone: location.contactPhone || "",
+      contactEmail: (location as any).contactEmail || "",
     });
   };
 
@@ -989,11 +991,12 @@ export default function WholesaleCustomers() {
                           ) : (
                             <div className="text-sm text-muted-foreground mt-1 italic">No address</div>
                           )}
-                          {location.contactName && (
+                          {(location.contactName || (location as any).contactEmail) && (
                             <div className="text-sm text-muted-foreground mt-2">
                               <div className="font-medium">Contact:</div>
-                              <div>{location.contactName}</div>
+                              {location.contactName && <div>{location.contactName}</div>}
                               {location.contactPhone && <div>{location.contactPhone}</div>}
+                              {(location as any).contactEmail && <div>{(location as any).contactEmail}</div>}
                             </div>
                           )}
                         </div>
@@ -1095,6 +1098,19 @@ export default function WholesaleCustomers() {
                       </FormItem>
                     )}
                   />
+                  <FormField
+                    control={locationForm.control}
+                    name="contactEmail"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Invoice Email (Optional)</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="email" value={field.value || ""} placeholder="Invoices for this location go here" data-testid="input-location-contact-email" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                   <div className="flex gap-2">
                     {editingLocation && (
                       <Button
@@ -1111,6 +1127,7 @@ export default function WholesaleCustomers() {
                             zipCode: "",
                             contactName: "",
                             contactPhone: "",
+                            contactEmail: "",
                           });
                         }}
                         data-testid="button-cancel-edit-location"
