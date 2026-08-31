@@ -12,6 +12,15 @@ declare module 'http' {
     rawBody: unknown
   }
 }
+// Canonical host: www redirects to the bare domain so links and the address bar
+// always read soundkombucha.com. Permanent redirect, path and query preserved.
+app.use((req, res, next) => {
+  if (req.headers.host === 'www.soundkombucha.com') {
+    return res.redirect(301, `https://soundkombucha.com${req.originalUrl}`);
+  }
+  next();
+});
+
 app.use(express.json({
   verify: (req, _res, buf) => {
     req.rawBody = buf;
