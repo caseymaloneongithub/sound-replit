@@ -5982,6 +5982,9 @@ If you have any questions, please don't hesitate to reach out!`,
         })).min(1),
         pickupDate: z.string().optional().nullable(),
         notes: z.string().optional(),
+        // Comped cases, or orders migrated from the old system that were already
+        // paid there: goods move, no money is owed (and none hits Filing Numbers).
+        noCharge: z.boolean().optional().default(false),
       });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: "Invalid order", errors: parsed.error.errors });
@@ -5996,8 +5999,9 @@ If you have any questions, please don't hesitate to reach out!`,
         if (!rp) return res.status(400).json({ message: `Unknown product ${item.retailProductId}` });
         subtotal += Number(rp.price) * item.quantity;
         deposit += Number(rp.deposit || 0) * item.quantity;
-        lines.push({ retailProductId: rp.id, selectedFlavorId: item.selectedFlavorId || null, quantity: item.quantity, unitPrice: String(rp.price) });
+        lines.push({ retailProductId: rp.id, selectedFlavorId: item.selectedFlavorId || null, quantity: item.quantity, unitPrice: parsed.data.noCharge ? '0.00' : String(rp.price) });
       }
+      if (parsed.data.noCharge) { subtotal = 0; deposit = 0; }
       const total = subtotal + deposit;
 
       // Same ORDxxxxxx series checkout mints; retry past the rare collision.
@@ -6017,7 +6021,10 @@ If you have any questions, please don't hesitate to reach out!`,
             taxAmount: '0.00',
             depositAmount: deposit.toFixed(2),
             totalAmount: total.toFixed(2),
-            notes: parsed.data.notes?.trim() ? `${parsed.data.notes.trim()} — staff-entered, pay at pickup` : 'Staff-entered, pay at pickup',
+            notes: (() => {
+              const tail = parsed.data.noCharge ? 'staff-entered, NO CHARGE' : 'staff-entered, pay at pickup';
+              return parsed.data.notes?.trim() ? `${parsed.data.notes.trim()} — ${tail}` : `${tail.charAt(0).toUpperCase()}${tail.slice(1)}`;
+            })(),
           } as any);
         } catch (err: any) {
           if (attempt >= 5 || !String(err?.message || '').includes('unique')) throw err;

@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, MoreHorizontal } from "lucide-react";
@@ -413,7 +414,8 @@ function NewOrderDialog({ customer, onOpenChange }: { customer: RetailCustomer |
     return p ? sum + (Number(p.price) + Number(p.deposit || 0)) * l.quantity : sum;
   }, 0);
 
-  const reset = () => { setLines([{ retailProductId: "", selectedFlavorId: "", quantity: 1 }]); setPickupDate(""); setNotes(""); };
+  const [noCharge, setNoCharge] = useState(false);
+  const reset = () => { setLines([{ retailProductId: "", selectedFlavorId: "", quantity: 1 }]); setPickupDate(""); setNotes(""); setNoCharge(false); };
 
   const create = useMutation({
     mutationFn: async () =>
@@ -424,11 +426,12 @@ function NewOrderDialog({ customer, onOpenChange }: { customer: RetailCustomer |
           .map((l) => ({ retailProductId: l.retailProductId, selectedFlavorId: l.selectedFlavorId || null, quantity: l.quantity })),
         pickupDate: pickupDate || null,
         notes: notes || undefined,
+        noCharge,
       }),
     onSuccess: (order: any) => {
       queryClient.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith("/api/retail/orders") });
       queryClient.invalidateQueries({ queryKey: ["/api/staff/orders-board"] });
-      toast({ title: `Order ${order.orderNumber} created`, description: `$${Number(order.totalAmount).toFixed(2)} — pay at pickup.` });
+      toast({ title: `Order ${order.orderNumber} created`, description: noCharge ? "No charge — nothing owed at pickup." : `$${Number(order.totalAmount).toFixed(2)} — pay at pickup.` });
       reset();
       onOpenChange(false);
     },
@@ -509,6 +512,13 @@ function NewOrderDialog({ customer, onOpenChange }: { customer: RetailCustomer |
           <div>
             <Label htmlFor="ro-notes">Notes</Label>
             <Textarea id="ro-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} data-testid="input-order-notes" />
+          </div>
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="ro-no-charge">No charge</Label>
+              <p className="text-sm text-muted-foreground">Comped, or already paid in the old system — totals record as $0.</p>
+            </div>
+            <Switch id="ro-no-charge" checked={noCharge} onCheckedChange={setNoCharge} data-testid="switch-no-charge" />
           </div>
         </div>
         <DialogFooter>
