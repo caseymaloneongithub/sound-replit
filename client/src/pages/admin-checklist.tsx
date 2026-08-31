@@ -627,7 +627,7 @@ export default function AdminChecklist() {
       <div className="p-6 space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
+            <h1 className="text-3xl font-bold flex items-center gap-2">
               Weekly Checklist
             </h1>
             <p className="text-muted-foreground">Track and complete weekly operational tasks</p>

@@ -225,7 +225,7 @@ export default function AccountingBanks() {
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold" data-testid="heading-bank-connections">
+            <h1 className="text-3xl font-bold" data-testid="heading-bank-connections">
               Bank Connections
             </h1>
             <p className="text-muted-foreground">

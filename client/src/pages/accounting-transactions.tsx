@@ -434,7 +434,7 @@ export default function AccountingTransactions() {
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold" data-testid="heading-transactions">
+            <h1 className="text-3xl font-bold" data-testid="heading-transactions">
               Transactions
             </h1>
             <p className="text-muted-foreground">

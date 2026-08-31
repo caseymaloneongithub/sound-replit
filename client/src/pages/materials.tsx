@@ -338,7 +338,7 @@ export default function Materials() {
       <div className="max-w-7xl mx-auto px-6 py-10">
         <div className="flex items-start justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-bold mb-1" data-testid="text-materials-title">Materials</h1>
+            <h1 className="text-3xl font-bold mb-1" data-testid="text-materials-title">Materials</h1>
             <p className="text-muted-foreground">
               Raw process inputs and current stock on hand
             </p>

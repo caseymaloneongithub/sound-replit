@@ -205,7 +205,7 @@ export default function Productions() {
       <div className="max-w-7xl mx-auto px-6 py-10">
         <div className="flex items-start justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-bold mb-1" data-testid="text-productions-title">Productions</h1>
+            <h1 className="text-3xl font-bold mb-1" data-testid="text-productions-title">Productions</h1>
             <p className="text-muted-foreground">
               Log a batch — recording one draws down the raw materials it consumed
             </p>
