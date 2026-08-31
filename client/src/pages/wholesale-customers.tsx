@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ContactRequestsPanel } from "@/components/staff/contact-requests-panel";
 import { AuthorizedContactsDialog } from "@/components/staff/authorized-contacts-dialog";
@@ -370,8 +370,13 @@ export default function WholesaleCustomers() {
     }
   };
 
+  // The edit form lives BELOW the location list; on long lists (Evergreens: 14 stores)
+  // it's off-screen, so tapping the pencil looked like a dead button.
+  const locationFormRef = useRef<HTMLDivElement>(null);
+
   const handleEditLocation = (location: WholesaleLocation) => {
     setEditingLocation(location);
+    setTimeout(() => locationFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
     locationForm.reset({
       customerId: location.customerId,
       locationName: location.locationName,
@@ -1031,9 +1036,9 @@ export default function WholesaleCustomers() {
             )}
 
             {/* Add/Edit Location Form */}
-            <div>
+            <div ref={locationFormRef}>
               <Label className="text-sm font-medium">
-                {editingLocation ? 'Edit Location' : 'Add New Location'}
+                {editingLocation ? `Edit Location — ${editingLocation.locationName}` : 'Add New Location'}
               </Label>
               <Form {...locationForm}>
                 <form onSubmit={locationForm.handleSubmit(handleLocationSubmit)} className="space-y-4 mt-2">
