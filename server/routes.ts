@@ -9678,7 +9678,10 @@ If you have any questions, please don't hesitate to reach out!`,
             id: order.id,
             latitude: parseFloat(lat),
             longitude: parseFloat(lng),
-            name: customer?.businessName || 'Unknown',
+            // Multi-location stores need the store on the stop: "Evergreens — Thomas & Boren"
+            name: location?.locationName && location.locationName !== 'Main Location'
+              ? `${customer?.businessName || 'Unknown'} — ${location.locationName}`
+              : (customer?.businessName || 'Unknown'),
             address: location ? `${location.address}, ${location.city}` : 'Unknown',
             type: 'order',
             orderId: order.id,

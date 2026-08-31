@@ -45,6 +45,7 @@ interface EnrichedOrder {
     businessName: string;
   };
   location?: {
+    locationName?: string;
     address: string;
     city: string;
     latitude?: string;
@@ -135,6 +136,11 @@ export default function DeliveryRoutes() {
       if (!response.ok) throw new Error("Failed to fetch delivery orders");
       return response.json();
     },
+    // The app default is staleTime: Infinity — an order entered after this page loaded
+    // never appeared until a full reload. Keep the day's list live.
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
   });
 
   const { data: customStops = [], isLoading: stopsLoading } = useQuery<DeliveryStop[]>({
@@ -368,6 +374,9 @@ export default function DeliveryRoutes() {
                           <div>
                             <p className="font-medium">
                               {order.customer?.businessName || "Unknown"}
+                              {order.location?.locationName && order.location.locationName !== "Main Location" && (
+                                <span className="font-normal text-muted-foreground"> — {order.location.locationName}</span>
+                              )}
                             </p>
                             {order.location && (
                               <p className="text-sm text-muted-foreground">
