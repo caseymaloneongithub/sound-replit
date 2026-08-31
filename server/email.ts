@@ -249,7 +249,7 @@ export async function sendPaymentMethodAddedNotification(params: { staffEmails: 
   }
   await transporter.sendMail({
     from: process.env.GMAIL_USER,
-    to: params.staffEmails.join(', '),
+    to: params.staffEmails,
     subject: `Payment method added — ${params.customerLabel}`,
     text: `${params.customerLabel} just saved a payment method (${params.methodLabel}). If they have a subscription waiting on a card, it will bill on its scheduled date — or they can use "Try payment again" for an immediate charge.`,
   });
@@ -683,7 +683,7 @@ export async function sendRetailOrderAdminNotification(params: RetailOrderAdminN
 
   const mailOptions = {
     from: process.env.GMAIL_USER,
-    to: params.adminEmails.join(', '),
+    to: params.adminEmails,
     subject: `${orderTypeLabel}: #${params.orderNumber} - ${params.customerName} ($${params.total.toFixed(2)})`,
     text: `
 ${orderTypeLabel}
@@ -883,7 +883,7 @@ export async function sendContactFormNotification(params: ContactFormNotificatio
 
   const mailOptions = {
     from: process.env.GMAIL_USER,
-    to: params.staffEmails.join(', '),
+    to: params.staffEmails,
     subject: `New Contact Form Submission from ${params.contactName}`,
     text: `
 New Contact Form Submission
@@ -1236,7 +1236,7 @@ export async function sendWholesaleInvoicePaidNotification(params: WholesaleInvo
   
   const mailOptions = {
     from: process.env.GMAIL_USER,
-    to: params.adminEmails.join(', '),
+    to: params.adminEmails,
     subject: `Invoice Paid: ${params.invoiceNumber} - ${params.businessName} ($${params.amount.toFixed(2)})`,
     text: `
 Wholesale Invoice Paid Online
@@ -1659,7 +1659,7 @@ export async function sendWholesaleOrderAdminNotification(params: WholesaleOrder
 
   const mailOptions = {
     from: process.env.GMAIL_USER,
-    to: params.adminEmails.join(', '),
+    to: params.adminEmails,
     subject: `New Wholesale Order: ${params.invoiceNumber} - ${params.businessName} ($${params.totalAmount.toFixed(2)})`,
     text: `
 New Wholesale Order
