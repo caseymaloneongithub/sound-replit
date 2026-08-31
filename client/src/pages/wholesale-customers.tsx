@@ -1110,7 +1110,7 @@ export default function WholesaleCustomers() {
                       <FormItem>
                         <FormLabel>Invoice Email (Optional)</FormLabel>
                         <FormControl>
-                          <Input {...field} type="email" value={field.value || ""} placeholder="Invoices for this location go here" data-testid="input-location-contact-email" />
+                          <Input {...field} type="email" multiple value={field.value || ""} placeholder="Invoices for this location go here — separate several with commas" data-testid="input-location-contact-email" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>

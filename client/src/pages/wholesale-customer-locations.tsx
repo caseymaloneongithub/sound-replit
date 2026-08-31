@@ -271,8 +271,8 @@ export default function WholesaleCustomerLocations() {
 
               <div className="space-y-2">
                 <Label htmlFor="contactEmail">Invoice email</Label>
-                <Input id="contactEmail" type="email" value={form.contactEmail} onChange={set("contactEmail")}
-                  placeholder="Invoices for this location go here (account email otherwise)"
+                <Input id="contactEmail" type="email" multiple value={form.contactEmail} onChange={set("contactEmail")}
+                  placeholder="Invoices for this location go here — separate several with commas"
                   data-testid="input-contact-email" />
               </div>
 

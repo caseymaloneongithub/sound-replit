@@ -1753,7 +1753,9 @@ interface WholesaleInvoiceLocation {
 
 export interface WholesaleInvoiceEmailParams {
   poNumber?: string | null;
-  customerEmail: string;
+  // One address or several — a location can bill more than one inbox. Arrays are
+  // passed to the transport as-is (never comma-joined; Resend rejects that).
+  customerEmail: string | string[];
   businessName: string;
   contactName: string;
   customerAddress: string;
