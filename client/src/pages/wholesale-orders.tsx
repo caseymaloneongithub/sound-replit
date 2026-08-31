@@ -60,7 +60,7 @@ export default function WholesaleOrders() {
   const [editPoNumber, setEditPoNumber] = useState('');
   const { toast } = useToast();
 
-  const { data: ordersData, isLoading } = useQuery<{ orders: WholesaleOrder[]; total: number }>({
+  const { data: ordersData, isLoading } = useQuery<{ orders: (WholesaleOrder & { locationName?: string | null })[]; total: number }>({
     queryKey: ["/api/wholesale/orders"],
   });
   const orders = ordersData?.orders ?? [];
@@ -449,6 +449,9 @@ export default function WholesaleOrders() {
                       <TableCell>
                         <div className="font-medium" data-testid={`text-customer-${order.id}`}>
                           {customer?.businessName || 'Unknown Customer'}
+                          {order.locationName && order.locationName !== 'Main Location' && (
+                            <span className="font-normal text-muted-foreground"> — {order.locationName}</span>
+                          )}
                         </div>
                         <div className="text-sm text-muted-foreground">
                           Invoice: {order.invoiceNumber}

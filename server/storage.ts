@@ -228,7 +228,7 @@ export interface IStorage {
   updateWholesaleLocation(id: string, updates: Partial<InsertWholesaleLocation>): Promise<WholesaleLocation | undefined>;
   deleteWholesaleLocation(id: string): Promise<void>;
   
-  getWholesaleOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: WholesaleOrder[]; total: number }>;
+  getWholesaleOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: Array<WholesaleOrder & { locationName: string | null }>; total: number }>;
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
   getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
   getWholesaleOrdersByDeliveryDateRange(startDate: Date, endDate: Date): Promise<WholesaleOrder[]>;
@@ -2440,7 +2440,7 @@ export class PostgresStorage implements IStorage {
     await db.delete(wholesaleLocations).where(eq(wholesaleLocations.id, id));
   }
 
-  async getWholesaleOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: WholesaleOrder[]; total: number }> {
+  async getWholesaleOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: Array<WholesaleOrder & { locationName: string | null }>; total: number }> {
     const whereClause = isNull(wholesaleOrders.deletedAt);
 
     const [countResult] = await db
@@ -2448,7 +2448,15 @@ export class PostgresStorage implements IStorage {
       .from(wholesaleOrders)
       .where(whereClause);
 
-    let query = db.select().from(wholesaleOrders).where(whereClause).orderBy(desc(wholesaleOrders.orderDate)).$dynamic();
+    // Location rides along so lists can tell "Evergreens — 2nd & Pike" from
+    // "Evergreens — Capitol Hill" without a per-order lookup.
+    let query = db
+      .select({ order: wholesaleOrders, locationName: wholesaleLocations.locationName })
+      .from(wholesaleOrders)
+      .leftJoin(wholesaleLocations, eq(wholesaleOrders.locationId, wholesaleLocations.id))
+      .where(whereClause)
+      .orderBy(desc(wholesaleOrders.orderDate))
+      .$dynamic();
 
     if (options?.limit !== undefined) {
       query = query.limit(options.limit);
@@ -2457,8 +2465,8 @@ export class PostgresStorage implements IStorage {
       query = query.offset(options.offset);
     }
 
-    const orders = await query;
-    return { orders, total: countResult.count };
+    const rows = await query;
+    return { orders: rows.map(r => ({ ...r.order, locationName: r.locationName })), total: countResult.count };
   }
 
   async getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined> {
