@@ -18,9 +18,10 @@ import ws from "ws";
 
 neonConfig.webSocketConstructor = ws;
 
-const SQLITE_PATH = process.argv[2] || "./inventory.db";
+const SQLITE_PATH = process.argv.filter(a => !a.startsWith("--"))[2] || "./inventory.db";
 const sqlite = new DatabaseSync(SQLITE_PATH);
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({ connectionString: process.argv.includes("--prod") ? (process.env.PROD_DATABASE_URL || process.env.DATABASE_URL_PROD) : process.env.DATABASE_URL });
+console.log("TARGET:", process.argv.includes("--prod") ? "PROD" : "dev");
 
 const all = (sql) => sqlite.prepare(sql).all();
 const clean = (v) => (typeof v === "string" ? v.trim() || null : v ?? null);
@@ -216,6 +217,22 @@ async function main() {
       ["id", "order_id", "material_id", "units", "delivered"],
       orderMatRows
     );
+
+    // Relink finished products (the mirror recreates processes without them, and
+    // productions -> shelf stock depends on the link). Bottle:/Can:/Keg: prefix maps
+    // to the product container; flavor comes from the text after the colon.
+    const relinked = await client.query(`
+      UPDATE processes p SET finished_product_id = pr.id
+      FROM products pr
+      WHERE p.flavor_id = pr.flavor_id
+        AND pr.container = CASE
+          WHEN p.title ILIKE 'bottle:%' THEN 'bottle-case'
+          WHEN p.title ILIKE 'can:%' THEN 'can-case'
+          WHEN p.title ILIKE 'keg:%' THEN 'keg-sixth'
+          ELSE NULL
+        END
+      RETURNING p.id`);
+    console.log(`  finished-product links restored: ${relinked.rowCount}`);
 
     await client.query("COMMIT");
 
