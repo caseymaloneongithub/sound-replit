@@ -10,7 +10,6 @@ import { Printer, ArrowLeft, Landmark, Loader2, Mail } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { formatCaseQuantity } from "@shared/pricing";
 import type { User } from "@shared/schema";
 
 export default function WholesaleInvoice() {
@@ -322,8 +321,8 @@ export default function WholesaleInvoice() {
                 <thead>
                   <tr className="border-b">
                     <th className="text-left py-3 font-semibold">Product</th>
-                    <th className="text-right py-3 font-semibold">Cases</th>
-                    <th className="text-right py-3 font-semibold">Price/Case</th>
+                    <th className="text-right py-3 font-semibold">Quantity</th>
+                    <th className="text-right py-3 font-semibold">Price/Unit</th>
                     <th className="text-right py-3 font-semibold">Total</th>
                   </tr>
                 </thead>
@@ -334,8 +333,9 @@ export default function WholesaleInvoice() {
                         <div className="font-medium">{item.product.name}</div>
                         <div className="text-sm text-muted-foreground">{item.product.flavor}</div>
                       </td>
+                      {/* Plain count — "4 cases (48 bottles)" read absurdly on keg lines. */}
                       <td className="text-right py-4">
-                        <div>{formatCaseQuantity(item.quantity)}</div>
+                        <div>{item.quantity}</div>
                       </td>
                       <td className="text-right py-4">${parseFloat(item.unitPrice).toFixed(2)}</td>
                       <td className="text-right py-4 font-medium">
