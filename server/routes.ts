@@ -3643,35 +3643,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             },
           }, { idempotencyKey: `retailsub_first_${subscription.id}` });
 
-          // Create first order immediately
+          // Create the first order through the SAME finalizer the webhook uses — it is
+          // idempotent on the payment intent, so whichever of this call and the
+          // payment_intent.succeeded webhook runs second is a no-op. The old inline
+          // insert here raced the webhook for the next order number and could lose,
+          // failing checkout AFTER the charge — the customer saw an error, retried,
+          // and got charged twice (Kirk, 2026-08-31).
           if (paymentIntent.status === 'succeeded') {
-            const orderCount = await db.select({ count: sql<number>`count(*)` }).from(retailOrders).where(isNull(retailOrders.deletedAt));
-            const orderNumber = `RO-${String((orderCount[0].count as number) + 1).padStart(6, '0')}`;
-
-            const [newOrder] = await db.insert(retailOrders).values({
-              orderNumber,
-              customerName: validated.customerName,
-              customerEmail: validated.customerEmail,
-              customerPhone: formatPhoneNumber(validated.customerPhone),
-              status: 'pending',
-              subtotal: subtotal.toFixed(2),
-              taxAmount: taxAmount.toFixed(2),
-              totalAmount: totalAmount.toFixed(2),
-              stripePaymentIntentId: paymentIntent.id,
-              isSubscriptionOrder: true,
-              userId: user.id,
-            }).returning();
-
-            // Create order item
-            await db.insert(retailOrderItemsV2).values({
-              orderId: newOrder.id,
-              retailProductId: item.retailProductId,
-              selectedFlavorId: item.selectedFlavorId,
-              quantity: item.quantity,
-              unitPrice: unitPrice.toFixed(2),
-            });
-
-            console.log(`[SUBSCRIPTION] ✅ Created first order ${orderNumber} for subscription ${subscription.id}`);
+            const { finalizeRetailSubscriptionCharge } = await import('./billing-cron');
+            const finalized = await finalizeRetailSubscriptionCharge(paymentIntent.id);
+            if (finalized) {
+              console.log(`[SUBSCRIPTION] ✅ First order finalized for subscription ${subscription.id}`);
+            } else {
+              console.error(`[SUBSCRIPTION] ⚠️ First-order finalize incomplete for ${paymentIntent.id} — the payment_intent.succeeded webhook will finish it`);
+            }
           } else {
             console.error(`[SUBSCRIPTION] ⚠️ Payment status ${paymentIntent.status} for first order`);
           }

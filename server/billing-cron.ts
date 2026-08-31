@@ -133,11 +133,23 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
       console.error(`🚨 [BILLING] Subscription ${sub.id} has unrecognized frequency "${sub.subscriptionFrequency}" — falling back to 28 days. Fix the subscription row.`);
       daysUntilNext = 28;
     }
-    const normalizedNextPickupDate = normalizeToAllowedPickupDay(
-      addDays(sub.nextDeliveryDate || new Date(), daysUntilNext)
-    );
+
+    // A SIGNUP charge is not a renewal (owner, 2026-08-31): the customer pays now and
+    // picks up NOW — the schedule checkout wrote (next cycle, one frequency out) already
+    // points at cycle two and must NOT advance again, or the first pickup lands a full
+    // cycle away and the next charge two cycles away (how Kirk got an Oct pickup for an
+    // Aug order).
+    const isFirstOrder = paymentIntent.metadata.type === 'retail_subscription_first_order';
+    const orderPickupDate = isFirstOrder
+      ? normalizeToAllowedPickupDay(new Date())
+      : (sub.nextDeliveryDate || new Date());
+    const normalizedNextPickupDate = isFirstOrder
+      ? (sub.nextDeliveryDate ?? normalizeToAllowedPickupDay(addDays(new Date(), daysUntilNext)))
+      : normalizeToAllowedPickupDay(addDays(sub.nextDeliveryDate || new Date(), daysUntilNext));
     // Billing happens on Monday of the pickup week
-    const nextBillingDate = getBillingDateForPickup(normalizedNextPickupDate);
+    const nextBillingDate = isFirstOrder && sub.nextChargeAt
+      ? sub.nextChargeAt
+      : getBillingDateForPickup(normalizedNextPickupDate);
 
     // The customer's card is ALREADY charged at this point, so the order, its line
     // items and the subscription's date advance must all land together. Previously
@@ -186,7 +198,7 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
           totalAmount.toFixed(2),
           paymentIntentId,
           sub.userId,
-          sub.nextDeliveryDate, // the pickup this charge pays for
+          orderPickupDate, // the pickup this charge pays for (signup = now, renewal = scheduled)
         ]
       );
       const newOrderId = inserted.rows[0].id;
@@ -225,9 +237,8 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
 
     // Send charge confirmation email with pickup instructions
     try {
-      // Get pickup date from the current subscription (before we updated it)
-      // The order is for the pickup date that was set before this renewal
-      const pickupDate = sub.nextDeliveryDate || new Date();
+      // The pickup this charge pays for (signup = now, renewal = the scheduled date)
+      const pickupDate = orderPickupDate;
       
       // Build subscription items with product and flavor names for the email
       const subscriptionItemsForEmail = await Promise.all(items.map(async (item) => {
