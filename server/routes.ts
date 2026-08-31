@@ -7586,12 +7586,17 @@ If you have any questions, please don't hesitate to reach out!`,
             })
             .from(retailOrderItemsV2)
             .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
-            .innerJoin(flavors, eq(flavors.id, retailProducts.flavorId))
+            // Left join on the CHOSEN flavor (falling back to the product's fixed one):
+            // an inner join on the fixed flavor silently dropped multi-flavor products,
+            // so a mixed-case order could send an empty ready email — or none at all.
+            .leftJoin(flavors, eq(flavors.id, sql`COALESCE(${retailOrderItemsV2.selectedFlavorId}, ${retailProducts.flavorId})`))
             .where(eq(retailOrderItemsV2.orderId, req.params.id));
-          
+
           for (const item of v2Items) {
-            if (item.retailProduct && item.flavor) {
-              const productName = `${item.flavor.name} - ${item.retailProduct.unitDescription}`;
+            if (item.retailProduct) {
+              const productName = item.flavor
+                ? `${item.flavor.name} - ${item.retailProduct.unitDescription}`
+                : item.retailProduct.unitDescription;
               orderItems.push({
                 productName,
                 quantity: item.quantity,

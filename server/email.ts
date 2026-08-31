@@ -803,9 +803,14 @@ Order Number: ${params.orderNumber}
 Items ready for pickup:
 ${itemsList}
 
-Pickup Hours: Monday-Thursday, 9am-3pm
+PICKUP INSTRUCTIONS
+-------------------
+Address: 4501 Shilshole Ave NW, Seattle, WA 98107
+Hours: Monday-Thursday, 9:00am to 3:00pm
+Location: At the back of the building at the garage door
+Phone: (206) 789-5219
 
-Please come by during our pickup hours to collect your order.
+Please call when you arrive and we'll bring your order out!
 
 Thank you for choosing Puget Sound Kombucha Co.!
 
@@ -832,12 +837,14 @@ Puget Sound Kombucha Co.
       `).join('')}
     </ul>
     
-    <div style="background-color: ${BRAND_COLORS.black}; color: ${BRAND_COLORS.white}; padding: 20px; margin-top: 32px; border-radius: 4px;">
-      <p style="margin: 0 0 8px 0; font-weight: bold; font-size: 16px;">Pickup Hours</p>
-      <p style="margin: 0; font-size: 18px; font-weight: 600;">Monday-Thursday, 9am-3pm</p>
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 20px; margin-top: 32px; border-radius: 4px; border: 2px solid ${BRAND_COLORS.black};">
+      <h3 style="margin: 0 0 16px 0; font-size: 16px; color: ${BRAND_COLORS.black};">📍 Pickup Instructions</h3>
+      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Address:</strong> 4501 Shilshole Ave NW, Seattle, WA 98107</p>
+      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Hours:</strong> Monday-Thursday, 9:00am to 3:00pm</p>
+      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Location:</strong> At the back of the building at the garage door</p>
+      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Phone:</strong> (206) 789-5219</p>
+      <p style="margin: 16px 0 0 0; color: ${BRAND_COLORS.black}; font-weight: 600;">📞 Please call when you arrive and we'll bring your order out!</p>
     </div>
-    
-    <p style="margin-top: 24px; color: ${BRAND_COLORS.darkGrey}; line-height: 1.6;">Please come by during our pickup hours to collect your order.</p>
     
     <p style="color: ${BRAND_COLORS.darkGrey}; margin-top: 32px;">Thank you for choosing Puget Sound Kombucha Co.!</p>
     
@@ -1120,28 +1127,21 @@ export async function sendSubscriptionChargeConfirmationEmail(params: Subscripti
   const mailOptions = {
     from: process.env.GMAIL_USER,
     to: params.customerEmail,
-    subject: `Your Subscription Order is Confirmed! Pickup on ${format(params.pickupDate, 'EEEE, MMM d')}`,
+    subject: `Your Subscription Order is Confirmed!`,
     text: `
 Hi ${params.customerName},
 
 Your subscription has been charged and your order is confirmed!
 
 ${params.orderNumber ? `Order Number: ${params.orderNumber}\n` : ''}
-PICKUP DATE: ${formattedPickupDate}
+PICKUP: ${formattedPickupDate}
 
 Your Items:
 ${itemsText}
 
 Total Charged: $${params.totalAmount.toFixed(2)} (including tax)
 
-PICKUP INSTRUCTIONS
--------------------
-Address: 4501 Shilshole Ave NW, Seattle, WA 98107
-Hours: Monday-Thursday, 9:00am to 3:00pm
-Location: At the back of the building at the garage door
-Phone: (206) 789-5219
-
-Please call when you arrive and we'll bring your order out!
+We'll email you as soon as your order is ready for pickup, with our hours and directions.
 
 Thank you for being a valued subscriber!
 
@@ -1164,8 +1164,9 @@ Puget Sound Kombucha Co.
     ` : ''}
     
     <div style="background-color: ${BRAND_COLORS.black}; color: ${BRAND_COLORS.white}; padding: 20px; border-radius: 4px; margin-bottom: 24px;">
-      <p style="margin: 0 0 4px 0; font-size: 14px; opacity: 0.9;">PICKUP DATE</p>
+      <p style="margin: 0 0 4px 0; font-size: 14px; opacity: 0.9;">PICKUP</p>
       <p style="margin: 0; font-size: 20px; font-weight: bold;">${formattedPickupDate}</p>
+      <p style="margin: 8px 0 0 0; font-size: 14px; opacity: 0.9;">We'll email you as soon as it's ready, with our hours and directions.</p>
     </div>
     
     <h2 style="font-size: 16px; margin: 24px 0 12px 0; color: ${BRAND_COLORS.darkGrey}; border-bottom: 2px solid ${BRAND_COLORS.black}; padding-bottom: 8px;">Your Items</h2>
@@ -1186,15 +1187,6 @@ Puget Sound Kombucha Co.
       </tr>
     </table>
     <p style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 24px 0;">* Price includes 10.35% sales tax</p>
-    
-    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 20px; border-radius: 4px; border: 2px solid ${BRAND_COLORS.black};">
-      <h3 style="margin: 0 0 16px 0; font-size: 16px; color: ${BRAND_COLORS.black};">📍 Pickup Instructions</h3>
-      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Address:</strong> 4501 Shilshole Ave NW, Seattle, WA 98107</p>
-      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Hours:</strong> Monday-Thursday, 9:00am to 3:00pm</p>
-      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Location:</strong> At the back of the building at the garage door</p>
-      <p style="margin: 0 0 8px 0; color: ${BRAND_COLORS.darkGrey};"><strong>Phone:</strong> (206) 789-5219</p>
-      <p style="margin: 16px 0 0 0; color: ${BRAND_COLORS.black}; font-weight: 600;">📞 Please call when you arrive and we'll bring your order out!</p>
-    </div>
     
     <p style="color: ${BRAND_COLORS.darkGrey}; margin-top: 32px;">Thank you for being a valued subscriber!</p>
     
