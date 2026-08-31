@@ -9653,8 +9653,9 @@ If you have any questions, please don't hesitate to reach out!`,
       // Save the route
       const savedRoute = await storage.createDeliveryRoute({
         routeDate: targetDate,
-        totalDistanceMeters: optimizedRoute.totalDistance,
-        totalDurationSeconds: optimizedRoute.totalDuration,
+        // Mapbox returns fractional meters/seconds; the columns are integers.
+        totalDistanceMeters: Math.round(optimizedRoute.totalDistance),
+        totalDurationSeconds: Math.round(optimizedRoute.totalDuration),
         optimizedStops: JSON.stringify(reorderedStops),
         generatedByUserId: req.user!.id,
       });
@@ -9667,8 +9668,8 @@ If you have any questions, please don't hesitate to reach out!`,
           stopType: stop.type,
           wholesaleOrderId: stop.type === 'order' ? stop.id : null,
           deliveryStopId: stop.type === 'custom' ? stop.id : null,
-          distanceFromPrevious: stop.distanceFromPrevious,
-          durationFromPrevious: stop.durationFromPrevious,
+          distanceFromPrevious: stop.distanceFromPrevious != null ? Math.round(stop.distanceFromPrevious) : null,
+          durationFromPrevious: stop.durationFromPrevious != null ? Math.round(stop.durationFromPrevious) : null,
         });
       }
 
