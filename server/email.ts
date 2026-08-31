@@ -1866,23 +1866,33 @@ export function renderInvoicePage(doc: PDFKit.PDFDocument, params: WholesaleInvo
       doc.text(line, PDF_MARGIN, y, { width: PDF_CONTENT_WIDTH, align: 'right' });
     }
 
-    // ===== BILL TO (left) =====
+    // ===== CUSTOMER (left) =====
+    // With a delivery location, "Deliver to" IS the customer block — no separate
+    // "Bill to": the account's billing email/contact belongs to whichever location
+    // opened the account and misleads on multi-location stores (owner, 2026-08-31).
     let leftY = PDF_MARGIN + 96;
-    doc.fontSize(9).font('Helvetica-Bold').fillColor(LABEL_COLOR).text('Bill to', PDF_MARGIN, leftY);
-    leftY += 12;
-    doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(params.businessName, PDF_MARGIN, leftY, { width: 260 });
-    leftY = doc.y + 1;
-    doc.font('Helvetica').fillColor(LABEL_COLOR);
-    for (const line of [params.customerAddress, params.contactName, params.customerEmail, params.customerPhone]) {
-      if (line) { doc.text(line, PDF_MARGIN, leftY, { width: 260 }); leftY = doc.y + 1; }
-    }
     if (params.location) {
-      leftY += 6;
-      doc.font('Helvetica-Bold').fillColor(LABEL_COLOR).text('Deliver to', PDF_MARGIN, leftY);
+      const loc = params.location;
+      doc.fontSize(9).font('Helvetica-Bold').fillColor(LABEL_COLOR).text('Deliver to', PDF_MARGIN, leftY);
       leftY += 12;
-      doc.font('Helvetica').fillColor(LABEL_COLOR);
-      doc.text(`${params.location.locationName} — ${params.location.address}, ${params.location.city}, ${params.location.state} ${params.location.zipCode}`, PDF_MARGIN, leftY, { width: 300 });
+      const storeLine = loc.locationName && loc.locationName !== 'Main Location'
+        ? `${params.businessName} — ${loc.locationName}`
+        : params.businessName;
+      doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(storeLine, PDF_MARGIN, leftY, { width: 300 });
       leftY = doc.y + 1;
+      doc.font('Helvetica').fillColor(LABEL_COLOR);
+      for (const line of [`${loc.address}, ${loc.city}, ${loc.state} ${loc.zipCode}`, loc.contactName, loc.contactPhone]) {
+        if (line) { doc.text(line, PDF_MARGIN, leftY, { width: 300 }); leftY = doc.y + 1; }
+      }
+    } else {
+      doc.fontSize(9).font('Helvetica-Bold').fillColor(LABEL_COLOR).text('Bill to', PDF_MARGIN, leftY);
+      leftY += 12;
+      doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(params.businessName, PDF_MARGIN, leftY, { width: 260 });
+      leftY = doc.y + 1;
+      doc.font('Helvetica').fillColor(LABEL_COLOR);
+      for (const line of [params.customerAddress, params.contactName, params.customerPhone]) {
+        if (line) { doc.text(line, PDF_MARGIN, leftY, { width: 260 }); leftY = doc.y + 1; }
+      }
     }
 
     // ===== META (right): number / dates / amount due =====
@@ -2144,7 +2154,7 @@ export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailPar
   const locationHtml = params.location ? `
     <div style="margin-top: 16px;">
       <h3 style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 8px 0;">DELIVER TO</h3>
-      <p style="margin: 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.location.locationName}</p>
+      <p style="margin: 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.location.locationName && params.location.locationName !== 'Main Location' ? `${params.businessName} — ${params.location.locationName}` : params.businessName}</p>
       <p style="margin: 4px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.location.address}</p>
       <p style="margin: 2px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.location.city}, ${params.location.state} ${params.location.zipCode}</p>
       ${params.location.contactName ? `<p style="margin: 2px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.location.contactName}</p>` : ''}
@@ -2168,12 +2178,12 @@ Date: ${orderDateFormatted}
 ${deliveryDateFormatted ? `Delivery Date: ${deliveryDateFormatted}` : ''}
 ${dueDateFormatted ? `Payment Due: ${dueDateFormatted}` : ''}
 
-Bill To:
+${params.location ? locationText.trim() : `Bill To:
 ${params.businessName}
 ${params.contactName}
 ${params.customerAddress}
-${params.customerPhone}
-${locationText}
+${params.customerPhone}`}
+
 Items:
 ${itemsText}
 
@@ -2200,6 +2210,7 @@ emily@soundkombucha.com
     </div>
     
     <div style="display: flex; gap: 24px; margin-bottom: 24px;">
+      ${params.location ? '' : `
       <div>
         <h3 style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 8px 0;">BILL TO</h3>
         <p style="margin: 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.businessName}</p>
@@ -2207,6 +2218,7 @@ emily@soundkombucha.com
         <p style="margin: 2px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.customerAddress}</p>
         <p style="margin: 2px 0 0 0; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px;">${params.customerPhone}</p>
       </div>
+      `}
       ${locationHtml}
     </div>
     

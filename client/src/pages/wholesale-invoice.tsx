@@ -258,7 +258,7 @@ export default function WholesaleInvoice() {
               )}
             </div>
 
-            <div className={`grid ${order.location ? 'grid-cols-3' : 'grid-cols-2'} gap-8 mb-8`}>
+            <div className="grid grid-cols-2 gap-8 mb-8">
               <div>
                 <h2 className="font-semibold text-sm text-muted-foreground mb-2">FROM</h2>
                 <div>
@@ -278,15 +278,19 @@ export default function WholesaleInvoice() {
                 </div>
               </div>
 
-              <div>
-                <h2 className="font-semibold text-sm text-muted-foreground mb-2">BILL TO</h2>
-                <div data-testid="customer-info">
-                  <div className="font-semibold">{customer.businessName}</div>
-                  <div className="text-sm text-muted-foreground">{customer.contactName}</div>
-                  <div className="text-sm text-muted-foreground">{customer.email}</div>
-                  <div className="text-sm text-muted-foreground">{customer.phone}</div>
+              {/* BILL TO only when there is no delivery location to identify the store —
+                  the account's billing email (e.g. the first location's) misleads on
+                  multi-location customers (owner, 2026-08-31). */}
+              {!order.location && (
+                <div>
+                  <h2 className="font-semibold text-sm text-muted-foreground mb-2">BILL TO</h2>
+                  <div data-testid="customer-info">
+                    <div className="font-semibold">{customer.businessName}</div>
+                    <div className="text-sm text-muted-foreground">{customer.contactName}</div>
+                    <div className="text-sm text-muted-foreground">{customer.phone}</div>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {order.location && (
                 <div>
