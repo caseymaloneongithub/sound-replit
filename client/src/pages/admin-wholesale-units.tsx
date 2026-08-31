@@ -217,7 +217,7 @@ export default function AdminWholesaleUnits() {
     <StaffLayout>
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="mb-8">
-          <h1 className="text-4xl font-bold mb-2" data-testid="text-wholesale-units-title">Wholesale Packaging Types</h1>
+          <h1 className="text-2xl font-bold mb-2" data-testid="text-wholesale-units-title">Wholesale Packaging Types</h1>
           <p className="text-muted-foreground">
             Define wholesale unit types with default pricing and which flavors are available for each unit
           </p>

@@ -107,7 +107,7 @@ export default function WholesaleDeliveryReport() {
         <DeliveriesTabs />
         <div className="flex items-center justify-between mb-8 print:hidden">
           <div>
-            <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
+            <h1 className="text-2xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
               {reportTitle}
             </h1>
             <p className="text-muted-foreground">
@@ -156,7 +156,7 @@ export default function WholesaleDeliveryReport() {
 
         <div className="space-y-6">
           <div className="hidden print:block mb-6">
-                <h1 className="text-3xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
+                <h1 className="text-2xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
                   {reportTitle}
                 </h1>
                 <p className="text-lg text-muted-foreground">

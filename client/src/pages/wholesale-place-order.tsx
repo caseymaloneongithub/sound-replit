@@ -234,7 +234,7 @@ export default function WholesalePlaceOrder() {
     <StaffLayout>
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="mb-8">
-          <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
+          <h1 className="text-2xl font-bold mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
             Place Wholesale Order
           </h1>
           <p className="text-muted-foreground">

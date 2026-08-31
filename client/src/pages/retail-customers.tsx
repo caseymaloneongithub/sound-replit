@@ -98,7 +98,7 @@ export default function RetailCustomers() {
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: "var(--font-heading)" }}>
+            <h1 className="text-2xl font-bold mb-2" style={{ fontFamily: "var(--font-heading)" }}>
               Retail Customers
             </h1>
             <p className="text-muted-foreground">Add customers, import from Shopify, start orders</p>
