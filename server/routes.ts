@@ -6407,9 +6407,11 @@ If you have any questions, please don't hesitate to reach out!`,
           scheduledDate: o.pickupDate ?? o.orderDate,
           status: o.status,
           total: o.totalAmount,
+          notes: o.notes,
           items: o.items.map(i => ({
             label: i.unitDescription ? `${i.flavorName} — ${i.unitDescription}` : i.flavorName,
             quantity: i.quantity,
+            note: i.notes,
           })),
         })),
         ...wholesale.map(o => ({
@@ -6422,9 +6424,11 @@ If you have any questions, please don't hesitate to reach out!`,
           scheduledDate: o.deliveryDate ?? o.orderDate,
           status: o.status,
           total: o.totalAmount,
+          notes: o.notes,
           items: o.items.map(i => ({
             label: `${i.flavorName} — ${i.unitTypeName}`,
             quantity: i.quantity,
+            note: null as string | null,
           })),
         })),
       ].sort((a, b) => new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime());
@@ -8077,6 +8081,7 @@ If you have any questions, please don't hesitate to reach out!`,
         retailProductId: z.string().optional(),
         selectedFlavorId: z.string().nullable().optional(),
         quantity: z.number().int().min(1).max(10).optional(),
+        notes: z.string().max(500).nullable().optional(),
       });
       
       const validated = updateSchema.parse(req.body);
@@ -8098,7 +8103,8 @@ If you have any questions, please don't hesitate to reach out!`,
       if (validated.retailProductId !== undefined) updates.retailProductId = validated.retailProductId;
       if (validated.selectedFlavorId !== undefined) updates.selectedFlavorId = validated.selectedFlavorId;
       if (validated.quantity !== undefined) updates.quantity = validated.quantity;
-      
+      if (validated.notes !== undefined) updates.notes = validated.notes?.trim() || null;
+
       const [updated] = await db
         .update(retailSubscriptionItems)
         .set(updates)

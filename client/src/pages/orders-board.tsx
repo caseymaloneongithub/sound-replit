@@ -13,7 +13,7 @@ import { PICKUP_POLICY } from "@shared/pickup-policy";
 
 const TZ = PICKUP_POLICY.timezone;
 
-type BoardItem = { label: string; quantity: number };
+type BoardItem = { label: string; quantity: number; note?: string | null };
 type BoardOrder = {
   id: string;
   kind: "retail" | "wholesale";
@@ -23,6 +23,7 @@ type BoardOrder = {
   scheduledDate: string;
   status: string;
   total: string;
+  notes?: string | null;
   items: BoardItem[];
 };
 type BoardData = {
@@ -423,9 +424,15 @@ function OrderCard({ order, onAdvance, advancing }: { order: BoardOrder; onAdvan
           {order.items.map((it, i) => (
             <li key={i}>
               <span className="font-semibold tabular-nums">{it.quantity}×</span> {it.label}
+              {it.note && <span className="block pl-6 text-xs text-muted-foreground">{it.note}</span>}
             </li>
           ))}
         </ul>
+        {order.notes && (
+          <p className="mt-2 text-xs text-muted-foreground border-l-2 border-muted pl-2" data-testid={`order-notes-${order.id}`}>
+            {order.notes}
+          </p>
+        )}
 
         <div className="mt-4">
           {done ? (

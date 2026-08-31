@@ -37,6 +37,7 @@ type SubscriptionWithItems = RetailSubscription & {
     retailProductId: string;
     selectedFlavorId: string | null;
     quantity: number;
+    notes: string | null;
     retailProduct: RetailProduct;
     flavor: Flavor | null;
   }>;
@@ -210,6 +211,23 @@ export default function RetailSubscriptions() {
         description: error.message || "Failed to remove item",
         variant: "destructive",
       });
+    },
+  });
+
+  const [editingNoteItemId, setEditingNoteItemId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
+
+  const itemNoteMutation = useMutation({
+    mutationFn: async ({ subscriptionId, itemId, notes }: { subscriptionId: string; itemId: string; notes: string }) => {
+      return await apiRequest('PATCH', `/api/retail/subscriptions/${subscriptionId}/items/${itemId}`, { notes });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/retail/subscriptions'] });
+      setEditingNoteItemId(null);
+      toast({ title: "Note saved", description: "It will appear on every order this subscription generates." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to save note", variant: "destructive" });
     },
   });
 
@@ -533,6 +551,36 @@ export default function RetailSubscriptions() {
                                       <p className="text-sm text-muted-foreground">
                                         Qty: {item.quantity} case{item.quantity > 1 ? 's' : ''}
                                       </p>
+                                      {editingNoteItemId === item.id ? (
+                                        <div className="mt-1 flex items-center gap-2">
+                                          <Input
+                                            value={noteDraft}
+                                            onChange={(e) => setNoteDraft(e.target.value)}
+                                            placeholder="e.g. 6 HUM, 6 Mist"
+                                            className="h-8 w-64 text-sm"
+                                            autoFocus
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') itemNoteMutation.mutate({ subscriptionId: subscription.id, itemId: item.id, notes: noteDraft });
+                                              if (e.key === 'Escape') setEditingNoteItemId(null);
+                                            }}
+                                            data-testid={`input-item-note-${item.id}`}
+                                          />
+                                          <Button size="sm" className="h-8" disabled={itemNoteMutation.isPending}
+                                            onClick={() => itemNoteMutation.mutate({ subscriptionId: subscription.id, itemId: item.id, notes: noteDraft })}>
+                                            Save
+                                          </Button>
+                                          <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditingNoteItemId(null)}>Cancel</Button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className="mt-0.5 text-xs text-muted-foreground hover:text-foreground underline decoration-dotted text-left"
+                                          onClick={() => { setEditingNoteItemId(item.id); setNoteDraft(item.notes || ''); }}
+                                          data-testid={`button-item-note-${item.id}`}
+                                        >
+                                          {item.notes ? item.notes : '+ Packing note'}
+                                        </button>
+                                      )}
                                     </div>
                                   </div>
                                   {subscription.items.length > 1 && (

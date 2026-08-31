@@ -231,6 +231,9 @@ export const retailOrderItemsV2 = pgTable("retail_order_items_v2", {
   selectedFlavorId: varchar("selected_flavor_id").references(() => flavors.id), // For multi-flavor products, tracks which flavor customer selected
   quantity: integer("quantity").notNull(),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
+  // Packing note, e.g. what goes in a mixed case ("6 HUM, 6 Mist"). Copied from the
+  // subscription item on renewal orders; shown on the orders board.
+  notes: text("notes"),
 });
 
 // NEW SCHEMA - Retail Subscriptions V2 (references retailProducts)
@@ -276,6 +279,9 @@ export const retailSubscriptionItems = pgTable("retail_subscription_items", {
   // existing subscriber's next charge with no notice. Nullable for rows created
   // before this column existed; billing falls back to the live price when null.
   unitPriceAtSignup: decimal("unit_price_at_signup", { precision: 10, scale: 2 }),
+  // Standing packing note for this item — what goes in a mixed case. Copied onto
+  // every order this subscription generates.
+  notes: text("notes"),
 });
 
 export const subscriptionPlans = pgTable("subscription_plans", {

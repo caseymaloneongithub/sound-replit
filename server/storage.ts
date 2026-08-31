@@ -233,8 +233,8 @@ export interface IStorage {
   getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
   getWholesaleOrdersByDeliveryDateRange(startDate: Date, endDate: Date): Promise<WholesaleOrder[]>;
   getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean }): Promise<{
-    retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; items: Array<{ flavorName: string; unitDescription: string; quantity: number }> }>;
-    wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
+    retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; notes: string | null; items: Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }> }>;
+    wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; notes: string | null; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
   }>;
   getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string | null; unitTypeName: string | null; flavorName: string | null }> }>>;
   getWholesaleOrderWithDetails(id: string): Promise<{
@@ -2612,8 +2612,8 @@ export class PostgresStorage implements IStorage {
    * retail orders are excluded (nothing to prepare); soft-deleted rows are always excluded.
    */
   async getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean }): Promise<{
-    retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; items: Array<{ flavorName: string; unitDescription: string; quantity: number }> }>;
-    wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
+    retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; notes: string | null; items: Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }> }>;
+    wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; notes: string | null; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
   }> {
     // --- Retail (by pickupDate) ---
     // On the ACTIVE week (retailBacklog), open orders never fall off the board: anything
@@ -2646,6 +2646,7 @@ export class PostgresStorage implements IStorage {
             quantity: retailOrderItemsV2.quantity,
             flavorName: flavors.name,
             unitDescription: retailProducts.unitDescription,
+            notes: retailOrderItemsV2.notes,
           })
           .from(retailOrderItemsV2)
           .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
@@ -2653,10 +2654,10 @@ export class PostgresStorage implements IStorage {
           .where(inArray(retailOrderItemsV2.orderId, retailIds))
       : [];
 
-    const retailItemsByOrder = new Map<string, Array<{ flavorName: string; unitDescription: string; quantity: number }>>();
+    const retailItemsByOrder = new Map<string, Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }>>();
     for (const it of retailItems) {
       const arr = retailItemsByOrder.get(it.orderId) || [];
-      arr.push({ flavorName: it.flavorName || 'Unknown', unitDescription: it.unitDescription || '', quantity: it.quantity });
+      arr.push({ flavorName: it.flavorName || 'Unknown', unitDescription: it.unitDescription || '', quantity: it.quantity, notes: it.notes ?? null });
       retailItemsByOrder.set(it.orderId, arr);
     }
 
@@ -2669,6 +2670,7 @@ export class PostgresStorage implements IStorage {
       status: o.status,
       isSubscriptionOrder: o.isSubscriptionOrder,
       totalAmount: o.totalAmount,
+      notes: o.notes,
       items: retailItemsByOrder.get(o.id) || [],
     }));
 
@@ -2717,6 +2719,7 @@ export class PostgresStorage implements IStorage {
       orderDate: r.order.orderDate,
       status: r.order.status,
       totalAmount: r.order.totalAmount,
+      notes: r.order.notes,
       items: wsItemsByOrder.get(r.order.id) || [],
     }));
 

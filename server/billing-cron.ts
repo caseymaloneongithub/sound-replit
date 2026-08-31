@@ -103,6 +103,7 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
         selectedFlavorId: retailSubscriptionItems.selectedFlavorId,
         quantity: retailSubscriptionItems.quantity,
         unitPriceAtSignup: retailSubscriptionItems.unitPriceAtSignup,
+        notes: retailSubscriptionItems.notes,
         retailProduct: retailProducts,
       })
       .from(retailSubscriptionItems)
@@ -197,9 +198,9 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
 
         await orderClient.query(
           `INSERT INTO retail_order_items_v2
-             (order_id, retail_product_id, selected_flavor_id, quantity, unit_price)
-           VALUES ($1,$2,$3,$4,$5)`,
-          [newOrderId, item.retailProductId, item.selectedFlavorId, item.quantity, unitPrice.toFixed(2)]
+             (order_id, retail_product_id, selected_flavor_id, quantity, unit_price, notes)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [newOrderId, item.retailProductId, item.selectedFlavorId, item.quantity, unitPrice.toFixed(2), item.notes ?? null]
         );
       }
 
@@ -534,6 +535,7 @@ export async function chargeSubscriptionNow(subscriptionId: string): Promise<{ o
         selectedFlavorId: retailSubscriptionItems.selectedFlavorId,
         quantity: retailSubscriptionItems.quantity,
         unitPriceAtSignup: retailSubscriptionItems.unitPriceAtSignup,
+        notes: retailSubscriptionItems.notes,
         retailProduct: retailProducts,
       })
       .from(retailSubscriptionItems)
