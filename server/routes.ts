@@ -6389,10 +6389,13 @@ If you have any questions, please don't hesitate to reach out!`,
       const weekOffset = Number.isFinite(rawOffset) ? Math.max(-26, Math.min(26, rawOffset)) : 0;
       const { start, end, mondayISO } = getPacificWeekRange(weekOffset);
 
-      // The "active" week matches the client's default view (next week once Sunday hits).
-      // Only there does the open retail backlog ride along; history stays date-bucketed.
+      // The open retail backlog rides along on any week staff could reasonably call
+      // "now": the calendar week containing today AND the board's default view (which
+      // jumps to next week once Sunday hits). Past weeks stay date-bucketed history;
+      // weeks further out stay clean forecasts.
       const pacificDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }).format(new Date());
-      const retailBacklog = weekOffset === (pacificDay === 'Sun' ? 1 : 0);
+      const defaultOffset = pacificDay === 'Sun' ? 1 : 0;
+      const retailBacklog = weekOffset === 0 || weekOffset === defaultOffset;
 
       const { retail, wholesale } = await storage.getWeeklyBoardOrders(start, end, { retailBacklog });
 
