@@ -2287,11 +2287,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // "what can we actually make today", same audience as the orders board.
   app.get("/api/inventory/finished-goods", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
     try {
+      // Mixed cases are assembled from single-flavor stock, so their own count is
+      // meaningless and untracked for now (owner, 2026-08-31) — hidden here; the
+      // number can be reset if tracking ever starts.
       const rows = await db.execute(sql`
         SELECT p.id, p.name, p.container, p.stock_quantity AS "stockQuantity", f.name AS flavor
         FROM products p
         LEFT JOIN flavors f ON f.id = p.flavor_id
-        WHERE p.is_active AND p.container IS NOT NULL
+        WHERE p.is_active AND p.container IS NOT NULL AND (f.name IS NULL OR f.name <> 'Mixed')
         ORDER BY p.container, f.name NULLS LAST`);
       res.json(rows.rows);
     } catch (error: any) {
@@ -6472,11 +6475,13 @@ If you have any questions, please don't hesitate to reach out!`,
       // Shelf stock per column, so the grid can show "In Stock" under Total. Wholesale
       // labels resolve via unit type -> container -> finished product; retail labels via
       // retail_products.finished_product_id. Unlinked labels stay null (shown as a dash).
+      // Mixed-case stock is untracked (owner, 2026-08-31): its column still shows
+      // demand when orders exist, but In Stock renders as a dash.
       const stockRows = (await pool.query(
-        'select p.id, f.name as flavor, p.container, p.stock_quantity from products p join flavors f on f.id = p.flavor_id'
+        "select p.id, f.name as flavor, p.container, p.stock_quantity from products p join flavors f on f.id = p.flavor_id where f.name <> 'Mixed'"
       )).rows;
       const retailStockRows = (await pool.query(
-        'select p.id, rp.unit_description, f.name as flavor, p.stock_quantity from retail_products rp left join flavors f on f.id = rp.flavor_id left join products p on p.id = rp.finished_product_id'
+        "select p.id, rp.unit_description, f.name as flavor, p.stock_quantity from retail_products rp left join flavors f on f.id = rp.flavor_id left join products p on p.id = rp.finished_product_id where f.name is null or f.name <> 'Mixed'"
       )).rows;
       const containerByUnit = new Map(unitRows.map((u: any) => [u.name, u.container]));
       const shelfByFlavorContainer = new Map(stockRows.map((r: any) => [`${r.flavor}|${r.container}`, { quantity: r.stock_quantity, productId: r.id }]));
