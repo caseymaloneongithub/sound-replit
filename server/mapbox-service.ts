@@ -221,3 +221,42 @@ export async function getRouteDirections(
     return null;
   }
 }
+
+/**
+ * Static route map with numbered stop pins (and the facility marked), for the
+ * Routes screen and the driver packet. Pins only — full route geometry can
+ * overflow the Static Images URL limit on long runs.
+ */
+export function buildStaticRouteMapUrl(
+  stops: Array<{ latitude: number; longitude: number; order: number }>,
+  token: string,
+  size = "1000x560"
+): string | null {
+  if (!stops.length || !token) return null;
+  const facility = getFacilityLocation();
+  const pins = [
+    `pin-s-warehouse+1f2937(${facility.longitude},${facility.latitude})`,
+    ...stops.map((s) => `pin-l-${s.order}+b45309(${s.longitude},${s.latitude})`),
+  ].join(",");
+  return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pins}/auto/${size}@2x?padding=60&access_token=${token}`;
+}
+
+/** Fetch the static route map as image bytes for embedding in the packet PDF. */
+export async function fetchRouteMapImage(
+  stops: Array<{ latitude: number; longitude: number; order: number }>
+): Promise<Buffer | null> {
+  if (!MAPBOX_ACCESS_TOKEN) return null;
+  const url = buildStaticRouteMapUrl(stops, MAPBOX_ACCESS_TOKEN);
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.error(`Static map fetch failed: ${res.status}`);
+      return null;
+    }
+    return Buffer.from(await res.arrayBuffer());
+  } catch (e: any) {
+    console.error("Static map fetch error:", e.message);
+    return null;
+  }
+}

@@ -29,7 +29,7 @@ import { createStripeCustomer } from "./stripeCustomer";
 // frequencyToDays deliberately NOT imported from pickup-policy: the single source of
 // truth for frequency conversion is @shared/subscription-frequency (imported above).
 import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange, nextPickupDateFromScheduled } from "@shared/pickup-policy";
-import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
+import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections, fetchRouteMapImage } from "./mapbox-service";
 import { insertDeliveryStopSchema } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -9815,6 +9815,7 @@ If you have any questions, please don't hesitate to reach out!`,
 
       const stopLines: any[] = [];
       const invoices: any[] = [];
+      const mapStops: Array<{ latitude: number; longitude: number; order: number }> = [];
       for (const stop of [...stops].sort((a, b) => a.stopOrder - b.stopOrder)) {
         if (stop.stopType === 'order' && stop.wholesaleOrderId) {
           const details = await storage.getWholesaleOrderWithDetails(stop.wholesaleOrderId);
@@ -9827,8 +9828,12 @@ If you have any questions, please don't hesitate to reach out!`,
           ];
           const location = order.location ?? null;
           const customerAddress = location ? `${location.address}, ${location.city}, ${location.state} ${location.zipCode}` : '';
+          const locCoords = location as any;
+          if (locCoords?.latitude && locCoords?.longitude) {
+            mapStops.push({ latitude: Number(locCoords.latitude), longitude: Number(locCoords.longitude), order: stop.stopOrder + 1 });
+          }
           stopLines.push({
-            order: stop.stopOrder,
+            order: stop.stopOrder + 1,
             label: `${customer.businessName}${location && location.locationName !== 'Main Location' ? ` — ${location.locationName}` : ''}`,
             address: customerAddress,
             arrival: stop.arrivalEstimate ? new Date(stop.arrivalEstimate) : null,
@@ -9860,8 +9865,11 @@ If you have any questions, please don't hesitate to reach out!`,
           });
         } else if (stop.deliveryStopId) {
           const c: any = customById.get(stop.deliveryStopId);
+          if (c?.latitude && c?.longitude) {
+            mapStops.push({ latitude: Number(c.latitude), longitude: Number(c.longitude), order: stop.stopOrder + 1 });
+          }
           stopLines.push({
-            order: stop.stopOrder,
+            order: stop.stopOrder + 1,
             label: c?.name ?? 'Custom stop',
             address: c ? [c.address, c.city, c.state, c.zipCode].filter(Boolean).join(', ') : '',
             arrival: stop.arrivalEstimate ? new Date(stop.arrivalEstimate) : null,
@@ -9887,6 +9895,8 @@ If you have any questions, please don't hesitate to reach out!`,
       }
       const packingList = Array.from(packing.values());
 
+      const mapImage = await fetchRouteMapImage(mapStops);
+
       const pdf = await generateDeliveryPacketPDF({
         routeDate: new Date(route.routeDate),
         totalDistanceMeters: route.totalDistanceMeters,
@@ -9894,6 +9904,7 @@ If you have any questions, please don't hesitate to reach out!`,
         stops: stopLines,
         packingList,
         invoices,
+        mapImage,
       });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `inline; filename="delivery-packet-${format(new Date(route.routeDate), 'yyyy-MM-dd')}.pdf"`);

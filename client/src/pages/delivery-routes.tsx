@@ -113,6 +113,18 @@ export default function DeliveryRoutes() {
   const [selectedCustomStops, setSelectedCustomStops] = useState<string[]>([]);
   const [isAddStopOpen, setIsAddStopOpen] = useState(false);
   const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRouteResponse | null>(null);
+
+  // Static map with numbered pins matching the stop list. Uses the public (pk.)
+  // browser token; the packet PDF builds the same map server-side.
+  const mapboxToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined;
+  const routeMapUrl = (() => {
+    if (!mapboxToken || !optimizedRoute?.stops?.length) return null;
+    const pins = [
+      `pin-s-warehouse+1f2937(-122.3894,47.6694)`,
+      ...optimizedRoute.stops.map((s, i) => `pin-l-${i + 1}+b45309(${s.longitude},${s.latitude})`),
+    ].join(",");
+    return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pins}/auto/1000x560@2x?padding=60&access_token=${mapboxToken}`;
+  })();
   const { toast } = useToast();
 
   const form = useForm<DeliveryStopFormData>({
@@ -423,6 +435,15 @@ export default function DeliveryRoutes() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
+                  {routeMapUrl && (
+                    <img
+                      src={routeMapUrl}
+                      alt="Route map with numbered stops"
+                      className="w-full rounded-md border mb-4"
+                      loading="lazy"
+                      data-testid="img-route-map"
+                    />
+                  )}
                   <div className="space-y-3">
                     <div className="flex items-center gap-3 p-3 bg-primary/5 rounded-md">
                       <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">
