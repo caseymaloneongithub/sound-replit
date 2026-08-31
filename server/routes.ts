@@ -507,10 +507,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .map((e) => e.trim())
       .filter(Boolean);
     if (!recipients.length) return;
+    const locName = order.location?.locationName;
     await sendWholesalePaymentReceipt({
       poNumber: (order as any).poNumber ?? null,
       customerEmail: recipients,
-      businessName: customer.businessName,
+      businessName: locName && locName !== 'Main Location' ? `${customer.businessName} — ${locName}` : customer.businessName,
       contactName: customer.contactName || customer.businessName,
       invoiceNumber: order.invoiceNumber,
       amount: Number(order.totalAmount),
@@ -558,9 +559,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .filter((email): email is string => !!email);
 
       if (adminEmails.length > 0 && customer) {
+        const paidLoc = order.locationId ? await storage.getWholesaleLocation(order.locationId) : null;
         await sendWholesaleInvoicePaidNotification({
           adminEmails,
-          businessName: customer.businessName,
+          businessName: paidLoc?.locationName && paidLoc.locationName !== 'Main Location'
+            ? `${customer.businessName} — ${paidLoc.locationName}`
+            : customer.businessName,
           invoiceNumber: order.invoiceNumber,
           amount: Number(order.totalAmount),
           paidAt,
@@ -1632,10 +1636,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const placer = opts.placedByUserId ? await storage.getUser(opts.placedByUserId) : undefined;
       const confirmationEmail = contactEmail || placer?.email || customer.email;
 
+      // Multi-location stores: emails name the store, not just the chain
+      // ("Evergreens — Thomas & Boren"), so everyone knows which site ordered.
+      const emailLocation = createdOrder.locationId ? await storage.getWholesaleLocation(createdOrder.locationId) : null;
+      const emailBusinessName = emailLocation?.locationName && emailLocation.locationName !== 'Main Location'
+        ? `${customer.businessName} — ${emailLocation.locationName}`
+        : customer.businessName;
+
       // Send emails in the background (don't block the response)
       sendWholesaleOrderConfirmation({
         customerEmail: confirmationEmail,
-        businessName: customer.businessName,
+        businessName: emailBusinessName,
         contactName: customer.contactName,
         invoiceNumber,
         orderDate,
@@ -1657,7 +1668,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (adminEmails.length > 0) {
           await sendWholesaleOrderAdminNotification({
             adminEmails,
-            businessName: customer.businessName,
+            businessName: emailBusinessName,
             contactName: customer.contactName,
             invoiceNumber,
             orderDate,
@@ -4539,9 +4550,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 .filter((e): e is string => !!e);
               const wsCustomer = wsOrder ? await storage.getWholesaleCustomer(wsOrder.customerId) : null;
               if (adminEmails.length > 0 && wsOrder) {
+                const failLoc = wsOrder.locationId ? await storage.getWholesaleLocation(wsOrder.locationId) : null;
                 await sendWholesalePaymentFailedNotification({
                   adminEmails,
-                  businessName: wsCustomer?.businessName ?? 'Wholesale customer',
+                  businessName: failLoc?.locationName && failLoc.locationName !== 'Main Location'
+                    ? `${wsCustomer?.businessName ?? 'Wholesale customer'} — ${failLoc.locationName}`
+                    : (wsCustomer?.businessName ?? 'Wholesale customer'),
                   invoiceNumber: wsOrder.invoiceNumber,
                   amount: Number(wsOrder.totalAmount),
                   reason: failure,
@@ -6647,6 +6661,12 @@ If you have any questions, please don't hesitate to reach out!`,
           };
         }));
 
+        // Multi-location stores: emails name the store, not just the chain.
+        const emailLocation = createdOrder.locationId ? await storage.getWholesaleLocation(createdOrder.locationId) : null;
+        const emailBusinessName = emailLocation?.locationName && emailLocation.locationName !== 'Main Location'
+          ? `${customer.businessName} — ${emailLocation.locationName}`
+          : customer.businessName;
+
         // Customer confirmation is a CHOICE on staff-entered orders (owner, 2026-08-31):
         // historical entries and corrections shouldn't surprise the customer. Defaults
         // on; customer-placed orders always send (their path is placeCustomerOrder).
@@ -6657,7 +6677,7 @@ If you have any questions, please don't hesitate to reach out!`,
         // Send emails in the background (don't block the response)
         if (sendConfirmation) sendWholesaleOrderConfirmation({
           customerEmail: customer.email,
-          businessName: customer.businessName,
+          businessName: emailBusinessName,
           contactName: customer.contactName,
           invoiceNumber,
           orderDate,
@@ -6679,7 +6699,7 @@ If you have any questions, please don't hesitate to reach out!`,
           if (adminEmails.length > 0) {
             await sendWholesaleOrderAdminNotification({
               adminEmails,
-              businessName: customer.businessName,
+              businessName: emailBusinessName,
               contactName: customer.contactName,
               invoiceNumber,
               orderDate,
