@@ -299,7 +299,7 @@ export default function AdminRetailProducts() {
     <StaffLayout>
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2" data-testid="text-retail-products-title">Retail Product Offerings</h1>
+          <h1 className="text-2xl font-bold mb-2" data-testid="text-retail-products-title">Retail Product Offerings</h1>
           <p className="text-muted-foreground">
             Create specific products by combining flavors with unit types and setting retail prices
           </p>

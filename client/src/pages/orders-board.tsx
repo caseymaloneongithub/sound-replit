@@ -134,7 +134,7 @@ export default function OrdersBoard() {
         {/* Week navigation — large touch targets for a tablet */}
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <h1 className="text-3xl font-bold" data-testid="text-board-title">Orders Board</h1>
+            <h1 className="text-2xl font-bold" data-testid="text-board-title">Orders Board</h1>
             <p className="text-lg text-muted-foreground">
               {weekName}{weekOffset !== 0 && weekLabel ? ` · ${weekLabel}` : ""}
             </p>

@@ -98,7 +98,7 @@ export default function InventoryDashboard() {
     <StaffLayout>
       <div className="max-w-7xl mx-auto px-6 py-10">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-1" data-testid="text-dashboard-title">Inventory Dashboard</h1>
+          <h1 className="text-2xl font-bold mb-1" data-testid="text-dashboard-title">Inventory Dashboard</h1>
           <p className="text-muted-foreground">Production trends, flavor mix, and what to reorder</p>
         </div>
 

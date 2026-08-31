@@ -66,7 +66,7 @@ export default function AccountingIncomeStatement() {
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h1 className="text-3xl font-bold" data-testid="heading-income-statement">
+            <h1 className="text-2xl font-bold" data-testid="heading-income-statement">
               Income Statement
             </h1>
             <p className="text-muted-foreground">

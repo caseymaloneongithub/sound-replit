@@ -72,7 +72,7 @@ export default function Reports() {
     <StaffLayout>
       <div className="p-8 space-y-8">
         <div>
-        <h1 className="text-3xl font-bold mb-2" data-testid="text-reports-title">
+        <h1 className="text-2xl font-bold mb-2" data-testid="text-reports-title">
           Reports & Analytics
         </h1>
         <p className="text-muted-foreground" data-testid="text-reports-description">
