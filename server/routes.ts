@@ -6399,6 +6399,22 @@ If you have any questions, please don't hesitate to reach out!`,
 
       const { retail, wholesale } = await storage.getWeeklyBoardOrders(start, end, { retailBacklog });
 
+      // Retail and wholesale sell the SAME physical units (owner, 2026-08-30), but the
+      // names differ ("Twelve 16 oz bottles" vs "Case of 12 Bottles"), which split the
+      // prep grid into duplicate tables. Canonicalize retail unit names to the wholesale
+      // unit type sharing the same finished-goods container, so one unit = one table.
+      const unitRows = (await pool.query('select name, container from wholesale_unit_types')).rows;
+      const retailUnitLinks = (await pool.query(
+        `select distinct rp.unit_description, p.container
+         from retail_products rp join products p on p.id = rp.finished_product_id`
+      )).rows;
+      const retailUnitAlias = new Map<string, string>();
+      for (const r of retailUnitLinks as any[]) {
+        const u = (unitRows as any[]).find((u) => u.container && u.container === r.container);
+        if (u) retailUnitAlias.set(r.unit_description, u.name);
+      }
+      const canonUnit = (unitDescription: string) => retailUnitAlias.get(unitDescription) ?? unitDescription;
+
       // Normalise both channels to one card shape. The client maps status→stage per kind.
       const now = new Date();
       const orders = [
@@ -6418,7 +6434,7 @@ If you have any questions, please don't hesitate to reach out!`,
           total: o.totalAmount,
           notes: o.notes,
           items: o.items.map(i => ({
-            label: i.unitDescription ? `${i.flavorName} — ${i.unitDescription}` : i.flavorName,
+            label: i.unitDescription ? `${i.flavorName} — ${canonUnit(i.unitDescription)}` : i.flavorName,
             quantity: i.quantity,
             note: i.notes,
           })),
@@ -6442,8 +6458,8 @@ If you have any questions, please don't hesitate to reach out!`,
         })),
       ].sort((a, b) => new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime());
 
-      // Production totals, kept per channel because a retail 12-pack and a wholesale case
-      // are different things to pack even when they share a flavor.
+      // Production totals stay split by channel — the prep grid renders them as separate
+      // rows — but labels are canonical, so both channels share one table per unit.
       const tally = (rows: typeof orders) => {
         const map = new Map<string, number>();
         for (const o of rows) {
@@ -6474,14 +6490,14 @@ If you have any questions, please don't hesitate to reach out!`,
       const stockRows = (await pool.query(
         'select p.id, f.name as flavor, p.container, p.stock_quantity from products p join flavors f on f.id = p.flavor_id'
       )).rows;
-      const unitRows = (await pool.query('select name, container from wholesale_unit_types')).rows;
       const retailStockRows = (await pool.query(
         'select p.id, rp.unit_description, f.name as flavor, p.stock_quantity from retail_products rp left join flavors f on f.id = rp.flavor_id left join products p on p.id = rp.finished_product_id'
       )).rows;
       const containerByUnit = new Map(unitRows.map((u: any) => [u.name, u.container]));
       const shelfByFlavorContainer = new Map(stockRows.map((r: any) => [`${r.flavor}|${r.container}`, { quantity: r.stock_quantity, productId: r.id }]));
+      // Keyed by CANONICAL label so aliased retail units land in the shared table.
       const shelfByRetailLabel = new Map(retailStockRows.filter((r: any) => r.flavor && r.unit_description && r.id)
-        .map((r: any) => [`${r.flavor} — ${r.unit_description}`, { quantity: r.stock_quantity, productId: r.id }]));
+        .map((r: any) => [`${r.flavor} — ${canonUnit(r.unit_description)}`, { quantity: r.stock_quantity, productId: r.id }]));
       const splitLabel = (label: string) => {
         const idx = label.lastIndexOf(' — ');
         return idx === -1 ? null : { flavor: label.slice(0, idx), unit: label.slice(idx + 3) };
@@ -6509,7 +6525,10 @@ If you have any questions, please don't hesitate to reach out!`,
       }
       for (const r of retailStockRows as any[]) {
         if (!r.flavor || !r.unit_description || !r.id) continue;
-        (catalog[r.unit_description] ??= []).push({ flavor: r.flavor, quantity: r.stock_quantity, productId: r.id });
+        const uname = canonUnit(r.unit_description);
+        // A unit aliased onto a wholesale type already has its full container catalog.
+        if (retailUnitAlias.has(r.unit_description) && catalog[uname]) continue;
+        (catalog[uname] ??= []).push({ flavor: r.flavor, quantity: r.stock_quantity, productId: r.id });
       }
 
       res.json({
