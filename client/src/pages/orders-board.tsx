@@ -63,7 +63,10 @@ function statusLabel(o: BoardOrder): string {
 
 export default function OrdersBoard() {
   const { toast } = useToast();
-  const [weekOffset, setWeekOffset] = useState(0);
+  // On Sunday the board looks ahead: the coming Monday-week is what the crew is
+  // prepping, so "Today" lands there. (ISO day 7 = Sunday, Pacific.)
+  const DEFAULT_OFFSET = formatInTimeZone(new Date(), TZ, "i") === "7" ? 1 : 0;
+  const [weekOffset, setWeekOffset] = useState(DEFAULT_OFFSET);
   // Completed orders (retail picked up / wholesale delivered) are hidden by default so the
   // board shows only what still needs doing; the toggle brings them back for reference.
   const [showDone, setShowDone] = useState(false);
@@ -141,16 +144,16 @@ export default function OrdersBoard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="lg" className="h-14 w-14" onClick={() => setWeekOffset(w => w - 1)} data-testid="button-prev-week" aria-label="Previous week">
+            <Button variant="outline" size="icon" onClick={() => setWeekOffset(w => w - 1)} data-testid="button-prev-week" aria-label="Previous week">
               <ChevronLeft className="h-6 w-6" />
             </Button>
-            <Button variant={weekOffset === 0 ? "secondary" : "outline"} size="lg" className="h-14 px-5 text-base" onClick={() => setWeekOffset(0)} data-testid="button-this-week">
+            <Button variant={weekOffset === DEFAULT_OFFSET ? "secondary" : "outline"} size="sm" className="px-4" onClick={() => setWeekOffset(DEFAULT_OFFSET)} data-testid="button-this-week">
               Today
             </Button>
-            <Button variant="outline" size="lg" className="h-14 w-14" onClick={() => setWeekOffset(w => w + 1)} data-testid="button-next-week" aria-label="Next week">
+            <Button variant="outline" size="icon" onClick={() => setWeekOffset(w => w + 1)} data-testid="button-next-week" aria-label="Next week">
               <ChevronRight className="h-6 w-6" />
             </Button>
-            <Button variant="ghost" size="lg" className="h-14 w-14" onClick={() => refetch()} aria-label="Refresh now" data-testid="button-refresh">
+            <Button variant="ghost" size="icon" onClick={() => refetch()} aria-label="Refresh now" data-testid="button-refresh">
               <RefreshCw className={`h-5 w-5 ${isFetching ? "animate-spin" : ""}`} />
             </Button>
           </div>
