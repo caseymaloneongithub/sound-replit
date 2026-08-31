@@ -9870,21 +9870,22 @@ If you have any questions, please don't hesitate to reach out!`,
         }
       }
 
-      // Packing list: real products aggregated across every delivery on the route.
-      // Adjustments (pallet fees, credits) are invoice lines, not things on a truck.
-      const packing = new Map<string, number>();
+      // Packing list: real products aggregated across every delivery on the route,
+      // as unit × flavor cells for the matrix page. Adjustments (pallet fees,
+      // credits) are invoice lines, not things on a truck.
+      const packing = new Map<string, { unit: string; flavor: string; quantity: number }>();
       for (const stop of [...stops].sort((a, b) => a.stopOrder - b.stopOrder)) {
         if (stop.stopType !== 'order' || !stop.wholesaleOrderId) continue;
         const details = await storage.getWholesaleOrderWithDetails(stop.wholesaleOrderId);
         for (const item of details?.items ?? []) {
           const p = (item as any).product;
-          const name = p.flavor ? `${p.name} - ${p.flavor}` : p.name;
-          packing.set(name, (packing.get(name) ?? 0) + item.quantity);
+          const key = `${p.name}|${p.flavor || ''}`;
+          const entry = packing.get(key) ?? { unit: p.name, flavor: p.flavor || 'Other', quantity: 0 };
+          entry.quantity += item.quantity;
+          packing.set(key, entry);
         }
       }
-      const packingList = Array.from(packing.entries())
-        .map(([productName, quantity]) => ({ productName, quantity }))
-        .sort((a, b) => a.productName.localeCompare(b.productName));
+      const packingList = Array.from(packing.values());
 
       const pdf = await generateDeliveryPacketPDF({
         routeDate: new Date(route.routeDate),

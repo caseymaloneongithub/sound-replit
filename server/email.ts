@@ -2054,7 +2054,7 @@ export async function generateDeliveryPacketPDF(input: {
   stops: Array<{ order: number; label: string; address: string; arrival?: Date | null; invoiceNumber?: string | null; totalAmount?: string | null; notes?: string | null; paid?: boolean }>;
   // Aggregated across all deliveries (real products only, no invoice adjustments) —
   // what to load on the truck.
-  packingList: Array<{ productName: string; quantity: number }>;
+  packingList: Array<{ unit: string; flavor: string; quantity: number }>;
   invoices: WholesaleInvoiceEmailParams[];
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -2104,7 +2104,8 @@ export async function generateDeliveryPacketPDF(input: {
       y += 10;
     }
 
-    // ===== PACKING LIST: what to load on the truck =====
+    // ===== PACKING LIST: flavor × unit matrix (units along the top, flavors down
+    // the side — owner, 2026-08-31), so loading the truck reads like the pack sheet.
     if (input.packingList.length > 0) {
       doc.addPage();
       doc.fontSize(22).font('Helvetica-Bold').fillColor(TEXT_COLOR);
@@ -2112,19 +2113,39 @@ export async function generateDeliveryPacketPDF(input: {
       doc.fontSize(10).font('Helvetica').fillColor(LABEL_COLOR);
       doc.text(`Everything across all ${input.invoices.length} deliveries on ${format(input.routeDate, 'MMMM d')}`, PDF_MARGIN, PDF_MARGIN + 28);
 
+      const units = Array.from(new Set(input.packingList.map((e) => e.unit))).sort();
+      const flavorRows = Array.from(new Set(input.packingList.map((e) => e.flavor))).sort();
+      const qty = new Map(input.packingList.map((e) => [`${e.unit}|${e.flavor}`, e.quantity]));
+
+      const FLAVOR_W = 130;
+      const ALL_W = 50;
+      const unitW = (PDF_CONTENT_WIDTH - FLAVOR_W - ALL_W) / Math.max(units.length, 1);
+      const colX = (i: number) => PDF_MARGIN + FLAVOR_W + i * unitW;
+      const allX = PDF_MARGIN + FLAVOR_W + units.length * unitW;
+
       let py = PDF_MARGIN + 56;
-      doc.rect(PDF_MARGIN, py - 5, PDF_CONTENT_WIDTH, 19).fill(HEADER_BG);
-      doc.fontSize(10).font('Helvetica-Bold').fillColor(TEXT_COLOR);
-      doc.text('Product', PDF_MARGIN + 6, py);
-      doc.text('Total', PDF_WIDTH - PDF_MARGIN - 80, py, { width: 74, align: 'right' });
-      py += 22;
-      doc.fontSize(11).font('Helvetica');
+      doc.rect(PDF_MARGIN, py - 5, PDF_CONTENT_WIDTH, 26).fill(HEADER_BG);
+      doc.fontSize(9).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+      doc.text('Flavor', PDF_MARGIN + 6, py + 4);
+      units.forEach((u, i) => doc.text(u, colX(i), py, { width: unitW - 6, align: 'right' }));
+      doc.text('All', allX, py + 4, { width: ALL_W, align: 'right' });
+      py += 30;
+
+      doc.fontSize(11);
+      const colTotals = new Array(units.length).fill(0);
       let grandTotal = 0;
-      for (const line of input.packingList) {
+      for (const flavor of flavorRows) {
         if (py > doc.page.height - 70) { doc.addPage(); py = PDF_MARGIN; }
-        doc.fillColor(TEXT_COLOR).text(line.productName, PDF_MARGIN + 6, py, { width: PDF_CONTENT_WIDTH - 110 });
-        doc.text(String(line.quantity), PDF_WIDTH - PDF_MARGIN - 80, py, { width: 74, align: 'right' });
-        grandTotal += line.quantity;
+        doc.font('Helvetica').fillColor(TEXT_COLOR).text(flavor, PDF_MARGIN + 6, py, { width: FLAVOR_W - 10 });
+        let rowTotal = 0;
+        units.forEach((u, i) => {
+          const n = qty.get(`${u}|${flavor}`) ?? 0;
+          rowTotal += n;
+          colTotals[i] += n;
+          doc.fillColor(n ? TEXT_COLOR : LABEL_COLOR).text(n ? String(n) : '—', colX(i), py, { width: unitW - 6, align: 'right' });
+        });
+        grandTotal += rowTotal;
+        doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(String(rowTotal), allX, py, { width: ALL_W, align: 'right' });
         py = doc.y + 5;
         doc.moveTo(PDF_MARGIN, py - 2).lineTo(PDF_WIDTH - PDF_MARGIN, py - 2).lineWidth(0.5).strokeColor('#eeeeee').stroke();
         py += 4;
@@ -2132,7 +2153,8 @@ export async function generateDeliveryPacketPDF(input: {
       py += 4;
       doc.font('Helvetica-Bold').fillColor(TEXT_COLOR);
       doc.text('Total units', PDF_MARGIN + 6, py);
-      doc.text(String(grandTotal), PDF_WIDTH - PDF_MARGIN - 80, py, { width: 74, align: 'right' });
+      units.forEach((u, i) => doc.text(String(colTotals[i]), colX(i), py, { width: unitW - 6, align: 'right' }));
+      doc.text(String(grandTotal), allX, py, { width: ALL_W, align: 'right' });
     }
 
     // ===== INVOICES, IN DRIVE ORDER =====
