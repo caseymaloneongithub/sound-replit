@@ -1288,10 +1288,83 @@ Puget Sound Kombucha Co.
   }
 }
 
-// Wholesale Invoice Payment Receipt - sent to customer when they pay online
+// Staff alert when a wholesale ACH debit bounces days after authorisation.
+export async function sendWholesalePaymentFailedNotification(params: {
+  adminEmails: string[];
+  businessName: string;
+  invoiceNumber: string;
+  amount: number;
+  reason: string;
+}): Promise<void> {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log('[EMAIL] Would send payment-failed notification for', params.invoiceNumber);
+    return;
+  }
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.adminEmails,
+    subject: `Payment FAILED: ${params.invoiceNumber} - ${params.businessName} ($${params.amount.toFixed(2)})`,
+    text: `
+Wholesale Bank Payment Failed
+
+Invoice: ${params.invoiceNumber}
+Customer: ${params.businessName}
+Amount: $${params.amount.toFixed(2)}
+Reason: ${params.reason}
+
+The invoice is marked unpaid again. Follow up with the customer.
+
+---
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader('Payment Failed')}
+
+  <div style="padding: 32px 24px;">
+    <div style="background-color: #fee2e2; border: 2px solid #dc2626; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+      <p style="margin: 0; font-size: 16px; color: #991b1b; font-weight: bold;">Bank Payment Did Not Clear</p>
+      <p style="margin: 8px 0 0 0; font-size: 24px; color: #991b1b; font-weight: bold;">$${params.amount.toFixed(2)}</p>
+    </div>
+
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+      <tr>
+        <td style="padding: 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey}; width: 120px;">Invoice</td>
+        <td style="padding: 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.invoiceNumber}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.mediumGrey};">Customer</td>
+        <td style="padding: 12px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${params.businessName}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; color: ${BRAND_COLORS.mediumGrey};">Reason</td>
+        <td style="padding: 12px 0; color: ${BRAND_COLORS.darkGrey};">${params.reason}</td>
+      </tr>
+    </table>
+
+    <p style="color: ${BRAND_COLORS.darkGrey};">The invoice is marked unpaid again. Follow up with the customer.</p>
+
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[EMAIL] ✅ Sent payment-failed notification to admins for ${params.invoiceNumber}`);
+  } catch (error) {
+    console.error('[EMAIL] Failed to send payment-failed notification:', error);
+    throw error;
+  }
+}
+
+// Wholesale Invoice Payment Receipt - sent to the location's invoice inbox(es) when
+// an invoice settles, whether paid online or marked paid by staff.
 interface WholesalePaymentReceiptParams {
   poNumber?: string | null;
-  customerEmail: string;
+  customerEmail: string | string[];
   businessName: string;
   contactName: string;
   invoiceNumber: string;

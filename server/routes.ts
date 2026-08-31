@@ -13,7 +13,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail, sendWholesaleWelcomeEmail, generateDeliveryPacketPDF } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail, sendWholesaleWelcomeEmail, sendWholesalePaymentReceipt, sendWholesalePaymentFailedNotification, generateDeliveryPacketPDF } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
@@ -496,6 +496,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * Idempotent: a no-op if the order is already paid, so a replayed webhook can't send a
    * second receipt.
    */
+  /** Payment receipt to the location's invoice inbox(es), account email otherwise —
+   *  the same routing invoices use. Called on online settlement AND staff mark-paid. */
+  async function sendWholesaleReceiptForOrder(orderId: string, paidAt: Date) {
+    const details = await storage.getWholesaleOrderWithDetails(orderId);
+    if (!details) return;
+    const { order, customer, items } = details;
+    const recipients = String((order.location as any)?.contactEmail || customer.email)
+      .split(/[,;]/)
+      .map((e) => e.trim())
+      .filter(Boolean);
+    if (!recipients.length) return;
+    await sendWholesalePaymentReceipt({
+      poNumber: (order as any).poNumber ?? null,
+      customerEmail: recipients,
+      businessName: customer.businessName,
+      contactName: customer.contactName || customer.businessName,
+      invoiceNumber: order.invoiceNumber,
+      amount: Number(order.totalAmount),
+      paidAt,
+      items: items.map((item: any) => ({
+        productName: item.product.flavor ? `${item.product.name} - ${item.product.flavor}` : item.product.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      })),
+    });
+  }
+
   async function settleWholesaleInvoice(orderId: string, paymentIntentId?: string) {
     const order = await storage.getWholesaleOrder(orderId);
     if (!order) {
@@ -515,11 +542,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     console.log(`[WEBHOOK] ✅ Wholesale invoice ${order.invoiceNumber} settled (funds received)`);
 
-    // POLICY (2026-08-19): no automatic emails to wholesale customers except order
-    // confirmations — the settlement receipt is deliberately not sent. The invoice
-    // flips to Paid in the portal, which is where customers check. Staff still get
-    // the paid notification below. (Dropping the receipt also removed the
-    // 2-queries-per-line-item lookup this webhook was flagged for in review.)
+    // Receipt to the customer (owner reversal 2026-08-31 of the 2026-08-19 no-receipt
+    // policy): now that locations bill their own AP inboxes, settlement sends a receipt
+    // to the same address(es) the invoice went to.
+    sendWholesaleReceiptForOrder(orderId, paidAt).catch((e) =>
+      console.error('[WEBHOOK] Failed to send payment receipt:', e.message));
+
     const customer = await storage.getWholesaleCustomer(order.customerId);
 
     try {
@@ -4511,12 +4539,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 .filter((e): e is string => !!e);
               const wsCustomer = wsOrder ? await storage.getWholesaleCustomer(wsOrder.customerId) : null;
               if (adminEmails.length > 0 && wsOrder) {
-                await sendContactFormNotification({
-                  staffEmails: adminEmails,
-                  contactName: wsCustomer?.contactName ?? 'Wholesale customer',
-                  contactEmail: wsCustomer?.email ?? '',
-                  contactCompany: wsCustomer?.businessName ?? '',
-                  message: `BANK PAYMENT FAILED\n\nInvoice ${wsOrder.invoiceNumber} for $${Number(wsOrder.totalAmount).toFixed(2)} did not clear.\nReason: ${failure}\n\nThe invoice is marked unpaid again. Follow up with the customer.`,
+                await sendWholesalePaymentFailedNotification({
+                  adminEmails,
+                  businessName: wsCustomer?.businessName ?? 'Wholesale customer',
+                  invoiceNumber: wsOrder.invoiceNumber,
+                  amount: Number(wsOrder.totalAmount),
+                  reason: failure,
                 });
               }
             } catch (emailError: any) {
@@ -6888,14 +6916,20 @@ If you have any questions, please don't hesitate to reach out!`,
       }
 
       const user = req.user as any;
+      const paidAt = new Date();
       await storage.updateWholesaleOrder(req.params.id, {
-        paidAt: new Date(),
+        paidAt,
         paidByUserId: user.id,
       });
 
-      res.json({ 
-        success: true, 
-        message: "Invoice marked as paid",
+      // Check arrived and staff recorded it — the customer's AP inbox gets the same
+      // receipt an online payment would have produced (owner, 2026-08-31).
+      sendWholesaleReceiptForOrder(req.params.id, paidAt).catch((e) =>
+        console.error('[MARK-PAID] Failed to send payment receipt:', e.message));
+
+      res.json({
+        success: true,
+        message: "Invoice marked as paid — receipt emailed to the customer",
       });
     } catch (error: any) {
       console.error("Error marking invoice as paid:", error);
