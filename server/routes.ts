@@ -6787,7 +6787,7 @@ If you have any questions, please don't hesitate to reach out!`,
       const orderAdjustments = await storage.getWholesaleOrderAdjustments(order.id);
       const invoiceItems = [
         ...items.map((item: any) => ({
-          productName: item.product.name,
+          productName: item.product.flavor ? `${item.product.name} - ${item.product.flavor}` : item.product.name,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
         })),
@@ -9717,7 +9717,7 @@ If you have any questions, please don't hesitate to reach out!`,
           const { order, customer, items } = details;
           const adjustments = await storage.getWholesaleOrderAdjustments(order.id);
           const invoiceItems = [
-            ...items.map((item: any) => ({ productName: item.product.name, quantity: item.quantity, unitPrice: item.unitPrice })),
+            ...items.map((item: any) => ({ productName: item.product.flavor ? `${item.product.name} - ${item.product.flavor}` : item.product.name, quantity: item.quantity, unitPrice: item.unitPrice })),
             ...adjustments.map((a) => ({ productName: a.label, quantity: 1, unitPrice: a.amount })),
           ];
           const location = order.location ?? null;
@@ -9772,7 +9772,8 @@ If you have any questions, please don't hesitate to reach out!`,
         if (stop.stopType !== 'order' || !stop.wholesaleOrderId) continue;
         const details = await storage.getWholesaleOrderWithDetails(stop.wholesaleOrderId);
         for (const item of details?.items ?? []) {
-          const name = (item as any).product.name;
+          const p = (item as any).product;
+          const name = p.flavor ? `${p.name} - ${p.flavor}` : p.name;
           packing.set(name, (packing.get(name) ?? 0) + item.quantity);
         }
       }
