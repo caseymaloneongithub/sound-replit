@@ -6400,6 +6400,7 @@ If you have any questions, please don't hesitate to reach out!`,
       const { retail, wholesale } = await storage.getWeeklyBoardOrders(start, end, { retailBacklog });
 
       // Normalise both channels to one card shape. The client maps status→stage per kind.
+      const now = new Date();
       const orders = [
         ...retail.map(o => ({
           id: o.id,
@@ -6407,7 +6408,12 @@ If you have any questions, please don't hesitate to reach out!`,
           title: o.customerName,
           reference: o.orderNumber,
           tag: o.isSubscriptionOrder ? 'Subscription' : null,
-          scheduledDate: o.pickupDate ?? o.orderDate,
+          // An open order with no pickup date — or one whose date already slipped —
+          // lands on TODAY, every day, until someone fulfils it (owner, 2026-08-30).
+          // A future pickup date still files under its planned day.
+          scheduledDate: !['fulfilled', 'cancelled'].includes(o.status) && (!o.pickupDate || o.pickupDate < now)
+            ? now
+            : (o.pickupDate ?? o.orderDate),
           status: o.status,
           total: o.totalAmount,
           notes: o.notes,
