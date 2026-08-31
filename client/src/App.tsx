@@ -156,7 +156,7 @@ function Router() {
       <StaffProtectedRoute path="/user-management" component={StaffPortal} />
       
       {/* Redirect /staff-portal to wholesale orders by default */}
-      <Route path="/staff-portal" component={() => <Redirect to="/staff-portal/wholesale/orders" />} />
+      <Route path="/staff-portal" component={() => <Redirect to="/staff-portal/orders-board" />} />
       <Route component={NotFound} />
     </Switch>
   );

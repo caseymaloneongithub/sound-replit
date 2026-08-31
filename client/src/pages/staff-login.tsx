@@ -139,7 +139,7 @@ export default function StaffLogin() {
       
       // Add small delay to ensure auth state propagates
       setTimeout(() => {
-        setLocation("/staff-portal/wholesale/orders");
+        setLocation("/staff-portal/orders-board");
       }, 100);
     } catch (error: any) {
       toast({
@@ -191,7 +191,7 @@ export default function StaffLogin() {
       
       // Add small delay to ensure auth state propagates
       setTimeout(() => {
-        setLocation("/staff-portal/wholesale/orders");
+        setLocation("/staff-portal/orders-board");
       }, 100);
     } catch (error: any) {
       toast({
@@ -241,7 +241,7 @@ export default function StaffLogin() {
       });
       
       setTimeout(() => {
-        setLocation("/staff-portal/wholesale/orders");
+        setLocation("/staff-portal/orders-board");
       }, 100);
     } catch (error: any) {
       toast({
