@@ -9,7 +9,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CalendarIcon, Printer } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import { DeliveriesTabs } from "@/components/staff/deliveries-tabs";
+import { DeliveriesTabs, useSharedDeliveryDate } from "@/components/staff/deliveries-tabs";
 import { format, startOfWeek, endOfWeek, addDays } from "date-fns";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -18,7 +18,7 @@ type ReportView = "daily" | "weekly";
 export default function WholesaleDeliveryReport() {
   const { user } = useAuth();
   const [reportView, setReportView] = useState<ReportView>("daily");
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [selectedDate, setSelectedDate] = useSharedDeliveryDate();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
   // Calculate date range based on view

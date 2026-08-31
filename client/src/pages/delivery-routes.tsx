@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CalendarIcon, Route, Plus, X, RefreshCw } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
-import { DeliveriesTabs } from "@/components/staff/deliveries-tabs";
+import { DeliveriesTabs, useSharedDeliveryDate } from "@/components/staff/deliveries-tabs";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -108,7 +108,7 @@ function formatDistance(meters: number): string {
 }
 
 export default function DeliveryRoutes() {
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [selectedDate, setSelectedDate] = useSharedDeliveryDate();
   const [selectedCustomStops, setSelectedCustomStops] = useState<string[]>([]);
   const [isAddStopOpen, setIsAddStopOpen] = useState(false);
   const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRouteResponse | null>(null);
