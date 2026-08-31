@@ -9516,11 +9516,21 @@ If you have any questions, please don't hesitate to reach out!`,
         geocodeResult.longitude
       );
 
+      // Backfill address parts a person left blank with what Mapbox resolved — so the
+      // screen shows the full address and a wrong geocode is visible, not silent.
+      // Never overwrites anything already entered.
+      const backfill: Record<string, string> = {};
+      if (!foundLocation.city?.trim() && geocodeResult.city) backfill.city = geocodeResult.city;
+      if (!foundLocation.state?.trim() && geocodeResult.state) backfill.state = geocodeResult.state;
+      if (!foundLocation.zipCode?.trim() && geocodeResult.zipCode) backfill.zipCode = geocodeResult.zipCode;
+      if (Object.keys(backfill).length) await storage.updateWholesaleLocation(locationId, backfill);
+
       res.json({
         success: true,
         latitude: geocodeResult.latitude,
         longitude: geocodeResult.longitude,
         placeName: geocodeResult.placeName,
+        ...backfill,
       });
     } catch (error: any) {
       console.error("Error geocoding location:", error);
@@ -9550,6 +9560,12 @@ If you have any questions, please don't hesitate to reach out!`,
             geocodeResult.latitude,
             geocodeResult.longitude
           );
+          // Same backfill as single-location geocode: fill blanks, never overwrite.
+          const backfill: Record<string, string> = {};
+          if (!location.city?.trim() && geocodeResult.city) backfill.city = geocodeResult.city;
+          if (!location.state?.trim() && geocodeResult.state) backfill.state = geocodeResult.state;
+          if (!location.zipCode?.trim() && geocodeResult.zipCode) backfill.zipCode = geocodeResult.zipCode;
+          if (Object.keys(backfill).length) await storage.updateWholesaleLocation(location.id, backfill);
           successCount++;
         } else {
           failCount++;
@@ -9704,13 +9720,17 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(500).json({ message: "Failed to optimize route" });
       }
 
-      // Reorder stops based on optimization
-      const reorderedStops = optimizedRoute.stops.map(optStop => ({
-        ...orderStops[optStop.waypointIndex],
-        stopOrder: optStop.stopIndex,
-        distanceFromPrevious: optStop.distanceFromPrevious,
-        durationFromPrevious: optStop.durationFromPrevious,
-      }));
+      // Reorder stops into the optimized drive sequence. stopIndex says which INPUT
+      // stop each entry is; waypointIndex says where it lands in the drive. The old
+      // mapping used them the other way around, scrambling names against distances.
+      const reorderedStops = [...optimizedRoute.stops]
+        .sort((a, b) => a.waypointIndex - b.waypointIndex)
+        .map(optStop => ({
+          ...orderStops[optStop.stopIndex],
+          stopOrder: optStop.waypointIndex,
+          distanceFromPrevious: optStop.distanceFromPrevious,
+          durationFromPrevious: optStop.durationFromPrevious,
+        }));
 
       // Save the route
       const savedRoute = await storage.createDeliveryRoute({

@@ -4,6 +4,11 @@ interface GeocodingResult {
   latitude: number;
   longitude: number;
   placeName: string;
+  // Parsed from Mapbox's result so callers can backfill address fields a person
+  // left blank — and so a wrong geocode is visible on screen instead of silent.
+  city: string | null;
+  state: string | null;
+  zipCode: string | null;
 }
 
 interface OptimizedStop {
@@ -56,12 +61,19 @@ export async function geocodeAddress(
       return null;
     }
 
-    const [longitude, latitude] = data.features[0].center;
-    
+    const feature = data.features[0];
+    const [longitude, latitude] = feature.center;
+    const ctx: any[] = feature.context || [];
+    const byType = (t: string) => ctx.find((c) => String(c.id || "").startsWith(t + "."));
+    const region = byType("region");
+
     return {
       latitude,
       longitude,
-      placeName: data.features[0].place_name,
+      placeName: feature.place_name,
+      city: byType("place")?.text ?? null,
+      state: region?.short_code ? String(region.short_code).replace(/^US-/, "") : null,
+      zipCode: byType("postcode")?.text ?? null,
     };
   } catch (error) {
     console.error("Geocoding error:", error);
@@ -137,11 +149,17 @@ export async function optimizeDeliveryRoute(
     const waypoints = data.waypoints || [];
     const legs = trip.legs || [];
     
+    // data.waypoints is in INPUT order; each carries waypoint_index = its position in
+    // the OPTIMIZED drive. Legs are in optimized order (legs[k] = drive position k → k+1,
+    // position 0 being the facility). So the leg INTO the stop at drive position p is
+    // legs[p] — indexing legs by input order attached every distance to the wrong stop
+    // (a Thorp run 100 miles out showed "+10.9 mi").
     const optimizedStops: OptimizedStop[] = waypoints.slice(1, -1).map((wp: any, index: number) => {
-      const leg = legs[index] || {};
+      const tripPosition = wp.waypoint_index - 1;
+      const leg = legs[tripPosition] || {};
       return {
-        stopIndex: index,
-        waypointIndex: wp.waypoint_index - 1,
+        stopIndex: index, // which input stop this is
+        waypointIndex: tripPosition, // where it lands in the optimized sequence
         distanceFromPrevious: leg.distance || 0,
         durationFromPrevious: leg.duration || 0,
       };
