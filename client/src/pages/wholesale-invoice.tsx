@@ -265,7 +265,7 @@ export default function WholesaleInvoice() {
                   <div className="font-semibold">Puget Sound Kombucha Co.</div>
                   <div className="text-sm text-muted-foreground">4501 Shilshole Ave NW</div>
                   <div className="text-sm text-muted-foreground">Seattle, WA 98107</div>
-                  <div className="text-sm text-muted-foreground">emily@soundkombucha.com</div>
+                  <div className="text-sm text-muted-foreground">orders@soundkombucha.com</div>
                   <div className="text-sm text-muted-foreground">(206) 789-5219</div>
                   {/* Checks go to the mailing address, not the brewery. */}
                   {!order.paidAt && (
@@ -425,7 +425,7 @@ export default function WholesaleInvoice() {
 
             <div className="mt-12 text-center text-sm text-muted-foreground">
               <p>Thank you for your business!</p>
-              <p className="mt-2">Questions? Contact us at emily@soundkombucha.com or (206) 789-5219</p>
+              <p className="mt-2">Questions? Contact us at orders@soundkombucha.com or (206) 789-5219</p>
             </div>
           </CardContent>
         </Card>

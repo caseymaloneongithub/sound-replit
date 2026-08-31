@@ -1353,7 +1353,7 @@ This receipt confirms your payment has been successfully processed.
 Puget Sound Kombucha Co.
 4501 Shilshole Ave NW
 Seattle, WA 98107
-emily@soundkombucha.com
+orders@soundkombucha.com
 (206) 789-5219
     `.trim(),
     html: `
@@ -1509,7 +1509,7 @@ We will contact you to confirm delivery details.
 Puget Sound Kombucha Co.
 4501 Shilshole Ave NW
 Seattle, WA 98107
-emily@soundkombucha.com
+orders@soundkombucha.com
 (206) 789-5219
     `.trim(),
     html: `
@@ -2195,7 +2195,7 @@ Thank you for your business!
 Puget Sound Kombucha Co.
 4501 Shilshole Ave NW
 Seattle, WA 98107
-emily@soundkombucha.com
+orders@soundkombucha.com
 (206) 789-5219
     `.trim(),
     html: `
@@ -2276,7 +2276,7 @@ emily@soundkombucha.com
 }
 
 // Admin email for notifications
-const ADMIN_EMAIL = 'emily@soundkombucha.com';
+const ADMIN_EMAIL = 'orders@soundkombucha.com';
 
 /**
  * Send data retention cleanup notification to admin
