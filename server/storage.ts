@@ -1528,6 +1528,8 @@ export class PostgresStorage implements IStorage {
     brewMix: { flavor: string; gallons: number }[];
     monthly: Array<Record<string, string | number>>;
     monthlyFlavors: string[];
+    brewMonthly: Array<Record<string, string | number>>;
+    brewMonthlyFlavors: string[];
     negativeStock: { id: string; title: string; unit: string; stock: number }[];
   }> {
     const mats = await this.getMaterials();
@@ -1576,6 +1578,8 @@ export class PostgresStorage implements IStorage {
       monthLabels.push(d.toLocaleString('en-US', { month: 'short' }));
     }
     const monthlyByFlavor: Array<Map<string, number>> = monthKeys.map(() => new Map());
+    const brewMonthlyByFlavor: Array<Map<string, number>> = monthKeys.map(() => new Map());
+    const brewYearTotals = new Map<string, number>();
 
     const flavorMixMap = new Map<string, number>();
     const brewMixMap = new Map<string, number>();
@@ -1596,8 +1600,14 @@ export class PostgresStorage implements IStorage {
       const flavor = r.flavorName ?? 'Unknown';
       // Gallons brewed = fermentation output, measured in gallons ('Brew:' recipes).
       const isBrew = String(r.processUnit).toLowerCase().startsWith('gallon') || r.title.startsWith('Brew:');
-      if (isBrew && (!mixCutoff || d >= mixCutoff)) {
-        brewMixMap.set(flavor, (brewMixMap.get(flavor) ?? 0) + units);
+      if (isBrew) {
+        if (!mixCutoff || d >= mixCutoff) brewMixMap.set(flavor, (brewMixMap.get(flavor) ?? 0) + units);
+        const bk = d.getFullYear() + '-' + d.getMonth();
+        const bi = monthIdx.get(bk);
+        if (bi !== undefined) {
+          brewMonthlyByFlavor[bi].set(flavor, (brewMonthlyByFlavor[bi].get(flavor) ?? 0) + units);
+          brewYearTotals.set(flavor, (brewYearTotals.get(flavor) ?? 0) + units);
+        }
       }
       if (!isBottle) continue;
       if (!mixCutoff || d >= mixCutoff) {
@@ -1629,6 +1639,16 @@ export class PostgresStorage implements IStorage {
       }
       return row;
     });
+    const brewMonthlyFlavors = Array.from(brewYearTotals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([flavor]) => flavor);
+    const brewMonthly = monthKeys.map((_, i) => {
+      const row: Record<string, string | number> = { month: monthLabels[i] };
+      for (const flavor of brewMonthlyFlavors) {
+        row[flavor] = Math.round(brewMonthlyByFlavor[i].get(flavor) ?? 0);
+      }
+      return row;
+    });
 
     return {
       inventoryValue,
@@ -1640,6 +1660,8 @@ export class PostgresStorage implements IStorage {
       brewMix,
       monthly,
       monthlyFlavors,
+      brewMonthly,
+      brewMonthlyFlavors,
     };
   }
 

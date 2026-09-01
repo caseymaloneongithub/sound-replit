@@ -21,6 +21,8 @@ type Dashboard = {
   brewMix: { flavor: string; gallons: number }[];
   monthly: Array<Record<string, string | number>>;
   monthlyFlavors: string[];
+  brewMonthly: Array<Record<string, string | number>>;
+  brewMonthlyFlavors: string[];
   negativeStock: { id: string; title: string; unit: string; stock: number }[];
 };
 
@@ -100,7 +102,7 @@ export default function InventoryDashboard() {
     const map = new Map<string, string>();
     (dash?.monthlyFlavors ?? []).forEach((f, i) => map.set(f, PIE_COLORS[i % PIE_COLORS.length]));
     let extra = map.size;
-    for (const f of [...(dash?.flavorMix ?? []).map((x) => x.flavor), ...(dash?.brewMix ?? []).map((x) => x.flavor)]) {
+    for (const f of [...(dash?.brewMonthlyFlavors ?? []), ...(dash?.flavorMix ?? []).map((x) => x.flavor), ...(dash?.brewMix ?? []).map((x) => x.flavor)]) {
       if (!map.has(f)) map.set(f, PIE_COLORS[extra++ % PIE_COLORS.length]);
     }
     return (flavor: string) => map.get(flavor) ?? "#64748b";
@@ -273,7 +275,7 @@ export default function InventoryDashboard() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-lg">
-                Production — last 12 months
+                Bottling — last 12 months
               </CardTitle>
               <CardDescription>Cases bottled per month</CardDescription>
             </CardHeader>
@@ -292,6 +294,35 @@ export default function InventoryDashboard() {
                       fill={flavorColor(flavor)}
                       name={flavor}
                       radius={i === dash.monthlyFlavors.length - 1 ? [4, 4, 0, 0] : undefined}
+                    />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                Brewing — last 12 months
+              </CardTitle>
+              <CardDescription>Gallons brewed per month</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={dash.brewMonthly}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="month" fontSize={12} />
+                  <YAxis fontSize={12} />
+                  <Tooltip />
+                  {dash.brewMonthlyFlavors.map((flavor, i) => (
+                    <Bar
+                      key={flavor}
+                      dataKey={flavor}
+                      stackId="gallons"
+                      fill={flavorColor(flavor)}
+                      name={flavor}
+                      radius={i === dash.brewMonthlyFlavors.length - 1 ? [4, 4, 0, 0] : undefined}
                     />
                   ))}
                 </BarChart>
