@@ -342,7 +342,7 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
                 <th
                   key={`${s.unit}|${f.flavor}`}
                   title={f.flavor}
-                  className={`px-1 py-1.5 text-center font-semibold border-b ${i === 0 ? "border-l-2" : ""}`}
+                  className={`px-1 py-1.5 text-center font-semibold border-b ${i === 0 ? "border-l-2" : "border-l border-border/40"}`}
                 >
                   {flavorAbbr(f.flavor)}
                 </th>
@@ -394,7 +394,7 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
                   s.flavors.map((f, i) => {
                     const n = qtyFor(o, s.unit, f.flavor);
                     return (
-                      <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-1.5 text-center border-b ${i === 0 ? "border-l-2" : ""}`}>
+                      <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-1.5 text-center border-b ${i === 0 ? "border-l-2" : "border-l border-border/40"}`}>
                         {dash(n)}
                       </td>
                     );
@@ -413,7 +413,7 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
             <td className="py-2 pr-2 pl-2" colSpan={2}>Total</td>
             {sections.map((s) =>
               s.flavors.map((f, i) => (
-                <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : ""}`}>
+                <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : "border-l border-border/40"}`}>
                   {!f.offered ? "" : f.total > 0 ? f.total : "—"}
                 </td>
               ))
@@ -428,7 +428,7 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
                 const entry = stock[`${f.flavor} — ${s.unit}`] ?? (catalogEntry ? { quantity: catalogEntry.quantity, productId: catalogEntry.productId } : null);
                 const short = entry != null && entry.quantity < f.total;
                 return (
-                  <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : ""} ${short ? "text-destructive font-semibold" : ""}`}>
+                  <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : "border-l border-border/40"} ${short ? "text-destructive font-semibold" : ""}`}>
                     {entry ? <StockCell productId={entry.productId} quantity={entry.quantity} /> : f.offered ? "—" : ""}
                   </td>
                 );
