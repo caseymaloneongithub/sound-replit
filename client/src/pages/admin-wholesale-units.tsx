@@ -56,7 +56,7 @@ export default function AdminWholesaleUnits() {
   });
 
   const { data: wholesaleUnitTypes = [], isLoading: wholesaleUnitTypesLoading } = useQuery<(WholesaleUnitType & { flavors?: Flavor[] })[]>({
-    queryKey: ['/api/wholesale-unit-types'],
+    queryKey: ['/api/wholesale-unit-types', 'withFlavors'],
     queryFn: async () => apiRequest('GET', '/api/wholesale-unit-types?includeFlavors=true'),
   });
 
