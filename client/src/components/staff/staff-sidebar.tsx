@@ -97,9 +97,12 @@ function useOverdueChecklistCount(): number {
 
 interface StaffSidebarProps {
   onLinkClick?: () => void;
+  // Rendered beside the heading — the layout's collapse button lives here, IN the
+  // flow, because the sticky site header covers anything pinned to the top edge.
+  headerAction?: React.ReactNode;
 }
 
-export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
+export function StaffSidebar({ onLinkClick, headerAction }: StaffSidebarProps) {
   const [location] = useLocation();
   const { user } = useAuth();
   const overdueCount = useOverdueChecklistCount();
@@ -187,9 +190,12 @@ export function StaffSidebar({ onLinkClick }: StaffSidebarProps) {
 
   return (
     <aside className="w-64 border-r bg-card/50 min-h-screen">
-      <div className="p-6">
-        <h2 className="text-lg font-semibold mb-1">Staff & Admin</h2>
-        <p className="text-sm text-muted-foreground">Management Portal</p>
+      <div className="p-6 flex items-start justify-between gap-2">
+        <div>
+          <h2 className="text-lg font-semibold mb-1">Staff & Admin</h2>
+          <p className="text-sm text-muted-foreground">Management Portal</p>
+        </div>
+        {headerAction}
       </div>
 
       <nav className="px-3 space-y-6 pb-8">

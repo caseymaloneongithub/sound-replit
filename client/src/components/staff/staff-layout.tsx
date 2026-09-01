@@ -43,19 +43,22 @@ export function StaffLayout({ children }: StaffLayoutProps) {
             </Button>
           </div>
         ) : (
-          <div className="hidden md:block relative">
-            <StaffSidebar />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleCollapsed}
-              className="absolute top-3 right-2 text-muted-foreground"
-              title="Hide menu (full screen)"
-              aria-label="Hide menu"
-              data-testid="button-toggle-sidebar"
-            >
-              <PanelLeftClose className="w-5 h-5" />
-            </Button>
+          <div className="hidden md:block">
+            <StaffSidebar
+              headerAction={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleCollapsed}
+                  className="text-muted-foreground -mr-2 -mt-1"
+                  title="Hide menu (full screen)"
+                  aria-label="Hide menu"
+                  data-testid="button-toggle-sidebar"
+                >
+                  <PanelLeftClose className="w-5 h-5" />
+                </Button>
+              }
+            />
           </div>
         )}
 
