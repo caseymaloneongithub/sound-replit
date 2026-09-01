@@ -704,53 +704,19 @@ export default function WholesaleOrders() {
                   Invoice: {selectedOrder?.invoiceNumber}
                 </DialogDescription>
               </div>
-              {!isEditMode && (
-                <div className="flex items-center gap-2">
-                  {selectedOrder?.status !== 'delivered' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={initializeEditMode}
-                      data-testid="button-edit-order"
-                    >
-                      <Pencil className="w-4 h-4 mr-2" />
-                      Edit Order
-                    </Button>
-                  )}
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        data-testid="button-delete-order"
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Delete
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete Order</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Are you sure you want to delete this order ({selectedOrder?.invoiceNumber})? This action cannot be undone.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={() => selectedOrderId && deleteOrderMutation.mutate(selectedOrderId)}
-                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                          data-testid="button-confirm-delete"
-                        >
-                          {deleteOrderMutation.isPending ? (
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          ) : null}
-                          Delete
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
+              {/* Delete lives in the footer, far from the X — top-right had it one
+                  slip away from "close" (owner, 2026-09-01). */}
+              {!isEditMode && selectedOrder?.status !== 'delivered' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mr-6"
+                  onClick={initializeEditMode}
+                  data-testid="button-edit-order"
+                >
+                  <Pencil className="w-4 h-4 mr-2" />
+                  Edit Order
+                </Button>
               )}
             </div>
           </DialogHeader>
@@ -924,6 +890,45 @@ export default function WholesaleOrders() {
                   </Table>
                 </div>
               )}
+            </div>
+          )}
+
+          {!isEditMode && (
+            <div className="flex justify-start pt-2 border-t">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    data-testid="button-delete-order"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete order
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete Order</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Are you sure you want to delete this order ({selectedOrder?.invoiceNumber})? This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => selectedOrderId && deleteOrderMutation.mutate(selectedOrderId)}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      data-testid="button-confirm-delete"
+                    >
+                      {deleteOrderMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : null}
+                      Delete
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           )}
 
