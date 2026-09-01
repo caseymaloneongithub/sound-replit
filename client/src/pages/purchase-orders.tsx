@@ -29,7 +29,7 @@ type PurchaseOrder = {
   id: string; supplierId: string; dateOrdered: string; dateDelivered: string | null;
   cost: string; notes: string | null; supplierName: string | null; lines: POLine[];
 };
-type MaterialLite = { id: string; title: string; unit: string };
+type MaterialLite = { id: string; title: string; unit: string; cost?: string };
 
 const n = (v: string | number | null | undefined) => {
   const x = typeof v === "number" ? v : parseFloat(v ?? "0");
@@ -212,19 +212,32 @@ export default function PurchaseOrders() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const isOpenOrder = (o: PurchaseOrder) =>
+    o.lines.length > 0 && o.lines.some((l) => !l.delivered);
+
   const stats = useMemo(() => {
+    const costOf = new Map(materials.map((m) => [m.id, n(m.cost)]));
     let openCount = 0, onOrderValue = 0, awaitingLines = 0;
     for (const o of orders) {
-      const delivered = o.lines.filter((l) => l.delivered).length;
-      const isOpen = o.lines.length > 0 && delivered < o.lines.length;
-      if (isOpen) {
-        openCount++;
-        onOrderValue += n(o.cost);
-        awaitingLines += o.lines.length - delivered;
-      }
+      if (!isOpenOrder(o)) continue;
+      openCount++;
+      const undelivered = o.lines.filter((l) => !l.delivered);
+      awaitingLines += undelivered.length;
+      // Most POs never had a cost entered — estimate the value still on the truck
+      // from the undelivered lines at current material cost.
+      const estimated = undelivered.reduce((s, l) => s + n(l.units) * (costOf.get(l.materialId) ?? 0), 0);
+      onOrderValue += n(o.cost) > 0 ? n(o.cost) : estimated;
     }
     return { openCount, onOrderValue, awaitingLines };
-  }, [orders]);
+  }, [orders, materials]);
+
+  // Open orders float to the top — a months-old order with one unreceived line was
+  // invisible under dozens of delivered ones, so the KPI said 3 and the eye saw 2.
+  const sortedOrders = useMemo(() =>
+    [...orders].sort((a, b) =>
+      Number(isOpenOrder(b)) - Number(isOpenOrder(a)) ||
+      new Date(b.dateOrdered).getTime() - new Date(a.dateOrdered).getTime()
+    ), [orders]);
 
   if (isLoading) {
     return (
@@ -264,7 +277,7 @@ export default function PurchaseOrders() {
           </CardContent></Card>
         ) : (
           <div className="space-y-4">
-            {orders.map((o) => {
+            {sortedOrders.map((o) => {
               const status = orderStatus(o);
               return (
                 <Card key={o.id} data-testid={`card-po-${o.id}`}>
