@@ -1838,13 +1838,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           group by 1`,
         [start, end]
       );
+      // CASH BASIS (owner confirmation 2026-09-01, matching the federal filing method):
+      // wholesale revenue counts in the month the money ARRIVED (paid_at), not the month
+      // ordered — unpaid net-30 invoices don't count yet. Retail stays by order date:
+      // customers pay at checkout, so order date ≈ cash date.
       const wholesale = await pool.query(
-        `select to_char(${pacific("order_date")}, 'YYYY-MM') as month,
+        `select to_char(${pacific("paid_at")}, 'YYYY-MM') as month,
                 count(*)::int as orders,
                 coalesce(sum(total_amount), 0)::text as gross
            from wholesale_orders
-          where deleted_at is null
-            and ${pacific("order_date")} >= $1::timestamp and ${pacific("order_date")} < $2::timestamp
+          where deleted_at is null and paid_at is not null
+            and ${pacific("paid_at")} >= $1::timestamp and ${pacific("paid_at")} < $2::timestamp
           group by 1`,
         [start, end]
       );

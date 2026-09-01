@@ -27,25 +27,37 @@ export function StaffLayout({ children }: StaffLayoutProps) {
   return (
     <div className="min-h-screen bg-background">
       <div className="flex">
-        {/* Desktop Sidebar */}
-        {!collapsed && (
-          <div className="hidden md:block">
+        {/* Desktop Sidebar — the collapse toggle lives IN the flow (inside the sidebar,
+            or on a slim rail when collapsed) so no header can cover it. */}
+        {collapsed ? (
+          <div className="hidden md:flex flex-col items-center border-r bg-card/30 px-1 pt-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleCollapsed}
+              title="Show menu"
+              aria-label="Show menu"
+              data-testid="button-toggle-sidebar"
+            >
+              <PanelLeftOpen className="w-5 h-5" />
+            </Button>
+          </div>
+        ) : (
+          <div className="hidden md:block relative">
             <StaffSidebar />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleCollapsed}
+              className="absolute top-3 right-2 text-muted-foreground"
+              title="Hide menu (full screen)"
+              aria-label="Hide menu"
+              data-testid="button-toggle-sidebar"
+            >
+              <PanelLeftClose className="w-5 h-5" />
+            </Button>
           </div>
         )}
-
-        {/* Desktop collapse toggle, floating at the content's top-left corner */}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={toggleCollapsed}
-          className="hidden md:inline-flex fixed bottom-4 left-4 z-40 bg-background/90 border shadow-sm"
-          title={collapsed ? "Show menu" : "Hide menu (full screen)"}
-          aria-label={collapsed ? "Show menu" : "Hide menu"}
-          data-testid="button-toggle-sidebar"
-        >
-          {collapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
-        </Button>
 
         {/* Mobile Header & Menu */}
         <div className="flex-1 flex flex-col">

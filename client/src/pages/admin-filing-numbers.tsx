@@ -92,7 +92,7 @@ export default function FilingNumbers() {
             <CardContent>
               <dl className="space-y-3">
                 <Row label="Retailing gross (B&O retailing + retail sales)" hint={`${selected.retail.orders} retail orders`} value={fmt(selected.retail.gross)} testid="dor-retail-gross" />
-                <Row label="Wholesaling gross (B&O wholesaling)" hint={`${selected.wholesale.orders} wholesale invoices`} value={fmt(selected.wholesale.gross)} testid="dor-wholesale-gross" />
+                <Row label="Wholesaling gross (B&O wholesaling)" hint={`${selected.wholesale.orders} invoices paid this month`} value={fmt(selected.wholesale.gross)} testid="dor-wholesale-gross" />
                 <Row label="Retail sales tax collected" value={fmt(selected.retail.tax)} testid="dor-sales-tax" />
               </dl>
               {Number(selected.retail.deposits) > 0 && (
@@ -145,8 +145,10 @@ export default function FilingNumbers() {
         )}
 
         <p className="text-xs text-muted-foreground">
-          Months are Pacific-time calendar months by order date. Cancelled and deleted orders are excluded.
-          Wholesale is resale — no sales tax. Cross-check against your accountant's numbers before filing.
+          CASH BASIS, matching the federal filing method: wholesale counts in the Pacific-time month the invoice
+          was <em>paid</em> (unpaid invoices aren't counted yet); retail counts by order date since customers pay
+          at checkout. Cancelled and deleted orders are excluded. Wholesale is resale — no sales tax.
+          Cross-check against your accountant's numbers before filing.
         </p>
       </div>
     </StaffLayout>
