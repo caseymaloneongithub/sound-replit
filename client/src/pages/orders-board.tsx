@@ -32,6 +32,7 @@ type BoardData = {
   totals: { retail: BoardItem[]; wholesale: BoardItem[] };
   stock?: Record<string, { quantity: number; productId: string } | null>;
   catalog?: Record<string, Array<{ flavor: string; quantity: number; productId: string }>>;
+  flavorOrder?: string[];
   counts: { retail: number; wholesale: number };
 };
 
@@ -172,7 +173,7 @@ export default function OrdersBoard() {
             ) : (data?.totals.retail.length ?? 0) + (data?.totals.wholesale.length ?? 0) === 0 ? (
               <p className="text-muted-foreground">Nothing scheduled this week.</p>
             ) : (
-              <PrepGrid retail={data!.totals.retail} wholesale={data!.totals.wholesale} stock={data!.stock ?? {}} catalog={data!.catalog ?? {}} />
+              <PrepGrid retail={data!.totals.retail} wholesale={data!.totals.wholesale} stock={data!.stock ?? {}} catalog={data!.catalog ?? {}} flavorOrder={data!.flavorOrder ?? []} />
             )}
           </CardContent>
         </Card>
@@ -186,6 +187,7 @@ export default function OrdersBoard() {
             ) : (
               <BoardSheet
                 orders={allOrders}
+                flavorOrder={data?.flavorOrder ?? []}
                 stock={data?.stock ?? {}}
                 catalog={data?.catalog ?? {}}
                 onAdvance={(o) => advance.mutate(o)}
@@ -220,8 +222,9 @@ function advanceButtonClass(status: string): string {
  * (short codes from the old sheet); Total and editable In Stock rows at the bottom.
  * Item labels arrive as "Flavor — Unit".
  */
-function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
+function BoardSheet({ orders, flavorOrder, stock, catalog, onAdvance, advancing }: {
   orders: BoardOrder[];
+  flavorOrder: string[];
   stock: Record<string, { quantity: number; productId: string } | null>;
   catalog: Record<string, Array<{ flavor: string; quantity: number; productId: string }>>;
   onAdvance: (o: BoardOrder) => void;
@@ -252,16 +255,14 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
     }
   }
 
-  // One flavor order shared by every section (ranked by combined weekly total),
-  // matching the To Prepare tables above.
-  const globalTotals = new Map<string, number>();
+  // One flavor order shared by every section: the catalog display order (the same
+  // order the flavors admin manages); unknown names sort last alphabetically.
+  const flavorSet = new Set<string>();
   for (const flavors of Array.from(unitTotals.values())) {
-    for (const [flavor, total] of Array.from(flavors.entries())) {
-      globalTotals.set(flavor, (globalTotals.get(flavor) ?? 0) + total);
-    }
+    for (const flavor of Array.from(flavors.keys())) flavorSet.add(flavor);
   }
-  const flavorRank = Array.from(globalTotals.keys())
-    .sort((a, b) => (globalTotals.get(b)! - globalTotals.get(a)!) || a.localeCompare(b));
+  const rank = (fl: string) => { const i = flavorOrder.indexOf(fl); return i === -1 ? 999 : i; };
+  const flavorRank = Array.from(flavorSet).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 
   // Every section carries the FULL flavor set in the same order (like the old
   // Excel: MIX shows under kegs too, just empty) so sections stay comparable.
@@ -485,7 +486,7 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
  * Wholesale / Retail / Total rows, and In Stock (shelf count) under the total —
  * red when the shelf can't cover the week. Item labels arrive as "Flavor — Unit".
  */
-function PrepGrid({ retail, wholesale, stock, catalog }: { retail: BoardItem[]; wholesale: BoardItem[]; stock: Record<string, { quantity: number; productId: string } | null>; catalog: Record<string, Array<{ flavor: string; quantity: number; productId: string }>> }) {
+function PrepGrid({ retail, wholesale, stock, catalog, flavorOrder }: { retail: BoardItem[]; wholesale: BoardItem[]; stock: Record<string, { quantity: number; productId: string } | null>; catalog: Record<string, Array<{ flavor: string; quantity: number; productId: string }>>; flavorOrder: string[] }) {
   const parse = (label: string) => {
     const idx = label.lastIndexOf(" — ");
     return idx === -1
@@ -520,17 +521,14 @@ function PrepGrid({ retail, wholesale, stock, catalog }: { retail: BoardItem[]; 
     }
   }
 
-  // ONE flavor order for every table (owner, 2026-09-01): ranked by combined weekly
-  // total across all units, and every table shows the full flavor set — so the same
-  // flavor sits in the same column in both tables and the columns line up.
-  const globalTotals = new Map<string, number>();
+  // ONE flavor order for every table: catalog display order, full flavor set in each
+  // table so the same flavor sits in the same column and the columns line up.
+  const present = new Set<string>();
   for (const flavors of Array.from(units.values())) {
-    for (const [flavor, cell] of Array.from(flavors.entries())) {
-      globalTotals.set(flavor, (globalTotals.get(flavor) ?? 0) + cell.wholesale + cell.retail);
-    }
+    for (const flavor of Array.from(flavors.keys())) present.add(flavor);
   }
-  const flavorOrder = Array.from(globalTotals.keys())
-    .sort((a, b) => (globalTotals.get(b)! - globalTotals.get(a)!) || a.localeCompare(b));
+  const rank = (fl: string) => { const i = flavorOrder.indexOf(fl); return i === -1 ? 999 : i; };
+  const orderedFlavors = Array.from(present).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 
   const unitGroups = Array.from(units.entries())
     .map(([unit, flavors]) => ({
@@ -538,7 +536,7 @@ function PrepGrid({ retail, wholesale, stock, catalog }: { retail: BoardItem[]; 
       // `offered` = this unit actually sells the flavor (activity or catalog);
       // a padding column added purely for alignment renders BLANK, not dashed —
       // there is no such thing as a Mixed keg.
-      columns: flavorOrder.map((flavor) => {
+      columns: orderedFlavors.map((flavor) => {
         const cell = flavors.get(flavor) ?? { wholesale: 0, retail: 0, stock: null, productId: null };
         return { flavor, ...cell, total: cell.wholesale + cell.retail, offered: flavors.has(flavor) };
       }),

@@ -6565,12 +6565,17 @@ If you have any questions, please don't hesitate to reach out!`,
         (catalog[uname] ??= []).push({ flavor: r.flavor, quantity: r.stock_quantity, productId: r.id });
       }
 
+      // Column order on the board follows the catalog's display order (owner, 2026-09-01),
+      // the same order the flavors admin page manages.
+      const flavorOrder = (await pool.query('select name from flavors order by display_order, name')).rows.map((r: any) => r.name);
+
       res.json({
         week: { mondayISO, startISO: start.toISOString(), endISO: end.toISOString(), offset: weekOffset },
         orders,
         totals,
         stock,
         catalog,
+        flavorOrder,
         counts: { retail: retail.length, wholesale: wholesale.length },
       });
     } catch (error: any) {
