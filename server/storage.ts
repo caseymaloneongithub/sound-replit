@@ -2641,6 +2641,15 @@ export class PostgresStorage implements IStorage {
                 sql`${retailOrders.status} <> 'fulfilled'`,
                 or(isNull(retailOrders.pickupDate), lt(retailOrders.pickupDate, end)),
               ),
+              // A date-less order that was picked up stays on the week it was
+              // fulfilled in — otherwise it vanished from the board entirely the
+              // moment someone tapped it done (owner, 2026-09-01).
+              and(
+                eq(retailOrders.status, 'fulfilled'),
+                isNull(retailOrders.pickupDate),
+                gte(retailOrders.fulfilledAt, start),
+                lt(retailOrders.fulfilledAt, end),
+              ),
             )
           : inWindow,
       ))
@@ -2698,6 +2707,14 @@ export class PostgresStorage implements IStorage {
               and(
                 isNull(wholesaleOrders.deliveryDate),
                 sql`${wholesaleOrders.status} NOT IN ('delivered', 'fulfilled', 'cancelled')`,
+              ),
+              // Date-less orders that were delivered stay on the week they were
+              // completed in (updatedAt approximates the delivery tap).
+              and(
+                isNull(wholesaleOrders.deliveryDate),
+                sql`${wholesaleOrders.status} IN ('delivered', 'fulfilled')`,
+                gte(wholesaleOrders.updatedAt, start),
+                lt(wholesaleOrders.updatedAt, end),
               ),
             )
           : and(gte(wholesaleOrders.deliveryDate, start), lt(wholesaleOrders.deliveryDate, end)),
