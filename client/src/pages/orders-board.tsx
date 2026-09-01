@@ -194,21 +194,12 @@ export default function OrdersBoard() {
           <CardContent className="pt-5">
             {isLoading ? (
               <p className="text-muted-foreground py-8">Loading…</p>
-            ) : visibleOrders.length === 0 ? (
-              allOrders.length > 0 && !showDone ? (
-                <div className="text-center py-12 space-y-3">
-                  <p className="text-lg text-muted-foreground">All {allOrders.length} {allOrders.length === 1 ? "order" : "orders"} this week are completed. 🎉</p>
-                  <Button variant="outline" size="lg" onClick={() => setShowDone(true)} data-testid="button-show-completed">
-                    <Eye className="h-4 w-4 mr-2" />
-                    Show completed
-                  </Button>
-                </div>
-              ) : (
-                <p className="text-center text-muted-foreground py-12 text-lg">No orders scheduled for {weekName.toLowerCase()}.</p>
-              )
+            ) : allOrders.length === 0 ? (
+              <p className="text-center text-muted-foreground py-12 text-lg">No orders scheduled for {weekName.toLowerCase()}.</p>
             ) : (
               <BoardSheet
-                orders={visibleOrders}
+                orders={allOrders}
+                showDone={showDone}
                 stock={data?.stock ?? {}}
                 catalog={data?.catalog ?? {}}
                 onAdvance={(o) => advance.mutate(o)}
@@ -243,8 +234,9 @@ function advanceButtonClass(status: string): string {
  * (short codes from the old sheet); Total and editable In Stock rows at the bottom.
  * Item labels arrive as "Flavor — Unit".
  */
-function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
+function BoardSheet({ orders, showDone, stock, catalog, onAdvance, advancing }: {
   orders: BoardOrder[];
+  showDone: boolean;
   stock: Record<string, { quantity: number; productId: string } | null>;
   catalog: Record<string, Array<{ flavor: string; quantity: number; productId: string }>>;
   onAdvance: (o: BoardOrder) => void;
@@ -304,6 +296,14 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
 
   const rows = [...orders].sort((a, b) =>
     new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime() || a.title.localeCompare(b.title));
+  // Open work on top, finished work below — the shelf only has to cover what's OPEN.
+  const openRows = rows.filter((o) => nextStatus(o) !== null);
+  const doneRows = rows.filter((o) => nextStatus(o) === null);
+  const sumFor = (list: BoardOrder[], unit: string, flavor: string) =>
+    list.reduce((sum, o) => sum + qtyFor(o, unit, flavor), 0);
+
+  const flavorColCount = sections.reduce((a, s) => a + s.flavors.length, 0);
+  const fullSpan = 2 + flavorColCount + 1;
 
   const notesFor = (o: BoardOrder) =>
     [o.notes, ...o.items.map((it) => it.note)].filter(Boolean).join(" · ");
@@ -352,7 +352,12 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
           </tr>
         </thead>
         <tbody className="tabular-nums">
-          {rows.map((o) => {
+          {openRows.length > 0 && (
+            <tr>
+              <td colSpan={fullSpan} className="pt-3 pb-1 pl-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Open orders</td>
+            </tr>
+          )}
+          {openRows.map((o) => {
             const next = nextStatus(o);
             const done = next === null;
             return (
@@ -406,17 +411,19 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
               </tr>
             );
           })}
-        </tbody>
-        <tfoot className="tabular-nums">
-          {/* The yellow totals row from the old sheet, in board colours. */}
+          {/* The yellow totals row from the old sheet — OPEN work only, since that's
+              what still has to leave the shelf. */}
           <tr className="font-bold bg-amber-100 dark:bg-amber-950/40">
-            <td className="py-2 pr-2 pl-2" colSpan={2}>Total</td>
+            <td className="py-2 pr-2 pl-2" colSpan={2}>Open subtotal</td>
             {sections.map((s) =>
-              s.flavors.map((f, i) => (
-                <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : "border-l border-border/40"}`}>
-                  {!f.offered ? "" : f.total > 0 ? f.total : "—"}
-                </td>
-              ))
+              s.flavors.map((f, i) => {
+                const n = sumFor(openRows, s.unit, f.flavor);
+                return (
+                  <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : "border-l border-border/40"}`}>
+                    {!f.offered ? "" : n > 0 ? n : "—"}
+                  </td>
+                );
+              })
             )}
             <td className="border-l-2"></td>
           </tr>
@@ -426,7 +433,8 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
               s.flavors.map((f, i) => {
                 const catalogEntry = (catalog[s.unit] ?? []).find((e) => e.flavor === f.flavor);
                 const entry = stock[`${f.flavor} — ${s.unit}`] ?? (catalogEntry ? { quantity: catalogEntry.quantity, productId: catalogEntry.productId } : null);
-                const short = entry != null && entry.quantity < f.total;
+                const openNeed = sumFor(openRows, s.unit, f.flavor);
+                const short = entry != null && entry.quantity < openNeed;
                 return (
                   <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : "border-l border-border/40"} ${short ? "text-destructive font-semibold" : ""}`}>
                     {entry ? <StockCell productId={entry.productId} quantity={entry.quantity} /> : f.offered ? "—" : ""}
@@ -436,7 +444,52 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
             )}
             <td className="border-l-2"></td>
           </tr>
-        </tfoot>
+
+          {doneRows.length > 0 && (
+            <>
+              <tr>
+                <td colSpan={fullSpan} className="pt-4 pb-1 pl-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Delivered &amp; picked up ({doneRows.length})
+                </td>
+              </tr>
+              {showDone && doneRows.map((o) => (
+                <tr key={`${o.kind}-${o.id}`} className="opacity-50" data-testid={`order-${o.id}`}>
+                  <td className={`py-1.5 pr-2 pl-2 border-b ${CHANNEL_EDGE[o.kind]}`}>
+                    <span className="text-xs font-medium">{o.title.split(" — ")[0]}</span>
+                    {o.title.includes(" — ") && <span className="block text-[11px] text-muted-foreground">{o.title.slice(o.title.indexOf(" — ") + 3)}</span>}
+                  </td>
+                  <td className="py-1.5 pr-3 border-b whitespace-nowrap">
+                    <span className="text-xs text-muted-foreground">{statusLabel(o)}</span>
+                  </td>
+                  {sections.map((s) =>
+                    s.flavors.map((f, i) => (
+                      <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-1.5 text-center border-b ${i === 0 ? "border-l-2" : "border-l border-border/40"}`}>
+                        {dash(qtyFor(o, s.unit, f.flavor))}
+                      </td>
+                    ))
+                  )}
+                  <td className="px-2 py-1.5 border-b border-l-2 text-xs text-muted-foreground">
+                    <span className="line-clamp-2" title={notesFor(o)}>{notesFor(o)}</span>
+                  </td>
+                </tr>
+              ))}
+              <tr className="font-semibold text-muted-foreground">
+                <td className="py-2 pr-2 pl-2" colSpan={2}>Delivered subtotal</td>
+                {sections.map((s) =>
+                  s.flavors.map((f, i) => {
+                    const n = sumFor(doneRows, s.unit, f.flavor);
+                    return (
+                      <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : "border-l border-border/40"}`}>
+                        {!f.offered ? "" : n > 0 ? n : "—"}
+                      </td>
+                    );
+                  })
+                )}
+                <td className="border-l-2"></td>
+              </tr>
+            </>
+          )}
+        </tbody>
       </table>
     </div>
   );
