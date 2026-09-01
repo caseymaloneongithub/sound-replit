@@ -2690,8 +2690,17 @@ export class PostgresStorage implements IStorage {
       .leftJoin(wholesaleLocations, eq(wholesaleOrders.locationId, wholesaleLocations.id))
       .where(and(
         isNull(wholesaleOrders.deletedAt),
-        gte(wholesaleOrders.deliveryDate, start),
-        lt(wholesaleOrders.deliveryDate, end),
+        // On the ACTIVE week, open wholesale orders with NO delivery date set ride
+        // along too (owner, 2026-09-01) — an unscheduled order still needs packing.
+        opts?.retailBacklog
+          ? or(
+              and(gte(wholesaleOrders.deliveryDate, start), lt(wholesaleOrders.deliveryDate, end)),
+              and(
+                isNull(wholesaleOrders.deliveryDate),
+                sql`${wholesaleOrders.status} NOT IN ('delivered', 'fulfilled', 'cancelled')`,
+              ),
+            )
+          : and(gte(wholesaleOrders.deliveryDate, start), lt(wholesaleOrders.deliveryDate, end)),
       ))
       .orderBy(asc(wholesaleOrders.deliveryDate));
 

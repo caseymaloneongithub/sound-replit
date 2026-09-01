@@ -62,21 +62,21 @@ function statusLabel(o: BoardOrder): string {
   return FLOW[o.kind].labels[o.status] ?? o.status;
 }
 
-// Column headers use the short codes from the crew's old Excel pack sheet; anything
-// unmapped falls back to the first letters. Full name lives in the tooltip.
+// Two-letter column codes so headers never collide; the full name lives in the
+// tooltip. Unmapped flavors fall back to their first two letters.
 const FLAVOR_ABBR: Record<string, string> = {
-  Evergreen: "EVGR",
-  Hummingbrew: "HUM",
-  Mist: "MIST",
-  Bonfire: "BON",
-  Northzest: "NZST",
-  Wildberry: "WLDBY",
-  Sunbreak: "SUNBK",
-  "Island Hop": "IHOP",
-  Mixed: "MIX",
+  Evergreen: "EV",
+  Hummingbrew: "HU",
+  Mist: "MI",
+  Bonfire: "BO",
+  Northzest: "NZ",
+  Wildberry: "WB",
+  Sunbreak: "SB",
+  "Island Hop": "IH",
+  Mixed: "MX",
 };
 function flavorAbbr(flavor: string): string {
-  return FLAVOR_ABBR[flavor] ?? flavor.replace(/[^A-Za-z0-9]/g, "").slice(0, 5).toUpperCase();
+  return FLAVOR_ABBR[flavor] ?? flavor.replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase();
 }
 
 export default function OrdersBoard() {
@@ -314,7 +314,6 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
     <div className="overflow-x-auto" data-testid="board-sheet">
       <table className="w-full table-fixed text-sm border-separate border-spacing-0">
         <colgroup>
-          <col className="w-14" />
           <col className="w-44" />
           <col className="w-24" />
           {sections.flatMap((s2) => s2.flavors.map((f) => <col key={`${s2.unit}|${f.flavor}`} />))}
@@ -322,7 +321,7 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
         </colgroup>
         <thead>
           <tr>
-            <th className="sticky left-0 z-10 bg-background border-b" colSpan={3}></th>
+            <th className="border-b" colSpan={2}></th>
             {sections.map((s) => (
               <th
                 key={s.unit}
@@ -336,7 +335,6 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
             <th className="border-b border-l-2"></th>
           </tr>
           <tr className="text-xs text-muted-foreground">
-            <th className="sticky left-0 z-10 bg-background text-left font-medium py-1.5 pr-2 border-b">Day</th>
             <th className="text-left font-medium py-1.5 pr-2 border-b">Order</th>
             <th className="text-left font-medium py-1.5 pr-3 border-b">Status</th>
             {sections.map((s) =>
@@ -359,12 +357,22 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
             const done = next === null;
             return (
               <tr key={`${o.kind}-${o.id}`} className={done ? "opacity-50" : ""} data-testid={`order-${o.id}`}>
-                <td className="sticky left-0 z-10 bg-background py-1.5 pr-2 whitespace-nowrap text-muted-foreground border-b">
-                  {formatInTimeZone(new Date(o.scheduledDate), TZ, "EEE d")}
-                </td>
                 <td className={`py-1.5 pr-2 pl-2 border-b ${CHANNEL_EDGE[o.kind]}`}>
-                  <span className="font-medium">{o.title}</span>
-                  {o.tag && <span className="block text-xs text-muted-foreground">{o.tag}</span>}
+                  {(() => {
+                    const sep = o.title.indexOf(" — ");
+                    const name = sep === -1 ? o.title : o.title.slice(0, sep);
+                    const loc = sep === -1 ? null : o.title.slice(sep + 3);
+                    return (
+                      <>
+                        <span className="text-xs font-medium">{name}</span>
+                        {loc && <span className="block text-[11px] text-muted-foreground">{loc}</span>}
+                        {/* City tags are noise here; keep only tags that change handling. */}
+                        {o.tag && (o.kind === "retail" || o.tag === "Pickup at brewery") && (
+                          <span className="block text-[11px] text-muted-foreground">{o.tag}</span>
+                        )}
+                      </>
+                    );
+                  })()}
                 </td>
                 <td className="py-1.5 pr-3 border-b whitespace-nowrap">
                   {done ? (
@@ -372,7 +380,7 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
                   ) : (
                     <Button
                       size="sm"
-                      className={`h-8 px-2.5 text-xs ${advanceButtonClass(o.status)}`}
+                      className={`h-7 px-2 text-[11px] ${advanceButtonClass(o.status)}`}
                       onClick={() => onAdvance(o)}
                       disabled={advancing}
                       title={`${statusLabel(o)} → Mark ${FLOW[o.kind].labels[next!]}`}
@@ -402,7 +410,7 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
         <tfoot className="tabular-nums">
           {/* The yellow totals row from the old sheet, in board colours. */}
           <tr className="font-bold bg-amber-100 dark:bg-amber-950/40">
-            <td className="sticky left-0 z-10 bg-amber-100 dark:bg-amber-950/40 py-2 pr-2" colSpan={3}>Total</td>
+            <td className="py-2 pr-2 pl-2" colSpan={2}>Total</td>
             {sections.map((s) =>
               s.flavors.map((f, i) => (
                 <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : ""}`}>
@@ -413,10 +421,11 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
             <td className="border-l-2"></td>
           </tr>
           <tr className="text-muted-foreground">
-            <td className="sticky left-0 z-10 bg-background py-2 pr-2" colSpan={3}>In Stock</td>
+            <td className="py-2 pr-2 pl-2" colSpan={2}>In Stock</td>
             {sections.map((s) =>
               s.flavors.map((f, i) => {
-                const entry = stock[`${f.flavor} — ${s.unit}`];
+                const catalogEntry = (catalog[s.unit] ?? []).find((e) => e.flavor === f.flavor);
+                const entry = stock[`${f.flavor} — ${s.unit}`] ?? (catalogEntry ? { quantity: catalogEntry.quantity, productId: catalogEntry.productId } : null);
                 const short = entry != null && entry.quantity < f.total;
                 return (
                   <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : ""} ${short ? "text-destructive font-semibold" : ""}`}>
