@@ -100,6 +100,11 @@ async function getProductPricing(productId: string): Promise<{ retailPrice: stri
 // Email-code rate limiting lives in ./rate-limit so auth.ts shares the same buckets.
 import { checkEmailCodeRateLimit, MAX_CODE_ATTEMPTS, checkSubmissionRateLimit, isHoneypotTripped } from "./rate-limit";
 
+// Changes when the server (re)starts — i.e. on every deploy. Long-lived pages
+// like the orders-board tablet compare it across refetches and reload themselves
+// when it moves, so nobody has to hard-refresh after a deploy.
+const SERVER_BOOT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware - sets up /api/register, /api/login, /api/logout, /api/user
   await setupAuth(app);
@@ -6576,6 +6581,7 @@ If you have any questions, please don't hesitate to reach out!`,
         stock,
         catalog,
         flavorOrder,
+        bootId: SERVER_BOOT_ID,
         counts: { retail: retail.length, wholesale: wholesale.length },
       });
     } catch (error: any) {

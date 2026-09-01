@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { usePendingLinkRequests } from "@/components/staff/contact-requests-panel";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -33,6 +33,7 @@ type BoardData = {
   stock?: Record<string, { quantity: number; productId: string } | null>;
   catalog?: Record<string, Array<{ flavor: string; quantity: number; productId: string }>>;
   flavorOrder?: string[];
+  bootId?: string;
   counts: { retail: number; wholesale: number };
 };
 
@@ -112,6 +113,19 @@ export default function OrdersBoard() {
       toast({ title: "Couldn't update", description: e.message, variant: "destructive" });
     },
   });
+
+  // A deploy restarts the server and changes bootId; a long-open tablet is running
+  // the OLD JavaScript at that point, so reload once to pick up the new build —
+  // no more hard-refreshing the board after deploys.
+  const bootIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!data?.bootId) return;
+    if (bootIdRef.current === null) {
+      bootIdRef.current = data.bootId;
+    } else if (bootIdRef.current !== data.bootId) {
+      window.location.reload();
+    }
+  }, [data?.bootId]);
 
   const week = data?.week;
   const weekLabel = week
