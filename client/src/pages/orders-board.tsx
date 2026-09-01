@@ -35,27 +35,25 @@ type BoardData = {
   counts: { retail: number; wholesale: number };
 };
 
-// Status progression per channel. Tapping the button advances to `next`; at the terminal
-// state there's nothing to advance to (done). Kept here, next to the labels, so the board
-// and the buttons can't disagree about what "next" means.
-const FLOW: Record<BoardOrder["kind"], { order: string[]; labels: Record<string, string>; endpoint: (id: string) => string }> = {
+// Status progression per channel. Tapping the button advances to `next`; a status with
+// no next is done. Wholesale taps go STRAIGHT to delivered (owner, 2026-09-01) — the
+// packaged middle step was one tap too many on the board; an order already sitting at
+// packaged still advances to delivered.
+const FLOW: Record<BoardOrder["kind"], { next: Record<string, string>; labels: Record<string, string>; endpoint: (id: string) => string }> = {
   retail: {
-    order: ["pending", "ready_for_pickup", "fulfilled"],
+    next: { pending: "ready_for_pickup", ready_for_pickup: "fulfilled" },
     labels: { pending: "Pending", ready_for_pickup: "Ready", fulfilled: "Picked up" },
     endpoint: (id) => `/api/retail/orders/${id}/status`,
   },
   wholesale: {
-    order: ["pending", "packaged", "delivered"],
+    next: { pending: "delivered", packaged: "delivered" },
     labels: { pending: "Pending", packaged: "Packaged", delivered: "Delivered" },
     endpoint: (id) => `/api/wholesale/orders/${id}`,
   },
 };
 
 function nextStatus(o: BoardOrder): string | null {
-  const flow = FLOW[o.kind];
-  const i = flow.order.indexOf(o.status);
-  if (i === -1 || i >= flow.order.length - 1) return null;
-  return flow.order[i + 1];
+  return FLOW[o.kind].next[o.status] ?? null;
 }
 
 function statusLabel(o: BoardOrder): string {
@@ -323,7 +321,7 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
           </tr>
           <tr className="text-xs text-muted-foreground">
             <th className="text-left font-medium py-1.5 pr-2 border-b">Order</th>
-            <th className="text-left font-medium py-1.5 pr-3 border-b">Status</th>
+            <th className="py-1.5 pr-3 border-b"></th>
             {sections.map((s) =>
               s.flavors.map((f, i) => (
                 <th
