@@ -5,7 +5,7 @@ import crypto from "crypto";
 import Stripe from "stripe";
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { storage } from "./storage";
-import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, insertMaterialSchema, insertSupplierSchema, insertProcessSchema, insertProductionSchema, insertMaterialOrderSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings } from "@shared/schema";
+import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, insertMaterialSchema, insertSupplierSchema, insertProcessSchema, insertProductionSchema, insertMaterialOrderSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings, wholesaleOrderItems, wholesaleUnitTypes } from "@shared/schema";
 import { eq, sql, and, desc, isNull, inArray } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -9663,6 +9663,62 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error("Error fetching delivery orders:", error);
       res.status(500).json({ message: "Error fetching delivery orders: " + error.message });
+    }
+  });
+
+  // Stock check for a delivery day: the day's total demand per flavor/unit against
+  // finished-goods on the shelf, so shortages surface BEFORE the route is built.
+  app.get("/api/delivery/stock-check/:date", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const targetDate = new Date(req.params.date);
+      if (isNaN(targetDate.getTime())) return res.status(400).json({ message: "Invalid date" });
+      const dayOrders = (await storage.getWholesaleOrdersByDeliveryDate(targetDate))
+        .filter(o => o.status !== 'cancelled' && o.fulfillmentMethod !== 'pickup');
+      if (!dayOrders.length) return res.json({ rows: [], shortages: 0 });
+
+      const orderIds = dayOrders.map(o => o.id);
+      const itemRows = await db
+        .select({
+          unitName: wholesaleUnitTypes.name,
+          container: wholesaleUnitTypes.container,
+          flavorName: flavors.name,
+          quantity: wholesaleOrderItems.quantity,
+        })
+        .from(wholesaleOrderItems)
+        .leftJoin(wholesaleUnitTypes, eq(wholesaleOrderItems.unitTypeId, wholesaleUnitTypes.id))
+        .leftJoin(flavors, eq(wholesaleOrderItems.flavorId, flavors.id))
+        .where(inArray(wholesaleOrderItems.orderId, orderIds));
+
+      const demand = new Map<string, { label: string; flavor: string; container: string | null; needed: number }>();
+      for (const r of itemRows) {
+        const flavor = r.flavorName || 'Unknown';
+        const unit = r.unitName || 'Item';
+        const key = `${flavor}|${unit}`;
+        const entry = demand.get(key) ?? { label: `${flavor} — ${unit}`, flavor, container: r.container ?? null, needed: 0 };
+        entry.needed += r.quantity;
+        demand.set(key, entry);
+      }
+
+      const shelf = (await pool.query(
+        'select f.name as flavor, p.container, p.stock_quantity from products p join flavors f on f.id = p.flavor_id'
+      )).rows as Array<{ flavor: string; container: string; stock_quantity: number }>;
+      const shelfBy = new Map(shelf.map(s => [`${s.flavor}|${s.container}`, s.stock_quantity]));
+
+      const rows = Array.from(demand.values()).map(d => {
+        // Mixed cases are assembled from single-flavor stock and untracked.
+        const tracked = d.flavor !== 'Mixed' && d.container != null;
+        const inStock = tracked ? (shelfBy.get(`${d.flavor}|${d.container}`) ?? null) : null;
+        return {
+          label: d.label,
+          needed: d.needed,
+          inStock,
+          short: inStock != null && inStock < d.needed,
+        };
+      }).sort((a, b) => Number(b.short) - Number(a.short) || a.label.localeCompare(b.label));
+
+      res.json({ rows, shortages: rows.filter(r => r.short).length });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error checking stock: " + error.message });
     }
   });
 

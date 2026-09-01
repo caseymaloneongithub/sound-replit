@@ -155,6 +155,19 @@ export default function DeliveryRoutes() {
     refetchInterval: 60_000,
   });
 
+  // Day's demand vs finished-goods stock — surfaces shortages BEFORE the route is built.
+  const { data: stockCheck } = useQuery<{ rows: Array<{ label: string; needed: number; inStock: number | null; short: boolean }>; shortages: number }>({
+    queryKey: ["/api/delivery/stock-check", selectedDate.toISOString().split("T")[0]],
+    queryFn: async () => {
+      const response = await fetch(`/api/delivery/stock-check/${selectedDate.toISOString().split("T")[0]}`);
+      if (!response.ok) throw new Error("Failed to check stock");
+      return response.json();
+    },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
+  });
+
   const { data: customStops = [], isLoading: stopsLoading } = useQuery<DeliveryStop[]>({
     queryKey: ["/api/delivery/stops"],
   });
@@ -508,6 +521,38 @@ export default function DeliveryRoutes() {
           </div>
 
           <div className="space-y-6">
+            {stockCheck && stockCheck.rows.length > 0 && (
+              <Card className={stockCheck.shortages > 0 ? "border-red-300 dark:border-red-800" : ""} data-testid="card-stock-check">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    Stock Check
+                    {stockCheck.shortages > 0 ? (
+                      <Badge variant="destructive">{stockCheck.shortages} short</Badge>
+                    ) : (
+                      <Badge className="bg-green-600 hover:bg-green-600">Covered</Badge>
+                    )}
+                  </CardTitle>
+                  <CardDescription>
+                    {stockCheck.shortages > 0
+                      ? "The shelf can't cover this day yet — pack or brew before the run."
+                      : "Everything on this day's orders is on the shelf."}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-1.5">
+                    {stockCheck.rows.map((r) => (
+                      <div key={r.label} className="flex items-center justify-between text-sm" data-testid={`stock-row-${r.label}`}>
+                        <span className={r.short ? "text-red-700 dark:text-red-400 font-medium" : ""}>{r.label}</span>
+                        <span className={r.short ? "text-red-700 dark:text-red-400 font-medium tabular-nums" : "text-muted-foreground tabular-nums"}>
+                          {r.needed} needed · {r.inStock == null ? "not tracked" : `${r.inStock} on hand`}
+                          {r.short && ` · short ${r.needed - (r.inStock ?? 0)}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
