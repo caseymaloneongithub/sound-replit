@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { usePendingLinkRequests } from "@/components/staff/contact-requests-panel";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { formatInTimeZone } from "date-fns-tz";
-import { ChevronLeft, ChevronRight, RefreshCw, Eye, EyeOff } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -85,9 +85,6 @@ export default function OrdersBoard() {
   // prepping, so "Today" lands there. (ISO day 7 = Sunday, Pacific.)
   const DEFAULT_OFFSET = formatInTimeZone(new Date(), TZ, "i") === "7" ? 1 : 0;
   const [weekOffset, setWeekOffset] = useState(DEFAULT_OFFSET);
-  // Completed orders (retail picked up / wholesale delivered) are hidden by default so the
-  // board shows only what still needs doing; the toggle brings them back for reference.
-  const [showDone, setShowDone] = useState(false);
 
   const { data, isLoading, isFetching, dataUpdatedAt, refetch } = useQuery<BoardData>({
     queryKey: ["/api/staff/orders-board", weekOffset],
@@ -127,8 +124,6 @@ export default function OrdersBoard() {
   const pendingCount = pendingRequests?.length ?? 0;
 
   const allOrders = data?.orders ?? [];
-  const doneCount = allOrders.filter((o) => nextStatus(o) === null).length;
-  const visibleOrders = showDone ? allOrders : allOrders.filter((o) => nextStatus(o) !== null);
 
   return (
     <StaffLayout>
@@ -167,12 +162,6 @@ export default function OrdersBoard() {
             <Button variant="ghost" size="icon" onClick={() => refetch()} aria-label="Refresh now" data-testid="button-refresh">
               <RefreshCw className={`h-5 w-5 ${isFetching ? "animate-spin" : ""}`} />
             </Button>
-            {doneCount > 0 && (
-              <Button variant="outline" size="sm" className="h-9" onClick={() => setShowDone((v) => !v)} data-testid="button-toggle-done">
-                {showDone ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
-                {showDone ? "Hide" : "Show"} done ({doneCount})
-              </Button>
-            )}
           </div>
         </div>
 
@@ -199,7 +188,6 @@ export default function OrdersBoard() {
             ) : (
               <BoardSheet
                 orders={allOrders}
-                showDone={showDone}
                 stock={data?.stock ?? {}}
                 catalog={data?.catalog ?? {}}
                 onAdvance={(o) => advance.mutate(o)}
@@ -234,9 +222,8 @@ function advanceButtonClass(status: string): string {
  * (short codes from the old sheet); Total and editable In Stock rows at the bottom.
  * Item labels arrive as "Flavor — Unit".
  */
-function BoardSheet({ orders, showDone, stock, catalog, onAdvance, advancing }: {
+function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
   orders: BoardOrder[];
-  showDone: boolean;
   stock: Record<string, { quantity: number; productId: string } | null>;
   catalog: Record<string, Array<{ flavor: string; quantity: number; productId: string }>>;
   onAdvance: (o: BoardOrder) => void;
@@ -452,7 +439,7 @@ function BoardSheet({ orders, showDone, stock, catalog, onAdvance, advancing }: 
                   Delivered &amp; picked up ({doneRows.length})
                 </td>
               </tr>
-              {showDone && doneRows.map((o) => (
+              {doneRows.map((o) => (
                 <tr key={`${o.kind}-${o.id}`} className="opacity-50" data-testid={`order-${o.id}`}>
                   <td className={`py-1.5 pr-2 pl-2 border-b ${CHANNEL_EDGE[o.kind]}`}>
                     <span className="text-xs font-medium">{o.title.split(" — ")[0]}</span>
