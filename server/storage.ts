@@ -234,7 +234,7 @@ export interface IStorage {
   getWholesaleOrdersByDeliveryDateRange(startDate: Date, endDate: Date): Promise<WholesaleOrder[]>;
   getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean }): Promise<{
     retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; notes: string | null; items: Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }> }>;
-    wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; notes: string | null; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
+    wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; locationName: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; notes: string | null; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
   }>;
   getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string | null; unitTypeName: string | null; flavorName: string | null }> }>>;
   getWholesaleOrderWithDetails(id: string): Promise<{
@@ -2621,7 +2621,7 @@ export class PostgresStorage implements IStorage {
    */
   async getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean }): Promise<{
     retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; notes: string | null; items: Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }> }>;
-    wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; notes: string | null; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
+    wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; locationName: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; notes: string | null; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
   }> {
     // --- Retail (by pickupDate) ---
     // On the ACTIVE week (retailBacklog), open orders never fall off the board: anything
@@ -2684,7 +2684,7 @@ export class PostgresStorage implements IStorage {
 
     // --- Wholesale (by deliveryDate) ---
     const wholesaleRows = await db
-      .select({ order: wholesaleOrders, businessName: wholesaleCustomers.businessName, city: wholesaleLocations.city })
+      .select({ order: wholesaleOrders, businessName: wholesaleCustomers.businessName, city: wholesaleLocations.city, locationName: wholesaleLocations.locationName })
       .from(wholesaleOrders)
       .leftJoin(wholesaleCustomers, eq(wholesaleOrders.customerId, wholesaleCustomers.id))
       .leftJoin(wholesaleLocations, eq(wholesaleOrders.locationId, wholesaleLocations.id))
@@ -2722,6 +2722,7 @@ export class PostgresStorage implements IStorage {
       invoiceNumber: r.order.invoiceNumber,
       businessName: r.businessName || 'Unknown',
       city: r.city,
+      locationName: r.locationName,
       fulfillmentMethod: r.order.fulfillmentMethod,
       deliveryDate: r.order.deliveryDate,
       orderDate: r.order.orderDate,

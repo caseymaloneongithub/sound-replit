@@ -585,6 +585,9 @@ export default function StaffPortal() {
                         <div className="flex-1">
                           <CardTitle className="text-lg mb-1">
                             {getCustomerName(order.customerId)}
+                            {(order as any).locationName && (order as any).locationName !== "Main Location" && (
+                              <span className="font-normal text-muted-foreground"> — {(order as any).locationName}</span>
+                            )}
                           </CardTitle>
                           <CardDescription>
                             Order Date: {new Date(order.orderDate).toLocaleDateString()}

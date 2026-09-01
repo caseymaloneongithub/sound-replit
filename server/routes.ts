@@ -6350,7 +6350,7 @@ If you have any questions, please don't hesitate to reach out!`,
         }
         
         const orders = await storage.getWholesaleOrdersByDeliveryDateRange(start, end);
-        return res.json(orders);
+        return res.json(await enrichOrdersWithLocation(orders));
       }
       
       // Handle single date query (daily)
@@ -6364,11 +6364,27 @@ If you have any questions, please don't hesitate to reach out!`,
       }
 
       const orders = await storage.getWholesaleOrdersByDeliveryDate(deliveryDate);
-      res.json(orders);
+      res.json(await enrichOrdersWithLocation(orders));
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching delivery report: " + error.message });
     }
   });
+
+  /** Attach each order's delivery location so reports can show the store, not just
+   *  the chain — and the store's own address/contact instead of blank account fields. */
+  async function enrichOrdersWithLocation(orders: Array<{ locationId: string | null; customerId: string }>) {
+    const locationCache = new Map<string, any>();
+    return Promise.all(orders.map(async (order) => {
+      let location = null;
+      if (order.locationId) {
+        if (!locationCache.has(order.locationId)) {
+          locationCache.set(order.locationId, await storage.getWholesaleLocation(order.locationId));
+        }
+        location = locationCache.get(order.locationId) ?? null;
+      }
+      return { ...order, location };
+    }));
+  }
 
   app.get("/api/retail/pickup-report", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
@@ -6458,7 +6474,7 @@ If you have any questions, please don't hesitate to reach out!`,
         ...wholesale.map(o => ({
           id: o.id,
           kind: 'wholesale' as const,
-          title: o.businessName,
+          title: o.locationName && o.locationName !== 'Main Location' ? `${o.businessName} — ${o.locationName}` : o.businessName,
           reference: o.invoiceNumber,
           // Pickup is called out explicitly — staff must not stage it onto a delivery run.
           tag: o.fulfillmentMethod === 'pickup' ? 'Pickup at brewery' : (o.city ?? null),

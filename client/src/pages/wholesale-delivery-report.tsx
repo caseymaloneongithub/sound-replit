@@ -235,15 +235,21 @@ export default function WholesaleDeliveryReport() {
                                 <div className="flex items-center gap-3 mb-2">
                                   <h3 className="font-semibold text-lg">
                                     {customer?.businessName || 'Unknown Customer'}
+                                    {(order as any).location?.locationName && (order as any).location.locationName !== 'Main Location' && (
+                                      <span className="font-normal text-muted-foreground"> — {(order as any).location.locationName}</span>
+                                    )}
                                   </h3>
                                   <Badge variant={getStatusColor(order.status)} className="capitalize">
                                     {order.status}
                                   </Badge>
                                 </div>
+                                {/* The store's own details when a location exists; account fields otherwise. */}
                                 <div className="text-sm text-muted-foreground space-y-1">
-                                  <p>Contact: {customer?.contactName}</p>
-                                  <p>Phone: {customer?.phone}</p>
-                                  <p>Address: {customer?.address}</p>
+                                  <p>Contact: {(order as any).location?.contactName || customer?.contactName}</p>
+                                  <p>Phone: {(order as any).location?.contactPhone || customer?.phone}</p>
+                                  <p>Address: {(order as any).location
+                                    ? `${(order as any).location.address}, ${(order as any).location.city}`
+                                    : customer?.address}</p>
                                   {order.notes && (
                                     <p className="italic mt-2">Notes: {order.notes}</p>
                                   )}

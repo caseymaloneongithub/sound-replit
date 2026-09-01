@@ -222,7 +222,12 @@ export default function WholesaleInvoices() {
             </span>
           </Link>
         </TableCell>
-        <TableCell>{getCustomerName(order.customerId)}</TableCell>
+        <TableCell>
+          {getCustomerName(order.customerId)}
+          {(order as any).locationName && (order as any).locationName !== "Main Location" && (
+            <span className="text-muted-foreground"> — {(order as any).locationName}</span>
+          )}
+        </TableCell>
         <TableCell>{format(new Date(order.orderDate), "MMM dd, yyyy")}</TableCell>
         <TableCell>
           {(() => { const d = getDeliveryStatus(order); return (
