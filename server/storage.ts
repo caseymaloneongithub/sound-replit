@@ -1522,10 +1522,12 @@ export class PostgresStorage implements IStorage {
     return report.sort((a, b) => (a.maxUnits ?? Infinity) - (b.maxUnits ?? Infinity));
   }
 
-  async getInventoryDashboard(): Promise<{
+  async getInventoryDashboard(mixPeriod?: string): Promise<{
     inventoryValue: number; totalMaterials: number; batchesLast30: number; casesLast30: number;
     flavorMix: { flavor: string; cases: number }[];
-    monthly: { month: string; cases: number }[];
+    brewMix: { flavor: string; gallons: number }[];
+    monthly: Array<Record<string, string | number>>;
+    monthlyFlavors: string[];
     negativeStock: { id: string; title: string; unit: string; stock: number }[];
   }> {
     const mats = await this.getMaterials();
@@ -1551,17 +1553,33 @@ export class PostgresStorage implements IStorage {
     const cutoff30 = new Date();
     cutoff30.setDate(cutoff30.getDate() - 30);
 
-    // 12-month buckets (cases = "Bottle:" processes)
-    const monthly: { key: string; month: string; cases: number }[] = [];
+    // Flavor-mix window (owner, 2026-09-01): month = calendar month to date; Nd = last
+    // N days; 12m = last 365; anything else = all time.
+    let mixCutoff: Date | null = null;
+    if (mixPeriod === 'month') {
+      mixCutoff = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (mixPeriod && /^\d+$/.test(mixPeriod)) {
+      mixCutoff = new Date(now.getTime() - Number(mixPeriod) * 86400_000);
+    } else if (mixPeriod === '12m') {
+      mixCutoff = new Date(now.getTime() - 365 * 86400_000);
+    }
+
+    // 12-month buckets, split per flavor so the chart can stack.
+    const monthKeys: string[] = [];
+    const monthLabels: string[] = [];
     const monthIdx = new Map<string, number>();
     for (let i = 11; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${d.getMonth()}`;
-      monthIdx.set(key, monthly.length);
-      monthly.push({ key, month: d.toLocaleString('en-US', { month: 'short' }), cases: 0 });
+      monthIdx.set(key, monthKeys.length);
+      monthKeys.push(key);
+      monthLabels.push(d.toLocaleString('en-US', { month: 'short' }));
     }
+    const monthlyByFlavor: Array<Map<string, number>> = monthKeys.map(() => new Map());
 
     const flavorMixMap = new Map<string, number>();
+    const brewMixMap = new Map<string, number>();
+    const flavorYearTotals = new Map<string, number>();
     let batchesLast30 = 0;
     let casesLast30 = 0;
 
@@ -1575,16 +1593,42 @@ export class PostgresStorage implements IStorage {
         batchesLast30 += 1;
         if (isBottle) casesLast30 += units;
       }
+      const flavor = r.flavorName ?? 'Unknown';
+      // Gallons brewed = fermentation output, measured in gallons ('Brew:' recipes).
+      const isBrew = String(r.processUnit).toLowerCase().startsWith('gallon') || r.title.startsWith('Brew:');
+      if (isBrew && (!mixCutoff || d >= mixCutoff)) {
+        brewMixMap.set(flavor, (brewMixMap.get(flavor) ?? 0) + units);
+      }
       if (!isBottle) continue;
-      flavorMixMap.set(r.flavorName ?? 'Unknown', (flavorMixMap.get(r.flavorName ?? 'Unknown') ?? 0) + units);
+      if (!mixCutoff || d >= mixCutoff) {
+        flavorMixMap.set(flavor, (flavorMixMap.get(flavor) ?? 0) + units);
+      }
       const key = `${d.getFullYear()}-${d.getMonth()}`;
       const mi = monthIdx.get(key);
-      if (mi !== undefined) monthly[mi].cases += units;
+      if (mi !== undefined) {
+        monthlyByFlavor[mi].set(flavor, (monthlyByFlavor[mi].get(flavor) ?? 0) + units);
+        flavorYearTotals.set(flavor, (flavorYearTotals.get(flavor) ?? 0) + units);
+      }
     }
 
     const flavorMix = Array.from(flavorMixMap.entries())
       .map(([flavor, cases]) => ({ flavor, cases: Math.round(cases) }))
       .sort((a, b) => b.cases - a.cases);
+    const brewMix = Array.from(brewMixMap.entries())
+      .map(([flavor, gallons]) => ({ flavor, gallons: Math.round(gallons) }))
+      .sort((a, b) => b.gallons - a.gallons);
+
+    // Stable stack order: biggest 12-month producers at the bottom of the stack.
+    const monthlyFlavors = Array.from(flavorYearTotals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([flavor]) => flavor);
+    const monthly = monthKeys.map((_, i) => {
+      const row: Record<string, string | number> = { month: monthLabels[i] };
+      for (const flavor of monthlyFlavors) {
+        row[flavor] = Math.round(monthlyByFlavor[i].get(flavor) ?? 0);
+      }
+      return row;
+    });
 
     return {
       inventoryValue,
@@ -1593,7 +1637,9 @@ export class PostgresStorage implements IStorage {
       casesLast30: Math.round(casesLast30),
       negativeStock,
       flavorMix,
-      monthly: monthly.map((m) => ({ month: m.month, cases: Math.round(m.cases) })),
+      brewMix,
+      monthly,
+      monthlyFlavors,
     };
   }
 

@@ -2322,9 +2322,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/inventory/dashboard", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
+  app.get("/api/inventory/dashboard", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      res.json(await storage.getInventoryDashboard());
+      res.json(await storage.getInventoryDashboard(typeof req.query.mixPeriod === 'string' ? req.query.mixPeriod : undefined));
     } catch (error: any) {
       res.status(500).json({ message: "Error building dashboard: " + error.message });
     }

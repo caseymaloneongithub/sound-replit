@@ -13,13 +13,24 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { Loader2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Dashboard = {
   inventoryValue: number; totalMaterials: number; batchesLast30: number; casesLast30: number;
   flavorMix: { flavor: string; cases: number }[];
-  monthly: { month: string; cases: number }[];
+  brewMix: { flavor: string; gallons: number }[];
+  monthly: Array<Record<string, string | number>>;
+  monthlyFlavors: string[];
   negativeStock: { id: string; title: string; unit: string; stock: number }[];
 };
+
+const MIX_PERIODS = [
+  { value: "month", label: "This month" },
+  { value: "30", label: "Last 30 days" },
+  { value: "60", label: "Last 60 days" },
+  { value: "90", label: "Last 90 days" },
+  { value: "12m", label: "Last 12 months" },
+] as const;
 type CogsReport = {
   windowDays: number;
   totalMaterialCost: number;
@@ -47,6 +58,21 @@ const shortMaterial = (t: string) => {
 };
 const PIE_COLORS = ["#f59e0b", "#ef4444", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316", "#64748b"];
 
+function MixPeriodSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="w-40 h-8 text-sm" data-testid="select-mix-period">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {MIX_PERIODS.map((p) => (
+          <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 function StatCard({ label, value }: {
   label: string; value: string;
 }) {
@@ -63,7 +89,23 @@ function StatCard({ label, value }: {
 }
 
 export default function InventoryDashboard() {
-  const { data: dash, isLoading } = useQuery<Dashboard>({ queryKey: ["/api/inventory/dashboard"] });
+  const [mixPeriod, setMixPeriod] = useState<string>("30");
+  const { data: dash, isLoading } = useQuery<Dashboard>({
+    queryKey: ["/api/inventory/dashboard", mixPeriod],
+    queryFn: () => apiRequest("GET", `/api/inventory/dashboard?mixPeriod=${mixPeriod}`),
+  });
+  // One colour per flavor, shared by the stacked bars and both pies, keyed off the
+  // 12-month stack order so a flavor keeps its colour everywhere.
+  const flavorColor = useMemo(() => {
+    const map = new Map<string, string>();
+    (dash?.monthlyFlavors ?? []).forEach((f, i) => map.set(f, PIE_COLORS[i % PIE_COLORS.length]));
+    let extra = map.size;
+    for (const f of [...(dash?.flavorMix ?? []).map((x) => x.flavor), ...(dash?.brewMix ?? []).map((x) => x.flavor)]) {
+      if (!map.has(f)) map.set(f, PIE_COLORS[extra++ % PIE_COLORS.length]);
+    }
+    return (flavor: string) => map.get(flavor) ?? "#64748b";
+  }, [dash]);
+  const periodLabel = MIX_PERIODS.find((p) => p.value === mixPeriod)?.label ?? "";
   const { data: reorder = [] } = useQuery<ReorderRow[]>({ queryKey: ["/api/inventory/reorder-report"] });
   const { data: limits = [] } = useQuery<LimitRow[]>({ queryKey: ["/api/inventory/limit-report"] });
   const { data: cogs } = useQuery<CogsReport>({ queryKey: ["/api/inventory/cogs-report"] });
@@ -242,7 +284,16 @@ export default function InventoryDashboard() {
                   <XAxis dataKey="month" fontSize={12} />
                   <YAxis fontSize={12} />
                   <Tooltip />
-                  <Bar dataKey="cases" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Cases" />
+                  {dash.monthlyFlavors.map((flavor, i) => (
+                    <Bar
+                      key={flavor}
+                      dataKey={flavor}
+                      stackId="cases"
+                      fill={flavorColor(flavor)}
+                      name={flavor}
+                      radius={i === dash.monthlyFlavors.length - 1 ? [4, 4, 0, 0] : undefined}
+                    />
+                  ))}
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -250,28 +301,73 @@ export default function InventoryDashboard() {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg">Flavor mix</CardTitle>
-              <CardDescription>Cases bottled by flavor (all time)</CardDescription>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-lg">Flavor mix</CardTitle>
+                  <CardDescription>Cases bottled by flavor — {periodLabel.toLowerCase()}</CardDescription>
+                </div>
+                <MixPeriodSelect value={mixPeriod} onChange={setMixPeriod} />
+              </div>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={dash.flavorMix}
-                    cx="50%" cy="50%"
-                    labelLine={false}
-                    label={({ flavor, percent }) => `${flavor} ${(percent * 100).toFixed(0)}%`}
-                    outerRadius={100}
-                    dataKey="cases"
-                    nameKey="flavor"
-                  >
-                    {dash.flavorMix.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(v: number) => [`${v.toLocaleString()} cases`, ""]} />
-                </PieChart>
-              </ResponsiveContainer>
+              {dash.flavorMix.length === 0 ? (
+                <p className="text-muted-foreground text-sm py-12 text-center">No cases bottled in this period.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={dash.flavorMix}
+                      cx="50%" cy="50%"
+                      labelLine={false}
+                      label={({ flavor, percent }) => `${flavor} ${(percent * 100).toFixed(0)}%`}
+                      outerRadius={100}
+                      dataKey="cases"
+                      nameKey="flavor"
+                    >
+                      {dash.flavorMix.map((entry, i) => (
+                        <Cell key={i} fill={flavorColor(entry.flavor)} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v: number) => [`${v.toLocaleString()} cases`, ""]} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-lg">Gallons brewed</CardTitle>
+                  <CardDescription>Fermentation output by flavor — {periodLabel.toLowerCase()}</CardDescription>
+                </div>
+                <MixPeriodSelect value={mixPeriod} onChange={setMixPeriod} />
+              </div>
+            </CardHeader>
+            <CardContent>
+              {dash.brewMix.length === 0 ? (
+                <p className="text-muted-foreground text-sm py-12 text-center">No brews logged in this period.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={dash.brewMix}
+                      cx="50%" cy="50%"
+                      labelLine={false}
+                      label={({ flavor, percent }) => `${flavor} ${(percent * 100).toFixed(0)}%`}
+                      outerRadius={100}
+                      dataKey="gallons"
+                      nameKey="flavor"
+                    >
+                      {dash.brewMix.map((entry, i) => (
+                        <Cell key={i} fill={flavorColor(entry.flavor)} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v: number) => [`${v.toLocaleString()} gallons`, ""]} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
         </div>
