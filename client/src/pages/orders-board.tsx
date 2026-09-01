@@ -62,6 +62,23 @@ function statusLabel(o: BoardOrder): string {
   return FLOW[o.kind].labels[o.status] ?? o.status;
 }
 
+// Column headers use the short codes from the crew's old Excel pack sheet; anything
+// unmapped falls back to the first letters. Full name lives in the tooltip.
+const FLAVOR_ABBR: Record<string, string> = {
+  Evergreen: "EVGR",
+  Hummingbrew: "HUM",
+  Mist: "MIST",
+  Bonfire: "BON",
+  Northzest: "NZST",
+  Wildberry: "WLDBY",
+  Sunbreak: "SUNBK",
+  "Island Hop": "IHOP",
+  Mixed: "MIX",
+};
+function flavorAbbr(flavor: string): string {
+  return FLAVOR_ABBR[flavor] ?? flavor.replace(/[^A-Za-z0-9]/g, "").slice(0, 5).toUpperCase();
+}
+
 export default function OrdersBoard() {
   const { toast } = useToast();
   // On Sunday the board looks ahead: the coming Monday-week is what the crew is
@@ -113,19 +130,9 @@ export default function OrdersBoard() {
   const doneCount = allOrders.filter((o) => nextStatus(o) === null).length;
   const visibleOrders = showDone ? allOrders : allOrders.filter((o) => nextStatus(o) !== null);
 
-  // Group orders by their Pacific calendar day for readability.
-  const byDay = new Map<string, BoardOrder[]>();
-  for (const o of visibleOrders) {
-    const key = formatInTimeZone(new Date(o.scheduledDate), TZ, "yyyy-MM-dd");
-    (byDay.get(key) ?? byDay.set(key, []).get(key)!).push(o);
-  }
-  const dayKeys = Array.from(byDay.keys()).sort();
-
-  const totalItems = (data?.totals.retail.length ?? 0) + (data?.totals.wholesale.length ?? 0);
-
   return (
     <StaffLayout>
-      <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
+      <div className="p-4 sm:p-6 max-w-full mx-auto space-y-5">
         {pendingCount > 0 && (
           <Link href="/staff-portal/wholesale/customers" className="block rounded-md border bg-muted/50 px-4 py-3 text-base hover:bg-muted" data-testid="banner-contact-requests">
             <span className="font-semibold">{pendingCount} {pendingCount === 1 ? "person is" : "people are"} waiting to be connected to a store.</span>{" "}
@@ -142,6 +149,9 @@ export default function OrdersBoard() {
             <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-sky-500" />Retail pickup</span>
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-violet-500" />Wholesale delivery</span>
+              <span className="text-sm" data-testid="text-updated">
+                {dataUpdatedAt ? `Updated ${formatInTimeZone(new Date(dataUpdatedAt), TZ, "h:mm a")}` : ""}
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -157,21 +167,22 @@ export default function OrdersBoard() {
             <Button variant="ghost" size="icon" onClick={() => refetch()} aria-label="Refresh now" data-testid="button-refresh">
               <RefreshCw className={`h-5 w-5 ${isFetching ? "animate-spin" : ""}`} />
             </Button>
+            {doneCount > 0 && (
+              <Button variant="outline" size="sm" className="h-9" onClick={() => setShowDone((v) => !v)} data-testid="button-toggle-done">
+                {showDone ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+                {showDone ? "Hide" : "Show"} done ({doneCount})
+              </Button>
+            )}
           </div>
         </div>
 
         {/* Production summary — "what to make this week" */}
         <Card>
           <CardContent className="pt-6">
-            <div className="flex items-baseline justify-between mb-3">
-              <h2 className="text-xl font-semibold">To prepare this week</h2>
-              <span className="text-sm text-muted-foreground" data-testid="text-updated">
-                {dataUpdatedAt ? `Updated ${formatInTimeZone(new Date(dataUpdatedAt), TZ, "h:mm a")}` : ""}
-              </span>
-            </div>
+            <h2 className="text-xl font-semibold mb-3">To prepare this week</h2>
             {isLoading ? (
               <p className="text-muted-foreground">Loading…</p>
-            ) : totalItems === 0 ? (
+            ) : (data?.totals.retail.length ?? 0) + (data?.totals.wholesale.length ?? 0) === 0 ? (
               <p className="text-muted-foreground">Nothing scheduled this week.</p>
             ) : (
               <PrepGrid retail={data!.totals.retail} wholesale={data!.totals.wholesale} stock={data!.stock ?? {}} catalog={data!.catalog ?? {}} />
@@ -179,51 +190,228 @@ export default function OrdersBoard() {
           </CardContent>
         </Card>
 
-        {/* Show/hide completed orders */}
-        {doneCount > 0 && (
-          <div className="flex justify-end">
-            <Button
-              variant="outline"
-              size="lg"
-              className="h-11"
-              onClick={() => setShowDone((v) => !v)}
-              data-testid="button-toggle-done"
-            >
-              {showDone ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
-              {showDone ? "Hide" : "Show"} completed ({doneCount})
-            </Button>
-          </div>
-        )}
-
-        {/* Order list, grouped by day */}
-        {!isLoading && dayKeys.length === 0 && (
-          allOrders.length > 0 && !showDone ? (
-            <div className="text-center py-12 space-y-3">
-              <p className="text-lg text-muted-foreground">All {allOrders.length} {allOrders.length === 1 ? "order" : "orders"} this week are completed. 🎉</p>
-              <Button variant="outline" size="lg" onClick={() => setShowDone(true)} data-testid="button-show-completed">
-                <Eye className="h-4 w-4 mr-2" />
-                Show completed
-              </Button>
-            </div>
-          ) : (
-            <p className="text-center text-muted-foreground py-12 text-lg">No orders scheduled for {weekName.toLowerCase()}.</p>
-          )
-        )}
-
-        {dayKeys.map((day) => (
-          <div key={day} className="space-y-3">
-            <h3 className="text-lg font-semibold sticky top-0 bg-background/95 py-2 z-10" data-testid={`day-${day}`}>
-              {formatInTimeZone(new Date(`${day}T12:00:00`), TZ, "EEEE, MMM d")}
-            </h3>
-            <div className="grid gap-3 md:grid-cols-2">
-              {byDay.get(day)!.map((o) => (
-                <OrderCard key={`${o.kind}-${o.id}`} order={o} onAdvance={() => advance.mutate(o)} advancing={advance.isPending} />
-              ))}
-            </div>
-          </div>
-        ))}
+        <Card>
+          <CardContent className="pt-5">
+            {isLoading ? (
+              <p className="text-muted-foreground py-8">Loading…</p>
+            ) : visibleOrders.length === 0 ? (
+              allOrders.length > 0 && !showDone ? (
+                <div className="text-center py-12 space-y-3">
+                  <p className="text-lg text-muted-foreground">All {allOrders.length} {allOrders.length === 1 ? "order" : "orders"} this week are completed. 🎉</p>
+                  <Button variant="outline" size="lg" onClick={() => setShowDone(true)} data-testid="button-show-completed">
+                    <Eye className="h-4 w-4 mr-2" />
+                    Show completed
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-center text-muted-foreground py-12 text-lg">No orders scheduled for {weekName.toLowerCase()}.</p>
+              )
+            ) : (
+              <BoardSheet
+                orders={visibleOrders}
+                stock={data?.stock ?? {}}
+                catalog={data?.catalog ?? {}}
+                onAdvance={(o) => advance.mutate(o)}
+                advancing={advance.isPending}
+              />
+            )}
+          </CardContent>
+        </Card>
       </div>
     </StaffLayout>
+  );
+}
+
+// Channel reads by colour on the order cell: a coloured left edge, same coding as the
+// legend (sky = retail pickup, violet = wholesale delivery).
+const CHANNEL_EDGE: Record<BoardOrder["kind"], string> = {
+  retail: "border-l-4 border-l-sky-500",
+  wholesale: "border-l-4 border-l-violet-500",
+};
+
+// Button colour tracks the CURRENT stage, so the action reads at a glance:
+// amber = not started yet (get it going), green = last step (send it out the door).
+function advanceButtonClass(status: string): string {
+  return status === "pending"
+    ? "bg-amber-500 hover:bg-amber-600 text-amber-950"
+    : "bg-green-600 hover:bg-green-700 text-white";
+}
+
+/**
+ * The whole week as one pack-sheet spreadsheet (owner, 2026-09-01, modeled on the
+ * crew's old Excel): one row per order; columns sectioned by unit type, then flavor
+ * (short codes from the old sheet); Total and editable In Stock rows at the bottom.
+ * Item labels arrive as "Flavor — Unit".
+ */
+function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
+  orders: BoardOrder[];
+  stock: Record<string, { quantity: number; productId: string } | null>;
+  catalog: Record<string, Array<{ flavor: string; quantity: number; productId: string }>>;
+  onAdvance: (o: BoardOrder) => void;
+  advancing: boolean;
+}) {
+  const parse = (label: string) => {
+    const idx = label.lastIndexOf(" — ");
+    return idx === -1
+      ? { flavor: label, unit: "Other" }
+      : { flavor: label.slice(0, idx), unit: label.slice(idx + 3) };
+  };
+
+  // Column model: unit -> flavor -> weekly total, from the visible orders…
+  const unitTotals = new Map<string, Map<string, number>>();
+  for (const o of orders) {
+    for (const it of o.items) {
+      const { flavor, unit } = parse(it.label);
+      const flavors = unitTotals.get(unit) ?? new Map<string, number>();
+      flavors.set(flavor, (flavors.get(flavor) ?? 0) + it.quantity);
+      unitTotals.set(unit, flavors);
+    }
+  }
+  // …plus every catalog flavor (zeros included) for units that have SOME activity —
+  // an all-zero unit section is noise, an all-zero flavor column is signal.
+  for (const [unit, flavors] of Array.from(unitTotals.entries())) {
+    for (const entry of catalog[unit] ?? []) {
+      if (!flavors.has(entry.flavor)) flavors.set(entry.flavor, 0);
+    }
+  }
+
+  const sections = Array.from(unitTotals.entries())
+    .map(([unit, flavors]) => ({
+      unit,
+      flavors: Array.from(flavors.entries())
+        .map(([flavor, total]) => ({ flavor, total }))
+        .sort((a, b) => b.total - a.total || a.flavor.localeCompare(b.flavor)),
+      sectionTotal: Array.from(flavors.values()).reduce((a, b) => a + b, 0),
+    }))
+    .sort((a, b) => b.sectionTotal - a.sectionTotal);
+
+  const qtyFor = (o: BoardOrder, unit: string, flavor: string) =>
+    o.items.reduce((sum, it) => {
+      const p = parse(it.label);
+      return p.unit === unit && p.flavor === flavor ? sum + it.quantity : sum;
+    }, 0);
+
+  const rows = [...orders].sort((a, b) =>
+    new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime() || a.title.localeCompare(b.title));
+
+  const notesFor = (o: BoardOrder) =>
+    [o.notes, ...o.items.map((it) => it.note)].filter(Boolean).join(" · ");
+
+  const dash = (n: number) => (n > 0 ? n : "");
+
+  return (
+    <div className="overflow-x-auto" data-testid="board-sheet">
+      <table className="text-sm border-separate border-spacing-0 min-w-max">
+        <thead>
+          <tr>
+            <th className="sticky left-0 z-10 bg-background border-b" colSpan={3}></th>
+            {sections.map((s) => (
+              <th
+                key={s.unit}
+                colSpan={s.flavors.length}
+                className="px-2 py-1.5 text-center text-xs font-bold uppercase tracking-wider border-b border-l-2 bg-muted/50"
+                data-testid={`section-${s.unit}`}
+              >
+                {s.unit}
+              </th>
+            ))}
+            <th className="border-b border-l-2"></th>
+          </tr>
+          <tr className="text-xs text-muted-foreground">
+            <th className="sticky left-0 z-10 bg-background text-left font-medium py-1.5 pr-2 border-b">Day</th>
+            <th className="text-left font-medium py-1.5 pr-2 border-b min-w-44">Order</th>
+            <th className="text-left font-medium py-1.5 pr-3 border-b">Status</th>
+            {sections.map((s) =>
+              s.flavors.map((f, i) => (
+                <th
+                  key={`${s.unit}|${f.flavor}`}
+                  title={f.flavor}
+                  className={`px-2 py-1.5 text-center font-semibold border-b whitespace-nowrap ${i === 0 ? "border-l-2" : ""}`}
+                >
+                  {flavorAbbr(f.flavor)}
+                </th>
+              ))
+            )}
+            <th className="px-3 py-1.5 text-left font-medium border-b border-l-2 min-w-40">Notes</th>
+          </tr>
+        </thead>
+        <tbody className="tabular-nums">
+          {rows.map((o) => {
+            const next = nextStatus(o);
+            const done = next === null;
+            return (
+              <tr key={`${o.kind}-${o.id}`} className={done ? "opacity-50" : ""} data-testid={`order-${o.id}`}>
+                <td className="sticky left-0 z-10 bg-background py-1.5 pr-2 whitespace-nowrap text-muted-foreground border-b">
+                  {formatInTimeZone(new Date(o.scheduledDate), TZ, "EEE d")}
+                </td>
+                <td className={`py-1.5 pr-2 pl-2 border-b ${CHANNEL_EDGE[o.kind]}`}>
+                  <span className="font-medium whitespace-nowrap">{o.title}</span>
+                  {o.tag && <span className="block text-xs text-muted-foreground">{o.tag}</span>}
+                </td>
+                <td className="py-1.5 pr-3 border-b whitespace-nowrap">
+                  {done ? (
+                    <span className="text-xs text-muted-foreground">{statusLabel(o)}</span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      className={`h-8 px-2.5 text-xs ${advanceButtonClass(o.status)}`}
+                      onClick={() => onAdvance(o)}
+                      disabled={advancing}
+                      title={`${statusLabel(o)} → Mark ${FLOW[o.kind].labels[next!]}`}
+                      data-testid={`button-advance-${o.id}`}
+                    >
+                      → {FLOW[o.kind].labels[next!]}
+                    </Button>
+                  )}
+                </td>
+                {sections.map((s) =>
+                  s.flavors.map((f, i) => {
+                    const n = qtyFor(o, s.unit, f.flavor);
+                    return (
+                      <td key={`${s.unit}|${f.flavor}`} className={`px-2 py-1.5 text-center text-base border-b ${i === 0 ? "border-l-2" : ""}`}>
+                        {dash(n)}
+                      </td>
+                    );
+                  })
+                )}
+                <td className="px-3 py-1.5 border-b border-l-2 text-xs text-muted-foreground max-w-64">
+                  <span className="line-clamp-2" title={notesFor(o)}>{notesFor(o)}</span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot className="tabular-nums">
+          {/* The yellow totals row from the old sheet, in board colours. */}
+          <tr className="font-bold bg-amber-100 dark:bg-amber-950/40">
+            <td className="sticky left-0 z-10 bg-amber-100 dark:bg-amber-950/40 py-2 pr-2" colSpan={3}>Total</td>
+            {sections.map((s) =>
+              s.flavors.map((f, i) => (
+                <td key={`${s.unit}|${f.flavor}`} className={`px-2 py-2 text-center text-base ${i === 0 ? "border-l-2" : ""}`}>
+                  {f.total > 0 ? f.total : "—"}
+                </td>
+              ))
+            )}
+            <td className="border-l-2"></td>
+          </tr>
+          <tr className="text-muted-foreground">
+            <td className="sticky left-0 z-10 bg-background py-2 pr-2" colSpan={3}>In Stock</td>
+            {sections.map((s) =>
+              s.flavors.map((f, i) => {
+                const entry = stock[`${f.flavor} — ${s.unit}`];
+                const short = entry != null && entry.quantity < f.total;
+                return (
+                  <td key={`${s.unit}|${f.flavor}`} className={`px-2 py-2 text-center text-base ${i === 0 ? "border-l-2" : ""} ${short ? "text-destructive font-semibold" : ""}`}>
+                    {entry ? <StockCell productId={entry.productId} quantity={entry.quantity} /> : "—"}
+                  </td>
+                );
+              })
+            )}
+            <td className="border-l-2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   );
 }
 
@@ -368,7 +556,7 @@ function StockCell({ productId, quantity }: { productId: string; quantity: numbe
       <input
         autoFocus
         inputMode="numeric"
-        className="w-16 rounded border bg-background px-1.5 py-1 text-center tabular-nums text-lg"
+        className="w-14 rounded border bg-background px-1 py-0.5 text-center tabular-nums"
         value={value}
         onChange={(e) => setValue(e.target.value.replace(/[^0-9]/g, ""))}
         onBlur={() => save.mutate()}
@@ -390,67 +578,5 @@ function StockCell({ productId, quantity }: { productId: string; quantity: numbe
     >
       {quantity}
     </button>
-  );
-}
-
-// Channel is shown by colour, not a repeated badge: a coloured left edge + faint tint so
-// you can tell retail from wholesale across the room. Legend at the top of the page.
-const CHANNEL_CARD: Record<BoardOrder["kind"], string> = {
-  retail: "border-l-4 border-l-sky-500 bg-sky-50/60 dark:bg-sky-950/30",
-  wholesale: "border-l-4 border-l-violet-500 bg-violet-50/60 dark:bg-violet-950/30",
-};
-
-// Button colour tracks the CURRENT stage, so the action reads at a glance:
-// amber = not started yet (get it going), green = last step (send it out the door).
-function advanceButtonClass(status: string): string {
-  return status === "pending"
-    ? "bg-amber-500 hover:bg-amber-600 text-amber-950"
-    : "bg-green-600 hover:bg-green-700 text-white";
-}
-
-function OrderCard({ order, onAdvance, advancing }: { order: BoardOrder; onAdvance: () => void; advancing: boolean }) {
-  const next = nextStatus(order);
-  const done = next === null;
-
-  return (
-    <Card className={`${CHANNEL_CARD[order.kind]} ${done ? "opacity-60" : ""}`} data-testid={`order-${order.id}`}>
-      <CardContent className="pt-5">
-        <div className="min-w-0">
-          <p className="text-lg font-semibold truncate">{order.title}</p>
-          {order.tag && <p className="text-sm text-muted-foreground">{order.tag}</p>}
-        </div>
-
-        <ul className="mt-3 space-y-0.5 text-sm">
-          {order.items.map((it, i) => (
-            <li key={i}>
-              <span className="font-semibold tabular-nums">{it.quantity}×</span> {it.label}
-              {it.note && <span className="block pl-6 text-xs text-muted-foreground">{it.note}</span>}
-            </li>
-          ))}
-        </ul>
-        {order.notes && (
-          <p className="mt-2 text-xs text-muted-foreground border-l-2 border-muted pl-2" data-testid={`order-notes-${order.id}`}>
-            {order.notes}
-          </p>
-        )}
-
-        <div className="mt-4">
-          {done ? (
-            <div className="flex items-center justify-center gap-2 h-12 rounded-md bg-muted text-muted-foreground font-medium">
-              {statusLabel(order)}
-            </div>
-          ) : (
-            <Button
-              className={`w-full h-14 text-base ${advanceButtonClass(order.status)}`}
-              onClick={onAdvance}
-              disabled={advancing}
-              data-testid={`button-advance-${order.id}`}
-            >
-              {statusLabel(order)} → Mark {FLOW[order.kind].labels[next!]}
-            </Button>
-          )}
-        </div>
-      </CardContent>
-    </Card>
   );
 }
