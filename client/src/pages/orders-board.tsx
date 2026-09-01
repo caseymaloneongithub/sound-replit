@@ -275,12 +275,23 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
     }
   }
 
+  // One flavor order shared by every section (ranked by combined weekly total),
+  // matching the To Prepare tables above.
+  const globalTotals = new Map<string, number>();
+  for (const flavors of Array.from(unitTotals.values())) {
+    for (const [flavor, total] of Array.from(flavors.entries())) {
+      globalTotals.set(flavor, (globalTotals.get(flavor) ?? 0) + total);
+    }
+  }
+  const flavorRank = Array.from(globalTotals.keys())
+    .sort((a, b) => (globalTotals.get(b)! - globalTotals.get(a)!) || a.localeCompare(b));
+
+  // Every section carries the FULL flavor set in the same order (like the old
+  // Excel: MIX shows under kegs too, just empty) so sections stay comparable.
   const sections = Array.from(unitTotals.entries())
     .map(([unit, flavors]) => ({
       unit,
-      flavors: Array.from(flavors.entries())
-        .map(([flavor, total]) => ({ flavor, total }))
-        .sort((a, b) => b.total - a.total || a.flavor.localeCompare(b.flavor)),
+      flavors: flavorRank.map((flavor) => ({ flavor, total: flavors.get(flavor) ?? 0, offered: flavors.has(flavor) })),
       sectionTotal: Array.from(flavors.values()).reduce((a, b) => a + b, 0),
     }))
     .sort((a, b) => b.sectionTotal - a.sectionTotal);
@@ -301,7 +312,14 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
 
   return (
     <div className="overflow-x-auto" data-testid="board-sheet">
-      <table className="text-sm border-separate border-spacing-0 min-w-max">
+      <table className="w-full table-fixed text-sm border-separate border-spacing-0">
+        <colgroup>
+          <col className="w-14" />
+          <col className="w-44" />
+          <col className="w-24" />
+          {sections.flatMap((s2) => s2.flavors.map((f) => <col key={`${s2.unit}|${f.flavor}`} />))}
+          <col className="w-40" />
+        </colgroup>
         <thead>
           <tr>
             <th className="sticky left-0 z-10 bg-background border-b" colSpan={3}></th>
@@ -319,20 +337,20 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
           </tr>
           <tr className="text-xs text-muted-foreground">
             <th className="sticky left-0 z-10 bg-background text-left font-medium py-1.5 pr-2 border-b">Day</th>
-            <th className="text-left font-medium py-1.5 pr-2 border-b min-w-44">Order</th>
+            <th className="text-left font-medium py-1.5 pr-2 border-b">Order</th>
             <th className="text-left font-medium py-1.5 pr-3 border-b">Status</th>
             {sections.map((s) =>
               s.flavors.map((f, i) => (
                 <th
                   key={`${s.unit}|${f.flavor}`}
                   title={f.flavor}
-                  className={`px-2 py-1.5 text-center font-semibold border-b whitespace-nowrap ${i === 0 ? "border-l-2" : ""}`}
+                  className={`px-1 py-1.5 text-center font-semibold border-b ${i === 0 ? "border-l-2" : ""}`}
                 >
                   {flavorAbbr(f.flavor)}
                 </th>
               ))
             )}
-            <th className="px-3 py-1.5 text-left font-medium border-b border-l-2 min-w-40">Notes</th>
+            <th className="px-2 py-1.5 text-left font-medium border-b border-l-2">Notes</th>
           </tr>
         </thead>
         <tbody className="tabular-nums">
@@ -345,7 +363,7 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
                   {formatInTimeZone(new Date(o.scheduledDate), TZ, "EEE d")}
                 </td>
                 <td className={`py-1.5 pr-2 pl-2 border-b ${CHANNEL_EDGE[o.kind]}`}>
-                  <span className="font-medium whitespace-nowrap">{o.title}</span>
+                  <span className="font-medium">{o.title}</span>
                   {o.tag && <span className="block text-xs text-muted-foreground">{o.tag}</span>}
                 </td>
                 <td className="py-1.5 pr-3 border-b whitespace-nowrap">
@@ -368,13 +386,13 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
                   s.flavors.map((f, i) => {
                     const n = qtyFor(o, s.unit, f.flavor);
                     return (
-                      <td key={`${s.unit}|${f.flavor}`} className={`px-2 py-1.5 text-center text-base border-b ${i === 0 ? "border-l-2" : ""}`}>
+                      <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-1.5 text-center border-b ${i === 0 ? "border-l-2" : ""}`}>
                         {dash(n)}
                       </td>
                     );
                   })
                 )}
-                <td className="px-3 py-1.5 border-b border-l-2 text-xs text-muted-foreground max-w-64">
+                <td className="px-2 py-1.5 border-b border-l-2 text-xs text-muted-foreground">
                   <span className="line-clamp-2" title={notesFor(o)}>{notesFor(o)}</span>
                 </td>
               </tr>
@@ -387,8 +405,8 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
             <td className="sticky left-0 z-10 bg-amber-100 dark:bg-amber-950/40 py-2 pr-2" colSpan={3}>Total</td>
             {sections.map((s) =>
               s.flavors.map((f, i) => (
-                <td key={`${s.unit}|${f.flavor}`} className={`px-2 py-2 text-center text-base ${i === 0 ? "border-l-2" : ""}`}>
-                  {f.total > 0 ? f.total : "—"}
+                <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : ""}`}>
+                  {!f.offered ? "" : f.total > 0 ? f.total : "—"}
                 </td>
               ))
             )}
@@ -401,8 +419,8 @@ function BoardSheet({ orders, stock, catalog, onAdvance, advancing }: {
                 const entry = stock[`${f.flavor} — ${s.unit}`];
                 const short = entry != null && entry.quantity < f.total;
                 return (
-                  <td key={`${s.unit}|${f.flavor}`} className={`px-2 py-2 text-center text-base ${i === 0 ? "border-l-2" : ""} ${short ? "text-destructive font-semibold" : ""}`}>
-                    {entry ? <StockCell productId={entry.productId} quantity={entry.quantity} /> : "—"}
+                  <td key={`${s.unit}|${f.flavor}`} className={`px-1 py-2 text-center ${i === 0 ? "border-l-2" : ""} ${short ? "text-destructive font-semibold" : ""}`}>
+                    {entry ? <StockCell productId={entry.productId} quantity={entry.quantity} /> : f.offered ? "—" : ""}
                   </td>
                 );
               })
@@ -455,12 +473,28 @@ function PrepGrid({ retail, wholesale, stock, catalog }: { retail: BoardItem[]; 
     }
   }
 
+  // ONE flavor order for every table (owner, 2026-09-01): ranked by combined weekly
+  // total across all units, and every table shows the full flavor set — so the same
+  // flavor sits in the same column in both tables and the columns line up.
+  const globalTotals = new Map<string, number>();
+  for (const flavors of Array.from(units.values())) {
+    for (const [flavor, cell] of Array.from(flavors.entries())) {
+      globalTotals.set(flavor, (globalTotals.get(flavor) ?? 0) + cell.wholesale + cell.retail);
+    }
+  }
+  const flavorOrder = Array.from(globalTotals.keys())
+    .sort((a, b) => (globalTotals.get(b)! - globalTotals.get(a)!) || a.localeCompare(b));
+
   const unitGroups = Array.from(units.entries())
     .map(([unit, flavors]) => ({
       unit,
-      columns: Array.from(flavors.entries())
-        .map(([flavor, cell]) => ({ flavor, ...cell, total: cell.wholesale + cell.retail }))
-        .sort((a, b) => b.total - a.total),
+      // `offered` = this unit actually sells the flavor (activity or catalog);
+      // a padding column added purely for alignment renders BLANK, not dashed —
+      // there is no such thing as a Mixed keg.
+      columns: flavorOrder.map((flavor) => {
+        const cell = flavors.get(flavor) ?? { wholesale: 0, retail: 0, stock: null, productId: null };
+        return { flavor, ...cell, total: cell.wholesale + cell.retail, offered: flavors.has(flavor) };
+      }),
     }))
     .sort((a, b) =>
       b.columns.reduce((sum, c) => sum + c.total, 0) - a.columns.reduce((sum, c) => sum + c.total, 0)
@@ -478,7 +512,7 @@ function PrepGrid({ retail, wholesale, stock, catalog }: { retail: BoardItem[]; 
         return (
           <div key={g.unit} className="overflow-x-auto" data-testid={`prep-table-${g.unit}`}>
             <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{g.unit}</div>
-            <table className="w-full text-sm border-separate border-spacing-0">
+            <table className="w-full text-sm border-separate border-spacing-0 table-fixed">
               <thead>
                 <tr>
                   <th className="text-left font-medium text-muted-foreground py-2 pr-3 border-b w-28"></th>
@@ -494,7 +528,7 @@ function PrepGrid({ retail, wholesale, stock, catalog }: { retail: BoardItem[]; 
                     <span className="inline-block w-2 h-2 rounded-full bg-violet-500 mr-2" aria-hidden />Wholesale
                   </td>
                   {g.columns.map((c, i) => (
-                    <td key={i} className="px-3 py-2 text-center text-lg">{dash(c.wholesale)}</td>
+                    <td key={i} className="px-3 py-2 text-center text-lg">{c.offered ? dash(c.wholesale) : ""}</td>
                   ))}
                   <td className="px-3 py-2 text-center text-lg font-semibold">{dash(sum("wholesale"))}</td>
                 </tr>
@@ -503,14 +537,14 @@ function PrepGrid({ retail, wholesale, stock, catalog }: { retail: BoardItem[]; 
                     <span className="inline-block w-2 h-2 rounded-full bg-sky-500 mr-2" aria-hidden />Retail
                   </td>
                   {g.columns.map((c, i) => (
-                    <td key={i} className="px-3 py-2 text-center text-lg">{dash(c.retail)}</td>
+                    <td key={i} className="px-3 py-2 text-center text-lg">{c.offered ? dash(c.retail) : ""}</td>
                   ))}
                   <td className="px-3 py-2 text-center text-lg font-semibold">{dash(sum("retail"))}</td>
                 </tr>
                 <tr className="font-bold">
                   <td className="py-2 pr-3 border-t">Total</td>
                   {g.columns.map((c, i) => (
-                    <td key={i} className="px-3 py-2 text-center text-lg border-t">{dash(c.total)}</td>
+                    <td key={i} className="px-3 py-2 text-center text-lg border-t">{c.offered ? dash(c.total) : ""}</td>
                   ))}
                   <td className="px-3 py-2 text-center text-lg border-t">{sum("total")}</td>
                 </tr>
@@ -518,7 +552,7 @@ function PrepGrid({ retail, wholesale, stock, catalog }: { retail: BoardItem[]; 
                   <td className="py-2 pr-3 whitespace-nowrap">In Stock</td>
                   {g.columns.map((c, i) => (
                     <td key={i} className={`px-3 py-2 text-center text-lg ${c.stock !== null && c.stock < c.total ? "text-destructive font-semibold" : ""}`}>
-                      {c.productId ? <StockCell productId={c.productId} quantity={c.stock ?? 0} /> : (c.stock === null ? "—" : c.stock)}
+                      {c.productId ? <StockCell productId={c.productId} quantity={c.stock ?? 0} /> : (!c.offered ? "" : c.stock === null ? "—" : c.stock)}
                     </td>
                   ))}
                   <td className={`px-3 py-2 text-center text-lg ${stockSum !== null && stockSum < sum("total") ? "text-destructive font-semibold" : ""}`}>
