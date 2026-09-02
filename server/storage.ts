@@ -2670,6 +2670,9 @@ export class PostgresStorage implements IStorage {
           zipCode: location.zipCode,
           contactName: location.contactName || undefined,
           contactPhone: location.contactPhone || undefined,
+          // Invoice/receipt routing reads this; omitting it silently sent every
+          // multi-location invoice to the account email (2026-09-02).
+          contactEmail: (location as any).contactEmail || undefined,
         } : undefined,
         items: items.map((item) => ({
           ...item,
@@ -2871,7 +2874,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async getWholesaleOrderWithDetails(id: string): Promise<{
-    order: WholesaleOrder & { location?: { locationName: string; address: string; city: string; state: string; zipCode: string; contactName?: string; contactPhone?: string; } };
+    order: WholesaleOrder & { location?: { locationName: string; address: string; city: string; state: string; zipCode: string; contactName?: string; contactPhone?: string; contactEmail?: string; } };
     customer: WholesaleCustomer;
     items: Array<WholesaleOrderItem & { product: { name: string; flavor: string } }>;
   } | undefined> {
