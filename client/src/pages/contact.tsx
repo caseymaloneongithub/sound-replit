@@ -157,7 +157,7 @@ export default function Contact() {
                     application form captures the details we actually need and files it
                     as a lead. */}
                 <Button asChild className="w-full mt-4" data-testid="button-wholesale-apply">
-                  <Link href="/wholesale/apply">Apply for a wholesale account</Link>
+                  <Link href="/wholesale/apply">Set up wholesale account</Link>
                 </Button>
               </CardContent>
             </Card>

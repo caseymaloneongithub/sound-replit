@@ -66,14 +66,14 @@ export default function Home() {
               <>
                 <h2 className="text-2xl font-bold mt-2">Wholesale ordering</h2>
                 <p className="text-muted-foreground mt-1 flex-1">
-                  Cases and kegs, delivered or picked up &mdash; no account needed.
+                  Cases and kegs, delivered or picked up.
                 </p>
                 <div className="flex flex-wrap gap-2 mt-4">
                   <Button asChild size="lg" data-testid="button-lane-wholesale-login">
                     <Link href="/wholesale/login">Order online</Link>
                   </Button>
                   <Button asChild size="lg" variant="outline" data-testid="button-lane-wholesale-apply">
-                    <Link href="/wholesale/apply">Apply for a wholesale account</Link>
+                    <Link href="/wholesale/apply">Set up wholesale account</Link>
                   </Button>
                 </div>
               </>
@@ -168,7 +168,7 @@ export default function Home() {
               <Link href="/shop">Shop kombucha</Link>
             </Button>
             <Button asChild size="lg" variant="outline" data-testid="button-cta-wholesale">
-              <Link href="/wholesale/apply">Apply for a wholesale account</Link>
+              <Link href="/wholesale/apply">Set up wholesale account</Link>
             </Button>
           </div>
         </div>

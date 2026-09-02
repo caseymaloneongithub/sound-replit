@@ -281,10 +281,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Notify staff, but never fail the applicant's submission because email is down —
       // the lead is already safely recorded.
       try {
+        // Applications go to admins and super-admins only (owner, 2026-09-02) —
+        // account setup is their call, not general staff's.
         const staffUsers = await db
           .select({ email: users.email })
           .from(users)
-          .where(sql`${users.role} IN ('staff', 'admin', 'super_admin') AND ${users.email} IS NOT NULL`);
+          .where(sql`${users.role} IN ('admin', 'super_admin') AND ${users.email} IS NOT NULL`);
         const staffEmails = staffUsers.map(u => u.email).filter((e): e is string => e !== null);
         if (staffEmails.length > 0) {
           await sendContactFormNotification({
