@@ -42,6 +42,12 @@ export default function WholesaleDeliveryReport() {
       }
       return response.json();
     },
+    // The app default is staleTime: Infinity — delivery dates edited on the orders
+    // page never showed here until a full reload, so the report claimed yesterday's
+    // schedule. Keep the day's list live.
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
   });
   
   const { data: customers = [] } = useQuery<WholesaleCustomer[]>({
