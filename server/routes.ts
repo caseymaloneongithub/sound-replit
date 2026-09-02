@@ -9881,23 +9881,16 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
-  // Reverse a saved route (owner, 2026-09-01): same stops, opposite direction, with
-  // legs and totals recomputed over real roads via the Directions API.
-  app.post("/api/delivery/routes/:id/reverse", isAuthenticated, isStaffOrAdmin, async (req, res) => {
-    try {
-      const route = await storage.getDeliveryRoute(req.params.id);
-      if (!route) return res.status(404).json({ message: "Route not found" });
-      const saved: any[] = JSON.parse((route as any).optimizedStops ?? "[]");
-      if (saved.length < 2) return res.status(400).json({ message: "Not enough stops to reverse" });
-
-      const reversed = [...saved].reverse().map((s, i) => ({ ...s, stopOrder: i }));
+  /** Re-leg a stop sequence over real roads and persist it as the route's new order. */
+  async function saveRouteSequence(route: any, sequence: any[], res: any) {
+      const reversed = sequence.map((s, i) => ({ ...s, stopOrder: i }));
       const facility = getFacilityLocation();
       const directions = await getRouteDirections([
         { latitude: facility.latitude, longitude: facility.longitude },
         ...reversed.map((s) => ({ latitude: Number(s.latitude), longitude: Number(s.longitude) })),
         { latitude: facility.latitude, longitude: facility.longitude },
       ]);
-      if (!directions) return res.status(500).json({ message: "Could not recompute the reversed drive" });
+      if (!directions) return res.status(500).json({ message: "Could not recompute the drive for this order" });
 
       // legs[i] is the drive INTO stop i (leg 0 leaves the facility).
       const restopped = reversed.map((s, i) => ({
@@ -9933,9 +9926,39 @@ If you have any questions, please don't hesitate to reach out!`,
         totalDistance: directions.distance,
         geometry: directions.geometry,
       });
+  }
+
+  // Reverse a saved route (owner, 2026-09-01): same stops, opposite direction, with
+  // legs and totals recomputed over real roads via the Directions API.
+  app.post("/api/delivery/routes/:id/reverse", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const route = await storage.getDeliveryRoute(req.params.id);
+      if (!route) return res.status(404).json({ message: "Route not found" });
+      const saved: any[] = JSON.parse((route as any).optimizedStops ?? "[]");
+      if (saved.length < 2) return res.status(400).json({ message: "Not enough stops to reverse" });
+      await saveRouteSequence(route, [...saved].reverse(), res);
     } catch (error: any) {
       console.error("Error reversing route:", error);
       res.status(500).json({ message: "Error reversing route: " + error.message });
+    }
+  });
+
+  // Hand-reorder a saved route (owner, 2026-09-02): the body carries the stop ids in
+  // the new order; legs and totals recompute over real roads.
+  app.post("/api/delivery/routes/:id/reorder", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const route = await storage.getDeliveryRoute(req.params.id);
+      if (!route) return res.status(404).json({ message: "Route not found" });
+      const saved: any[] = JSON.parse((route as any).optimizedStops ?? "[]");
+      const order: string[] = Array.isArray(req.body?.order) ? req.body.order.map(String) : [];
+      const byId = new Map(saved.map((s) => [String(s.id), s]));
+      if (order.length !== saved.length || !order.every((id) => byId.has(id))) {
+        return res.status(400).json({ message: "Order must list every stop on the route exactly once" });
+      }
+      await saveRouteSequence(route, order.map((id) => byId.get(id)), res);
+    } catch (error: any) {
+      console.error("Error reordering route:", error);
+      res.status(500).json({ message: "Error reordering route: " + error.message });
     }
   });
 

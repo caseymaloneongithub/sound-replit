@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CalendarIcon, Route, Plus, X, RefreshCw, ArrowLeftRight, Loader2 } from "lucide-react";
+import { CalendarIcon, Route, Plus, X, RefreshCw, ArrowLeftRight, Loader2, GripVertical } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { DeliveriesTabs, useSharedDeliveryDate } from "@/components/staff/deliveries-tabs";
 import { format } from "date-fns";
@@ -276,10 +276,39 @@ export default function DeliveryRoutes() {
     },
   });
 
-  // Per-stop ETAs: leave time + a flat minutes-per-stop dwell, applied cumulatively
-  // down the optimized order (owner, 2026-09-01).
+  const reorderMutation = useMutation({
+    mutationFn: async ({ routeId, order }: { routeId: string; order: string[] }) =>
+      (await apiRequest("POST", `/api/delivery/routes/${routeId}/reorder`, { order })) as OptimizedRouteResponse,
+    onSuccess: (data) => {
+      setOptimizedRoute(data);
+      toast({
+        title: "Route reordered",
+        description: `Now ${formatDistance(data.totalDistance)}, ${formatDuration(data.totalDuration)}`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't reorder", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Drag a stop card onto another to move it there; drive times recompute server-side.
+  const dragIndexRef = useRef<number | null>(null);
+  const dropOnIndex = (target: number) => {
+    const from = dragIndexRef.current;
+    dragIndexRef.current = null;
+    if (from === null || from === target || !optimizedRoute?.route?.id) return;
+    const ids = optimizedRoute.stops.map((s) => String(s.id));
+    const [moved] = ids.splice(from, 1);
+    ids.splice(target, 0, moved);
+    reorderMutation.mutate({ routeId: optimizedRoute.route.id, order: ids });
+  };
+
+  // Per-stop ETAs: leave time + minutes-per-stop dwell, applied cumulatively down
+  // the route. The global value is the default; any stop can override its own.
   const [departTime, setDepartTime] = useState("08:00");
   const [stopMinutes, setStopMinutes] = useState(10);
+  const [dwellOverrides, setDwellOverrides] = useState<Record<string, number>>({});
+  const dwellFor = (stopId: string) => dwellOverrides[stopId] ?? stopMinutes;
   const etaFor = (index: number): string | null => {
     if (!optimizedRoute) return null;
     const [h, m] = departTime.split(":").map(Number);
@@ -287,7 +316,7 @@ export default function DeliveryRoutes() {
     let seconds = h * 3600 + m * 60;
     for (let i = 0; i <= index; i++) {
       seconds += optimizedRoute.stops[i]?.durationFromPrevious ?? 0;
-      if (i < index) seconds += stopMinutes * 60;
+      if (i < index) seconds += dwellFor(String(optimizedRoute.stops[i].id)) * 60;
     }
     const d = new Date();
     d.setHours(0, Math.round(seconds / 60), 0, 0);
@@ -513,12 +542,14 @@ export default function DeliveryRoutes() {
                     </label>
                     <span className="text-muted-foreground">
                       Back at facility ~{(() => {
-                        const total = optimizedRoute.totalDuration + optimizedRoute.stops.length * stopMinutes * 60;
+                        const dwellTotal = optimizedRoute.stops.reduce((s, st) => s + dwellFor(String(st.id)) * 60, 0);
+                        const total = optimizedRoute.totalDuration + dwellTotal;
                         const [h, m] = departTime.split(":").map(Number);
                         const d = new Date(); d.setHours(0, Math.round((h * 3600 + m * 60 + total) / 60), 0, 0);
                         return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
                       })()}
                     </span>
+                    <span className="text-xs text-muted-foreground">Drag stops to reorder — times recalculate.</span>
                   </div>
                   {routeMapUrl && (
                     <img
@@ -545,9 +576,14 @@ export default function DeliveryRoutes() {
                     {optimizedRoute.stops.map((stop, index) => (
                       <div
                         key={stop.id}
-                        className="flex items-center gap-3 p-3 border rounded-md"
+                        className={`flex items-center gap-3 p-3 border rounded-md cursor-grab active:cursor-grabbing ${reorderMutation.isPending ? "opacity-60" : ""}`}
+                        draggable
+                        onDragStart={() => { dragIndexRef.current = index; }}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => { e.preventDefault(); dropOnIndex(index); }}
                         data-testid={`optimized-stop-${index}`}
                       >
+                        <GripVertical className="w-4 h-4 text-muted-foreground shrink-0" aria-hidden />
                         <div className="w-8 h-8 rounded-full bg-muted text-foreground flex items-center justify-center text-sm font-bold">
                           {index + 1}
                         </div>
@@ -557,8 +593,21 @@ export default function DeliveryRoutes() {
                             {stop.address}
                           </p>
                           {etaFor(index) && (
-                            <p className="text-sm font-medium text-foreground/80" data-testid={`eta-${index}`}>
-                              ETA {etaFor(index)} · {stopMinutes} min stop
+                            <p className="text-sm font-medium text-foreground/80 flex items-center gap-1.5" data-testid={`eta-${index}`}>
+                              ETA {etaFor(index)} ·
+                              <Input
+                                type="number"
+                                min={0}
+                                max={120}
+                                value={dwellFor(String(stop.id))}
+                                onChange={(e) => setDwellOverrides((prev) => ({ ...prev, [String(stop.id)]: Math.max(0, Number(e.target.value) || 0) }))}
+                                onClick={(e) => e.stopPropagation()}
+                                draggable={false}
+                                onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                                className="h-6 w-14 px-1 text-sm text-center inline-block"
+                                data-testid={`input-dwell-${index}`}
+                              />
+                              min stop
                             </p>
                           )}
                         </div>
