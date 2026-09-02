@@ -6707,9 +6707,15 @@ If you have any questions, please don't hesitate to reach out!`,
         if (!sendConfirmation) {
           console.log(`[ORDER] Confirmation email skipped by staff for ${invoiceNumber}`);
         }
+        // Staff-entered confirmations go to the STORE's inbox(es) when the location
+        // has one (owner, 2026-09-02: a Fremont order emailed 2nd & Pike) — account
+        // email otherwise. Same routing as invoices.
+        const confirmationRecipients = String((emailLocation as any)?.contactEmail || customer.email)
+          .split(/[,;]/).map((e: string) => e.trim()).filter(Boolean);
+
         // Send emails in the background (don't block the response)
         if (sendConfirmation) sendWholesaleOrderConfirmation({
-          customerEmail: customer.email,
+          customerEmail: confirmationRecipients,
           businessName: emailBusinessName,
           contactName: customer.contactName,
           invoiceNumber,

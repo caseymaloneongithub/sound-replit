@@ -1507,10 +1507,11 @@ orders@soundkombucha.com
   }
 }
 
-// Wholesale Order Confirmation - sent to customer when order is placed
+// Wholesale Order Confirmation - sent to customer when order is placed.
+// Arrays are passed to the transport as-is (never comma-joined).
 interface WholesaleOrderConfirmationParams {
   poNumber?: string | null;
-  customerEmail: string;
+  customerEmail: string | string[];
   businessName: string;
   contactName: string;
   invoiceNumber: string;
