@@ -210,6 +210,9 @@ export default function DeliveryRoutes() {
       queryClient.invalidateQueries({ queryKey: ["/api/delivery/stops"] });
       toast({ title: "Stop deleted" });
     },
+    onError: (e: any) => {
+      toast({ title: "Couldn't delete stop", description: e.message, variant: "destructive" });
+    },
   });
 
   const geocodeAllMutation = useMutation({

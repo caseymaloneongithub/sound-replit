@@ -4460,6 +4460,9 @@ export class PostgresStorage implements IStorage {
   }
 
   async deleteDeliveryStop(id: string): Promise<void> {
+    // Saved routes may reference this stop; clear those rows first or the FK makes
+    // the delete fail — which surfaced as an X button that "did nothing".
+    await db.delete(deliveryRouteStops).where(eq(deliveryRouteStops.deliveryStopId, id));
     await db.delete(deliveryStops).where(eq(deliveryStops.id, id));
   }
 
