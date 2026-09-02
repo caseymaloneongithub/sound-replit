@@ -53,8 +53,12 @@ export const queryClient = new QueryClient({
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
-      refetchOnWindowFocus: false,
-      staleTime: Infinity,
+      // staleTime: Infinity cached every list forever — the delivery report showed
+      // yesterday's schedule, the routes page missed new orders, the wholesale-units
+      // dialog read a flavorless copy. Data is now fresh for 30s and re-fetched when
+      // the tab regains focus; pages with their own intervals keep them.
+      refetchOnWindowFocus: true,
+      staleTime: 30_000,
       retry: false,
     },
     mutations: {
