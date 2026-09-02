@@ -6866,6 +6866,18 @@ If you have any questions, please don't hesitate to reach out!`,
   app.post("/api/wholesale/orders/:id/send-invoice", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const { dueDate } = req.body;
+      // Optional overrides from the send dialog (owner, 2026-09-02): recipients,
+      // subject, and a personal note rendered above the invoice details.
+      const sendSchema = z.object({
+        to: z.array(z.string().email()).min(1).optional(),
+        subject: z.string().trim().min(1).max(200).optional(),
+        message: z.string().trim().max(2000).optional(),
+      });
+      const overrides = sendSchema.parse({
+        to: Array.isArray(req.body?.to) ? req.body.to : undefined,
+        subject: req.body?.subject || undefined,
+        message: req.body?.message || undefined,
+      });
       
       const orderDetails = await storage.getWholesaleOrderWithDetails(req.params.id);
       if (!orderDetails) {
@@ -6940,8 +6952,9 @@ If you have any questions, please don't hesitate to reach out!`,
 
       // Invoices go to the delivery location's own inbox(es) when set — each
       // Evergreens store bills separately, and a location may list several addresses
-      // separated by commas (owner, 2026-08-31). Account email otherwise.
-      const invoiceRecipient = String((order.location as any)?.contactEmail || customer.email)
+      // separated by commas (owner, 2026-08-31). Account email otherwise. The send
+      // dialog can override outright.
+      const invoiceRecipient = overrides.to ?? String((order.location as any)?.contactEmail || customer.email)
         .split(/[,;]/)
         .map((e: string) => e.trim())
         .filter(Boolean);
@@ -6949,6 +6962,8 @@ If you have any questions, please don't hesitate to reach out!`,
       // Send the invoice email
       await sendWholesaleInvoiceEmail({
         poNumber: (order as any).poNumber ?? null,
+        subject: overrides.subject,
+        personalMessage: overrides.message,
         customerEmail: invoiceRecipient,
         businessName: customer.businessName,
         contactName: customer.contactName,

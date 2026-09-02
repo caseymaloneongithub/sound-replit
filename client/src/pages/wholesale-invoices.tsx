@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -29,6 +30,9 @@ export default function WholesaleInvoices() {
   const [activeTab, setActiveTab] = useState("unpaid");
   const [markPaidDialogOpen, setMarkPaidDialogOpen] = useState(false);
   const [sendInvoiceDialogOpen, setSendInvoiceDialogOpen] = useState(false);
+  const [sendTo, setSendTo] = useState("");
+  const [sendSubject, setSendSubject] = useState("");
+  const [sendMessage, setSendMessage] = useState("");
   const [setDueDateDialogOpen, setSetDueDateDialogOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
@@ -89,8 +93,12 @@ export default function WholesaleInvoices() {
 
   const sendInvoiceMutation = useMutation({
     mutationFn: async ({ orderId, dueDateValue }: { orderId: string; dueDateValue: Date }) => {
+      const to = sendTo.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
       return await apiRequest("POST", `/api/wholesale/orders/${orderId}/send-invoice`, {
         dueDate: dueDateValue.toISOString(),
+        to: to.length ? to : undefined,
+        subject: sendSubject.trim() || undefined,
+        message: sendMessage.trim() || undefined,
       });
     },
     onSuccess: (data: any) => {
@@ -151,6 +159,11 @@ export default function WholesaleInvoices() {
     } else {
       setDueDate(addDays(new Date(), 30));
     }
+    // Same routing the server uses: location inbox(es) first, account otherwise.
+    const cust = customers.find(c => c.id === order?.customerId);
+    setSendTo(String((order as any)?.locationEmail || cust?.email || ""));
+    setSendSubject(`Invoice ${order?.invoiceNumber ?? ""} - Puget Sound Kombucha Co.`);
+    setSendMessage("");
     setSendInvoiceDialogOpen(true);
   };
 
@@ -622,13 +635,27 @@ export default function WholesaleInvoices() {
               </p>
             </div>
           )}
+          <div className="space-y-3 pb-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="send-to">To</Label>
+              <Input id="send-to" value={sendTo} onChange={(e) => setSendTo(e.target.value)} placeholder="Separate several with commas" data-testid="input-send-to" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="send-subject">Subject</Label>
+              <Input id="send-subject" value={sendSubject} onChange={(e) => setSendSubject(e.target.value)} data-testid="input-send-subject" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="send-message">Note (optional)</Label>
+              <Textarea id="send-message" rows={2} value={sendMessage} onChange={(e) => setSendMessage(e.target.value)} placeholder="Shown at the top of the email" data-testid="input-send-message" />
+            </div>
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSendInvoiceDialogOpen(false)}>
               Cancel
             </Button>
             <Button 
               onClick={confirmSendInvoice} 
-              disabled={sendInvoiceMutation.isPending || !dueDate}
+              disabled={sendInvoiceMutation.isPending || !dueDate || !sendTo.trim()}
               data-testid="button-confirm-send-invoice"
             >
               {sendInvoiceMutation.isPending ? (

@@ -1810,6 +1810,10 @@ interface WholesaleInvoiceLocation {
 
 export interface WholesaleInvoiceEmailParams {
   poNumber?: string | null;
+  // Send-dialog overrides: custom subject line and a personal note shown above
+  // the invoice details. Both optional.
+  subject?: string;
+  personalMessage?: string;
   // One address or several — a location can bill more than one inbox. Arrays are
   // passed to the transport as-is (never comma-joined; Resend rejects that).
   customerEmail: string | string[];
@@ -2250,11 +2254,11 @@ export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailPar
   const mailOptions = {
     from: process.env.GMAIL_USER,
     to: params.customerEmail,
-    subject: `Invoice ${params.invoiceNumber} - Puget Sound Kombucha Co.`,
+    subject: params.subject || `Invoice ${params.invoiceNumber} - Puget Sound Kombucha Co.`,
     text: `
 Invoice ${params.invoiceNumber}
 Puget Sound Kombucha Co.
-
+${params.personalMessage ? `\n${params.personalMessage}\n` : ''}
 Date: ${orderDateFormatted}
 ${deliveryDateFormatted ? `Delivery Date: ${deliveryDateFormatted}` : ''}
 ${dueDateFormatted ? `Payment Due: ${dueDateFormatted}` : ''}
@@ -2284,6 +2288,9 @@ orders@soundkombucha.com
   ${getEmailHeader(`Invoice ${params.invoiceNumber}`)}
   
   <div style="padding: 32px 24px;">
+    ${params.personalMessage ? `
+    <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 15px; margin: 0 0 20px 0; white-space: pre-line;">${params.personalMessage}</p>
+    ` : ''}
     <div style="margin-bottom: 24px;">
       <p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 4px 0; font-size: 14px;">Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${orderDateFormatted}</span></p>
       ${deliveryDateFormatted ? `<p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 4px 0; font-size: 14px;">Delivery Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${deliveryDateFormatted}</span></p>` : ''}

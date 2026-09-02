@@ -6,6 +6,9 @@ import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Printer, ArrowLeft, Landmark, Loader2, Mail } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -84,11 +87,24 @@ export default function WholesaleInvoice() {
     },
   });
 
+  // Send dialog: recipients / subject / note are pre-loaded and editable
+  // before anything goes out (owner, 2026-09-02).
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendTo, setSendTo] = useState("");
+  const [sendSubject, setSendSubject] = useState("");
+  const [sendMessage, setSendMessage] = useState("");
+
   const sendInvoiceMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", `/api/wholesale/orders/${orderId}/send-invoice`, {});
+      const to = sendTo.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
+      return await apiRequest("POST", `/api/wholesale/orders/${orderId}/send-invoice`, {
+        to,
+        subject: sendSubject.trim() || undefined,
+        message: sendMessage.trim() || undefined,
+      });
     },
     onSuccess: (data) => {
+      setSendOpen(false);
       toast({
         title: "Invoice Sent",
         description: data.message || "Invoice email sent successfully",
@@ -104,7 +120,13 @@ export default function WholesaleInvoice() {
   });
 
   const handleSendInvoice = () => {
-    sendInvoiceMutation.mutate();
+    // Same routing the server uses: the location's invoice inbox(es), account otherwise.
+    const order = invoiceData?.order;
+    const customer = invoiceData?.customer;
+    setSendTo(String(order?.location?.contactEmail || customer?.email || ""));
+    setSendSubject(`Invoice ${order?.invoiceNumber ?? ""} - Puget Sound Kombucha Co.`);
+    setSendMessage("");
+    setSendOpen(true);
   };
 
   const handlePrint = () => {
@@ -548,6 +570,45 @@ export default function WholesaleInvoice() {
           }
         }
       `}</style>
+
+      {/* Send-invoice dialog: everything editable before it goes out */}
+      <Dialog open={sendOpen} onOpenChange={setSendOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Send invoice {order.invoiceNumber}</DialogTitle>
+            <DialogDescription>
+              The Wave-style PDF is attached automatically. Separate several recipients with commas.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="send-to">To</Label>
+              <Input id="send-to" value={sendTo} onChange={(e) => setSendTo(e.target.value)} data-testid="input-send-to" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="send-subject">Subject</Label>
+              <Input id="send-subject" value={sendSubject} onChange={(e) => setSendSubject(e.target.value)} data-testid="input-send-subject" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="send-message">Note (optional)</Label>
+              <Textarea id="send-message" rows={3} value={sendMessage} onChange={(e) => setSendMessage(e.target.value)}
+                placeholder="Shown at the top of the email, above the invoice details"
+                data-testid="input-send-message" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSendOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => sendInvoiceMutation.mutate()}
+              disabled={sendInvoiceMutation.isPending || !sendTo.trim()}
+              data-testid="button-send-invoice-confirm"
+            >
+              {sendInvoiceMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Send invoice
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
