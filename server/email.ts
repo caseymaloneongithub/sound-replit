@@ -2039,8 +2039,6 @@ export async function generateDeliveryPacketPDF(input: {
   // what to load on the truck.
   packingList: Array<{ unit: string; flavor: string; quantity: number }>;
   invoices: WholesaleInvoiceEmailParams[];
-  // Static map with numbered stop pins, rendered under the page-1 summary.
-  mapImage?: Buffer | null;
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -2067,13 +2065,6 @@ export async function generateDeliveryPacketPDF(input: {
     let y = PDF_MARGIN + 78;
     doc.moveTo(PDF_MARGIN, y).lineTo(PDF_WIDTH - PDF_MARGIN, y).lineWidth(1).strokeColor('#dddddd').stroke();
     y += 12;
-
-    if (input.mapImage) {
-      try {
-        doc.image(input.mapImage, PDF_MARGIN, y, { fit: [PDF_CONTENT_WIDTH, 260] });
-        y += 270;
-      } catch { /* a corrupt map image never blocks the packet */ }
-    }
 
     for (const stop of input.stops) {
       if (y > doc.page.height - 90) { doc.addPage(); y = PDF_MARGIN; }
