@@ -1564,7 +1564,6 @@ Thank you for your order!
 Invoice #: ${params.invoiceNumber}
 ${params.poNumber ? `PO #: ${params.poNumber}\n` : ''}Order Date: ${orderDateFormatted}
 ${deliveryDateFormatted ? `Delivery Date: ${deliveryDateFormatted}` : ''}
-${dueDateFormatted ? `Payment Due: ${dueDateFormatted}` : ''}
 
 Items:
 ${itemsText}
@@ -1614,12 +1613,6 @@ orders@soundkombucha.com
         <tr>
           <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey};">Delivery Date</td>
           <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey};">${deliveryDateFormatted}</td>
-        </tr>
-        ` : ''}
-        ${dueDateFormatted ? `
-        <tr>
-          <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey};">Payment Due</td>
-          <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${dueDateFormatted}</td>
         </tr>
         ` : ''}
       </table>
