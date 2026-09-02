@@ -519,7 +519,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       poNumber: (order as any).poNumber ?? null,
       customerEmail: recipients,
       businessName: locName && locName !== 'Main Location' ? `${customer.businessName} — ${locName}` : customer.businessName,
-      contactName: customer.contactName || customer.businessName,
+      contactName: order.location?.contactName || customer.contactName || customer.businessName,
       invoiceNumber: order.invoiceNumber,
       amount: Number(order.totalAmount),
       paidAt,
@@ -1654,7 +1654,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       sendWholesaleOrderConfirmation({
         customerEmail: confirmationEmail,
         businessName: emailBusinessName,
-        contactName: customer.contactName,
+        contactName: (emailLocation as any)?.contactName || customer.contactName,
         invoiceNumber,
         orderDate,
         deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
@@ -1662,6 +1662,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalAmount,
         items: emailItems,
         notes: notes || null,
+        location: emailLocation ? {
+          locationName: emailLocation.locationName,
+          address: emailLocation.address,
+          city: emailLocation.city,
+          state: emailLocation.state,
+          zipCode: emailLocation.zipCode,
+        } : null,
       }).catch(emailError => {
         console.error('[ORDER] Failed to send customer confirmation:', emailError);
       });
@@ -6733,7 +6740,7 @@ If you have any questions, please don't hesitate to reach out!`,
         if (sendConfirmation) sendWholesaleOrderConfirmation({
           customerEmail: confirmationRecipients,
           businessName: emailBusinessName,
-          contactName: customer.contactName,
+          contactName: (emailLocation as any)?.contactName || customer.contactName,
           invoiceNumber,
           orderDate,
           deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
@@ -6741,6 +6748,13 @@ If you have any questions, please don't hesitate to reach out!`,
           totalAmount: serverCalculatedTotal,
           items: emailItems,
           notes: order.notes || null,
+          location: emailLocation ? {
+            locationName: emailLocation.locationName,
+            address: emailLocation.address,
+            city: emailLocation.city,
+            state: emailLocation.state,
+            zipCode: emailLocation.zipCode,
+          } : null,
         }).catch(emailError => {
           console.error('[ORDER] Failed to send customer confirmation:', emailError);
         });

@@ -1521,11 +1521,14 @@ interface WholesaleOrderConfirmationParams {
   totalAmount: number;
   items: { productName: string; quantity: number; unitPrice: string }[];
   notes?: string | null;
+  // Where the order delivers — shown so a multi-location chain knows WHICH store
+  // this confirmation is for.
+  location?: { locationName: string; address: string; city: string; state: string; zipCode: string } | null;
 }
 
 export async function sendWholesaleOrderConfirmation(params: WholesaleOrderConfirmationParams): Promise<void> {
   const transporter = createTransporter();
-  
+
   if (!transporter) {
     console.log('[EMAIL] Would send order confirmation to:', params.customerEmail);
     console.log('[EMAIL] Invoice:', params.invoiceNumber);
@@ -1535,6 +1538,11 @@ export async function sendWholesaleOrderConfirmation(params: WholesaleOrderConfi
   const orderDateFormatted = format(params.orderDate, 'MMMM d, yyyy');
   const deliveryDateFormatted = params.deliveryDate ? format(params.deliveryDate, 'MMMM d, yyyy') : null;
   const dueDateFormatted = params.dueDate ? format(params.dueDate, 'MMMM d, yyyy') : null;
+  // "Dear ," when the account has no contact on file read as broken (2026-09-02).
+  const greeting = params.contactName?.trim() ? `Dear ${params.contactName},` : 'Hello,';
+  const locationLine = params.location
+    ? `${params.location.locationName && params.location.locationName !== 'Main Location' ? params.location.locationName + ' — ' : ''}${params.location.address}, ${params.location.city}, ${params.location.state} ${params.location.zipCode}`
+    : null;
   
   const itemsHtml = params.items.map(item => {
     const lineTotal = parseFloat(item.unitPrice) * item.quantity;
@@ -1565,6 +1573,7 @@ Thank you for your order!
 Invoice #: ${params.invoiceNumber}
 ${params.poNumber ? `PO #: ${params.poNumber}\n` : ''}Order Date: ${orderDateFormatted}
 ${deliveryDateFormatted ? `Delivery Date: ${deliveryDateFormatted}` : ''}
+${locationLine ? `Deliver To: ${locationLine}` : ''}
 
 Items:
 ${itemsText}
@@ -1587,9 +1596,9 @@ orders@soundkombucha.com
   
   <div style="padding: 32px 24px;">
     <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 16px; margin: 0 0 24px 0;">
-      Dear ${params.contactName},
+      ${greeting}
     </p>
-    
+
     <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 16px; margin: 0 0 24px 0;">
       Thank you for your order! We've received your order and will contact you to confirm delivery details.
     </p>
@@ -1614,6 +1623,12 @@ orders@soundkombucha.com
         <tr>
           <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey};">Delivery Date</td>
           <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey};">${deliveryDateFormatted}</td>
+        </tr>
+        ` : ''}
+        ${locationLine ? `
+        <tr>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.mediumGrey}; vertical-align: top;">Deliver To</td>
+          <td style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${locationLine}</td>
         </tr>
         ` : ''}
       </table>
