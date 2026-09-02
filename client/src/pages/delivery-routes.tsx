@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CalendarIcon, Route, Plus, X, RefreshCw } from "lucide-react";
+import { CalendarIcon, Route, Plus, X, RefreshCw, ArrowLeftRight, Loader2 } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { DeliveriesTabs, useSharedDeliveryDate } from "@/components/staff/deliveries-tabs";
 import { format } from "date-fns";
@@ -258,6 +258,39 @@ export default function DeliveryRoutes() {
     },
   });
 
+  const reverseMutation = useMutation({
+    mutationFn: async (routeId: string) =>
+      (await apiRequest("POST", `/api/delivery/routes/${routeId}/reverse`, {})) as OptimizedRouteResponse,
+    onSuccess: (data) => {
+      setOptimizedRoute(data);
+      toast({
+        title: "Route reversed",
+        description: `Now ${formatDistance(data.totalDistance)}, ${formatDuration(data.totalDuration)} the other way around`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't reverse", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Per-stop ETAs: leave time + a flat minutes-per-stop dwell, applied cumulatively
+  // down the optimized order (owner, 2026-09-01).
+  const [departTime, setDepartTime] = useState("08:00");
+  const [stopMinutes, setStopMinutes] = useState(10);
+  const etaFor = (index: number): string | null => {
+    if (!optimizedRoute) return null;
+    const [h, m] = departTime.split(":").map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+    let seconds = h * 3600 + m * 60;
+    for (let i = 0; i <= index; i++) {
+      seconds += optimizedRoute.stops[i]?.durationFromPrevious ?? 0;
+      if (i < index) seconds += stopMinutes * 60;
+    }
+    const d = new Date();
+    d.setHours(0, Math.round(seconds / 60), 0, 0);
+    return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  };
+
   const ordersWithGeocode = deliveryOrders.filter(
     (o) => o.location?.latitude && o.location?.longitude
   );
@@ -435,19 +468,55 @@ export default function DeliveryRoutes() {
                     Total: {formatDistance(optimizedRoute.totalDistance)} -{" "}
                     {formatDuration(optimizedRoute.totalDuration)}
                     {optimizedRoute.route?.id && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="ml-3"
-                        onClick={() => window.open(`/api/delivery/routes/${optimizedRoute.route!.id}/packet`, "_blank")}
-                        data-testid="button-print-packet"
-                      >
-                        Print delivery packet
-                      </Button>
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="ml-3"
+                          onClick={() => window.open(`/api/delivery/routes/${optimizedRoute.route!.id}/packet`, "_blank")}
+                          data-testid="button-print-packet"
+                        >
+                          Print delivery packet
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="ml-2"
+                          disabled={reverseMutation.isPending}
+                          onClick={() => reverseMutation.mutate(optimizedRoute.route!.id)}
+                          data-testid="button-reverse-route"
+                        >
+                          {reverseMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ArrowLeftRight className="w-4 h-4 mr-1" />}
+                          Reverse route
+                        </Button>
+                      </>
                     )}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
+                  {/* ETA controls: leave time + minutes per stop feed the per-stop ETAs */}
+                  <div className="flex flex-wrap items-center gap-4 mb-4 text-sm">
+                    <label className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Leave at</span>
+                      <Input type="time" value={departTime} onChange={(e) => setDepartTime(e.target.value)}
+                        className="w-28 h-8" data-testid="input-depart-time" />
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Time per stop</span>
+                      <Input type="number" min={0} max={120} value={stopMinutes}
+                        onChange={(e) => setStopMinutes(Math.max(0, Number(e.target.value) || 0))}
+                        className="w-20 h-8" data-testid="input-stop-minutes" />
+                      <span className="text-muted-foreground">min</span>
+                    </label>
+                    <span className="text-muted-foreground">
+                      Back at facility ~{(() => {
+                        const total = optimizedRoute.totalDuration + optimizedRoute.stops.length * stopMinutes * 60;
+                        const [h, m] = departTime.split(":").map(Number);
+                        const d = new Date(); d.setHours(0, Math.round((h * 3600 + m * 60 + total) / 60), 0, 0);
+                        return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+                      })()}
+                    </span>
+                  </div>
                   {routeMapUrl && (
                     <img
                       src={routeMapUrl}
@@ -484,6 +553,11 @@ export default function DeliveryRoutes() {
                           <p className="text-sm text-muted-foreground">
                             {stop.address}
                           </p>
+                          {etaFor(index) && (
+                            <p className="text-sm font-medium text-foreground/80" data-testid={`eta-${index}`}>
+                              ETA {etaFor(index)} · {stopMinutes} min stop
+                            </p>
+                          )}
                         </div>
                         <div className="text-right text-sm">
                           {stop.distanceFromPrevious && (

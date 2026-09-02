@@ -179,7 +179,7 @@ export async function optimizeDeliveryRoute(
 
 export async function getRouteDirections(
   stops: Array<{ latitude: number; longitude: number }>
-): Promise<{ geometry: { type: string; coordinates: number[][] }; duration: number; distance: number } | null> {
+): Promise<{ geometry: { type: string; coordinates: number[][] }; duration: number; distance: number; legs: Array<{ distance: number; duration: number }> } | null> {
   if (!MAPBOX_ACCESS_TOKEN) {
     console.error("Mapbox access token not configured");
     return null;
@@ -215,6 +215,7 @@ export async function getRouteDirections(
       geometry: route.geometry,
       duration: route.duration,
       distance: route.distance,
+      legs: (route.legs ?? []).map((l: any) => ({ distance: l.distance ?? 0, duration: l.duration ?? 0 })),
     };
   } catch (error) {
     console.error("Directions error:", error);
