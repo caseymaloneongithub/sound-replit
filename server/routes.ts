@@ -3613,34 +3613,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         });
 
-        // Create subscription records and bill immediately for first order
+        // Create subscription records and bill immediately for first order.
+        // ONE subscription per FREQUENCY (owner, 2026-09-02): a four-case weekly cart
+        // used to mint four subscriptions and four charges — now it's one subscription
+        // holding all four items and one charge. A cart mixing frequencies still splits,
+        // because a subscription has exactly one billing clock.
         const subscriptionItems = retailItems.filter(i => i.isSubscription);
         const createdSubscriptions: any[] = [];
-        
+
+        const byFrequency = new Map<string, typeof subscriptionItems>();
         for (const item of subscriptionItems) {
-          // Get product details for pricing
-          const [retailProduct] = await db
-            .select()
-            .from(retailProducts)
-            .where(eq(retailProducts.id, item.retailProductId));
+          const freq = item.subscriptionFrequency || 'weekly';
+          byFrequency.set(freq, [...(byFrequency.get(freq) ?? []), item]);
+        }
 
-          if (!retailProduct) {
-            throw new Error(`Retail product ${item.retailProductId} not found`);
-          }
-
-          // Calculate amounts for first order
+        for (const [frequency, groupItems] of Array.from(byFrequency.entries())) {
+          // Price every line in the group
           const TAX_RATE = 0.1035;
-          const basePrice = parseFloat(retailProduct.price);
-          const discount = retailProduct.subscriptionDiscount ? Number(retailProduct.subscriptionDiscount) : 0;
-          const unitPrice = basePrice * (1 - discount / 100);
-          const subtotal = unitPrice * item.quantity;
+          const pricedLines: Array<{ item: (typeof groupItems)[number]; unitPrice: number }> = [];
+          let subtotal = 0;
+          for (const item of groupItems) {
+            const [retailProduct] = await db
+              .select()
+              .from(retailProducts)
+              .where(eq(retailProducts.id, item.retailProductId));
+            if (!retailProduct) {
+              throw new Error(`Retail product ${item.retailProductId} not found`);
+            }
+            const basePrice = parseFloat(retailProduct.price);
+            const discount = retailProduct.subscriptionDiscount ? Number(retailProduct.subscriptionDiscount) : 0;
+            const unitPrice = basePrice * (1 - discount / 100);
+            pricedLines.push({ item, unitPrice });
+            subtotal += unitPrice * item.quantity;
+          }
           const taxAmount = subtotal * TAX_RATE;
           const totalAmount = subtotal + taxAmount;
           const amountInCents = Math.round(totalAmount * 100);
 
           // Calculate next charge date (for 2nd order) — advance from now for initial setup
           const normalizedNextPickupDate = normalizeToAllowedPickupDay(
-            addDays(new Date(), frequencyToDays(item.subscriptionFrequency || 'weekly'))
+            addDays(new Date(), frequencyToDays(frequency))
           );
           // Billing happens on Monday of the pickup week
           const nextBillingDate = getBillingDateForPickup(normalizedNextPickupDate);
@@ -3653,7 +3665,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               customerName: validated.customerName,
               customerEmail: validated.customerEmail,
               customerPhone: formatPhoneNumber(validated.customerPhone),
-              subscriptionFrequency: item.subscriptionFrequency || 'weekly',
+              subscriptionFrequency: frequency,
               nextChargeAt: nextBillingDate, // Billing on Monday of pickup week
               nextDeliveryDate: normalizedNextPickupDate,
               status: 'active',
@@ -3666,16 +3678,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })
             .returning();
 
-          // Add subscription items
-          await db.insert(retailSubscriptionItems).values({
-            subscriptionId: subscription.id,
-            retailProductId: item.retailProductId,
-            selectedFlavorId: item.selectedFlavorId,
-            quantity: item.quantity,
-            // Lock in the agreed price so later catalogue edits don't silently
-            // re-price this customer's renewals.
-            unitPriceAtSignup: unitPrice.toFixed(2),
-          });
+          // Add every line as an item on the ONE subscription
+          for (const { item, unitPrice } of pricedLines) {
+            await db.insert(retailSubscriptionItems).values({
+              subscriptionId: subscription.id,
+              retailProductId: item.retailProductId,
+              selectedFlavorId: item.selectedFlavorId,
+              quantity: item.quantity,
+              // Lock in the agreed price so later catalogue edits don't silently
+              // re-price this customer's renewals.
+              unitPriceAtSignup: unitPrice.toFixed(2),
+            });
+          }
 
           // Charge immediately for first order.
           // Keyed on the subscription id so a double-submitted checkout (or a retry
@@ -3714,8 +3728,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.error(`[SUBSCRIPTION] ⚠️ Payment status ${paymentIntent.status} for first order`);
           }
 
-          // Clear this subscription item from cart
-          await db.delete(retailCartItems).where(eq(retailCartItems.id, item.id));
+          // Clear the group's lines from the cart
+          for (const { item } of pricedLines) {
+            await db.delete(retailCartItems).where(eq(retailCartItems.id, item.id));
+          }
 
           createdSubscriptions.push(subscription);
         }
