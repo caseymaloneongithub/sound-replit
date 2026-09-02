@@ -33,6 +33,27 @@ export default function WholesaleInvoices() {
   const [sendTo, setSendTo] = useState("");
   const [sendSubject, setSendSubject] = useState("");
   const [sendMessage, setSendMessage] = useState("");
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+
+  const fetchPreview = async (orderId: string, fields: { to: string; subject: string; message: string; dueDateValue?: Date }) => {
+    setPreviewBusy(true);
+    try {
+      const to = fields.to.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
+      const data = await apiRequest("POST", `/api/wholesale/orders/${orderId}/send-invoice`, {
+        preview: true,
+        dueDate: fields.dueDateValue?.toISOString(),
+        to: to.length ? to : undefined,
+        subject: fields.subject.trim() || undefined,
+        message: fields.message.trim() || undefined,
+      });
+      setPreviewHtml(data.html);
+    } catch (e: any) {
+      toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
   const [setDueDateDialogOpen, setSetDueDateDialogOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
@@ -164,6 +185,7 @@ export default function WholesaleInvoices() {
     setSendTo(String((order as any)?.locationEmail || cust?.email || ""));
     setSendSubject(`Invoice ${order?.invoiceNumber ?? ""} - Puget Sound Kombucha Co.`);
     setSendMessage("");
+    setPreviewHtml(null);
     setSendInvoiceDialogOpen(true);
   };
 
@@ -588,7 +610,7 @@ export default function WholesaleInvoices() {
 
       {/* Send Invoice Dialog with Due Date */}
       <Dialog open={sendInvoiceDialogOpen} onOpenChange={setSendInvoiceDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Send Invoice</DialogTitle>
             <DialogDescription>
@@ -645,9 +667,25 @@ export default function WholesaleInvoices() {
               <Input id="send-subject" value={sendSubject} onChange={(e) => setSendSubject(e.target.value)} data-testid="input-send-subject" />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="send-message">Note (optional)</Label>
+              <Label htmlFor="send-message">Email text (optional)</Label>
               <Textarea id="send-message" rows={2} value={sendMessage} onChange={(e) => setSendMessage(e.target.value)} placeholder="Shown at the top of the email" data-testid="input-send-message" />
             </div>
+            <div className="flex items-center justify-between">
+              <Label className="text-sm text-muted-foreground">Preview</Label>
+              <Button variant="outline" size="sm" disabled={previewBusy || !selectedOrderId}
+                onClick={() => selectedOrderId && fetchPreview(selectedOrderId, { to: sendTo, subject: sendSubject, message: sendMessage, dueDateValue: dueDate })}
+                data-testid="button-update-preview">
+                {previewBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+                Update preview
+              </Button>
+            </div>
+            {previewHtml ? (
+              <iframe title="Email preview" srcDoc={previewHtml} sandbox="" className="w-full h-80 rounded-md border bg-white" data-testid="iframe-email-preview" />
+            ) : (
+              <div className="h-24 rounded-md border flex items-center justify-center text-sm text-muted-foreground">
+                {previewBusy ? "Building preview…" : "Click Update preview to see the full email"}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSendInvoiceDialogOpen(false)}>

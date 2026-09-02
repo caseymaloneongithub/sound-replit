@@ -1524,17 +1524,15 @@ interface WholesaleOrderConfirmationParams {
   // Where the order delivers — shown so a multi-location chain knows WHICH store
   // this confirmation is for.
   location?: { locationName: string; address: string; city: string; state: string; zipCode: string } | null;
+  // Preview-dialog overrides: subject line and the editable body paragraph (the
+  // structured details below it are always generated).
+  subject?: string;
+  bodyText?: string;
 }
 
-export async function sendWholesaleOrderConfirmation(params: WholesaleOrderConfirmationParams): Promise<void> {
-  const transporter = createTransporter();
-
-  if (!transporter) {
-    console.log('[EMAIL] Would send order confirmation to:', params.customerEmail);
-    console.log('[EMAIL] Invoice:', params.invoiceNumber);
-    return;
-  }
-
+/** Builds the confirmation email without sending — the send path and the
+ *  staff preview dialog render the exact same thing. */
+export function buildWholesaleOrderConfirmationEmail(params: WholesaleOrderConfirmationParams): { subject: string; text: string; html: string } {
   const orderDateFormatted = format(params.orderDate, 'MMMM d, yyyy');
   const deliveryDateFormatted = params.deliveryDate ? format(params.deliveryDate, 'MMMM d, yyyy') : null;
   const dueDateFormatted = params.dueDate ? format(params.dueDate, 'MMMM d, yyyy') : null;
@@ -1561,14 +1559,14 @@ export async function sendWholesaleOrderConfirmation(params: WholesaleOrderConfi
     return `- ${item.productName} x ${item.quantity} @ $${parseFloat(item.unitPrice).toFixed(2)} = $${lineTotal.toFixed(2)}`;
   }).join('\n');
 
-  const mailOptions = {
-    from: process.env.GMAIL_USER,
-    to: params.customerEmail,
-    subject: `Order Confirmation - ${params.invoiceNumber} - Puget Sound Kombucha Co.`,
-    text: `
+  const bodyParagraph = params.bodyText?.trim()
+    || "Thank you for your order! We've received your order and will contact you to confirm delivery details.";
+
+  const subject = params.subject?.trim() || `Order Confirmation - ${params.invoiceNumber} - Puget Sound Kombucha Co.`;
+  const text = `
 Order Confirmation
 
-Thank you for your order!
+${bodyParagraph}
 
 Invoice #: ${params.invoiceNumber}
 ${params.poNumber ? `PO #: ${params.poNumber}\n` : ''}Order Date: ${orderDateFormatted}
@@ -1581,16 +1579,14 @@ ${itemsText}
 Total: $${params.totalAmount.toFixed(2)}
 ${params.notes ? `\nNotes: ${params.notes}` : ''}
 
-We will contact you to confirm delivery details.
-
 ---
 Puget Sound Kombucha Co.
 4501 Shilshole Ave NW
 Seattle, WA 98107
 orders@soundkombucha.com
 (206) 789-5219
-    `.trim(),
-    html: `
+    `.trim();
+  const html = `
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
   ${getEmailHeader('Order Confirmation')}
   
@@ -1599,8 +1595,8 @@ orders@soundkombucha.com
       ${greeting}
     </p>
 
-    <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 16px; margin: 0 0 24px 0;">
-      Thank you for your order! We've received your order and will contact you to confirm delivery details.
+    <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 16px; margin: 0 0 24px 0; white-space: pre-line;">
+      ${bodyParagraph}
     </p>
     
     <div style="background-color: ${BRAND_COLORS.backgroundGrey}; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
@@ -1668,12 +1664,31 @@ orders@soundkombucha.com
     ${getEmailFooter()}
   </div>
 </div>
-    `.trim(),
-    attachments: getLogoAttachment(),
-  };
+    `.trim();
+
+  return { subject, text, html };
+}
+
+export async function sendWholesaleOrderConfirmation(params: WholesaleOrderConfirmationParams): Promise<void> {
+  const transporter = createTransporter();
+
+  if (!transporter) {
+    console.log('[EMAIL] Would send order confirmation to:', params.customerEmail);
+    console.log('[EMAIL] Invoice:', params.invoiceNumber);
+    return;
+  }
+
+  const built = buildWholesaleOrderConfirmationEmail(params);
 
   try {
-    await transporter.sendMail(mailOptions);
+    await transporter.sendMail({
+      from: process.env.GMAIL_USER,
+      to: params.customerEmail,
+      subject: built.subject,
+      text: built.text,
+      html: built.html,
+      attachments: getLogoAttachment(),
+    });
     console.log(`[EMAIL] ✅ Sent order confirmation to ${params.customerEmail} for ${params.invoiceNumber}`);
   } catch (error) {
     console.error('[EMAIL] Failed to send order confirmation:', error);
@@ -2170,19 +2185,9 @@ export async function generateDeliveryPacketPDF(input: {
   });
 }
 
-export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailParams): Promise<void> {
-  const transporter = createTransporter();
-  
-  if (!transporter) {
-    console.log('[EMAIL] Would send wholesale invoice email to:', params.customerEmail);
-    console.log('[EMAIL] Invoice:', params.invoiceNumber);
-    console.log('[EMAIL] Total:', params.subtotal);
-    return;
-  }
-
-  // Generate PDF
-  const pdfBuffer = await generateInvoicePDF(params);
-  
+/** Builds the invoice email without sending — shared by the send path and the
+ *  staff preview dialog so the preview is exactly what goes out. */
+export function buildWholesaleInvoiceEmail(params: WholesaleInvoiceEmailParams): { subject: string; text: string; html: string } {
   const orderDateFormatted = format(params.orderDate, 'MMM dd, yyyy');
   const deliveryDateFormatted = params.deliveryDate ? format(params.deliveryDate, 'MMM dd, yyyy') : null;
   const dueDateFormatted = params.dueDate ? format(params.dueDate, 'MMM dd, yyyy') : null;
@@ -2266,11 +2271,8 @@ export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailPar
     ? `\nDeliver To: ${params.location.locationName}, ${params.location.address}, ${params.location.city}, ${params.location.state} ${params.location.zipCode}\n`
     : '';
 
-  const mailOptions = {
-    from: process.env.GMAIL_USER,
-    to: params.customerEmail,
-    subject: params.subject || `Invoice ${params.invoiceNumber} - Puget Sound Kombucha Co.`,
-    text: `
+  const subject = params.subject || `Invoice ${params.invoiceNumber} - Puget Sound Kombucha Co.`;
+  const text = `
 Invoice ${params.invoiceNumber}
 Puget Sound Kombucha Co.
 ${params.personalMessage ? `\n${params.personalMessage}\n` : ''}
@@ -2297,8 +2299,8 @@ Puget Sound Kombucha Co.
 Seattle, WA 98107
 orders@soundkombucha.com
 (206) 789-5219
-    `.trim(),
-    html: `
+    `.trim();
+  const html = `
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
   ${getEmailHeader(`Invoice ${params.invoiceNumber}`)}
   
@@ -2354,23 +2356,43 @@ orders@soundkombucha.com
     ${paymentHtml}
     
     <p style="color: ${BRAND_COLORS.darkGrey}; margin-top: 32px;">Thank you for your business!</p>
-    
+
     ${getEmailFooter()}
   </div>
 </div>
-    `.trim(),
-    attachments: [
-      ...getLogoAttachment(),
-      {
-        filename: `Invoice-${params.invoiceNumber}.pdf`,
-        content: pdfBuffer,
-        contentType: 'application/pdf',
-      }
-    ],
-  };
+    `.trim();
+
+  return { subject, text, html };
+}
+
+export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailParams): Promise<void> {
+  const transporter = createTransporter();
+
+  if (!transporter) {
+    console.log('[EMAIL] Would send wholesale invoice email to:', params.customerEmail);
+    console.log('[EMAIL] Invoice:', params.invoiceNumber);
+    return;
+  }
+
+  const built = buildWholesaleInvoiceEmail(params);
+  const pdfBuffer = await generateInvoicePDF(params);
 
   try {
-    await transporter.sendMail(mailOptions);
+    await transporter.sendMail({
+      from: process.env.GMAIL_USER,
+      to: params.customerEmail,
+      subject: built.subject,
+      text: built.text,
+      html: built.html,
+      attachments: [
+        ...getLogoAttachment(),
+        {
+          filename: `Invoice-${params.invoiceNumber}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        }
+      ],
+    });
     console.log(`[EMAIL] ✅ Sent wholesale invoice email to ${params.customerEmail} for invoice ${params.invoiceNumber}`);
   } catch (error) {
     console.error('[EMAIL] Failed to send wholesale invoice email:', error);

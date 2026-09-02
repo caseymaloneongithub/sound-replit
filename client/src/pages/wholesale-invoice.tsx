@@ -93,6 +93,26 @@ export default function WholesaleInvoice() {
   const [sendTo, setSendTo] = useState("");
   const [sendSubject, setSendSubject] = useState("");
   const [sendMessage, setSendMessage] = useState("");
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+
+  const fetchPreview = async (fields: { to: string; subject: string; message: string }) => {
+    setPreviewBusy(true);
+    try {
+      const to = fields.to.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
+      const data = await apiRequest("POST", `/api/wholesale/orders/${orderId}/send-invoice`, {
+        preview: true,
+        to: to.length ? to : undefined,
+        subject: fields.subject.trim() || undefined,
+        message: fields.message.trim() || undefined,
+      });
+      setPreviewHtml(data.html);
+    } catch (e: any) {
+      toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
 
   const sendInvoiceMutation = useMutation({
     mutationFn: async () => {
@@ -123,10 +143,14 @@ export default function WholesaleInvoice() {
     // Same routing the server uses: the location's invoice inbox(es), account otherwise.
     const order = invoiceData?.order;
     const customer = invoiceData?.customer;
-    setSendTo(String(order?.location?.contactEmail || customer?.email || ""));
-    setSendSubject(`Invoice ${order?.invoiceNumber ?? ""} - Puget Sound Kombucha Co.`);
+    const to = String(order?.location?.contactEmail || customer?.email || "");
+    const subject = `Invoice ${order?.invoiceNumber ?? ""} - Puget Sound Kombucha Co.`;
+    setSendTo(to);
+    setSendSubject(subject);
     setSendMessage("");
+    setPreviewHtml(null);
     setSendOpen(true);
+    fetchPreview({ to, subject, message: "" });
   };
 
   const handlePrint = () => {
@@ -571,9 +595,9 @@ export default function WholesaleInvoice() {
         }
       `}</style>
 
-      {/* Send-invoice dialog: everything editable before it goes out */}
+      {/* Send-invoice dialog: full rendered preview, everything editable before it goes out */}
       <Dialog open={sendOpen} onOpenChange={setSendOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Send invoice {order.invoiceNumber}</DialogTitle>
             <DialogDescription>
@@ -581,20 +605,39 @@ export default function WholesaleInvoice() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="send-to">To</Label>
-              <Input id="send-to" value={sendTo} onChange={(e) => setSendTo(e.target.value)} data-testid="input-send-to" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="send-to">To</Label>
+                <Input id="send-to" value={sendTo} onChange={(e) => setSendTo(e.target.value)} data-testid="input-send-to" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="send-subject">Subject</Label>
+                <Input id="send-subject" value={sendSubject} onChange={(e) => setSendSubject(e.target.value)} data-testid="input-send-subject" />
+              </div>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="send-subject">Subject</Label>
-              <Input id="send-subject" value={sendSubject} onChange={(e) => setSendSubject(e.target.value)} data-testid="input-send-subject" />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="send-message">Note (optional)</Label>
+              <Label htmlFor="send-message">Email text (optional)</Label>
               <Textarea id="send-message" rows={3} value={sendMessage} onChange={(e) => setSendMessage(e.target.value)}
                 placeholder="Shown at the top of the email, above the invoice details"
                 data-testid="input-send-message" />
             </div>
+            <div className="flex items-center justify-between">
+              <Label className="text-sm text-muted-foreground">Preview</Label>
+              <Button variant="outline" size="sm" disabled={previewBusy}
+                onClick={() => fetchPreview({ to: sendTo, subject: sendSubject, message: sendMessage })}
+                data-testid="button-update-preview">
+                {previewBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+                Update preview
+              </Button>
+            </div>
+            {previewHtml ? (
+              <iframe title="Email preview" srcDoc={previewHtml} sandbox=""
+                className="w-full h-96 rounded-md border bg-white" data-testid="iframe-email-preview" />
+            ) : (
+              <div className="h-96 rounded-md border flex items-center justify-center text-muted-foreground">
+                {previewBusy ? "Building preview…" : "No preview yet"}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSendOpen(false)}>Cancel</Button>

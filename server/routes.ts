@@ -13,7 +13,7 @@ import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
 import { z } from "zod";
-import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail, sendWholesaleWelcomeEmail, sendWholesalePaymentReceipt, sendWholesalePaymentFailedNotification, generateDeliveryPacketPDF } from "./email";
+import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleInvoiceEmail, sendWholesaleInvoicePaidNotification, sendWholesaleOrderConfirmation, sendWholesaleOrderAdminNotification, sendRetailOrderAdminNotification, sendRetailWelcomeEmail, retailWelcomeEmailsEnabled, sendStaffInviteEmail, sendSubscriberMigrationEmail, sendWholesaleWelcomeEmail, sendWholesalePaymentReceipt, sendWholesalePaymentFailedNotification, generateDeliveryPacketPDF, buildWholesaleInvoiceEmail, buildWholesaleOrderConfirmationEmail } from "./email";
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
@@ -6877,9 +6877,84 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
+  // Order confirmation for an existing order — preview (returns the rendered email)
+  // or send, with editable recipients/subject/body. Backs the staff-order preview
+  // dialog (owner, 2026-09-02).
+  app.post("/api/wholesale/orders/:id/confirmation", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const isPreview = req.body?.preview === true;
+      const overrides = z.object({
+        to: z.array(z.string().email()).min(1).optional(),
+        subject: z.string().trim().min(1).max(200).optional(),
+        body: z.string().trim().max(2000).optional(),
+      }).parse({
+        to: Array.isArray(req.body?.to) ? req.body.to : undefined,
+        subject: req.body?.subject || undefined,
+        body: req.body?.body || undefined,
+      });
+
+      const details = await storage.getWholesaleOrderWithDetails(req.params.id);
+      if (!details) return res.status(404).json({ message: "Order not found" });
+      const { order, customer, items } = details;
+      const loc = order.location as any;
+
+      const emailBusinessName = loc?.locationName && loc.locationName !== 'Main Location'
+        ? `${customer.businessName} — ${loc.locationName}`
+        : customer.businessName;
+      const recipients = overrides.to ?? String(loc?.contactEmail || customer.email)
+        .split(/[,;]/).map((e: string) => e.trim()).filter(Boolean);
+
+      const confirmationParams = {
+        poNumber: (order as any).poNumber ?? null,
+        customerEmail: recipients,
+        businessName: emailBusinessName,
+        contactName: loc?.contactName || customer.contactName,
+        invoiceNumber: order.invoiceNumber,
+        orderDate: new Date(order.orderDate),
+        deliveryDate: order.deliveryDate ? new Date(order.deliveryDate) : null,
+        dueDate: order.dueDate ? new Date(order.dueDate) : null,
+        totalAmount: Number(order.totalAmount),
+        items: items.map((item: any) => ({
+          productName: item.product.flavor ? `${item.product.name} - ${item.product.flavor}` : item.product.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+        })),
+        notes: order.notes ?? null,
+        location: loc ? {
+          locationName: loc.locationName,
+          address: loc.address,
+          city: loc.city,
+          state: loc.state,
+          zipCode: loc.zipCode,
+        } : null,
+        subject: overrides.subject,
+        bodyText: overrides.body,
+      };
+
+      if (isPreview) {
+        const built = buildWholesaleOrderConfirmationEmail(confirmationParams);
+        return res.json({
+          preview: true,
+          to: recipients,
+          subject: built.subject,
+          html: built.html.replace(/src="cid:[^"]*"/g, 'src=""'),
+        });
+      }
+
+      await sendWholesaleOrderConfirmation(confirmationParams);
+      res.json({ success: true, message: `Confirmation sent to ${recipients.join(", ")}` });
+    } catch (error: any) {
+      console.error("Error with order confirmation:", error);
+      res.status(500).json({ message: "Error with order confirmation: " + error.message });
+    }
+  });
+
   app.post("/api/wholesale/orders/:id/send-invoice", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const { dueDate } = req.body;
+      // preview=true renders the exact email and returns it WITHOUT sending or
+      // touching the order (no due-date write, no payment session).
+      const isPreview = req.body?.preview === true;
       // Optional overrides from the send dialog (owner, 2026-09-02): recipients,
       // subject, and a personal note rendered above the invoice details.
       const sendSchema = z.object({
@@ -6910,7 +6985,7 @@ If you have any questions, please don't hesitate to reach out!`,
       const dueDateValue = dueDate ? new Date(dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       
       // Update order with due date and sent timestamp
-      await storage.updateWholesaleOrder(req.params.id, {
+      if (!isPreview) await storage.updateWholesaleOrder(req.params.id, {
         dueDate: dueDateValue,
         invoiceSentAt: new Date(),
       });
@@ -6920,8 +6995,12 @@ If you have any questions, please don't hesitate to reach out!`,
       // Don't email a payment link for an invoice that's already paid or has a debit in
       // flight — following it would start a second ACH debit for the same invoice.
       if ((customer.allowOnlinePayment || customer.allowCardPayment) && stripe && !order.paidAt && !order.paymentInitiatedAt) {
-        const session = await createWholesaleCheckoutSession(order, customer, items);
-        paymentUrl = session.url;
+        if (isPreview) {
+          paymentUrl = '#payment-link-included-on-send';
+        } else {
+          const session = await createWholesaleCheckoutSession(order, customer, items);
+          paymentUrl = session.url;
+        }
       }
 
       // Prepare invoice items for email — adjustments render as qty-1 lines so the
@@ -6973,8 +7052,7 @@ If you have any questions, please don't hesitate to reach out!`,
         .map((e: string) => e.trim())
         .filter(Boolean);
 
-      // Send the invoice email
-      await sendWholesaleInvoiceEmail({
+      const emailParams = {
         poNumber: (order as any).poNumber ?? null,
         subject: overrides.subject,
         personalMessage: overrides.message,
@@ -6994,7 +7072,21 @@ If you have any questions, please don't hesitate to reach out!`,
         allowOnlinePayment: customer.allowOnlinePayment || customer.allowCardPayment,
         paymentUrl,
         paidAt: order.paidAt ? new Date(order.paidAt) : null,
-      });
+      };
+
+      if (isPreview) {
+        const built = buildWholesaleInvoiceEmail(emailParams);
+        // Logo ships as an inline attachment on the real send; previews swap the
+        // cid reference for nothing rather than a broken image.
+        return res.json({
+          preview: true,
+          to: invoiceRecipient,
+          subject: built.subject,
+          html: built.html.replace(/src="cid:[^"]*"/g, 'src=""'),
+        });
+      }
+
+      await sendWholesaleInvoiceEmail(emailParams);
 
       res.json({
         success: true,

@@ -1,3 +1,5 @@
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { WholesaleCustomer, WholesaleUnitType, Flavor, WholesaleCustomerPricing, WholesaleLocation } from "@shared/schema";
@@ -88,6 +90,63 @@ export default function WholesalePlaceOrder() {
     setSelectedFlavorId("");
   }, [selectedUnitTypeId]);
 
+  // Confirmation preview dialog: shows the FULL rendered email with editable
+  // To / Subject / body text before anything is sent (owner, 2026-09-02).
+  const [previewOrderId, setPreviewOrderId] = useState<string | null>(null);
+  const [previewTo, setPreviewTo] = useState("");
+  const [previewSubject, setPreviewSubject] = useState("");
+  const [previewBody, setPreviewBody] = useState("");
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+
+  const fetchPreview = async (orderId: string, fields?: { to?: string; subject?: string; body?: string }) => {
+    setPreviewBusy(true);
+    try {
+      const to = fields?.to?.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
+      const data = await apiRequest("POST", `/api/wholesale/orders/${orderId}/confirmation`, {
+        preview: true,
+        to: to?.length ? to : undefined,
+        subject: fields?.subject?.trim() || undefined,
+        body: fields?.body?.trim() || undefined,
+      });
+      setPreviewHtml(data.html);
+      if (!fields) {
+        setPreviewTo((data.to ?? []).join(", "));
+        setPreviewSubject(data.subject ?? "");
+        setPreviewBody("");
+      }
+    } catch (e: any) {
+      toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
+
+  const openConfirmationPreview = (orderId: string) => {
+    setPreviewOrderId(orderId);
+    setPreviewHtml(null);
+    fetchPreview(orderId);
+  };
+
+  const sendConfirmationMutation = useMutation({
+    mutationFn: async () => {
+      const to = previewTo.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
+      return apiRequest("POST", `/api/wholesale/orders/${previewOrderId}/confirmation`, {
+        to,
+        subject: previewSubject.trim() || undefined,
+        body: previewBody.trim() || undefined,
+      });
+    },
+    onSuccess: (data: any) => {
+      toast({ title: "Confirmation sent", description: data.message });
+      setPreviewOrderId(null);
+      setLocation("/staff-portal/wholesale/orders");
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't send", description: e.message, variant: "destructive" });
+    },
+  });
+
   const createOrderMutation = useMutation({
     mutationFn: async () => {
       if (!selectedCustomerId) {
@@ -102,7 +161,8 @@ export default function WholesalePlaceOrder() {
       }
 
       return await apiRequest("POST", "/api/wholesale/orders", {
-        sendConfirmation,
+        // The confirmation goes out via the preview dialog after creation, never blind.
+        sendConfirmation: false,
         order: {
           customerId: selectedCustomerId,
           poNumber: poNumber.trim() || undefined,
@@ -113,7 +173,7 @@ export default function WholesalePlaceOrder() {
         items: cart,
       });
     },
-    onSuccess: () => {
+    onSuccess: (createdOrder: any) => {
       toast({
         title: "Order Created",
         description: "Wholesale order has been created successfully",
@@ -127,7 +187,11 @@ export default function WholesalePlaceOrder() {
       setSelectedUnitTypeId("");
       setSelectedFlavorId("");
       setQuantity(1);
-      setLocation("/staff-portal/wholesale/orders");
+      if (sendConfirmation && createdOrder?.id) {
+        openConfirmationPreview(createdOrder.id);
+      } else {
+        setLocation("/staff-portal/wholesale/orders");
+      }
     },
     onError: (error: any) => {
       toast({
@@ -545,7 +609,8 @@ export default function WholesalePlaceOrder() {
                       <div className="space-y-0.5">
                         <Label htmlFor="send-confirmation">Email the customer a confirmation</Label>
                         <p className="text-sm text-muted-foreground">
-                          Turn off for historical entries or corrections the customer shouldn't be re-notified about.
+                          You'll preview and can edit the email before it sends. Turn off for
+                          historical entries or corrections the customer shouldn't be re-notified about.
                         </p>
                       </div>
                       <Switch
@@ -572,6 +637,76 @@ export default function WholesalePlaceOrder() {
           )}
         </div>
       </div>
+
+      {/* Confirmation preview: the full rendered email, editable before sending */}
+      <Dialog open={!!previewOrderId} onOpenChange={(open) => {
+        if (!open) { setPreviewOrderId(null); setLocation("/staff-portal/wholesale/orders"); }
+      }}>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Order confirmation email</DialogTitle>
+            <DialogDescription>
+              Review and edit before it goes to the store. Closing without sending skips the email.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="preview-to">To</Label>
+              <Input id="preview-to" value={previewTo} onChange={(e) => setPreviewTo(e.target.value)}
+                placeholder="Separate several with commas" data-testid="input-preview-to" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="preview-subject">Subject</Label>
+              <Input id="preview-subject" value={previewSubject} onChange={(e) => setPreviewSubject(e.target.value)} data-testid="input-preview-subject" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="preview-body">Email text</Label>
+            <Textarea id="preview-body" rows={3} value={previewBody} onChange={(e) => setPreviewBody(e.target.value)}
+              placeholder="Thank you for your order! We've received your order and will contact you to confirm delivery details."
+              data-testid="input-preview-body" />
+            <p className="text-xs text-muted-foreground">
+              Replaces the opening paragraph. The order details below it are generated automatically —
+              use Update preview to see your edits in place.
+            </p>
+          </div>
+          <div className="flex items-center justify-between">
+            <Label className="text-sm text-muted-foreground">Preview</Label>
+            <Button variant="outline" size="sm" disabled={previewBusy}
+              onClick={() => previewOrderId && fetchPreview(previewOrderId, { to: previewTo, subject: previewSubject, body: previewBody })}
+              data-testid="button-update-preview">
+              {previewBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+              Update preview
+            </Button>
+          </div>
+          {previewHtml ? (
+            <iframe
+              title="Email preview"
+              srcDoc={previewHtml}
+              sandbox=""
+              className="w-full h-96 rounded-md border bg-white"
+              data-testid="iframe-email-preview"
+            />
+          ) : (
+            <div className="h-96 rounded-md border flex items-center justify-center text-muted-foreground">
+              {previewBusy ? "Building preview…" : "No preview yet"}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setPreviewOrderId(null); setLocation("/staff-portal/wholesale/orders"); }}>
+              Don't send
+            </Button>
+            <Button
+              onClick={() => sendConfirmationMutation.mutate()}
+              disabled={sendConfirmationMutation.isPending || !previewTo.trim()}
+              data-testid="button-send-confirmation-email"
+            >
+              {sendConfirmationMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Send email
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </StaffLayout>
   );
 }
