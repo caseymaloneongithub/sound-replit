@@ -1177,7 +1177,10 @@ export default function MyAccount() {
                     <SelectValue placeholder="Select a flavor" />
                   </SelectTrigger>
                   <SelectContent>
-                    {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.map((flavor: any) => (
+                    {/* Mixed is a valid pick on a variety product, but never half a split. */}
+                    {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.filter((f: any) =>
+                      !(retailProducts?.find(p => p.id === selectedNewProduct) as any)?.allowSplit || f.name !== 'Mixed'
+                    ).map((flavor: any) => (
                       <SelectItem key={flavor.id} value={flavor.id} data-testid={`option-new-flavor-${flavor.id}`}>
                         {flavor.name}
                       </SelectItem>
@@ -1195,7 +1198,7 @@ export default function MyAccount() {
                     <SelectValue placeholder="Select a second flavor" />
                   </SelectTrigger>
                   <SelectContent>
-                    {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.filter((f: any) => f.id !== selectedNewFlavor).map((flavor: any) => (
+                    {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.filter((f: any) => f.id !== selectedNewFlavor && f.name !== 'Mixed').map((flavor: any) => (
                       <SelectItem key={flavor.id} value={flavor.id} data-testid={`option-new-split-flavor-${flavor.id}`}>
                         {flavor.name}
                       </SelectItem>

@@ -960,7 +960,9 @@ export default function RetailSubscriptions() {
               const isMulti = addProduct?.productType === 'multi-flavor';
               const isSplit = isMulti && !!(addProduct as any)?.allowSplit;
               const productFlavors: Flavor[] = ((addProduct as any)?.flavors ?? []).filter((f: Flavor) => f.isActive);
-              const pickList = productFlavors.length > 0 ? productFlavors : flavors.filter(f => f.isActive);
+              // Mixed is a valid pick on a variety product, but never half a split.
+              const pickList = (productFlavors.length > 0 ? productFlavors : flavors.filter(f => f.isActive))
+                .filter((f) => !isSplit || f.name !== 'Mixed');
               const ready = !!addProductId && (!isMulti || (
                 !!addFlavorId && (!isSplit || (!!addSplitFlavorId && addSplitFlavorId !== addFlavorId))
               ));

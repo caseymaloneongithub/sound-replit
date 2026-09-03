@@ -366,7 +366,8 @@ export default function ShopV2() {
                                 <SelectValue placeholder="Choose a flavor" />
                               </SelectTrigger>
                               <SelectContent>
-                                {product.flavors.filter(f => f.isActive).map((flavor) => (
+                                {/* Mixed is a valid pick on a variety product, but never half a split. */}
+                                {product.flavors.filter(f => f.isActive && (!isSplit || f.name !== 'Mixed')).map((flavor) => (
                                   <SelectItem key={flavor.id} value={flavor.id}>
                                     {flavor.name}
                                   </SelectItem>
@@ -387,7 +388,7 @@ export default function ShopV2() {
                                 <SelectValue placeholder="Choose a second flavor" />
                               </SelectTrigger>
                               <SelectContent>
-                                {product.flavors.filter(f => f.isActive && f.id !== selectedFlavors[product.id]).map((flavor) => (
+                                {product.flavors.filter(f => f.isActive && f.id !== selectedFlavors[product.id] && f.name !== 'Mixed').map((flavor) => (
                                   <SelectItem key={flavor.id} value={flavor.id}>
                                     {flavor.name}
                                   </SelectItem>
