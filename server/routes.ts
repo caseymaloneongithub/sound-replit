@@ -9895,6 +9895,10 @@ If you have any questions, please don't hesitate to reach out!`,
       const resolveEndpoint = async (raw: unknown): Promise<{ label: string; latitude: number; longitude: number; isFacility: boolean }> => {
         const address = typeof raw === 'string' ? raw.trim() : '';
         if (!address) return { label: 'Ballard Facility', latitude: facility.latitude, longitude: facility.longitude, isFacility: true };
+        // The airport is a preset on the Routes page; pinned coords beat geocoding a POI name.
+        if (/sea-?tac|seattle-tacoma/i.test(address)) {
+          return { label: 'Sea-Tac Airport', latitude: 47.4436, longitude: -122.3016, isFacility: false };
+        }
         const geo = await geocodeAddress(address, '', '', '');
         if (!geo) throw new Error(`Couldn't find "${address}" on the map — try a fuller address`);
         return { label: address, latitude: geo.latitude, longitude: geo.longitude, isFacility: false };

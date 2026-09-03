@@ -97,6 +97,10 @@ const deliveryStopSchema = z.object({
 
 type DeliveryStopFormData = z.infer<typeof deliveryStopSchema>;
 
+// Preset end point: some route days finish at the airport instead of the brewery.
+// Free text like everything else — the server geocodes it on Optimize.
+const SEATAC_ADDRESS = "Seattle-Tacoma International Airport";
+
 function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -431,6 +435,28 @@ export default function DeliveryRoutes() {
                       placeholder="Ballard Facility (default)"
                       data-testid="input-route-end"
                     />
+                    <div className="flex gap-2 mt-2">
+                      <Button
+                        type="button"
+                        variant={endAddress === "" ? "secondary" : "outline"}
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setEndAddress("")}
+                        data-testid="button-end-brewery"
+                      >
+                        Brewery
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={endAddress === SEATAC_ADDRESS ? "secondary" : "outline"}
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setEndAddress(SEATAC_ADDRESS)}
+                        data-testid="button-end-seatac"
+                      >
+                        Sea-Tac Airport
+                      </Button>
+                    </div>
                   </div>
                 </div>
                 {facility && (
