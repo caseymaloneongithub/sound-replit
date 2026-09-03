@@ -4,10 +4,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/use-auth";
-import { ExperienceModeProvider } from "@/hooks/use-experience-mode";
 import { Navbar } from "@/components/layout/navbar";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
-import { ExperienceSwitcher } from "@/components/experience-switcher";
 import { ProtectedRoute, StaffProtectedRoute, WholesaleCustomerProtectedRoute } from "@/lib/protected-route";
 import { ErrorBoundary } from "@/components/error-boundary";
 import AuthPage from "@/pages/auth-page";
@@ -175,7 +173,6 @@ function AppContent() {
       <ErrorBoundary>
         <Router />
       </ErrorBoundary>
-      <ExperienceSwitcher />
     </>
   );
 }
@@ -185,9 +182,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <AuthProvider>
-          <ExperienceModeProvider>
-            <AppContent />
-          </ExperienceModeProvider>
+          <AppContent />
         </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>
