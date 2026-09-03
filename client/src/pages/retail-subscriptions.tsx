@@ -93,6 +93,11 @@ export default function RetailSubscriptions() {
   const [isCreating, setIsCreating] = useState(false);
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
   const [selectedSubscriptionForItem, setSelectedSubscriptionForItem] = useState<string | null>(null);
+  // Add-item dialog: product first, then flavor picker(s) for multi-flavor products
+  // (two pickers for split cases).
+  const [addProductId, setAddProductId] = useState<string>('');
+  const [addFlavorId, setAddFlavorId] = useState<string>('');
+  const [addSplitFlavorId, setAddSplitFlavorId] = useState<string>('');
   const [newSubscriptionItems, setNewSubscriptionItems] = useState<Array<{ retailProductId: string; flavorId: string; quantity: number }>>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
 
@@ -232,9 +237,11 @@ export default function RetailSubscriptions() {
   });
 
   const addItemMutation = useMutation({
-    mutationFn: async ({ subscriptionId, retailProductId, quantity }: { subscriptionId: string; retailProductId: string; quantity: number }) => {
+    mutationFn: async ({ subscriptionId, retailProductId, selectedFlavorId, splitFlavorId, quantity }: { subscriptionId: string; retailProductId: string; selectedFlavorId?: string; splitFlavorId?: string; quantity: number }) => {
       return await apiRequest('POST', `/api/retail/subscriptions/${subscriptionId}/items`, {
         retailProductId,
+        selectedFlavorId,
+        splitFlavorId,
         quantity,
       });
     },
@@ -246,6 +253,9 @@ export default function RetailSubscriptions() {
       });
       setAddItemDialogOpen(false);
       setSelectedSubscriptionForItem(null);
+      setAddProductId('');
+      setAddFlavorId('');
+      setAddSplitFlavorId('');
     },
     onError: (error: any) => {
       toast({
@@ -927,11 +937,15 @@ export default function RetailSubscriptions() {
           </DialogContent>
         </Dialog>
 
-        {/* Add Item Dialog */}
+        {/* Add Item Dialog: product first, then flavor picker(s) — two for a split
+            case, mirroring the shop so staff can rebuild any line a customer could buy. */}
         <Dialog open={addItemDialogOpen} onOpenChange={(open) => {
           setAddItemDialogOpen(open);
           if (!open) {
             setSelectedSubscriptionForItem(null);
+            setAddProductId('');
+            setAddFlavorId('');
+            setAddSplitFlavorId('');
           }
         }}>
           <DialogContent className="sm:max-w-[400px]">
@@ -941,39 +955,97 @@ export default function RetailSubscriptions() {
                 Select a product to add to this subscription
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label>Product</Label>
-                <Select
-                  onValueChange={(value) => {
-                    if (selectedSubscriptionForItem) {
+            {(() => {
+              const addProduct = retailProducts.find(p => p.id === addProductId);
+              const isMulti = addProduct?.productType === 'multi-flavor';
+              const isSplit = isMulti && !!(addProduct as any)?.allowSplit;
+              const productFlavors: Flavor[] = ((addProduct as any)?.flavors ?? []).filter((f: Flavor) => f.isActive);
+              const pickList = productFlavors.length > 0 ? productFlavors : flavors.filter(f => f.isActive);
+              const ready = !!addProductId && (!isMulti || (
+                !!addFlavorId && (!isSplit || (!!addSplitFlavorId && addSplitFlavorId !== addFlavorId))
+              ));
+              return (
+                <div className="space-y-4">
+                  <div>
+                    <Label>Product</Label>
+                    <Select
+                      value={addProductId}
+                      onValueChange={(value) => { setAddProductId(value); setAddFlavorId(''); setAddSplitFlavorId(''); }}
+                    >
+                      <SelectTrigger data-testid="select-add-product">
+                        <SelectValue placeholder="Select a product" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {retailProducts.filter(p => p.isActive).map((product) => {
+                          const productFlavor = product.productType === 'single-flavor' && product.flavorId
+                            ? flavors.find(f => f.id === product.flavorId)
+                            : null;
+                          return (
+                            <SelectItem key={product.id} value={product.id}>
+                              {product.productType === 'multi-flavor' && (product as any).productName
+                                ? `${(product as any).productName} — ${product.unitDescription}`
+                                : product.unitDescription}
+                              {productFlavor && ` - ${productFlavor.name}`}
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {isMulti && (
+                    <div>
+                      <Label>{isSplit ? 'First Flavor' : 'Flavor'}</Label>
+                      <Select value={addFlavorId} onValueChange={setAddFlavorId}>
+                        <SelectTrigger data-testid="select-add-flavor">
+                          <SelectValue placeholder="Choose a flavor" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {pickList.map((f) => (
+                            <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {isSplit && (
+                    <div>
+                      <Label>Second Flavor</Label>
+                      <Select value={addSplitFlavorId} onValueChange={setAddSplitFlavorId}>
+                        <SelectTrigger data-testid="select-add-split-flavor">
+                          <SelectValue placeholder="Choose a second flavor" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {pickList.filter((f) => f.id !== addFlavorId).map((f) => (
+                            <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground mt-1">Half the case of each flavor.</p>
+                    </div>
+                  )}
+
+                  <Button
+                    className="w-full"
+                    disabled={!ready || addItemMutation.isPending}
+                    onClick={() => {
+                      if (!selectedSubscriptionForItem || !ready) return;
                       addItemMutation.mutate({
                         subscriptionId: selectedSubscriptionForItem,
-                        retailProductId: value,
+                        retailProductId: addProductId,
+                        selectedFlavorId: addFlavorId || undefined,
+                        splitFlavorId: isSplit ? addSplitFlavorId : undefined,
                         quantity: 1,
                       });
-                    }
-                  }}
-                >
-                  <SelectTrigger data-testid="select-add-product">
-                    <SelectValue placeholder="Select a product" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {retailProducts.filter(p => p.isActive).map((product) => {
-                      const productFlavor = product.productType === 'single-flavor' && product.flavorId
-                        ? flavors.find(f => f.id === product.flavorId)
-                        : null;
-                      return (
-                        <SelectItem key={product.id} value={product.id}>
-                          {product.unitDescription}
-                          {productFlavor && ` - ${productFlavor.name}`}
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+                    }}
+                    data-testid="button-confirm-add-item"
+                  >
+                    {addItemMutation.isPending ? 'Adding…' : 'Add item'}
+                  </Button>
+                </div>
+              );
+            })()}
           </DialogContent>
         </Dialog>
       </div>

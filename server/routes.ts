@@ -8361,27 +8361,49 @@ If you have any questions, please don't hesitate to reach out!`,
       const itemSchema = z.object({
         retailProductId: z.string(),
         selectedFlavorId: z.string().optional().nullable(),
+        // Second flavor for split-case products: half the case of each.
+        splitFlavorId: z.string().optional().nullable(),
         quantity: z.number().int().min(1).max(10),
       });
-      
+
       const validated = itemSchema.parse(req.body);
-      
+
       // Verify subscription exists
       const [subscription] = await db
         .select()
         .from(retailSubscriptions)
         .where(eq(retailSubscriptions.id, req.params.id));
-      
+
       if (!subscription) {
         return res.status(404).json({ message: "Subscription not found" });
       }
-      
+
+      const product = await storage.getRetailProduct(validated.retailProductId);
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+      if ((product as any).allowSplit) {
+        if (!validated.selectedFlavorId || !validated.splitFlavorId) {
+          return res.status(400).json({ message: "Pick two flavors for a split case" });
+        }
+        if (validated.selectedFlavorId === validated.splitFlavorId) {
+          return res.status(400).json({ message: "Pick two different flavors for a split case" });
+        }
+      } else if (validated.splitFlavorId) {
+        return res.status(400).json({ message: "This product doesn't offer split cases" });
+      }
+
+      // Splits resolve to Mixed + a packing note, same as customer checkout, so
+      // renewals land on the board as 0.5 under each chosen flavor.
+      const itemFields = await splitItemFields(validated.selectedFlavorId || null, validated.splitFlavorId || null);
+
       const [newItem] = await db
         .insert(retailSubscriptionItems)
         .values({
           subscriptionId: req.params.id,
           retailProductId: validated.retailProductId,
-          selectedFlavorId: validated.selectedFlavorId || null,
+          selectedFlavorId: itemFields.selectedFlavorId,
+          notes: itemFields.notes,
           quantity: validated.quantity,
         })
         .returning();
