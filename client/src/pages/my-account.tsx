@@ -49,6 +49,8 @@ export default function MyAccount() {
   const [selectedNewProduct, setSelectedNewProduct] = useState<string>("");
   const [selectedNewQuantity, setSelectedNewQuantity] = useState<number>(1);
   const [selectedNewFlavor, setSelectedNewFlavor] = useState<string>("");
+  // Second flavor for split-case products: half the case of each.
+  const [selectedNewSplitFlavor, setSelectedNewSplitFlavor] = useState<string>("");
 
   // Orders and subscriptions change server-side (webhooks, staff actions), so
   // refetch on every visit — the app-wide staleTime: Infinity would otherwise
@@ -117,16 +119,18 @@ export default function MyAccount() {
   });
 
   const addRetailItemMutation = useMutation({
-    mutationFn: async ({ subscriptionId, retailProductId, selectedFlavorId, quantity }: { 
-      subscriptionId: string; 
-      retailProductId: string; 
+    mutationFn: async ({ subscriptionId, retailProductId, selectedFlavorId, splitFlavorId, quantity }: {
+      subscriptionId: string;
+      retailProductId: string;
       selectedFlavorId?: string | null;
+      splitFlavorId?: string | null;
       quantity: number;
     }) => {
-      return await apiRequest("POST", `/api/retail-subscriptions/${subscriptionId}/items`, { 
-        retailProductId, 
+      return await apiRequest("POST", `/api/retail-subscriptions/${subscriptionId}/items`, {
+        retailProductId,
         selectedFlavorId: selectedFlavorId || null,
-        quantity 
+        splitFlavorId: splitFlavorId || null,
+        quantity
       });
     },
     onSuccess: () => {
@@ -135,6 +139,7 @@ export default function MyAccount() {
       setSelectedNewProduct("");
       setSelectedNewQuantity(1);
       setSelectedNewFlavor("");
+      setSelectedNewSplitFlavor("");
       toast({
         title: "Product added",
         description: "Product added to your subscription",
@@ -414,11 +419,21 @@ export default function MyAccount() {
       });
       return;
     }
+    const isSplitProduct = !!(selectedProduct as any)?.allowSplit;
+    if (isSplitProduct && (!selectedNewSplitFlavor || selectedNewSplitFlavor === selectedNewFlavor)) {
+      toast({
+        title: "Pick two flavors",
+        description: "Choose two different flavors for your split case",
+        variant: "destructive",
+      });
+      return;
+    }
 
     addRetailItemMutation.mutate({
       subscriptionId: addProductDialog.subscriptionId,
       retailProductId: selectedNewProduct,
       selectedFlavorId: selectedNewFlavor || null,
+      splitFlavorId: isSplitProduct ? selectedNewSplitFlavor : null,
       quantity: selectedNewQuantity,
     });
   };
@@ -730,8 +745,15 @@ export default function MyAccount() {
                                           </Select>
                                         </div>
 
+                                        {/* Split cases show their two flavors as text — the single-flavor
+                                            dropdown doesn't apply (remove + re-add to change the pair). */}
+                                        {/^Split:/.test((item as any).notes ?? '') && (
+                                          <p className="text-xs text-muted-foreground" data-testid={`text-split-${item.id}`}>
+                                            {(item as any).notes.replace(/^Split: /, '').replace(/6 /g, '6 × ')}
+                                          </p>
+                                        )}
                                         {/* Flavor selector for multi-flavor products */}
-                                        {isMultiFlavor && availableFlavors.length > 0 && (
+                                        {isMultiFlavor && availableFlavors.length > 0 && !/^Split:/.test((item as any).notes ?? '') && (
                                           <div className="flex items-center gap-2">
                                             <span className="text-xs text-muted-foreground">Flavor:</span>
                                             <Select
@@ -1110,6 +1132,7 @@ export default function MyAccount() {
           setSelectedNewProduct("");
           setSelectedNewQuantity(1);
           setSelectedNewFlavor("");
+          setSelectedNewSplitFlavor("");
         }
       }}>
         <DialogContent data-testid="dialog-add-product">
@@ -1127,6 +1150,7 @@ export default function MyAccount() {
                 onValueChange={(value) => {
                   setSelectedNewProduct(value);
                   setSelectedNewFlavor(""); // Reset flavor when product changes
+                  setSelectedNewSplitFlavor("");
                 }}
               >
                 <SelectTrigger data-testid="select-new-product">
@@ -1142,10 +1166,12 @@ export default function MyAccount() {
               </Select>
             </div>
             
-            {/* Show flavor selector for multi-flavor products */}
+            {/* Show flavor selector for multi-flavor products (two for split cases) */}
             {selectedNewProduct && retailProducts?.find(p => p.id === selectedNewProduct)?.productType === 'multi-flavor' && (
               <div>
-                <label className="text-sm font-medium mb-2 block">Flavor</label>
+                <label className="text-sm font-medium mb-2 block">
+                  {(retailProducts?.find(p => p.id === selectedNewProduct) as any)?.allowSplit ? "First Flavor" : "Flavor"}
+                </label>
                 <Select value={selectedNewFlavor} onValueChange={setSelectedNewFlavor}>
                   <SelectTrigger data-testid="select-new-flavor">
                     <SelectValue placeholder="Select a flavor" />
@@ -1158,6 +1184,25 @@ export default function MyAccount() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+
+            {selectedNewProduct && !!(retailProducts?.find(p => p.id === selectedNewProduct) as any)?.allowSplit && (
+              <div>
+                <label className="text-sm font-medium mb-2 block">Second Flavor</label>
+                <Select value={selectedNewSplitFlavor} onValueChange={setSelectedNewSplitFlavor}>
+                  <SelectTrigger data-testid="select-new-split-flavor">
+                    <SelectValue placeholder="Select a second flavor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.filter((f: any) => f.id !== selectedNewFlavor).map((flavor: any) => (
+                      <SelectItem key={flavor.id} value={flavor.id} data-testid={`option-new-split-flavor-${flavor.id}`}>
+                        {flavor.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">You'll get 6 of each flavor.</p>
               </div>
             )}
             

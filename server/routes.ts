@@ -5435,6 +5435,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Item not found" });
       }
 
+      // A split case stores Mixed + a packing note naming its two flavors; a
+      // single-flavor change here would orphan that note and mis-pack the case.
+      if (/^Split:/.test((item as any).notes ?? '')) {
+        return res.status(400).json({ message: "This is a split case — remove it and add it back with your two new flavors." });
+      }
+
       // Update the flavor
       const [updated] = await db
         .update(retailSubscriptionItems)
@@ -5505,43 +5511,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const itemSchema = z.object({
         retailProductId: z.string().uuid(),
         selectedFlavorId: z.string().uuid().optional().nullable(),
+        // Second flavor for split-case products: half the case of each.
+        splitFlavorId: z.string().uuid().optional().nullable(),
         quantity: z.number().int().min(1).max(5).default(1),
       });
-      
+
       const validated = itemSchema.parse(req.body);
-      
+
       // Verify subscription belongs to user
       const [subscription] = await db
         .select()
         .from(retailSubscriptions)
         .where(eq(retailSubscriptions.id, subscriptionId));
-      
+
       if (!subscription || subscription.userId !== userId) {
         return res.status(404).json({ message: "Subscription not found" });
       }
-      
+
       // Verify retail product exists
       const [retailProduct] = await db
         .select()
         .from(retailProducts)
         .where(eq(retailProducts.id, validated.retailProductId));
-      
+
       if (!retailProduct) {
         return res.status(404).json({ message: "Product not found" });
       }
-      
+
       // For multi-flavor products, require selectedFlavorId
       if (retailProduct.productType === 'multi-flavor' && !validated.selectedFlavorId) {
         return res.status(400).json({ message: "Flavor selection required for multi-flavor products" });
       }
-      
+
+      // Split cases need exactly two DIFFERENT flavors.
+      if ((retailProduct as any).allowSplit) {
+        if (!validated.selectedFlavorId || !validated.splitFlavorId) {
+          return res.status(400).json({ message: "Pick two flavors for your split case" });
+        }
+        if (validated.selectedFlavorId === validated.splitFlavorId) {
+          return res.status(400).json({ message: "Pick two different flavors for your split case" });
+        }
+      } else if (validated.splitFlavorId) {
+        return res.status(400).json({ message: "This product doesn't offer split cases" });
+      }
+
+      // Splits resolve to Mixed + a packing note, same as checkout, so renewals
+      // land on the board as 0.5 under each chosen flavor.
+      const itemFields = await splitItemFields(validated.selectedFlavorId || null, validated.splitFlavorId || null);
+
       // Create the subscription item
       const [newItem] = await db
         .insert(retailSubscriptionItems)
         .values({
           subscriptionId,
           retailProductId: validated.retailProductId,
-          selectedFlavorId: validated.selectedFlavorId,
+          selectedFlavorId: itemFields.selectedFlavorId,
+          notes: itemFields.notes,
           quantity: validated.quantity,
         })
         .returning();
