@@ -175,18 +175,19 @@ export default function WholesaleInvoices() {
     setSelectedOrderId(orderId);
     // Get existing due date or default to 30 days from today
     const order = orders.find(o => o.id === orderId);
-    if (order?.dueDate) {
-      setDueDate(new Date(order.dueDate));
-    } else {
-      setDueDate(addDays(new Date(), 30));
-    }
+    const due = order?.dueDate ? new Date(order.dueDate) : addDays(new Date(), 30);
+    setDueDate(due);
     // Same routing the server uses: location inbox(es) first, account otherwise.
     const cust = customers.find(c => c.id === order?.customerId);
-    setSendTo(String((order as any)?.locationEmail || cust?.email || ""));
-    setSendSubject(`Invoice ${order?.invoiceNumber ?? ""} - Puget Sound Kombucha Co.`);
+    const to = String((order as any)?.locationEmail || cust?.email || "");
+    const subject = `Invoice ${order?.invoiceNumber ?? ""} - Puget Sound Kombucha Co.`;
+    setSendTo(to);
+    setSendSubject(subject);
     setSendMessage("");
     setPreviewHtml(null);
     setSendInvoiceDialogOpen(true);
+    // Preview loads immediately — nobody should have to ask for it.
+    fetchPreview(orderId, { to, subject, message: "", dueDateValue: due });
   };
 
   const handleSetDueDate = (orderId: string) => {
