@@ -315,33 +315,15 @@ export default function WholesaleCustomerPlaceOrder() {
           <CardHeader>
             <CardTitle className="text-lg">Your account</CardTitle>
             <CardDescription>
-              Prices, minimum order, and delivery details for{" "}
+              Minimum order and delivery details for{" "}
               {customer?.businessName ?? "your business"}.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-6 sm:grid-cols-3">
-            <div>
-              {/* Just "Pricing", and no badge marking which lines are account-specific.
-                  Flagging a price as personalised invites the customer to wonder what
-                  everyone else pays; the number shown is simply the price. getPrice()
-                  still applies any agreed rate — this only changes how it's presented. */}
-              <p className="text-sm font-medium mb-2">Pricing</p>
-              {unitTypes.length === 0 && (
-                <p className="text-sm text-muted-foreground">Loading…</p>
-              )}
-              <ul className="space-y-1 text-sm text-muted-foreground">
-                {unitTypes
-                  .filter(ut => ut.isActive)
-                  .sort((a, b) => a.displayOrder - b.displayOrder)
-                  .map(ut => (
-                    <li key={ut.id} className="flex items-center gap-2">
-                      <span>{ut.name}</span>
-                      <span className="text-foreground font-medium">${getPrice(ut.id).toFixed(2)}</span>
-                    </li>
-                  ))}
-              </ul>
-            </div>
-
+          {/* No prices anywhere in the customer-facing order flow (owner, 2026-09-02):
+              ordering doesn't require sign-in, so on-screen numbers can't be guaranteed
+              to be the store's own rates. Account pricing is applied server-side and
+              appears on the invoice. */}
+          <CardContent className="grid gap-6 sm:grid-cols-2">
             <div>
               <p className="text-sm font-medium mb-2">Minimum order</p>
               <p className="text-sm text-muted-foreground">
@@ -407,20 +389,11 @@ export default function WholesaleCustomerPlaceOrder() {
                         {unitTypes
                           .filter(ut => ut.isActive)
                           .sort((a, b) => a.displayOrder - b.displayOrder)
-                          .map((unitType) => {
-                            const price = getPrice(unitType.id);
-
-                            return (
-                              <SelectItem key={unitType.id} value={unitType.id}>
-                                <div className="flex items-center gap-2">
-                                  <span>{unitType.name}</span>
-                                  <span className="text-muted-foreground">
-                                    (${price.toFixed(2)})
-                                  </span>
-                                </div>
-                              </SelectItem>
-                            );
-                          })}
+                          .map((unitType) => (
+                            <SelectItem key={unitType.id} value={unitType.id}>
+                              {unitType.name}
+                            </SelectItem>
+                          ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -502,8 +475,7 @@ export default function WholesaleCustomerPlaceOrder() {
                     {cart.map((item, index) => {
                       const unitTypeName = getUnitTypeName(item.unitTypeId);
                       const flavorName = getFlavorName(item.flavorId);
-                      const price = getPrice(item.unitTypeId);
-                      
+
                       return (
                         <div 
                           key={`${item.unitTypeId}-${item.flavorId}`}
@@ -515,9 +487,6 @@ export default function WholesaleCustomerPlaceOrder() {
                             <p className="text-sm text-muted-foreground">{unitTypeName}</p>
                             <p className="text-sm font-medium mt-1">
                               {item.quantity} {item.quantity === 1 ? 'case' : 'cases'}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              ${(price * item.quantity).toFixed(2)}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
@@ -715,9 +684,9 @@ export default function WholesaleCustomerPlaceOrder() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-2">
-                      <div className="flex justify-between text-lg font-bold">
-                        <span>Total:</span>
-                        <span data-testid="text-total">${getCartTotal().toFixed(2)}</span>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Items:</span>
+                        <span data-testid="text-item-count">{cart.reduce((n, i) => n + i.quantity, 0)}</span>
                       </div>
                       {minimumOrderAmount > 0 && (
                         <div className="flex justify-between text-sm text-muted-foreground">
@@ -725,11 +694,14 @@ export default function WholesaleCustomerPlaceOrder() {
                           <span data-testid="text-minimum-order">${minimumOrderAmount.toFixed(2)}</span>
                         </div>
                       )}
+                      <p className="text-sm text-muted-foreground">
+                        Your account pricing is applied automatically and shown on the invoice.
+                      </p>
                     </div>
                     {minimumOrderAmount > 0 && getCartTotal() < minimumOrderAmount && (
                       <Alert variant="destructive" className="mt-4">
                         <AlertDescription>
-                          Your order total of ${getCartTotal().toFixed(2)} does not meet the minimum order amount of ${minimumOrderAmount.toFixed(2)}. Please add more items to your order.
+                          This order doesn't meet the ${minimumOrderAmount.toFixed(2)} minimum yet — please add more items.
                         </AlertDescription>
                       </Alert>
                     )}

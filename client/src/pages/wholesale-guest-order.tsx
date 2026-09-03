@@ -15,12 +15,14 @@ import { useToast } from "@/hooks/use-toast";
  * verification. Store and location arrive from the entry page; the order carries an
  * FYI email that only receives the confirmation — invoices go to the billing contacts
  * on file, and staff filter incoming orders as they arrive. Bot guards: a honeypot
- * field and per-IP rate limits on the server. Prices shown are list prices; any
- * store-specific pricing is applied server-side when the order is written.
+ * field and per-IP rate limits on the server. NO prices are shown (owner, 2026-09-02):
+ * this flow needs no sign-in, so list prices would misstate any store's agreed rates.
+ * Store-specific pricing is applied server-side when the order is written, and the
+ * server enforces the order minimum.
  */
 
 type Loc = { id: string; locationName: string; street: string; city: string };
-type UnitType = { id: string; name: string; description?: string; defaultPrice: string; flavors: Array<{ id: string; name: string }> };
+type UnitType = { id: string; name: string; description?: string; flavors: Array<{ id: string; name: string }> };
 type Line = { unitTypeId: string; flavorId: string; quantity: number };
 
 export default function WholesaleGuestOrder() {
@@ -63,10 +65,6 @@ export default function WholesaleGuestOrder() {
   const { data: minOrder } = useQuery<{ value: number }>({ queryKey: ["/api/settings/wholesale-minimum-order"] });
 
   const byId = useMemo(() => new Map(unitTypes.map((u) => [u.id, u])), [unitTypes]);
-  const total = lines.reduce((sum, l) => {
-    const u = byId.get(l.unitTypeId);
-    return u ? sum + Number(u.defaultPrice) * l.quantity : sum;
-  }, 0);
   const min = Number(minOrder?.value ?? 0);
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail.trim());
   const linesOk = lines.some((l) => l.unitTypeId && l.flavorId);
@@ -156,7 +154,7 @@ export default function WholesaleGuestOrder() {
                       <SelectTrigger className="mt-1.5" data-testid={`select-unit-${i}`}><SelectValue placeholder="Choose…" /></SelectTrigger>
                       <SelectContent>
                         {unitTypes.map((ut) => (
-                          <SelectItem key={ut.id} value={ut.id}>{ut.name} (${Number(ut.defaultPrice).toFixed(2)})</SelectItem>
+                          <SelectItem key={ut.id} value={ut.id}>{ut.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -253,17 +251,14 @@ export default function WholesaleGuestOrder() {
           </div>
 
           <div className="flex items-center justify-between gap-3 flex-wrap border-t pt-4">
-            <div className="text-sm">
-              <span className="text-muted-foreground">Total: </span>
-              <span className="font-semibold text-base">${total.toFixed(2)}</span>
-              {min > 0 && total > 0 && total < min && (
-                <span className="text-destructive ml-2" data-testid="text-min-order">Minimum order is ${min.toFixed(2)}</span>
-              )}
+            <div className="text-sm text-muted-foreground">
+              {min > 0 && <span data-testid="text-min-order">Minimum order: ${min.toFixed(2)}. </span>}
+              Your store's pricing is applied automatically and shown on the invoice.
             </div>
             <Button
               size="lg"
               onClick={() => submit.mutate()}
-              disabled={submit.isPending || !linesOk || !emailOk || !locationOk || (min > 0 && total < min)}
+              disabled={submit.isPending || !linesOk || !emailOk || !locationOk}
               data-testid="button-submit-guest-order"
             >
               {submit.isPending ? "Placing…" : "Place order"}

@@ -1488,8 +1488,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Wholesale customer record not found" });
       }
 
-      // Get custom pricing for this customer
-      const pricing = await storage.getWholesalePricing(customer.id);
+      // Get custom pricing for this customer. This must be the unit-type-keyed
+      // wholesale_customer_pricing table — it briefly served the legacy
+      // product-type-keyed table, whose rows never matched the client's
+      // unitTypeId lookup, so every signed-in customer silently saw list prices.
+      const pricing = await storage.getWholesaleCustomerPricing(customer.id);
       res.json(pricing);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching pricing: " + error.message });
@@ -1583,10 +1586,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const minOrderAmount = minOrderResult[0] ? parseFloat(minOrderResult[0].value) : 0;
       
       if (minOrderAmount > 0 && totalAmount < minOrderAmount) {
-        throw new OrderValidationError(400, { 
-          message: `Order total of $${totalAmount.toFixed(2)} does not meet the minimum order amount of $${minOrderAmount.toFixed(2)}. Please add more items to your order.`,
+        // No dollar total in the message: this error also reaches the no-login guest
+        // flow, and the total is computed at the store's own (private) rates.
+        throw new OrderValidationError(400, {
+          message: `This order doesn't meet the $${minOrderAmount.toFixed(2)} minimum — please add more items.`,
           minimumOrderAmount: minOrderAmount,
-          currentTotal: totalAmount
         });
       }
 
@@ -1702,7 +1706,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/wholesale/guest/unit-types", async (_req, res) => {
     try {
       const unitTypes = await storage.getAllWholesaleUnitTypesWithFlavors();
-      res.json(unitTypes.filter((ut: any) => ut.isActive !== false));
+      // No prices to the public endpoint (owner, 2026-09-02): the guest flow shows
+      // none, and list prices would misstate any store's agreed rates.
+      res.json(
+        unitTypes
+          .filter((ut: any) => ut.isActive !== false)
+          .map(({ defaultPrice, ...rest }: any) => rest)
+      );
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching unit types: " + error.message });
     }
