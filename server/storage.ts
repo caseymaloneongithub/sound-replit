@@ -2712,12 +2712,13 @@ export class PostgresStorage implements IStorage {
                 sql`${retailOrders.status} <> 'fulfilled'`,
                 or(isNull(retailOrders.pickupDate), lt(retailOrders.pickupDate, end)),
               ),
-              // A date-less order that was picked up stays on the week it was
-              // fulfilled in — otherwise it vanished from the board entirely the
-              // moment someone tapped it done (owner, 2026-09-01).
+              // An order picked up during this week stays on this week's board no
+              // matter what its pickup date says (date-less, slipped, or skewed) —
+              // otherwise a backlog order vanished from the board entirely the
+              // moment someone tapped it done (owner, 2026-09-01; widened 2026-09-02
+              // after a slipped-date order disappeared on fulfill).
               and(
                 eq(retailOrders.status, 'fulfilled'),
-                isNull(retailOrders.pickupDate),
                 gte(retailOrders.fulfilledAt, start),
                 lt(retailOrders.fulfilledAt, end),
               ),
