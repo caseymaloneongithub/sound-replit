@@ -976,7 +976,12 @@ export default function RetailSubscriptions() {
                         <SelectValue placeholder="Select a product" />
                       </SelectTrigger>
                       <SelectContent>
-                        {retailProducts.filter(p => p.isActive).map((product) => {
+                        {retailProducts
+                          .filter(p => p.isActive
+                            // A single-flavor product whose flavor was retired can't be
+                            // added — it rendered as a blank, unlabeled row (Evergreen).
+                            && (p.productType !== 'single-flavor' || !p.flavorId || flavors.some(f => f.id === p.flavorId && f.isActive)))
+                          .map((product) => {
                           const productFlavor = product.productType === 'single-flavor' && product.flavorId
                             ? flavors.find(f => f.id === product.flavorId)
                             : null;
