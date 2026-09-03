@@ -102,7 +102,9 @@ export async function optimizeDeliveryRoute(
     name: string;
     address: string;
     type: "order" | "custom";
-  }>
+  }>,
+  // Route endpoints — default to the brewery on both ends.
+  endpoints?: { start?: { latitude: number; longitude: number }; end?: { latitude: number; longitude: number } }
 ): Promise<OptimizedRoute | null> {
   if (!MAPBOX_ACCESS_TOKEN) {
     console.error("Mapbox access token not configured");
@@ -114,10 +116,12 @@ export async function optimizeDeliveryRoute(
   }
 
   const facility = getFacilityLocation();
+  const start = endpoints?.start ?? facility;
+  const end = endpoints?.end ?? facility;
   const allCoordinates = [
-    `${facility.longitude},${facility.latitude}`,
+    `${start.longitude},${start.latitude}`,
     ...stops.map((stop) => `${stop.longitude},${stop.latitude}`),
-    `${facility.longitude},${facility.latitude}`,
+    `${end.longitude},${end.latitude}`,
   ];
 
   const coordinatesString = allCoordinates.join(";");

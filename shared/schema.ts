@@ -405,6 +405,14 @@ export const deliveryRoutes = pgTable("delivery_routes", {
   totalDistanceMeters: integer("total_distance_meters"),
   totalDurationSeconds: integer("total_duration_seconds"),
   optimizedStops: text("optimized_stops").notNull(), // JSON array of ordered stops with details
+  // Route endpoints (owner, 2026-09-03): null = the brewery. Persisted so reverse,
+  // reorder, and the packet all agree on where the drive begins and ends.
+  startLabel: text("start_label"),
+  startLatitude: decimal("start_latitude", { precision: 10, scale: 7 }),
+  startLongitude: decimal("start_longitude", { precision: 10, scale: 7 }),
+  endLabel: text("end_label"),
+  endLatitude: decimal("end_latitude", { precision: 10, scale: 7 }),
+  endLongitude: decimal("end_longitude", { precision: 10, scale: 7 }),
   generatedAt: timestamp("generated_at").notNull().defaultNow(),
   generatedByUserId: varchar("generated_by_user_id").references(() => users.id),
 });

@@ -9888,6 +9888,19 @@ If you have any questions, please don't hesitate to reach out!`,
       const { date } = req.params;
       const { customStopIds = [] } = req.body;
       const targetDate = new Date(date);
+
+      // Editable route endpoints (owner, 2026-09-03): blank = the brewery.
+      // Free-text addresses are geocoded once per optimize.
+      const facility = getFacilityLocation();
+      const resolveEndpoint = async (raw: unknown): Promise<{ label: string; latitude: number; longitude: number; isFacility: boolean }> => {
+        const address = typeof raw === 'string' ? raw.trim() : '';
+        if (!address) return { label: 'Ballard Facility', latitude: facility.latitude, longitude: facility.longitude, isFacility: true };
+        const geo = await geocodeAddress(address, '', '', '');
+        if (!geo) throw new Error(`Couldn't find "${address}" on the map — try a fuller address`);
+        return { label: address, latitude: geo.latitude, longitude: geo.longitude, isFacility: false };
+      };
+      const startPoint = await resolveEndpoint(req.body?.startAddress);
+      const endPoint = await resolveEndpoint(req.body?.endAddress);
       
       // Get all scheduled wholesale orders for this date
       const { orders } = await storage.getWholesaleOrders();
@@ -9969,7 +9982,10 @@ If you have any questions, please don't hesitate to reach out!`,
       }
 
       // Call Mapbox optimization API
-      const optimizedRoute = await optimizeDeliveryRoute(orderStops);
+      const optimizedRoute = await optimizeDeliveryRoute(orderStops, {
+        start: { latitude: startPoint.latitude, longitude: startPoint.longitude },
+        end: { latitude: endPoint.latitude, longitude: endPoint.longitude },
+      });
 
       if (!optimizedRoute) {
         return res.status(500).json({ message: "Failed to optimize route" });
@@ -9987,13 +10003,19 @@ If you have any questions, please don't hesitate to reach out!`,
           durationFromPrevious: optStop.durationFromPrevious,
         }));
 
-      // Save the route
+      // Save the route (endpoint columns stay null for the brewery default)
       const savedRoute = await storage.createDeliveryRoute({
         routeDate: targetDate,
         // Mapbox returns fractional meters/seconds; the columns are integers.
         totalDistanceMeters: Math.round(optimizedRoute.totalDistance),
         totalDurationSeconds: Math.round(optimizedRoute.totalDuration),
         optimizedStops: JSON.stringify(reorderedStops),
+        startLabel: startPoint.isFacility ? null : startPoint.label,
+        startLatitude: startPoint.isFacility ? null : String(startPoint.latitude),
+        startLongitude: startPoint.isFacility ? null : String(startPoint.longitude),
+        endLabel: endPoint.isFacility ? null : endPoint.label,
+        endLatitude: endPoint.isFacility ? null : String(endPoint.latitude),
+        endLongitude: endPoint.isFacility ? null : String(endPoint.longitude),
         generatedByUserId: req.user!.id,
       });
 
@@ -10017,6 +10039,8 @@ If you have any questions, please don't hesitate to reach out!`,
         totalDuration: optimizedRoute.totalDuration,
         totalDistance: optimizedRoute.totalDistance,
         geometry: optimizedRoute.geometry,
+        start: { label: startPoint.label, latitude: startPoint.latitude, longitude: startPoint.longitude },
+        end: { label: endPoint.label, latitude: endPoint.latitude, longitude: endPoint.longitude },
       });
     } catch (error: any) {
       console.error("Error optimizing route:", error);
@@ -10024,14 +10048,26 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
+  /** A route's endpoints: the saved custom ones, or the brewery. */
+  function routeEndpoints(route: any) {
+    const facility = getFacilityLocation();
+    const start = route.startLatitude && route.startLongitude
+      ? { label: route.startLabel ?? 'Custom start', latitude: Number(route.startLatitude), longitude: Number(route.startLongitude) }
+      : { label: 'Ballard Facility', latitude: facility.latitude, longitude: facility.longitude };
+    const end = route.endLatitude && route.endLongitude
+      ? { label: route.endLabel ?? 'Custom end', latitude: Number(route.endLatitude), longitude: Number(route.endLongitude) }
+      : { label: 'Ballard Facility', latitude: facility.latitude, longitude: facility.longitude };
+    return { start, end };
+  }
+
   /** Re-leg a stop sequence over real roads and persist it as the route's new order. */
   async function saveRouteSequence(route: any, sequence: any[], res: any) {
       const reversed = sequence.map((s, i) => ({ ...s, stopOrder: i }));
-      const facility = getFacilityLocation();
+      const { start, end } = routeEndpoints(route);
       const directions = await getRouteDirections([
-        { latitude: facility.latitude, longitude: facility.longitude },
+        { latitude: start.latitude, longitude: start.longitude },
         ...reversed.map((s) => ({ latitude: Number(s.latitude), longitude: Number(s.longitude) })),
-        { latitude: facility.latitude, longitude: facility.longitude },
+        { latitude: end.latitude, longitude: end.longitude },
       ]);
       if (!directions) return res.status(500).json({ message: "Could not recompute the drive for this order" });
 
@@ -10061,13 +10097,17 @@ If you have any questions, please don't hesitate to reach out!`,
         });
       }
 
+      const savedRoute = await storage.getDeliveryRoute(route.id);
+      const finalEndpoints = routeEndpoints(savedRoute);
       res.json({
         success: true,
-        route: await storage.getDeliveryRoute(route.id),
+        route: savedRoute,
         stops: restopped,
         totalDuration: directions.duration,
         totalDistance: directions.distance,
         geometry: directions.geometry,
+        start: finalEndpoints.start,
+        end: finalEndpoints.end,
       });
   }
 
@@ -10079,7 +10119,13 @@ If you have any questions, please don't hesitate to reach out!`,
       if (!route) return res.status(404).json({ message: "Route not found" });
       const saved: any[] = JSON.parse((route as any).optimizedStops ?? "[]");
       if (saved.length < 2) return res.status(400).json({ message: "Not enough stops to reverse" });
-      await saveRouteSequence(route, [...saved].reverse(), res);
+      // Reversing the drive also swaps custom start/end points.
+      await db.update(deliveryRoutes).set({
+        startLabel: (route as any).endLabel, startLatitude: (route as any).endLatitude, startLongitude: (route as any).endLongitude,
+        endLabel: (route as any).startLabel, endLatitude: (route as any).startLatitude, endLongitude: (route as any).startLongitude,
+      }).where(eq(deliveryRoutes.id, route.id));
+      const swapped = await storage.getDeliveryRoute(route.id);
+      await saveRouteSequence(swapped, [...saved].reverse(), res);
     } catch (error: any) {
       console.error("Error reversing route:", error);
       res.status(500).json({ message: "Error reversing route: " + error.message });

@@ -80,6 +80,9 @@ interface OptimizedRouteResponse {
     type: string;
     coordinates: number[][];
   };
+  // Route endpoints — the brewery unless a custom address was set.
+  start?: { label: string; latitude: number; longitude: number };
+  end?: { label: string; latitude: number; longitude: number };
   message?: string;
 }
 
@@ -113,15 +116,25 @@ export default function DeliveryRoutes() {
   const [selectedCustomStops, setSelectedCustomStops] = useState<string[]>([]);
   const [isAddStopOpen, setIsAddStopOpen] = useState(false);
   const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRouteResponse | null>(null);
+  // Blank = brewery; anything typed here is geocoded server-side on Optimize.
+  const [startAddress, setStartAddress] = useState("");
+  const [endAddress, setEndAddress] = useState("");
 
   // Static map with numbered pins matching the stop list. Uses the public (pk.)
   // browser token; the packet PDF builds the same map server-side.
   const mapboxToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined;
   const routeMapUrl = (() => {
     if (!mapboxToken || !optimizedRoute?.stops?.length) return null;
+    const startPin = optimizedRoute.start
+      ? `pin-s-embassy+1f2937(${optimizedRoute.start.longitude},${optimizedRoute.start.latitude})`
+      : `pin-s-warehouse+1f2937(-122.3894,47.6694)`;
+    const endPin = optimizedRoute.end
+      ? `pin-s-embassy+1f2937(${optimizedRoute.end.longitude},${optimizedRoute.end.latitude})`
+      : null;
     const pins = [
-      `pin-s-warehouse+1f2937(-122.3894,47.6694)`,
+      startPin,
       ...optimizedRoute.stops.map((s, i) => `pin-l-${i + 1}+b45309(${s.longitude},${s.latitude})`),
+      ...(endPin && endPin !== startPin ? [endPin] : []),
     ].join(",");
     return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${pins}/auto/1000x560@2x?padding=60&access_token=${mapboxToken}`;
   })();
@@ -233,7 +246,7 @@ export default function DeliveryRoutes() {
       const response = await apiRequest(
         "POST",
         `/api/delivery/optimize/${selectedDate.toISOString().split("T")[0]}`,
-        { customStopIds: selectedCustomStops }
+        { customStopIds: selectedCustomStops, startAddress, endAddress }
       );
       return response as OptimizedRouteResponse;
     },
@@ -396,18 +409,35 @@ export default function DeliveryRoutes() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  Facility Start/End Point
+                  Route Start/End Points
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                {facility && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <span>
-                      {facility.address}, {facility.city}, {facility.state}{" "}
-                      {facility.zipCode}
-                    </span>
-                    <Badge variant="outline">Origin/Destination</Badge>
+              <CardContent className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <p className="text-sm font-medium mb-1">Start</p>
+                    <Input
+                      value={startAddress}
+                      onChange={(e) => setStartAddress(e.target.value)}
+                      placeholder="Ballard Facility (default)"
+                      data-testid="input-route-start"
+                    />
                   </div>
+                  <div>
+                    <p className="text-sm font-medium mb-1">End</p>
+                    <Input
+                      value={endAddress}
+                      onChange={(e) => setEndAddress(e.target.value)}
+                      placeholder="Ballard Facility (default)"
+                      data-testid="input-route-end"
+                    />
+                  </div>
+                </div>
+                {facility && (
+                  <p className="text-sm text-muted-foreground">
+                    Leave blank to use the brewery: {facility.address}, {facility.city}, {facility.state}{" "}
+                    {facility.zipCode}. Applies the next time you hit Optimize Route.
+                  </p>
                 )}
               </CardContent>
             </Card>
@@ -541,7 +571,7 @@ export default function DeliveryRoutes() {
                       <span className="text-muted-foreground">min</span>
                     </label>
                     <span className="text-muted-foreground">
-                      Back at facility ~{(() => {
+                      {optimizedRoute.end && optimizedRoute.end.label !== "Ballard Facility" ? "At end point" : "Back at facility"} ~{(() => {
                         const dwellTotal = optimizedRoute.stops.reduce((s, st) => s + dwellFor(String(st.id)) * 60, 0);
                         const total = optimizedRoute.totalDuration + dwellTotal;
                         const [h, m] = departTime.split(":").map(Number);
@@ -566,10 +596,12 @@ export default function DeliveryRoutes() {
                         S
                       </div>
                       <div>
-                        <p className="font-medium">Start: Ballard Facility</p>
-                        <p className="text-sm text-muted-foreground">
-                          {facility?.address}
-                        </p>
+                        <p className="font-medium">Start: {optimizedRoute.start?.label ?? "Ballard Facility"}</p>
+                        {(!optimizedRoute.start || optimizedRoute.start.label === "Ballard Facility") && (
+                          <p className="text-sm text-muted-foreground">
+                            {facility?.address}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -634,10 +666,12 @@ export default function DeliveryRoutes() {
                         E
                       </div>
                       <div>
-                        <p className="font-medium">End: Ballard Facility</p>
-                        <p className="text-sm text-muted-foreground">
-                          {facility?.address}
-                        </p>
+                        <p className="font-medium">End: {optimizedRoute.end?.label ?? "Ballard Facility"}</p>
+                        {(!optimizedRoute.end || optimizedRoute.end.label === "Ballard Facility") && (
+                          <p className="text-sm text-muted-foreground">
+                            {facility?.address}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
