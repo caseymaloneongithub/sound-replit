@@ -2771,13 +2771,14 @@ export class PostgresStorage implements IStorage {
       .leftJoin(wholesaleLocations, eq(wholesaleOrders.locationId, wholesaleLocations.id))
       .where(and(
         isNull(wholesaleOrders.deletedAt),
-        // On the ACTIVE week, open wholesale orders with NO delivery date set ride
-        // along too (owner, 2026-09-01) — an unscheduled order still needs packing.
+        // On the ACTIVE week, open wholesale orders ride along whether their delivery
+        // date is unset OR already slipped past (owner, 2026-09-01; slipped dates added
+        // 2026-09-02 to match retail) — an unscheduled or overdue order still needs packing.
         opts?.retailBacklog
           ? or(
               and(gte(wholesaleOrders.deliveryDate, start), lt(wholesaleOrders.deliveryDate, end)),
               and(
-                isNull(wholesaleOrders.deliveryDate),
+                or(isNull(wholesaleOrders.deliveryDate), lt(wholesaleOrders.deliveryDate, end)),
                 sql`${wholesaleOrders.status} NOT IN ('delivered', 'fulfilled', 'cancelled')`,
               ),
               // Date-less orders that were delivered stay on the week they were
