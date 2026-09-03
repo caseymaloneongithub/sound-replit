@@ -156,6 +156,7 @@ export default function AdminRetailProducts() {
     productName: '',
     flavorId: '',
     selectedFlavorIds: [] as string[],
+    allowSplit: false,
     unitType: '',
     unitDescription: '',
     price: 0,
@@ -193,6 +194,7 @@ export default function AdminRetailProducts() {
         deposit: deposit.toFixed(2),
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
         productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
+        allowSplit: data.productType === 'multi-flavor' ? !!data.allowSplit : false,
         isActive: data.isActive,
         displayOrder: data.displayOrder,
       };
@@ -215,6 +217,7 @@ export default function AdminRetailProducts() {
         productName: '',
         flavorId: '',
         selectedFlavorIds: [],
+        allowSplit: false,
         unitType: '',
         unitDescription: '',
         price: 0,
@@ -250,6 +253,7 @@ export default function AdminRetailProducts() {
         deposit: deposit.toFixed(2),
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
         productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
+        allowSplit: data.productType === 'multi-flavor' ? !!data.allowSplit : false,
         isActive: data.isActive,
         displayOrder: data.displayOrder,
       };
@@ -413,6 +417,16 @@ export default function AdminRetailProducts() {
                       <p className="text-xs text-muted-foreground mt-1">
                         Selected: {retailProductForm.selectedFlavorIds.length} flavor(s)
                       </p>
+                      <label className="flex items-center gap-2 cursor-pointer mt-3">
+                        <input
+                          type="checkbox"
+                          checked={retailProductForm.allowSplit}
+                          onChange={(e) => setRetailProductForm({ ...retailProductForm, allowSplit: e.target.checked })}
+                          className="rounded"
+                          data-testid="checkbox-allow-split"
+                        />
+                        <span className="text-sm">Split case — customer picks 2 flavors, half the case of each</span>
+                      </label>
                     </div>
                   )}
 
@@ -607,6 +621,7 @@ export default function AdminRetailProducts() {
                               productName: product.productName || '',
                               flavorId: product.flavorId || '',
                               selectedFlavorIds: product.flavors.map(f => f.id),
+                              allowSplit: !!(product as any).allowSplit,
                               unitType: product.unitType,
                               unitDescription: product.unitDescription,
                               price: Number(product.price),
@@ -698,6 +713,16 @@ export default function AdminRetailProducts() {
                               <p className="text-xs text-muted-foreground mt-1">
                                 Selected: {retailProductForm.selectedFlavorIds.length} flavor(s)
                               </p>
+                              <label className="flex items-center gap-2 cursor-pointer mt-3">
+                                <input
+                                  type="checkbox"
+                                  checked={retailProductForm.allowSplit}
+                                  onChange={(e) => setRetailProductForm({ ...retailProductForm, allowSplit: e.target.checked })}
+                                  className="rounded"
+                                  data-testid="checkbox-edit-allow-split"
+                                />
+                                <span className="text-sm">Split case — customer picks 2 flavors, half the case of each</span>
+                              </label>
                             </div>
                           )}
 

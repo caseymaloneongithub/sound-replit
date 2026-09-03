@@ -105,6 +105,24 @@ import { checkEmailCodeRateLimit, MAX_CODE_ATTEMPTS, checkSubmissionRateLimit, i
 // when it moves, so nobody has to hard-refresh after a deploy.
 const SERVER_BOOT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
+/**
+ * Order/subscription-item fields for a retail cart line that may be a split case.
+ * A split files under the 'Mixed' flavor — untracked stock and the MX board column,
+ * exactly like mixed cases — and the packing note names the two chosen flavors,
+ * half the case of each (6+6 on a case of 12). Non-split lines pass through.
+ */
+async function splitItemFields(
+  selectedFlavorId: string | null,
+  splitFlavorId: string | null
+): Promise<{ selectedFlavorId: string | null; notes: string | null }> {
+  if (!splitFlavorId || !selectedFlavorId) return { selectedFlavorId, notes: null };
+  const all = await storage.getFlavors();
+  const a = all.find(f => f.id === selectedFlavorId)?.name ?? 'flavor 1';
+  const b = all.find(f => f.id === splitFlavorId)?.name ?? 'flavor 2';
+  const mixed = all.find(f => f.name === 'Mixed');
+  return { selectedFlavorId: mixed?.id ?? selectedFlavorId, notes: `Split: 6 ${a} / 6 ${b}` };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware - sets up /api/register, /api/login, /api/logout, /api/user
   await setupAuth(app);
@@ -3695,13 +3713,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })
             .returning();
 
-          // Add every line as an item on the ONE subscription
+          // Add every line as an item on the ONE subscription. Split cases resolve to
+          // Mixed + a packing note, which renewals copy onto each order.
           for (const { item, unitPrice } of pricedLines) {
+            const itemFields = await splitItemFields(item.selectedFlavorId, (item as any).splitFlavorId ?? null);
             await db.insert(retailSubscriptionItems).values({
               subscriptionId: subscription.id,
               retailProductId: item.retailProductId,
-              selectedFlavorId: item.selectedFlavorId,
+              selectedFlavorId: itemFields.selectedFlavorId,
               quantity: item.quantity,
+              notes: itemFields.notes,
               // Lock in the agreed price so later catalogue edits don't silently
               // re-price this customer's renewals.
               unitPriceAtSignup: unitPrice.toFixed(2),
@@ -4064,9 +4085,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const subscriptionItems = retailCartItems.filter(item => item.isSubscription);
             
             for (const item of subscriptionItems) {
+              // Keep the chosen flavor (it used to be dropped on this path), and
+              // resolve split cases to Mixed + a packing note.
+              const itemFields = await splitItemFields(item.selectedFlavorId ?? null, (item as any).splitFlavorId ?? null);
               await storage.addRetailSubscriptionItem({
                 subscriptionId: newRetailSubscription.id,
                 retailProductId: item.retailProductId,
+                selectedFlavorId: itemFields.selectedFlavorId,
+                notes: itemFields.notes,
                 quantity: item.quantity,
               });
             }
@@ -4453,9 +4479,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     }
                   }
                   
+                  // Carry the chosen flavor onto the order item (it used to be dropped
+                  // here, leaving one-time variety packs flavorless on the board), and
+                  // resolve split cases to Mixed + a packing note.
+                  const itemFields = await splitItemFields(item.selectedFlavorId ?? null, (item as any).splitFlavorId ?? null);
                   await client.query(
-                    'INSERT INTO retail_order_items_v2 (order_id, retail_product_id, quantity, unit_price) VALUES ($1, $2, $3, $4)',
-                    [orderId, item.retailProductId, item.quantity, unitPrice.toFixed(2)]
+                    'INSERT INTO retail_order_items_v2 (order_id, retail_product_id, selected_flavor_id, quantity, unit_price, notes) VALUES ($1, $2, $3, $4, $5, $6)',
+                    [orderId, item.retailProductId, itemFields.selectedFlavorId, item.quantity, unitPrice.toFixed(2), itemFields.notes]
                   );
                 }
                 
@@ -4481,24 +4511,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   }
                 }
                 
-                // Collect retail v2 cart items for email
+                // Collect retail v2 cart items for email. Multi-flavor lines resolve
+                // the chosen flavor(s) — the old flavor-only guard silently dropped
+                // variety packs and splits from the receipt entirely.
                 for (const item of retailItems) {
-                  if (item.retailProduct && item.retailProduct.flavor) {
-                    let unitPrice = parseFloat(item.retailProduct.price);
-                    if (item.isSubscription && item.retailProduct.subscriptionDiscount != null) {
-                      const discountPercent = parseFloat(item.retailProduct.subscriptionDiscount.toString());
-                      if (isFinite(discountPercent) && discountPercent > 0) {
-                        unitPrice = unitPrice * (1 - discountPercent / 100);
-                      }
+                  if (!item.retailProduct) continue;
+                  let unitPrice = parseFloat(item.retailProduct.price);
+                  if (item.isSubscription && item.retailProduct.subscriptionDiscount != null) {
+                    const discountPercent = parseFloat(item.retailProduct.subscriptionDiscount.toString());
+                    if (isFinite(discountPercent) && discountPercent > 0) {
+                      unitPrice = unitPrice * (1 - discountPercent / 100);
                     }
-                    // Use flavor name + unit description for the product name
-                    const productName = `${item.retailProduct.flavor.name} - ${item.retailProduct.unitDescription}`;
-                    orderItems.push({
-                      productName,
-                      quantity: item.quantity,
-                      unitPrice: unitPrice.toFixed(2),
-                    });
                   }
+                  const flavorList: any[] = (item.retailProduct as any).flavors ?? [];
+                  const chosen = item.selectedFlavorId ? flavorList.find((f: any) => f.id === item.selectedFlavorId) : null;
+                  const splitPick = (item as any).splitFlavorId ? flavorList.find((f: any) => f.id === (item as any).splitFlavorId) : null;
+                  const flavorLabel = splitPick && chosen
+                    ? `${chosen.name} / ${splitPick.name}`
+                    : chosen?.name ?? item.retailProduct.flavor?.name ?? item.retailProduct.productName;
+                  const productName = flavorLabel
+                    ? `${flavorLabel} - ${item.retailProduct.unitDescription}`
+                    : item.retailProduct.unitDescription;
+                  orderItems.push({
+                    productName,
+                    quantity: item.quantity,
+                    unitPrice: unitPrice.toFixed(2),
+                  });
                 }
                 
                 sendOrderReceiptEmail({
@@ -7473,16 +7511,29 @@ If you have any questions, please don't hesitate to reach out!`,
   app.post("/api/retail-cart", async (req, res) => {
     try {
       const sessionId = req.sessionID || "guest";
-      const { retailProductId, selectedFlavorId, quantity, isSubscription, subscriptionFrequency } = req.body;
-      
+      const { retailProductId, selectedFlavorId, splitFlavorId, quantity, isSubscription, subscriptionFrequency } = req.body;
+
       // Validate that multi-flavor products have a selected flavor
       const product = await storage.getRetailProduct(retailProductId);
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
       }
-      
+
       if (product.productType === 'multi-flavor' && !selectedFlavorId) {
         return res.status(400).json({ message: "Please select a flavor for this variety pack" });
+      }
+
+      // Split-case products need exactly two DIFFERENT flavors (owner, 2026-09-02:
+      // pick 2, get half the case of each).
+      if ((product as any).allowSplit) {
+        if (!selectedFlavorId || !splitFlavorId) {
+          return res.status(400).json({ message: "Pick two flavors for your split case" });
+        }
+        if (selectedFlavorId === splitFlavorId) {
+          return res.status(400).json({ message: "Pick two different flavors for your split case" });
+        }
+      } else if (splitFlavorId) {
+        return res.status(400).json({ message: "This product doesn't offer split cases" });
       }
 
       // Wholesale accounts don't do subscriptions. Their login is a business identity with
@@ -7510,6 +7561,7 @@ If you have any questions, please don't hesitate to reach out!`,
         sessionId,
         retailProductId,
         selectedFlavorId: selectedFlavorId || null,
+        splitFlavorId: splitFlavorId || null,
         quantity: quantity || 1,
         isSubscription: isSubscription || false,
         subscriptionFrequency: validatedFrequency,

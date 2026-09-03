@@ -105,6 +105,8 @@ type RetailProductWithFlavors = RetailProduct & {
 export default function ShopV2() {
   const [addedToCart, setAddedToCart] = useState<Set<string>>(new Set());
   const [selectedFlavors, setSelectedFlavors] = useState<Record<string, string>>({});
+  // Second flavor per split-case product (allowSplit): half the case of each.
+  const [splitFlavors, setSplitFlavors] = useState<Record<string, string>>({});
   const { toast } = useToast();
 
   const { data: products, isLoading } = useQuery<RetailProductWithFlavors[]>({
@@ -119,15 +121,17 @@ export default function ShopV2() {
   const hasOneTimeItems = cartItems.some(item => !item.isSubscription);
 
   const addToCartMutation = useMutation({
-    mutationFn: async ({ retailProductId, selectedFlavorId, isSubscription, subscriptionFrequency }: { 
+    mutationFn: async ({ retailProductId, selectedFlavorId, splitFlavorId, isSubscription, subscriptionFrequency }: {
       retailProductId: string;
       selectedFlavorId?: string;
-      isSubscription: boolean; 
+      splitFlavorId?: string;
+      isSubscription: boolean;
       subscriptionFrequency?: string;
     }) => {
       await apiRequest("POST", "/api/retail-cart", {
         retailProductId,
         selectedFlavorId,
+        splitFlavorId,
         quantity: 1,
         isSubscription,
         subscriptionFrequency,
@@ -166,7 +170,7 @@ export default function ShopV2() {
     return acc;
   }, {} as Record<string, RetailProductWithFlavors[]>) || {};
 
-  const oneTimePurchase = (retailProductId: string, selectedFlavorId?: string) => {
+  const oneTimePurchase = (retailProductId: string, selectedFlavorId?: string, splitFlavorId?: string) => {
     if (hasSubscriptionItems) {
       toast({
         title: "Cannot mix order types",
@@ -178,11 +182,12 @@ export default function ShopV2() {
     addToCartMutation.mutate({
       retailProductId,
       selectedFlavorId,
+      splitFlavorId,
       isSubscription: false,
     });
   };
 
-  const subscriptionPurchase = (retailProductId: string, frequency: string, selectedFlavorId?: string) => {
+  const subscriptionPurchase = (retailProductId: string, frequency: string, selectedFlavorId?: string, splitFlavorId?: string) => {
     if (hasOneTimeItems) {
       toast({
         title: "Cannot mix order types",
@@ -194,6 +199,7 @@ export default function ShopV2() {
     addToCartMutation.mutate({
       retailProductId,
       selectedFlavorId,
+      splitFlavorId,
       isSubscription: true,
       subscriptionFrequency: frequency,
     });
@@ -261,7 +267,14 @@ export default function ShopV2() {
                     const isMultiFlavor = product.productType === 'multi-flavor';
                     const imageUrl = isMultiFlavor ? product.productImageUrl : product.flavor?.primaryImageUrl;
                     const displayName = isMultiFlavor ? product.productName : product.flavor?.name;
-                    
+                    // Split cases need two different flavors before Add unlocks.
+                    const isSplit = isMultiFlavor && !!(product as any).allowSplit;
+                    const splitPick = splitFlavors[product.id] || '';
+                    const flavorsIncomplete = isMultiFlavor && (
+                      !selectedFlavors[product.id] ||
+                      (isSplit && (!splitPick || splitPick === selectedFlavors[product.id]))
+                    );
+
                     return (
                     <Card key={product.id} data-testid={`card-product-${product.id}`} className="overflow-hidden">
                       <CardHeader className="p-0">
@@ -344,7 +357,7 @@ export default function ShopV2() {
                         {/* Flavor selector for multi-flavor products */}
                         {isMultiFlavor && product.flavors.length > 0 && (
                           <div className="w-full mb-2">
-                            <Label className="text-xs text-muted-foreground mb-1">Select Flavor</Label>
+                            <Label className="text-xs text-muted-foreground mb-1">{isSplit ? "First Flavor" : "Select Flavor"}</Label>
                             <Select
                               value={selectedFlavors[product.id] || ''}
                               onValueChange={(value) => setSelectedFlavors(prev => ({ ...prev, [product.id]: value }))}
@@ -360,6 +373,28 @@ export default function ShopV2() {
                                 ))}
                               </SelectContent>
                             </Select>
+                          </div>
+                        )}
+
+                        {isSplit && product.flavors.length > 0 && (
+                          <div className="w-full mb-2">
+                            <Label className="text-xs text-muted-foreground mb-1">Second Flavor</Label>
+                            <Select
+                              value={splitPick}
+                              onValueChange={(value) => setSplitFlavors(prev => ({ ...prev, [product.id]: value }))}
+                            >
+                              <SelectTrigger data-testid={`select-split-flavor-${product.id}`} className="w-full">
+                                <SelectValue placeholder="Choose a second flavor" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {product.flavors.filter(f => f.isActive && f.id !== selectedFlavors[product.id]).map((flavor) => (
+                                  <SelectItem key={flavor.id} value={flavor.id}>
+                                    {flavor.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground mt-1">You'll get 6 of each flavor.</p>
                           </div>
                         )}
                         
@@ -395,20 +430,20 @@ export default function ShopV2() {
                             <Button
                               onClick={() => {
                                 const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
-                                if (isMultiFlavor && !flavorId) {
-                                  toast({ 
-                                    title: "Please select a flavor", 
-                                    description: "Choose which flavor you'd like from the dropdown above",
-                                    variant: "destructive" 
+                                if (flavorsIncomplete) {
+                                  toast({
+                                    title: isSplit ? "Please pick two flavors" : "Please select a flavor",
+                                    description: isSplit ? "Choose two different flavors for your split case" : "Choose which flavor you'd like from the dropdown above",
+                                    variant: "destructive"
                                   });
                                   return;
                                 }
-                                oneTimePurchase(product.id, flavorId);
+                                oneTimePurchase(product.id, flavorId, isSplit ? splitPick : undefined);
                               }}
                               disabled={
-                                addToCartMutation.isPending || 
+                                addToCartMutation.isPending ||
                                 addedToCart.has(product.id) ||
-                                (isMultiFlavor && !selectedFlavors[product.id])
+                                flavorsIncomplete
                               }
                               className="w-full"
                               data-testid={`button-add-one-time-${product.id}`}
@@ -439,20 +474,20 @@ export default function ShopV2() {
                                 subscriptionDiscount={product.subscriptionDiscount}
                                 disabled={
                                   addToCartMutation.isPending ||
-                                  (isMultiFlavor && !selectedFlavors[product.id])
+                                  flavorsIncomplete
                                 }
                                 testIdPrefix={product.id}
                                 onSelect={(frequency) => {
                                   const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
-                                  if (isMultiFlavor && !flavorId) {
+                                  if (flavorsIncomplete) {
                                     toast({
-                                      title: "Please select a flavor",
-                                      description: "Choose which flavor you'd like from the dropdown above",
+                                      title: isSplit ? "Please pick two flavors" : "Please select a flavor",
+                                      description: isSplit ? "Choose two different flavors for your split case" : "Choose which flavor you'd like from the dropdown above",
                                       variant: "destructive",
                                     });
                                     return;
                                   }
-                                  subscriptionPurchase(product.id, frequency, flavorId);
+                                  subscriptionPurchase(product.id, frequency, flavorId, isSplit ? splitPick : undefined);
                                 }}
                               />
                             )}
@@ -463,20 +498,20 @@ export default function ShopV2() {
                           <Button
                             onClick={() => {
                               const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
-                              if (isMultiFlavor && !flavorId) {
-                                toast({ 
-                                  title: "Please select a flavor", 
-                                  description: "Choose which flavor you'd like from the dropdown above",
-                                  variant: "destructive" 
+                              if (flavorsIncomplete) {
+                                toast({
+                                  title: isSplit ? "Please pick two flavors" : "Please select a flavor",
+                                  description: isSplit ? "Choose two different flavors for your split case" : "Choose which flavor you'd like from the dropdown above",
+                                  variant: "destructive"
                                 });
                                 return;
                               }
-                              oneTimePurchase(product.id, flavorId);
+                              oneTimePurchase(product.id, flavorId, isSplit ? splitPick : undefined);
                             }}
                             disabled={
-                              addToCartMutation.isPending || 
+                              addToCartMutation.isPending ||
                               addedToCart.has(product.id) ||
-                              (isMultiFlavor && !selectedFlavors[product.id])
+                              flavorsIncomplete
                             }
                             className="w-full"
                             data-testid={`button-add-one-time-${product.id}`}

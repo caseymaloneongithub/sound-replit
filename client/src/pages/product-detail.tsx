@@ -91,6 +91,8 @@ function ProductImageCarousel({
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const [selectedFlavor, setSelectedFlavor] = useState<string>("");
+  // Split-case products: the second flavor (half the case each).
+  const [splitFlavor, setSplitFlavor] = useState<string>("");
   const [addedToCart, setAddedToCart] = useState(false);
   const { toast } = useToast();
 
@@ -108,15 +110,17 @@ export default function ProductDetail() {
   const product = products?.find(p => p.id === id);
 
   const addToCartMutation = useMutation({
-    mutationFn: async ({ retailProductId, selectedFlavorId, isSubscription, subscriptionFrequency }: { 
+    mutationFn: async ({ retailProductId, selectedFlavorId, splitFlavorId, isSubscription, subscriptionFrequency }: {
       retailProductId: string;
       selectedFlavorId?: string;
-      isSubscription: boolean; 
+      splitFlavorId?: string;
+      isSubscription: boolean;
       subscriptionFrequency?: string;
     }) => {
       return await apiRequest("POST", "/api/retail-cart", {
         retailProductId,
         selectedFlavorId,
+        splitFlavorId,
         quantity: 1,
         isSubscription,
         subscriptionFrequency,
@@ -153,6 +157,7 @@ export default function ProductDetail() {
     addToCartMutation.mutate({
       retailProductId: product.id,
       selectedFlavorId,
+      splitFlavorId: (product as any).allowSplit ? splitFlavor || undefined : undefined,
       isSubscription: false,
     });
   };
@@ -170,6 +175,7 @@ export default function ProductDetail() {
     addToCartMutation.mutate({
       retailProductId: product.id,
       selectedFlavorId,
+      splitFlavorId: (product as any).allowSplit ? splitFlavor || undefined : undefined,
       isSubscription: true,
       subscriptionFrequency: frequency,
     });
@@ -215,8 +221,10 @@ export default function ProductDetail() {
   // disabled button with no explanation.
   const activeFlavors = product.flavors?.filter((f) => f.isActive) ?? [];
   const needsFlavorSelection = isMultiFlavor && activeFlavors.length > 0;
+  // Split cases need two DIFFERENT flavors before the cart button unlocks.
+  const isSplit = isMultiFlavor && !!(product as any).allowSplit;
   const canAddToCart = isMultiFlavor
-    ? activeFlavors.length > 0 && !!selectedFlavor
+    ? activeFlavors.length > 0 && !!selectedFlavor && (!isSplit || (!!splitFlavor && splitFlavor !== selectedFlavor))
     : true;
 
   return (
@@ -304,7 +312,7 @@ export default function ProductDetail() {
 
                 {needsFlavorSelection && (
                   <div className="mb-4">
-                    <Label className="mb-2 block">Select Flavor</Label>
+                    <Label className="mb-2 block">{isSplit ? "First Flavor" : "Select Flavor"}</Label>
                     <Select
                       value={selectedFlavor}
                       onValueChange={setSelectedFlavor}
@@ -320,6 +328,28 @@ export default function ProductDetail() {
                         ))}
                       </SelectContent>
                     </Select>
+                  </div>
+                )}
+
+                {isSplit && activeFlavors.length > 0 && (
+                  <div className="mb-4">
+                    <Label className="mb-2 block">Second Flavor</Label>
+                    <Select
+                      value={splitFlavor}
+                      onValueChange={setSplitFlavor}
+                    >
+                      <SelectTrigger data-testid="select-split-flavor" className="w-full">
+                        <SelectValue placeholder="Choose a second flavor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeFlavors.filter(f => f.id !== selectedFlavor).map((flavor) => (
+                          <SelectItem key={flavor.id} value={flavor.id}>
+                            {flavor.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1.5">You'll get 6 bottles of each flavor.</p>
                   </div>
                 )}
 

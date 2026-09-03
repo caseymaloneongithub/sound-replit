@@ -2095,9 +2095,15 @@ export class PostgresStorage implements IStorage {
       eq(retailCartItems.isSubscription, item.isSubscription || false),
     ];
 
-    // For multi-flavor products, also match by selected flavor
+    // For multi-flavor products, also match by selected flavor (and, for split
+    // cases, the second flavor — a different split is a different line)
     if (item.selectedFlavorId) {
       conditions.push(eq(retailCartItems.selectedFlavorId, item.selectedFlavorId));
+    }
+    if (item.splitFlavorId) {
+      conditions.push(eq(retailCartItems.splitFlavorId, item.splitFlavorId));
+    } else {
+      conditions.push(isNull(retailCartItems.splitFlavorId));
     }
 
     if (item.isSubscription && item.subscriptionFrequency) {

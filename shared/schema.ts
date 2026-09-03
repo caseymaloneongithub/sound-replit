@@ -162,6 +162,9 @@ export const retailProducts = pgTable("retail_products", {
   deposit: decimal("deposit", { precision: 10, scale: 2 }).notNull().default('0.00'), // Refundable deposit (e.g., $75 for keg)
   subscriptionDiscount: decimal("subscription_discount", { precision: 5, scale: 2 }).notNull().default('10.00'), // Percentage discount for subscriptions (e.g., 10.00 = 10%)
   productImageUrl: text("product_image_url"), // For multi-flavor products (uploaded via object storage)
+  // Split case (owner, 2026-09-02): the customer picks TWO flavors and gets half the
+  // case of each (6+6 on a 12-bottle case). Only meaningful on multi-flavor products.
+  allowSplit: boolean("allow_split").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
   // Finished-goods product whose stock this draws down when an order is fulfilled.
@@ -218,6 +221,9 @@ export const retailCartItems = pgTable("retail_cart_items", {
   sessionId: text("session_id").notNull(),
   retailProductId: varchar("retail_product_id").notNull().references(() => retailProducts.id),
   selectedFlavorId: varchar("selected_flavor_id").references(() => flavors.id), // For multi-flavor products, tracks which flavor customer selected
+  // Second flavor for split-case products (allowSplit): the case is half selectedFlavorId,
+  // half this. Null for everything else.
+  splitFlavorId: varchar("split_flavor_id").references(() => flavors.id),
   quantity: integer("quantity").notNull().default(1),
   isSubscription: boolean("is_subscription").notNull().default(false),
   subscriptionFrequency: text("subscription_frequency"), // 'weekly', 'bi-weekly', 'every-4-weeks', 'every-6-weeks', or 'every-8-weeks'

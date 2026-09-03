@@ -32,11 +32,18 @@ export function UnifiedCartItemComponent({ unifiedItem, onUpdateQuantity, onRemo
     const displayFlavor = item.retailProduct.productType === 'multi-flavor' && item.selectedFlavorId
       ? item.retailProduct.flavors.find(f => f.id === item.selectedFlavorId)
       : item.retailProduct.flavor;
-    
-    productName = displayFlavor
-      ? `${displayFlavor.name} ${item.retailProduct.unitDescription}`
+    // Split cases carry a second flavor — show both ("Evergreen / Wildberry").
+    const splitFlavor = (item as any).splitFlavorId
+      ? item.retailProduct.flavors.find(f => f.id === (item as any).splitFlavorId)
+      : null;
+    const flavorLabel = displayFlavor && splitFlavor
+      ? `${displayFlavor.name} / ${splitFlavor.name}`
+      : displayFlavor?.name;
+
+    productName = flavorLabel
+      ? `${flavorLabel} ${item.retailProduct.unitDescription}`
       : item.retailProduct.unitDescription;
-    
+
     productImageUrl = displayFlavor?.primaryImageUrl ?? '';
     unitDescription = item.retailProduct.unitDescription || 'case';
   }
