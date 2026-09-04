@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { FileText, Eye, Check, Mail, CalendarIcon, Loader2, DollarSign, Clock, AlertCircle } from "lucide-react";
+import { FileText, Eye, Check, Mail, CalendarIcon, Loader2, DollarSign, Clock, AlertCircle, ArrowUp, ArrowDown } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -82,9 +82,21 @@ export default function WholesaleInvoices() {
     return customers.find(c => c.id === customerId);
   };
 
+  // Due-date sort, toggled by the little arrow in the column header. Invoices
+  // with no due date sink to the bottom either way.
+  const [dueSort, setDueSort] = useState<'asc' | 'desc'>('asc');
+  const byDueDate = (a: WholesaleOrderWithPayment, b: WholesaleOrderWithPayment) => {
+    if (!a.dueDate && !b.dueDate) return 0;
+    if (!a.dueDate) return 1;
+    if (!b.dueDate) return -1;
+    const diff = new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+    return dueSort === 'asc' ? diff : -diff;
+  };
+
   // Filter invoices by payment status
-  const unpaidInvoices = orders.filter(o => !o.paidAt);
-  const paidInvoices = orders.filter(o => o.paidAt);
+  const sortedOrders = [...orders].sort(byDueDate);
+  const unpaidInvoices = sortedOrders.filter(o => !o.paidAt);
+  const paidInvoices = sortedOrders.filter(o => o.paidAt);
   const overdueInvoices = unpaidInvoices.filter(o => {
     if (!o.dueDate) return false;
     return isPast(new Date(o.dueDate));
@@ -471,7 +483,18 @@ export default function WholesaleInvoices() {
                           <TableHead>Customer</TableHead>
                           <TableHead>Order Date</TableHead>
                           <TableHead>Delivery</TableHead>
-                          <TableHead>Due Date</TableHead>
+                          <TableHead>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 hover:text-foreground"
+                              onClick={() => setDueSort(s => s === 'asc' ? 'desc' : 'asc')}
+                              title={dueSort === 'asc' ? 'Oldest first — click for newest first' : 'Newest first — click for oldest first'}
+                              data-testid="button-sort-due-date"
+                            >
+                              Due Date
+                              {dueSort === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                            </button>
+                          </TableHead>
                           <TableHead className="text-right">Amount</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Sent</TableHead>
@@ -502,7 +525,18 @@ export default function WholesaleInvoices() {
                           <TableHead>Customer</TableHead>
                           <TableHead>Order Date</TableHead>
                           <TableHead>Delivery</TableHead>
-                          <TableHead>Due Date</TableHead>
+                          <TableHead>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 hover:text-foreground"
+                              onClick={() => setDueSort(s => s === 'asc' ? 'desc' : 'asc')}
+                              title={dueSort === 'asc' ? 'Oldest first — click for newest first' : 'Newest first — click for oldest first'}
+                              data-testid="button-sort-due-date"
+                            >
+                              Due Date
+                              {dueSort === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                            </button>
+                          </TableHead>
                           <TableHead className="text-right">Amount</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Sent</TableHead>
@@ -533,7 +567,18 @@ export default function WholesaleInvoices() {
                           <TableHead>Customer</TableHead>
                           <TableHead>Order Date</TableHead>
                           <TableHead>Delivery</TableHead>
-                          <TableHead>Due Date</TableHead>
+                          <TableHead>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 hover:text-foreground"
+                              onClick={() => setDueSort(s => s === 'asc' ? 'desc' : 'asc')}
+                              title={dueSort === 'asc' ? 'Oldest first — click for newest first' : 'Newest first — click for oldest first'}
+                              data-testid="button-sort-due-date"
+                            >
+                              Due Date
+                              {dueSort === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                            </button>
+                          </TableHead>
                           <TableHead className="text-right">Amount</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Sent</TableHead>
@@ -564,7 +609,18 @@ export default function WholesaleInvoices() {
                           <TableHead>Customer</TableHead>
                           <TableHead>Order Date</TableHead>
                           <TableHead>Delivery</TableHead>
-                          <TableHead>Due Date</TableHead>
+                          <TableHead>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 hover:text-foreground"
+                              onClick={() => setDueSort(s => s === 'asc' ? 'desc' : 'asc')}
+                              title={dueSort === 'asc' ? 'Oldest first — click for newest first' : 'Newest first — click for oldest first'}
+                              data-testid="button-sort-due-date"
+                            >
+                              Due Date
+                              {dueSort === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                            </button>
+                          </TableHead>
                           <TableHead className="text-right">Amount</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Sent</TableHead>
@@ -572,7 +628,7 @@ export default function WholesaleInvoices() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {orders.map(renderInvoiceRow)}
+                        {sortedOrders.map(renderInvoiceRow)}
                       </TableBody>
                     </Table>
                   </Card>
