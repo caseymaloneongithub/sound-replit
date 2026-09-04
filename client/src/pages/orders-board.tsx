@@ -81,9 +81,10 @@ function flavorAbbr(flavor: string): string {
 
 export default function OrdersBoard() {
   const { toast } = useToast();
-  // On Sunday the board looks ahead: the coming Monday-week is what the crew is
-  // prepping, so "Today" lands there. (ISO day 7 = Sunday, Pacific.)
-  const DEFAULT_OFFSET = formatInTimeZone(new Date(), TZ, "i") === "7" ? 1 : 0;
+  // From SATURDAY morning the board looks ahead: the weekend is prep time for the
+  // coming Monday-week, so "Today" lands there and this week's leftovers ride along.
+  // (ISO day 6 = Saturday, 7 = Sunday, Pacific.)
+  const DEFAULT_OFFSET = Number(formatInTimeZone(new Date(), TZ, "i")) >= 6 ? 1 : 0;
   const [weekOffset, setWeekOffset] = useState(DEFAULT_OFFSET);
 
   const { data, isLoading, isFetching, dataUpdatedAt, refetch } = useQuery<BoardData>({

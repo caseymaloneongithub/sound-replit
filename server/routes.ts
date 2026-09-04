@@ -6532,10 +6532,11 @@ If you have any questions, please don't hesitate to reach out!`,
 
       // The open retail backlog rides along on any week staff could reasonably call
       // "now": the calendar week containing today AND the board's default view (which
-      // jumps to next week once Sunday hits). Past weeks stay date-bucketed history;
+      // jumps to next week once SATURDAY morning hits — owner, 2026-09-04: the weekend
+      // is prep time for the coming week). Past weeks stay date-bucketed history;
       // weeks further out stay clean forecasts.
       const pacificDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }).format(new Date());
-      const defaultOffset = pacificDay === 'Sun' ? 1 : 0;
+      const defaultOffset = pacificDay === 'Sat' || pacificDay === 'Sun' ? 1 : 0;
       const retailBacklog = weekOffset === 0 || weekOffset === defaultOffset;
 
       const { retail, wholesale } = await storage.getWeeklyBoardOrders(start, end, { retailBacklog });
