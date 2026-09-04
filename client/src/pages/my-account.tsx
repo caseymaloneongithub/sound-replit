@@ -11,6 +11,7 @@ import { PaymentMethodsOnFile } from "@/pages/account";
 import { Package, Repeat, Plus, Trash2, X, CreditCard, ShoppingCart, Mail, SkipForward, PauseCircle, PlayCircle } from "lucide-react";
 import { format, startOfWeek } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { PickupInfo } from "@/components/pickup-info";
@@ -1190,7 +1191,7 @@ export default function MyAccount() {
                   <SelectContent>
                     {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.map((flavor: any) => (
                       <SelectItem key={flavor.id} value={flavor.id} data-testid={`option-new-flavor-${flavor.id}`}>
-                        {flavor.name}
+                        {flavorOptionLabel(flavor.name)}
                       </SelectItem>
                     ))}
                   </SelectContent>

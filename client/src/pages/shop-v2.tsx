@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ShoppingCart, Check, ChevronLeft, ChevronRight, Image as ImageIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import fishermensTerminal from "@assets/stock_images/fishermens_terminal_ballard.jpg"; // Fishermen's Terminal, Ballard (Unsplash, free commercial use)
@@ -285,7 +286,7 @@ export default function ShopV2() {
                     const showFlavorDropdown = isMultiFlavor && !lockedFlavor;
                     const cardKey = lockedFlavor ? `${product.id}|${lockedFlavor.id}` : product.id;
                     const imageUrl = cardFlavor ? cardFlavor.primaryImageUrl : product.productImageUrl;
-                    const displayName = cardFlavor ? cardFlavor.name : product.productName;
+                    const displayName = cardFlavor ? flavorOptionLabel(cardFlavor.name) : product.productName;
                     const detailHref = lockedFlavor ? `/products/${product.id}?flavor=${lockedFlavor.id}` : `/products/${product.id}`;
                     // Picking Mixed on an allowSplit product offers a choice: the full
                     // assortment, or "pick 2 flavors — 6 of each" (a split under the
@@ -397,7 +398,7 @@ export default function ShopV2() {
                               <SelectContent>
                                 {product.flavors.filter(f => f.isActive).map((flavor) => (
                                   <SelectItem key={flavor.id} value={flavor.id}>
-                                    {flavor.name}
+                                    {flavorOptionLabel(flavor.name)}
                                   </SelectItem>
                                 ))}
                               </SelectContent>

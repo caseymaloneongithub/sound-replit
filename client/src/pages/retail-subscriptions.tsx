@@ -13,6 +13,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Loader2, Plus, Edit, Trash2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -1035,7 +1036,7 @@ export default function RetailSubscriptions() {
                         </SelectTrigger>
                         <SelectContent>
                           {pickList.map((f) => (
-                            <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                            <SelectItem key={f.id} value={f.id}>{flavorOptionLabel(f.name)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>

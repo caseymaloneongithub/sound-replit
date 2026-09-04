@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, ShoppingCart, Check, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
 import { Footer } from "@/components/layout/footer";
 import { SubscribeOptions } from "@/components/subscribe-options";
@@ -229,7 +230,7 @@ export default function ProductDetail() {
   const chosenFlavor = isMultiFlavor
     ? product.flavors?.find(f => f.id === selectedFlavor) ?? null
     : product.flavor ?? null;
-  const displayName = chosenFlavor?.name ?? product.productName;
+  const displayName = chosenFlavor ? flavorOptionLabel(chosenFlavor.name) : product.productName;
   const displayDescription = chosenFlavor?.description ?? null;
   const displayFlavorProfile = chosenFlavor?.flavorProfile ?? null;
   const displayIngredients = chosenFlavor?.ingredients ?? null;
@@ -352,7 +353,7 @@ export default function ProductDetail() {
                       <SelectContent>
                         {product.flavors.filter(f => f.isActive).map((flavor) => (
                           <SelectItem key={flavor.id} value={flavor.id}>
-                            {flavor.name}
+                            {flavorOptionLabel(flavor.name)}
                           </SelectItem>
                         ))}
                       </SelectContent>
