@@ -7809,6 +7809,7 @@ If you have any questions, please don't hesitate to reach out!`,
           orderId: retailOrderItemsV2.orderId,
           retailProductId: retailOrderItemsV2.retailProductId,
           selectedFlavorId: retailOrderItemsV2.selectedFlavorId,
+          notes: retailOrderItemsV2.notes,
           quantity: retailOrderItemsV2.quantity,
           unitPrice: retailOrderItemsV2.unitPrice,
           retailProduct: retailProducts,
@@ -7827,8 +7828,11 @@ If you have any questions, please don't hesitate to reach out!`,
         productName: string;
         flavorName: string | null;
         unitDescription: string;
+        retailProductId: string;
+        selectedFlavorId: string | null;
+        notes: string | null;
       }>> = {};
-      
+
       for (const item of v2Items) {
         if (!itemsByOrderId[item.orderId]) {
           itemsByOrderId[item.orderId] = [];
@@ -7840,6 +7844,11 @@ If you have any questions, please don't hesitate to reach out!`,
           productName: item.flavor?.name || 'Unknown Product',
           flavorName: item.flavor?.name || null,
           unitDescription: item.retailProduct?.unitDescription || '',
+          // For the open-order item editor: which product (multi-flavor? splits?)
+          // and the current flavor/split note.
+          retailProductId: item.retailProductId,
+          selectedFlavorId: item.selectedFlavorId,
+          notes: item.notes ?? null,
         });
       }
       
@@ -7853,6 +7862,82 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error("Error fetching retail orders:", error);
       res.status(500).json({ message: "Failed to fetch retail orders" });
+    }
+  });
+
+  // Price-neutral edits on OPEN retail orders (owner, 2026-09-04): swap a line's
+  // flavor or single↔split on a multi-flavor product (the case price is the same
+  // either way). Quantities move money, so they're only editable on orders with no
+  // Stripe charge (staff-entered / pay-at-pickup) — a paid order's stored totals
+  // must keep matching the settled charge; cancel-with-refund and re-enter instead.
+  app.patch("/api/retail/orders/:orderId/items/:itemId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const schema = z.object({
+        selectedFlavorId: z.string().optional().nullable(),
+        splitFlavorId: z.string().optional().nullable(),
+        quantity: z.number().int().min(1).max(20).optional(),
+      });
+      const validated = schema.parse(req.body);
+
+      const order = await storage.getRetailOrder(req.params.orderId);
+      if (!order || (order as any).deletedAt) return res.status(404).json({ message: "Order not found" });
+      if (!['pending', 'ready_for_pickup'].includes(order.status)) {
+        return res.status(400).json({ message: "Only open orders can be edited" });
+      }
+
+      const [item] = await db.select().from(retailOrderItemsV2).where(eq(retailOrderItemsV2.id, req.params.itemId));
+      if (!item || item.orderId !== order.id) return res.status(404).json({ message: "Order item not found" });
+
+      const updates: { selectedFlavorId?: string | null; notes?: string | null; quantity?: number } = {};
+
+      if (validated.selectedFlavorId !== undefined || validated.splitFlavorId !== undefined) {
+        const product = await storage.getRetailProduct(item.retailProductId);
+        if (!product) return res.status(404).json({ message: "Product not found" });
+        if (product.productType !== 'multi-flavor') {
+          return res.status(400).json({ message: "This item's product has a fixed flavor" });
+        }
+        if (!validated.selectedFlavorId) {
+          return res.status(400).json({ message: "Pick a flavor" });
+        }
+        if (validated.splitFlavorId) {
+          if (!(product as any).allowSplit) return res.status(400).json({ message: "This product doesn't offer split cases" });
+          if (validated.splitFlavorId === validated.selectedFlavorId) return res.status(400).json({ message: "Pick two different flavors for a split" });
+        }
+        const itemFields = await splitItemFields(validated.selectedFlavorId, validated.splitFlavorId || null);
+        updates.selectedFlavorId = itemFields.selectedFlavorId;
+        updates.notes = itemFields.notes;
+      }
+
+      if (validated.quantity !== undefined && validated.quantity !== item.quantity) {
+        if (order.stripePaymentIntentId) {
+          return res.status(400).json({ message: "This order is already paid — cancel with refund and re-enter it to change quantities" });
+        }
+        updates.quantity = validated.quantity;
+      }
+
+      if (Object.keys(updates).length === 0) return res.json({ success: true, unchanged: true });
+
+      await db.update(retailOrderItemsV2).set(updates).where(eq(retailOrderItemsV2.id, item.id));
+
+      // A quantity change moves money (unpaid orders only): keep stored totals honest.
+      if (updates.quantity !== undefined) {
+        const allItems = await db.select().from(retailOrderItemsV2).where(eq(retailOrderItemsV2.orderId, order.id));
+        const subtotal = allItems.reduce((s, i) => s + Number(i.unitPrice) * i.quantity, 0);
+        const hadTax = Number(order.taxAmount ?? 0) > 0;
+        const tax = hadTax ? subtotal * 0.1035 : 0;
+        const deposit = Number((order as any).depositAmount ?? 0);
+        await db.update(retailOrders).set({
+          subtotal: subtotal.toFixed(2),
+          taxAmount: tax.toFixed(2),
+          totalAmount: (subtotal + tax + deposit).toFixed(2),
+          updatedAt: new Date(),
+        }).where(eq(retailOrders.id, order.id));
+      }
+
+      res.json({ success: true });
+    } catch (e: any) {
+      if (e instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      res.status(400).json({ message: e.message });
     }
   });
 

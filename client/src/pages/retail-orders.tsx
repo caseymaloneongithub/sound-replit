@@ -10,8 +10,9 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
-import { Loader2, XCircle, ArrowUpDown, DollarSign, ChevronDown, ChevronRight } from "lucide-react";
+import { Loader2, XCircle, ArrowUpDown, DollarSign, ChevronDown, ChevronRight, Pencil } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
 import type { RetailOrder } from "@shared/schema";
 
@@ -22,7 +23,17 @@ interface OrderItem {
   productName: string;
   flavorName: string | null;
   unitDescription: string;
+  retailProductId: string;
+  selectedFlavorId: string | null;
+  notes: string | null;
 }
+
+type EditorProduct = {
+  id: string;
+  productType: string;
+  allowSplit?: boolean;
+  flavors?: Array<{ id: string; name: string; isActive: boolean }>;
+};
 
 interface RetailOrderWithItems extends RetailOrder {
   items: OrderItem[];
@@ -96,6 +107,11 @@ export default function RetailOrders() {
   // Fetch orders for the active tab with pagination
   const { data: ordersData, isLoading } = useQuery<{ orders: RetailOrderWithItems[]; total: number }>({
     queryKey: [`/api/retail/orders?status=${activeTab}&limit=${PAGE_SIZE}&offset=${offset}`],
+  });
+
+  // Product catalog for the open-order item editor (flavor/split pickers).
+  const { data: editorProducts = [] } = useQuery<EditorProduct[]>({
+    queryKey: ['/api/retail-products'],
   });
 
   const orders = ordersData?.orders ?? [];
@@ -501,28 +517,14 @@ export default function RetailOrders() {
                                     {order.items && order.items.length > 0 ? (
                                       <div className="space-y-1">
                                         {order.items.map((item) => (
-                                          <div
+                                          <OrderItemRow
                                             key={item.id}
-                                            className="flex justify-between items-center text-sm bg-background rounded-md px-3 py-2"
-                                            data-testid={`order-item-${item.id}`}
-                                          >
-                                            <div className="flex-1">
-                                              <span className="font-medium">{item.productName}</span>
-                                              {item.unitDescription && (
-                                                <span className="text-muted-foreground ml-2">
-                                                  ({item.unitDescription})
-                                                </span>
-                                              )}
-                                            </div>
-                                            <div className="flex items-center gap-4">
-                                              <span className="text-muted-foreground">
-                                                x{item.quantity}
-                                              </span>
-                                              <span className="font-medium">
-                                                ${(Number(item.unitPrice) * item.quantity).toFixed(2)}
-                                              </span>
-                                            </div>
-                                          </div>
+                                            orderId={order.id}
+                                            orderStatus={order.status}
+                                            orderPaid={!!order.stripePaymentIntentId}
+                                            item={item}
+                                            product={editorProducts.find(p => p.id === item.retailProductId)}
+                                          />
                                         ))}
                                       </div>
                                     ) : (
@@ -692,5 +694,189 @@ export default function RetailOrders() {
         </Tabs>
       </div>
     </StaffLayout>
+  );
+}
+
+/**
+ * One order item with price-neutral editing on OPEN orders (owner, 2026-09-04):
+ * flavor and single↔split swaps on multi-flavor products (same case price either
+ * way); quantities only when the order carries no Stripe charge. Paid quantity
+ * changes stay cancel-with-refund + re-enter.
+ */
+function OrderItemRow({ orderId, orderStatus, orderPaid, item, product }: {
+  orderId: string;
+  orderStatus: string;
+  orderPaid: boolean;
+  item: OrderItem;
+  product?: EditorProduct;
+}) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [flavorId, setFlavorId] = useState('');
+  const [pickTwoOn, setPickTwoOn] = useState(false);
+  const [pickA, setPickA] = useState('');
+  const [pickB, setPickB] = useState('');
+  const [quantity, setQuantity] = useState(item.quantity);
+
+  const isOpen = orderStatus === 'pending' || orderStatus === 'ready_for_pickup';
+  const isMulti = product?.productType === 'multi-flavor';
+  const isSplitProduct = !!product?.allowSplit;
+  const activeFlavors = (product?.flavors ?? []).filter(f => f.isActive);
+  const canEdit = isOpen && (isMulti || !orderPaid);
+
+  const splitMatch = /^Split: 6 (.+) \/ 6 (.+)$/.exec(item.notes ?? '');
+
+  const beginEdit = () => {
+    setQuantity(item.quantity);
+    if (splitMatch) {
+      const mixed = activeFlavors.find(f => f.name === 'Mixed');
+      setFlavorId(mixed?.id ?? '');
+      setPickTwoOn(true);
+      setPickA(activeFlavors.find(f => f.name === splitMatch[1])?.id ?? '');
+      setPickB(activeFlavors.find(f => f.name === splitMatch[2])?.id ?? '');
+    } else {
+      setFlavorId(item.selectedFlavorId ?? '');
+      setPickTwoOn(false);
+      setPickA('');
+      setPickB('');
+    }
+    setEditing(true);
+  };
+
+  const flavorName = activeFlavors.find(f => f.id === flavorId)?.name;
+  const mixedChoice = isSplitProduct && flavorName === 'Mixed';
+  const pickTwoActive = mixedChoice && pickTwoOn;
+  const pickTwoReady = !!pickA && !!pickB && pickA !== pickB;
+  const canSave = (!isMulti || !!flavorId) && (!pickTwoActive || pickTwoReady);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {};
+      if (isMulti) {
+        body.selectedFlavorId = pickTwoActive ? pickA : flavorId;
+        body.splitFlavorId = pickTwoActive ? pickB : null;
+      }
+      if (!orderPaid && quantity !== item.quantity) body.quantity = quantity;
+      return apiRequest('PATCH', `/api/retail/orders/${orderId}/items/${item.id}`, body);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0]).startsWith('/api/retail/orders') });
+      setEditing(false);
+      toast({ title: 'Order updated' });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't update item", description: e.message, variant: 'destructive' });
+    },
+  });
+
+  return (
+    <div className="text-sm bg-background rounded-md px-3 py-2" data-testid={`order-item-${item.id}`}>
+      <div className="flex justify-between items-center">
+        <div className="flex-1">
+          <span className="font-medium">{item.productName}</span>
+          {item.unitDescription && (
+            <span className="text-muted-foreground ml-2">({item.unitDescription})</span>
+          )}
+          {item.notes && (
+            <div className="text-xs text-muted-foreground">{item.notes}</div>
+          )}
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="text-muted-foreground">x{item.quantity}</span>
+          <span className="font-medium">${(Number(item.unitPrice) * item.quantity).toFixed(2)}</span>
+          {canEdit && !editing && (
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={beginEdit} data-testid={`button-edit-item-${item.id}`}>
+              <Pencil className="w-3.5 h-3.5" />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {editing && (
+        <div className="mt-2 pt-2 border-t space-y-2">
+          {isMulti && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-16">Flavor</span>
+              <Select value={flavorId} onValueChange={setFlavorId}>
+                <SelectTrigger className="h-8 flex-1" data-testid={`select-edit-item-flavor-${item.id}`}>
+                  <SelectValue placeholder="Choose a flavor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {activeFlavors.map(f => (
+                    <SelectItem key={f.id} value={f.id}>{flavorOptionLabel(f.name)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {mixedChoice && (
+            <div className="pl-16 ml-2 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <Button type="button" size="sm" variant={pickTwoOn ? 'outline' : 'secondary'} onClick={() => setPickTwoOn(false)}>
+                  A little of everything
+                </Button>
+                <Button type="button" size="sm" variant={pickTwoOn ? 'secondary' : 'outline'} onClick={() => setPickTwoOn(true)}>
+                  Pick 2 flavors
+                </Button>
+              </div>
+              {pickTwoOn && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Select value={pickA} onValueChange={setPickA}>
+                    <SelectTrigger className="h-8" data-testid={`select-edit-pick2-a-${item.id}`}>
+                      <SelectValue placeholder="First flavor" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activeFlavors.filter(f => f.name !== 'Mixed' && f.id !== pickB).map(f => (
+                        <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={pickB} onValueChange={setPickB}>
+                    <SelectTrigger className="h-8" data-testid={`select-edit-pick2-b-${item.id}`}>
+                      <SelectValue placeholder="Second flavor" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activeFlavors.filter(f => f.name !== 'Mixed' && f.id !== pickA).map(f => (
+                        <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground w-16">Qty</span>
+            {orderPaid ? (
+              <span className="text-xs text-muted-foreground">
+                {item.quantity} — paid orders keep their quantity (cancel with refund to change)
+              </span>
+            ) : (
+              <Select value={String(quantity)} onValueChange={(v) => setQuantity(parseInt(v))}>
+                <SelectTrigger className="h-8 w-24" data-testid={`select-edit-item-qty-${item.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(q => (
+                    <SelectItem key={q} value={String(q)}>{q}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setEditing(false)} data-testid={`button-cancel-edit-item-${item.id}`}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={!canSave || saveMutation.isPending} onClick={() => saveMutation.mutate()} data-testid={`button-save-edit-item-${item.id}`}>
+              {saveMutation.isPending ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
