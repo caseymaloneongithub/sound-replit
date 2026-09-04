@@ -49,8 +49,10 @@ export default function MyAccount() {
   const [selectedNewProduct, setSelectedNewProduct] = useState<string>("");
   const [selectedNewQuantity, setSelectedNewQuantity] = useState<number>(1);
   const [selectedNewFlavor, setSelectedNewFlavor] = useState<string>("");
-  // Second flavor for split-case products: half the case of each.
+  // Second flavor for split-case products: half the case of each. Collapsed behind
+  // a quiet link by default — offered, not pitched.
   const [selectedNewSplitFlavor, setSelectedNewSplitFlavor] = useState<string>("");
+  const [splitPickerOpen, setSplitPickerOpen] = useState(false);
 
   // Orders and subscriptions change server-side (webhooks, staff actions), so
   // refetch on every visit — the app-wide staleTime: Infinity would otherwise
@@ -140,6 +142,7 @@ export default function MyAccount() {
       setSelectedNewQuantity(1);
       setSelectedNewFlavor("");
       setSelectedNewSplitFlavor("");
+      setSplitPickerOpen(false);
       toast({
         title: "Product added",
         description: "Product added to your subscription",
@@ -1131,6 +1134,7 @@ export default function MyAccount() {
           setSelectedNewQuantity(1);
           setSelectedNewFlavor("");
           setSelectedNewSplitFlavor("");
+          setSplitPickerOpen(false);
         }
       }}>
         <DialogContent data-testid="dialog-add-product">
@@ -1149,6 +1153,7 @@ export default function MyAccount() {
                   setSelectedNewProduct(value);
                   setSelectedNewFlavor(""); // Reset flavor when product changes
                   setSelectedNewSplitFlavor("");
+                  setSplitPickerOpen(false);
                 }}
               >
                 <SelectTrigger data-testid="select-new-product">
@@ -1183,16 +1188,26 @@ export default function MyAccount() {
               </div>
             )}
 
-            {/* Optional split: second picker appears once a regular (non-Mixed) first
-                flavor is chosen on an allowSplit product. */}
+            {/* Optional split: a quiet link once a regular (non-Mixed) first flavor is
+                chosen on an allowSplit product; the picker appears only on request. */}
             {selectedNewProduct && !!(retailProducts?.find(p => p.id === selectedNewProduct) as any)?.allowSplit
               && !!selectedNewFlavor
               && (retailProducts?.find(p => p.id === selectedNewProduct) as any)?.flavors?.find((f: any) => f.id === selectedNewFlavor)?.name !== 'Mixed' && (
+              !splitPickerOpen ? (
+                <button
+                  type="button"
+                  className="block text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                  onClick={() => setSplitPickerOpen(true)}
+                  data-testid="button-open-new-split"
+                >
+                  + Split with a second flavor
+                </button>
+              ) : (
               <div>
-                <label className="text-sm font-medium mb-2 block">Split with a second flavor (optional)</label>
+                <label className="text-sm font-medium mb-2 block">Second flavor</label>
                 <Select value={selectedNewSplitFlavor} onValueChange={setSelectedNewSplitFlavor}>
                   <SelectTrigger data-testid="select-new-split-flavor">
-                    <SelectValue placeholder="No split — full case of one flavor" />
+                    <SelectValue placeholder="Choose a second flavor" />
                   </SelectTrigger>
                   <SelectContent>
                     {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.filter((f: any) => f.id !== selectedNewFlavor && f.name !== 'Mixed').map((flavor: any) => (
@@ -1202,8 +1217,19 @@ export default function MyAccount() {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground mt-1">Pick a second flavor and you'll get 6 of each.</p>
+                <div className="flex items-center justify-between mt-1">
+                  <p className="text-xs text-muted-foreground">You'll get 6 of each.</p>
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                    onClick={() => { setSplitPickerOpen(false); setSelectedNewSplitFlavor(""); }}
+                    data-testid="button-cancel-new-split"
+                  >
+                    Don't split
+                  </button>
+                </div>
               </div>
+              )
             )}
             
             <div>

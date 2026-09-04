@@ -91,8 +91,10 @@ function ProductImageCarousel({
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const [selectedFlavor, setSelectedFlavor] = useState<string>("");
-  // Split-case products: the second flavor (half the case each).
+  // Split-case products: the second flavor (half the case each). Collapsed behind a
+  // quiet link by default — we offer splits, we don't pitch them (owner, 2026-09-03).
   const [splitFlavor, setSplitFlavor] = useState<string>("");
+  const [splitOpen, setSplitOpen] = useState(false);
   const [addedToCart, setAddedToCart] = useState(false);
   const { toast } = useToast();
 
@@ -344,15 +346,26 @@ export default function ProductDetail() {
                   </div>
                 )}
 
-                {canSplitNow && (
+                {canSplitNow && !splitOpen && (
+                  <button
+                    type="button"
+                    className="mb-4 -mt-2 block text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                    onClick={() => setSplitOpen(true)}
+                    data-testid="button-open-split"
+                  >
+                    + Split with a second flavor
+                  </button>
+                )}
+
+                {canSplitNow && splitOpen && (
                   <div className="mb-4">
-                    <Label className="mb-2 block">Split with a second flavor (optional)</Label>
+                    <Label className="mb-2 block">Second flavor</Label>
                     <Select
                       value={effectiveSplitFlavor}
                       onValueChange={setSplitFlavor}
                     >
                       <SelectTrigger data-testid="select-split-flavor" className="w-full">
-                        <SelectValue placeholder="No split — full case of one flavor" />
+                        <SelectValue placeholder="Choose a second flavor" />
                       </SelectTrigger>
                       <SelectContent>
                         {activeFlavors.filter(f => f.id !== selectedFlavor && f.name !== 'Mixed').map((flavor) => (
@@ -362,7 +375,17 @@ export default function ProductDetail() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground mt-1.5">Pick a second flavor and you'll get 6 bottles of each.</p>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <p className="text-xs text-muted-foreground">You'll get 6 bottles of each flavor.</p>
+                      <button
+                        type="button"
+                        className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                        onClick={() => { setSplitOpen(false); setSplitFlavor(""); }}
+                        data-testid="button-cancel-split"
+                      >
+                        Don't split
+                      </button>
+                    </div>
                   </div>
                 )}
 
