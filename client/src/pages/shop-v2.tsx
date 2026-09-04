@@ -267,13 +267,16 @@ export default function ShopV2() {
                     const isMultiFlavor = product.productType === 'multi-flavor';
                     const imageUrl = isMultiFlavor ? product.productImageUrl : product.flavor?.primaryImageUrl;
                     const displayName = isMultiFlavor ? product.productName : product.flavor?.name;
-                    // Split cases need two different flavors before Add unlocks.
+                    // Splitting is OPTIONAL on allowSplit products: one flavor is a
+                    // normal case; a second (never Mixed, never the same) makes it
+                    // half of each.
                     const isSplit = isMultiFlavor && !!(product as any).allowSplit;
-                    const splitPick = splitFlavors[product.id] || '';
-                    const flavorsIncomplete = isMultiFlavor && (
-                      !selectedFlavors[product.id] ||
-                      (isSplit && (!splitPick || splitPick === selectedFlavors[product.id]))
-                    );
+                    const firstPick = selectedFlavors[product.id] || '';
+                    const firstPickName = product.flavors.find(f => f.id === firstPick)?.name;
+                    const canSplitNow = isSplit && !!firstPick && firstPickName !== 'Mixed';
+                    const rawSplitPick = splitFlavors[product.id] || '';
+                    const splitPick = canSplitNow && rawSplitPick !== firstPick ? rawSplitPick : '';
+                    const flavorsIncomplete = isMultiFlavor && !firstPick;
 
                     return (
                     <Card key={product.id} data-testid={`card-product-${product.id}`} className="overflow-hidden">
@@ -357,7 +360,7 @@ export default function ShopV2() {
                         {/* Flavor selector for multi-flavor products */}
                         {isMultiFlavor && product.flavors.length > 0 && (
                           <div className="w-full mb-2">
-                            <Label className="text-xs text-muted-foreground mb-1">{isSplit ? "First Flavor" : "Select Flavor"}</Label>
+                            <Label className="text-xs text-muted-foreground mb-1">Select Flavor</Label>
                             <Select
                               value={selectedFlavors[product.id] || ''}
                               onValueChange={(value) => setSelectedFlavors(prev => ({ ...prev, [product.id]: value }))}
@@ -366,8 +369,7 @@ export default function ShopV2() {
                                 <SelectValue placeholder="Choose a flavor" />
                               </SelectTrigger>
                               <SelectContent>
-                                {/* Mixed is a valid pick on a variety product, but never half a split. */}
-                                {product.flavors.filter(f => f.isActive && (!isSplit || f.name !== 'Mixed')).map((flavor) => (
+                                {product.flavors.filter(f => f.isActive).map((flavor) => (
                                   <SelectItem key={flavor.id} value={flavor.id}>
                                     {flavor.name}
                                   </SelectItem>
@@ -377,25 +379,25 @@ export default function ShopV2() {
                           </div>
                         )}
 
-                        {isSplit && product.flavors.length > 0 && (
+                        {canSplitNow && (
                           <div className="w-full mb-2">
-                            <Label className="text-xs text-muted-foreground mb-1">Second Flavor</Label>
+                            <Label className="text-xs text-muted-foreground mb-1">Split with a second flavor (optional)</Label>
                             <Select
                               value={splitPick}
                               onValueChange={(value) => setSplitFlavors(prev => ({ ...prev, [product.id]: value }))}
                             >
                               <SelectTrigger data-testid={`select-split-flavor-${product.id}`} className="w-full">
-                                <SelectValue placeholder="Choose a second flavor" />
+                                <SelectValue placeholder="No split — full case of one flavor" />
                               </SelectTrigger>
                               <SelectContent>
-                                {product.flavors.filter(f => f.isActive && f.id !== selectedFlavors[product.id] && f.name !== 'Mixed').map((flavor) => (
+                                {product.flavors.filter(f => f.isActive && f.id !== firstPick && f.name !== 'Mixed').map((flavor) => (
                                   <SelectItem key={flavor.id} value={flavor.id}>
                                     {flavor.name}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
-                            <p className="text-xs text-muted-foreground mt-1">You'll get 6 of each flavor.</p>
+                            <p className="text-xs text-muted-foreground mt-1">Pick a second flavor and you'll get 6 of each.</p>
                           </div>
                         )}
                         
@@ -433,13 +435,13 @@ export default function ShopV2() {
                                 const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
                                 if (flavorsIncomplete) {
                                   toast({
-                                    title: isSplit ? "Please pick two flavors" : "Please select a flavor",
-                                    description: isSplit ? "Choose two different flavors for your split case" : "Choose which flavor you'd like from the dropdown above",
+                                    title: "Please select a flavor",
+                                    description: "Choose which flavor you'd like from the dropdown above",
                                     variant: "destructive"
                                   });
                                   return;
                                 }
-                                oneTimePurchase(product.id, flavorId, isSplit ? splitPick : undefined);
+                                oneTimePurchase(product.id, flavorId, splitPick || undefined);
                               }}
                               disabled={
                                 addToCartMutation.isPending ||
@@ -482,13 +484,13 @@ export default function ShopV2() {
                                   const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
                                   if (flavorsIncomplete) {
                                     toast({
-                                      title: isSplit ? "Please pick two flavors" : "Please select a flavor",
-                                      description: isSplit ? "Choose two different flavors for your split case" : "Choose which flavor you'd like from the dropdown above",
+                                      title: "Please select a flavor",
+                                      description: "Choose which flavor you'd like from the dropdown above",
                                       variant: "destructive",
                                     });
                                     return;
                                   }
-                                  subscriptionPurchase(product.id, frequency, flavorId, isSplit ? splitPick : undefined);
+                                  subscriptionPurchase(product.id, frequency, flavorId, splitPick || undefined);
                                 }}
                               />
                             )}

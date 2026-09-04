@@ -425,7 +425,7 @@ export default function AdminRetailProducts() {
                           className="rounded"
                           data-testid="checkbox-allow-split"
                         />
-                        <span className="text-sm">Split case — customer picks 2 flavors, half the case of each</span>
+                        <span className="text-sm">Allow splits — customer can add a second flavor for half the case of each</span>
                       </label>
                     </div>
                   )}
@@ -721,7 +721,7 @@ export default function AdminRetailProducts() {
                                   className="rounded"
                                   data-testid="checkbox-edit-allow-split"
                                 />
-                                <span className="text-sm">Split case — customer picks 2 flavors, half the case of each</span>
+                                <span className="text-sm">Allow splits — customer can add a second flavor for half the case of each</span>
                               </label>
                             </div>
                           )}

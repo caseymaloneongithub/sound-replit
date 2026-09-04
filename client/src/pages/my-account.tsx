@@ -419,21 +419,19 @@ export default function MyAccount() {
       });
       return;
     }
+    // Splitting is optional: send the second flavor only when it's a valid split
+    // (allowSplit product, different flavor, first flavor isn't Mixed).
     const isSplitProduct = !!(selectedProduct as any)?.allowSplit;
-    if (isSplitProduct && (!selectedNewSplitFlavor || selectedNewSplitFlavor === selectedNewFlavor)) {
-      toast({
-        title: "Pick two flavors",
-        description: "Choose two different flavors for your split case",
-        variant: "destructive",
-      });
-      return;
-    }
+    const firstName = (selectedProduct as any)?.flavors?.find((f: any) => f.id === selectedNewFlavor)?.name;
+    const effectiveSplit = isSplitProduct && selectedNewSplitFlavor && selectedNewSplitFlavor !== selectedNewFlavor && firstName !== 'Mixed'
+      ? selectedNewSplitFlavor
+      : null;
 
     addRetailItemMutation.mutate({
       subscriptionId: addProductDialog.subscriptionId,
       retailProductId: selectedNewProduct,
       selectedFlavorId: selectedNewFlavor || null,
-      splitFlavorId: isSplitProduct ? selectedNewSplitFlavor : null,
+      splitFlavorId: effectiveSplit,
       quantity: selectedNewQuantity,
     });
   };
@@ -1166,21 +1164,16 @@ export default function MyAccount() {
               </Select>
             </div>
             
-            {/* Show flavor selector for multi-flavor products (two for split cases) */}
+            {/* Show flavor selector for multi-flavor products */}
             {selectedNewProduct && retailProducts?.find(p => p.id === selectedNewProduct)?.productType === 'multi-flavor' && (
               <div>
-                <label className="text-sm font-medium mb-2 block">
-                  {(retailProducts?.find(p => p.id === selectedNewProduct) as any)?.allowSplit ? "First Flavor" : "Flavor"}
-                </label>
+                <label className="text-sm font-medium mb-2 block">Flavor</label>
                 <Select value={selectedNewFlavor} onValueChange={setSelectedNewFlavor}>
                   <SelectTrigger data-testid="select-new-flavor">
                     <SelectValue placeholder="Select a flavor" />
                   </SelectTrigger>
                   <SelectContent>
-                    {/* Mixed is a valid pick on a variety product, but never half a split. */}
-                    {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.filter((f: any) =>
-                      !(retailProducts?.find(p => p.id === selectedNewProduct) as any)?.allowSplit || f.name !== 'Mixed'
-                    ).map((flavor: any) => (
+                    {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.map((flavor: any) => (
                       <SelectItem key={flavor.id} value={flavor.id} data-testid={`option-new-flavor-${flavor.id}`}>
                         {flavor.name}
                       </SelectItem>
@@ -1190,12 +1183,16 @@ export default function MyAccount() {
               </div>
             )}
 
-            {selectedNewProduct && !!(retailProducts?.find(p => p.id === selectedNewProduct) as any)?.allowSplit && (
+            {/* Optional split: second picker appears once a regular (non-Mixed) first
+                flavor is chosen on an allowSplit product. */}
+            {selectedNewProduct && !!(retailProducts?.find(p => p.id === selectedNewProduct) as any)?.allowSplit
+              && !!selectedNewFlavor
+              && (retailProducts?.find(p => p.id === selectedNewProduct) as any)?.flavors?.find((f: any) => f.id === selectedNewFlavor)?.name !== 'Mixed' && (
               <div>
-                <label className="text-sm font-medium mb-2 block">Second Flavor</label>
+                <label className="text-sm font-medium mb-2 block">Split with a second flavor (optional)</label>
                 <Select value={selectedNewSplitFlavor} onValueChange={setSelectedNewSplitFlavor}>
                   <SelectTrigger data-testid="select-new-split-flavor">
-                    <SelectValue placeholder="Select a second flavor" />
+                    <SelectValue placeholder="No split — full case of one flavor" />
                   </SelectTrigger>
                   <SelectContent>
                     {retailProducts?.find(p => p.id === selectedNewProduct)?.flavors?.filter((f: any) => f.id !== selectedNewFlavor && f.name !== 'Mixed').map((flavor: any) => (
@@ -1205,7 +1202,7 @@ export default function MyAccount() {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground mt-1">You'll get 6 of each flavor.</p>
+                <p className="text-xs text-muted-foreground mt-1">Pick a second flavor and you'll get 6 of each.</p>
               </div>
             )}
             

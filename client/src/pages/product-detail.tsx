@@ -144,6 +144,14 @@ export default function ProductDetail() {
     },
   });
 
+  // The second flavor actually sent to the cart: only on allowSplit products, only
+  // when it differs from the first, and never splitting off a Mixed case.
+  const effectiveSplitFor = (): string | undefined => {
+    if (!product || !(product as any).allowSplit || !splitFlavor || splitFlavor === selectedFlavor) return undefined;
+    const first = product.flavors?.find((f) => f.id === selectedFlavor)?.name;
+    return first === 'Mixed' ? undefined : splitFlavor;
+  };
+
   const oneTimePurchase = (selectedFlavorId?: string) => {
     if (!product) return;
     if (hasSubscriptionItems) {
@@ -157,7 +165,7 @@ export default function ProductDetail() {
     addToCartMutation.mutate({
       retailProductId: product.id,
       selectedFlavorId,
-      splitFlavorId: (product as any).allowSplit ? splitFlavor || undefined : undefined,
+      splitFlavorId: effectiveSplitFor(),
       isSubscription: false,
     });
   };
@@ -175,7 +183,7 @@ export default function ProductDetail() {
     addToCartMutation.mutate({
       retailProductId: product.id,
       selectedFlavorId,
-      splitFlavorId: (product as any).allowSplit ? splitFlavor || undefined : undefined,
+      splitFlavorId: effectiveSplitFor(),
       isSubscription: true,
       subscriptionFrequency: frequency,
     });
@@ -221,10 +229,15 @@ export default function ProductDetail() {
   // disabled button with no explanation.
   const activeFlavors = product.flavors?.filter((f) => f.isActive) ?? [];
   const needsFlavorSelection = isMultiFlavor && activeFlavors.length > 0;
-  // Split cases need two DIFFERENT flavors before the cart button unlocks.
+  // Splitting is OPTIONAL on allowSplit products: one flavor = a normal case, a
+  // second flavor = half the case of each. Mixed can't be half of a split, so the
+  // second picker only appears once a regular first flavor is chosen.
   const isSplit = isMultiFlavor && !!(product as any).allowSplit;
+  const firstFlavorName = activeFlavors.find((f) => f.id === selectedFlavor)?.name;
+  const canSplitNow = isSplit && !!selectedFlavor && firstFlavorName !== 'Mixed';
+  const effectiveSplitFlavor = effectiveSplitFor() ?? "";
   const canAddToCart = isMultiFlavor
-    ? activeFlavors.length > 0 && !!selectedFlavor && (!isSplit || (!!splitFlavor && splitFlavor !== selectedFlavor))
+    ? activeFlavors.length > 0 && !!selectedFlavor
     : true;
 
   return (
@@ -312,7 +325,7 @@ export default function ProductDetail() {
 
                 {needsFlavorSelection && (
                   <div className="mb-4">
-                    <Label className="mb-2 block">{isSplit ? "First Flavor" : "Select Flavor"}</Label>
+                    <Label className="mb-2 block">Select Flavor</Label>
                     <Select
                       value={selectedFlavor}
                       onValueChange={setSelectedFlavor}
@@ -321,8 +334,7 @@ export default function ProductDetail() {
                         <SelectValue placeholder="Choose a flavor" />
                       </SelectTrigger>
                       <SelectContent>
-                        {/* Mixed is a valid pick on a variety product, but never half a split. */}
-                        {product.flavors.filter(f => f.isActive && (!isSplit || f.name !== 'Mixed')).map((flavor) => (
+                        {product.flavors.filter(f => f.isActive).map((flavor) => (
                           <SelectItem key={flavor.id} value={flavor.id}>
                             {flavor.name}
                           </SelectItem>
@@ -332,15 +344,15 @@ export default function ProductDetail() {
                   </div>
                 )}
 
-                {isSplit && activeFlavors.length > 0 && (
+                {canSplitNow && (
                   <div className="mb-4">
-                    <Label className="mb-2 block">Second Flavor</Label>
+                    <Label className="mb-2 block">Split with a second flavor (optional)</Label>
                     <Select
-                      value={splitFlavor}
+                      value={effectiveSplitFlavor}
                       onValueChange={setSplitFlavor}
                     >
                       <SelectTrigger data-testid="select-split-flavor" className="w-full">
-                        <SelectValue placeholder="Choose a second flavor" />
+                        <SelectValue placeholder="No split — full case of one flavor" />
                       </SelectTrigger>
                       <SelectContent>
                         {activeFlavors.filter(f => f.id !== selectedFlavor && f.name !== 'Mixed').map((flavor) => (
@@ -350,7 +362,7 @@ export default function ProductDetail() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground mt-1.5">You'll get 6 bottles of each flavor.</p>
+                    <p className="text-xs text-muted-foreground mt-1.5">Pick a second flavor and you'll get 6 bottles of each.</p>
                   </div>
                 )}
 

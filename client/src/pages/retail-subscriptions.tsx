@@ -960,12 +960,13 @@ export default function RetailSubscriptions() {
               const isMulti = addProduct?.productType === 'multi-flavor';
               const isSplit = isMulti && !!(addProduct as any)?.allowSplit;
               const productFlavors: Flavor[] = ((addProduct as any)?.flavors ?? []).filter((f: Flavor) => f.isActive);
-              // Mixed is a valid pick on a variety product, but never half a split.
-              const pickList = (productFlavors.length > 0 ? productFlavors : flavors.filter(f => f.isActive))
-                .filter((f) => !isSplit || f.name !== 'Mixed');
-              const ready = !!addProductId && (!isMulti || (
-                !!addFlavorId && (!isSplit || (!!addSplitFlavorId && addSplitFlavorId !== addFlavorId))
-              ));
+              const pickList = productFlavors.length > 0 ? productFlavors : flavors.filter(f => f.isActive);
+              // Splitting is optional: a second (non-Mixed, different) flavor makes it
+              // half of each; Mixed as the first flavor is its own fixed assortment.
+              const firstName = pickList.find(f => f.id === addFlavorId)?.name;
+              const canSplitNow = isSplit && !!addFlavorId && firstName !== 'Mixed';
+              const effectiveSplit = canSplitNow && addSplitFlavorId && addSplitFlavorId !== addFlavorId ? addSplitFlavorId : undefined;
+              const ready = !!addProductId && (!isMulti || !!addFlavorId);
               return (
                 <div className="space-y-4">
                   <div>
@@ -1002,7 +1003,7 @@ export default function RetailSubscriptions() {
 
                   {isMulti && (
                     <div>
-                      <Label>{isSplit ? 'First Flavor' : 'Flavor'}</Label>
+                      <Label>Flavor</Label>
                       <Select value={addFlavorId} onValueChange={setAddFlavorId}>
                         <SelectTrigger data-testid="select-add-flavor">
                           <SelectValue placeholder="Choose a flavor" />
@@ -1016,15 +1017,15 @@ export default function RetailSubscriptions() {
                     </div>
                   )}
 
-                  {isSplit && (
+                  {canSplitNow && (
                     <div>
-                      <Label>Second Flavor</Label>
-                      <Select value={addSplitFlavorId} onValueChange={setAddSplitFlavorId}>
+                      <Label>Split with a second flavor (optional)</Label>
+                      <Select value={effectiveSplit ?? ''} onValueChange={setAddSplitFlavorId}>
                         <SelectTrigger data-testid="select-add-split-flavor">
-                          <SelectValue placeholder="Choose a second flavor" />
+                          <SelectValue placeholder="No split — full case of one flavor" />
                         </SelectTrigger>
                         <SelectContent>
-                          {pickList.filter((f) => f.id !== addFlavorId).map((f) => (
+                          {pickList.filter((f) => f.id !== addFlavorId && f.name !== 'Mixed').map((f) => (
                             <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
                           ))}
                         </SelectContent>
@@ -1042,7 +1043,7 @@ export default function RetailSubscriptions() {
                         subscriptionId: selectedSubscriptionForItem,
                         retailProductId: addProductId,
                         selectedFlavorId: addFlavorId || undefined,
-                        splitFlavorId: isSplit ? addSplitFlavorId : undefined,
+                        splitFlavorId: effectiveSplit,
                         quantity: 1,
                       });
                     }}

@@ -119,6 +119,10 @@ async function splitItemFields(
   const all = await storage.getFlavors();
   const a = all.find(f => f.id === selectedFlavorId)?.name ?? 'flavor 1';
   const b = all.find(f => f.id === splitFlavorId)?.name ?? 'flavor 2';
+  // Mixed is its own fixed assortment; half-Mixed splits don't exist.
+  if (a === 'Mixed' || b === 'Mixed') {
+    throw new Error('A split case cannot include Mixed — pick two regular flavors');
+  }
   const mixed = all.find(f => f.name === 'Mixed');
   return { selectedFlavorId: mixed?.id ?? selectedFlavorId, notes: `Split: 6 ${a} / 6 ${b}` };
 }
@@ -5543,16 +5547,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Flavor selection required for multi-flavor products" });
       }
 
-      // Split cases need exactly two DIFFERENT flavors.
-      if ((retailProduct as any).allowSplit) {
-        if (!validated.selectedFlavorId || !validated.splitFlavorId) {
-          return res.status(400).json({ message: "Pick two flavors for your split case" });
+      // Splitting is optional: one flavor is a normal case, two make it half of each.
+      if (validated.splitFlavorId) {
+        if (!(retailProduct as any).allowSplit) {
+          return res.status(400).json({ message: "This product doesn't offer split cases" });
         }
-        if (validated.selectedFlavorId === validated.splitFlavorId) {
+        if (!validated.selectedFlavorId || validated.selectedFlavorId === validated.splitFlavorId) {
           return res.status(400).json({ message: "Pick two different flavors for your split case" });
         }
-      } else if (validated.splitFlavorId) {
-        return res.status(400).json({ message: "This product doesn't offer split cases" });
       }
 
       // Splits resolve to Mixed + a packing note, same as checkout, so renewals
@@ -7561,17 +7563,15 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(400).json({ message: "Please select a flavor for this variety pack" });
       }
 
-      // Split-case products need exactly two DIFFERENT flavors (owner, 2026-09-02:
-      // pick 2, get half the case of each).
-      if ((product as any).allowSplit) {
-        if (!selectedFlavorId || !splitFlavorId) {
-          return res.status(400).json({ message: "Pick two flavors for your split case" });
+      // Splitting is OPTIONAL on allowSplit products (owner, 2026-09-02): one flavor
+      // is a normal case; a second flavor makes it half of each.
+      if (splitFlavorId) {
+        if (!(product as any).allowSplit) {
+          return res.status(400).json({ message: "This product doesn't offer split cases" });
         }
-        if (selectedFlavorId === splitFlavorId) {
+        if (!selectedFlavorId || selectedFlavorId === splitFlavorId) {
           return res.status(400).json({ message: "Pick two different flavors for your split case" });
         }
-      } else if (splitFlavorId) {
-        return res.status(400).json({ message: "This product doesn't offer split cases" });
       }
 
       // Wholesale accounts don't do subscriptions. Their login is a business identity with
@@ -8407,15 +8407,14 @@ If you have any questions, please don't hesitate to reach out!`,
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
       }
-      if ((product as any).allowSplit) {
-        if (!validated.selectedFlavorId || !validated.splitFlavorId) {
-          return res.status(400).json({ message: "Pick two flavors for a split case" });
+      // Splitting is optional: one flavor is a normal case, two make it half of each.
+      if (validated.splitFlavorId) {
+        if (!(product as any).allowSplit) {
+          return res.status(400).json({ message: "This product doesn't offer split cases" });
         }
-        if (validated.selectedFlavorId === validated.splitFlavorId) {
+        if (!validated.selectedFlavorId || validated.selectedFlavorId === validated.splitFlavorId) {
           return res.status(400).json({ message: "Pick two different flavors for a split case" });
         }
-      } else if (validated.splitFlavorId) {
-        return res.status(400).json({ message: "This product doesn't offer split cases" });
       }
 
       // Splits resolve to Mixed + a packing note, same as customer checkout, so
