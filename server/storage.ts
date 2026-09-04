@@ -1688,7 +1688,10 @@ export class PostgresStorage implements IStorage {
         })
         .from(retailProductFlavors)
         .innerJoin(flavors, eq(retailProductFlavors.flavorId, flavors.id))
-        .where(inArray(retailProductFlavors.retailProductId, multiFlavorProductIds));
+        .where(inArray(retailProductFlavors.retailProductId, multiFlavorProductIds))
+        // Catalog display order (the flavors admin page manages it) — this is what
+        // sequences the shop's flavor-wall cards and every flavor dropdown.
+        .orderBy(asc(flavors.displayOrder), asc(flavors.name));
 
       // Build map of productId -> flavors[]
       for (const row of multiFlavorResults) {
