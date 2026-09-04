@@ -299,7 +299,12 @@ function BoardSheet({ orders, flavorOrder, stock, catalog, onAdvance, advancing 
     new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime() || a.title.localeCompare(b.title));
   // Open work on top, finished work below — the shelf only has to cover what's OPEN.
   const openRows = rows.filter((o) => nextStatus(o) !== null);
-  const doneRows = rows.filter((o) => nextStatus(o) === null);
+  // Finished rows group by channel — wholesale deliveries together, then retail
+  // pickups (matching the section title's order) — instead of interleaving by date.
+  // Stable sort keeps the date/title order within each group.
+  const doneRows = rows
+    .filter((o) => nextStatus(o) === null)
+    .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "wholesale" ? -1 : 1));
   const sumFor = (list: BoardOrder[], unit: string, flavor: string) =>
     list.reduce((sum, o) => sum + qtyFor(o, unit, flavor), 0);
 
