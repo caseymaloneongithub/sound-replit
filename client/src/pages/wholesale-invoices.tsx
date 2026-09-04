@@ -282,12 +282,20 @@ export default function WholesaleInvoices() {
           </Badge>
         </TableCell>
         <TableCell>
-          {order.invoiceSentAt ? (
-            <span className="text-xs text-muted-foreground">
+          {/* Color-coded at a glance (owner, 2026-09-04): green = paid (nothing to
+              do), blue = sent and waiting, amber = not sent yet (needs action). */}
+          {order.paidAt ? (
+            <span className="inline-flex items-center rounded-full bg-green-100 text-green-900 dark:bg-green-900/40 dark:text-green-200 px-2 py-0.5 text-xs font-medium whitespace-nowrap">
+              Paid
+            </span>
+          ) : order.invoiceSentAt ? (
+            <span className="inline-flex items-center rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/40 dark:text-sky-200 px-2 py-0.5 text-xs font-medium whitespace-nowrap">
               Sent {format(new Date(order.invoiceSentAt), "MMM dd")}
             </span>
           ) : (
-            <span className="text-xs text-muted-foreground">Not sent</span>
+            <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200 px-2 py-0.5 text-xs font-medium whitespace-nowrap">
+              Not sent
+            </span>
           )}
         </TableCell>
         <TableCell>
