@@ -246,9 +246,12 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
           return null;
         }
         
-        // Get flavor name if selected
+        // Get flavor name if selected. A split case stores Mixed + a note naming its
+        // two flavors — the receipt shows those, not a bare "Mixed".
         let flavorName: string | undefined;
-        if (item.selectedFlavorId) {
+        if (/^Split: /.test((item as any).notes ?? '')) {
+          flavorName = (item as any).notes.replace(/^Split: /, '');
+        } else if (item.selectedFlavorId) {
           const [flavor] = await db
             .select({ name: flavors.name })
             .from(flavors)
@@ -782,6 +785,7 @@ export async function sendBillingReminders() {
             id: retailSubscriptionItems.id,
             quantity: retailSubscriptionItems.quantity,
             selectedFlavorId: retailSubscriptionItems.selectedFlavorId,
+            notes: retailSubscriptionItems.notes,
             retailProduct: retailProducts,
           })
           .from(retailSubscriptionItems)
@@ -806,9 +810,12 @@ export async function sendBillingReminders() {
           const lineTotal = unitPrice * item.quantity;
           subtotal += lineTotal;
 
-          // Get flavor name if it's a multi-flavor product
+          // Get flavor name if it's a multi-flavor product. Split cases show their
+          // two flavors from the packing note instead of a bare "Mixed".
           let productName = item.retailProduct.productName || item.retailProduct.unitType;
-          if (item.selectedFlavorId) {
+          if (/^Split: /.test(item.notes ?? '')) {
+            productName = `${item.retailProduct.productName || item.retailProduct.unitType} - ${item.notes!.replace(/^Split: /, '')}`;
+          } else if (item.selectedFlavorId) {
             const [flavor] = await db
               .select()
               .from(flavors)
