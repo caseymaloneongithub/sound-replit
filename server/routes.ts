@@ -7888,13 +7888,28 @@ If you have any questions, please don't hesitate to reach out!`,
       const [item] = await db.select().from(retailOrderItemsV2).where(eq(retailOrderItemsV2.id, req.params.itemId));
       if (!item || item.orderId !== order.id) return res.status(404).json({ message: "Order item not found" });
 
-      const updates: { selectedFlavorId?: string | null; notes?: string | null; quantity?: number } = {};
+      const updates: { retailProductId?: string; selectedFlavorId?: string | null; notes?: string | null; quantity?: number } = {};
 
       if (validated.selectedFlavorId !== undefined || validated.splitFlavorId !== undefined) {
-        const product = await storage.getRetailProduct(item.retailProductId);
+        let product = await storage.getRetailProduct(item.retailProductId);
         if (!product) return res.status(404).json({ message: "Product not found" });
         if (product.productType !== 'multi-flavor') {
-          return res.status(400).json({ message: "This item's product has a fixed flavor" });
+          // Pre-consolidation line (old per-flavor product): edit it through the
+          // active multi-flavor product for the same unit — price stays whatever
+          // the line already charged, so this is still price-neutral.
+          const all = await storage.getRetailProducts();
+          // Normalized match: legacy rows disagree on spacing ("16oz" vs "16 oz").
+          const unitKey = (u: string) => u.replace(/\s+/g, '').toLowerCase();
+          const replacement = all.find(p =>
+            p.productType === 'multi-flavor' && p.isActive
+            && unitKey(p.unitDescription) === unitKey(product!.unitDescription)
+            && (p.flavors?.length ?? 0) > 0
+          );
+          if (!replacement) {
+            return res.status(400).json({ message: "This item's product has a fixed flavor" });
+          }
+          product = replacement;
+          updates.retailProductId = replacement.id;
         }
         if (!validated.selectedFlavorId) {
           return res.status(400).json({ message: "Pick a flavor" });

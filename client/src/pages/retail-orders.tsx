@@ -31,6 +31,7 @@ interface OrderItem {
 type EditorProduct = {
   id: string;
   productType: string;
+  unitDescription: string;
   allowSplit?: boolean;
   flavors?: Array<{ id: string; name: string; isActive: boolean }>;
 };
@@ -523,7 +524,15 @@ export default function RetailOrders() {
                                             orderStatus={order.status}
                                             orderPaid={!!order.stripePaymentIntentId}
                                             item={item}
-                                            product={editorProducts.find(p => p.id === item.retailProductId)}
+                                            // Pre-consolidation lines (old per-flavor products,
+                                            // absent from the active list) edit through the
+                                            // multi-flavor product for the same unit.
+                                            product={
+                                              editorProducts.find(p => p.id === item.retailProductId && p.productType === 'multi-flavor')
+                                              ?? editorProducts.find(p => p.productType === 'multi-flavor'
+                                                && p.unitDescription.replace(/\s+/g, '').toLowerCase() === item.unitDescription.replace(/\s+/g, '').toLowerCase()
+                                                && (p.flavors?.length ?? 0) > 0)
+                                            }
                                           />
                                         ))}
                                       </div>
@@ -735,7 +744,9 @@ function OrderItemRow({ orderId, orderStatus, orderPaid, item, product }: {
       setPickA(activeFlavors.find(f => f.name === splitMatch[1])?.id ?? '');
       setPickB(activeFlavors.find(f => f.name === splitMatch[2])?.id ?? '');
     } else {
-      setFlavorId(item.selectedFlavorId ?? '');
+      // Old per-flavor lines carry no selectedFlavorId — match by name so the
+      // picker opens on the item's current flavor.
+      setFlavorId(item.selectedFlavorId ?? activeFlavors.find(f => f.name === item.flavorName)?.id ?? '');
       setPickTwoOn(false);
       setPickA('');
       setPickB('');
