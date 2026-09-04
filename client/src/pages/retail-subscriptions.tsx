@@ -133,7 +133,7 @@ export default function RetailSubscriptions() {
   });
 
   const createSubscriptionMutation = useMutation({
-    mutationFn: async (data: SubscriptionFormData & { items: Array<{ retailProductId: string; flavorId: string; quantity: number }> }) => {
+    mutationFn: async (data: SubscriptionFormData & { items: Array<{ retailProductId: string; selectedFlavorId: string | null; quantity: number }> }) => {
       return await apiRequest('POST', '/api/retail/subscriptions', data);
     },
     onSuccess: () => {
@@ -356,7 +356,17 @@ export default function RetailSubscriptions() {
         });
         return;
       }
-      createSubscriptionMutation.mutate({ ...data, items: newSubscriptionItems });
+      // The server field is selectedFlavorId — sending `flavorId` was silently
+      // dropped, which per-flavor products masked (their product carried the
+      // flavor) but the consolidated multi-flavor product does not.
+      createSubscriptionMutation.mutate({
+        ...data,
+        items: newSubscriptionItems.map(i => ({
+          retailProductId: i.retailProductId,
+          selectedFlavorId: i.flavorId || null,
+          quantity: i.quantity,
+        })),
+      });
     } else if (editingSubscription) {
       updateSubscriptionMutation.mutate({ id: editingSubscription.id, data });
     }
@@ -821,9 +831,12 @@ export default function RetailSubscriptions() {
                       <div className="space-y-3">
                         {newSubscriptionItems.map((item, index) => {
                           const selectedProduct = retailProducts.find(p => p.id === item.retailProductId);
+                          // Multi-flavor products offer THEIR flavors (active only);
+                          // single-flavor products are locked to their own.
+                          const productFlavorList: Flavor[] = ((selectedProduct as any)?.flavors ?? []).filter((f: Flavor) => f.isActive);
                           const availableFlavors = selectedProduct?.productType === 'single-flavor' && selectedProduct.flavorId
                             ? flavors.filter(f => f.id === selectedProduct.flavorId)
-                            : flavors;
+                            : (productFlavorList.length > 0 ? productFlavorList : flavors.filter(f => f.isActive));
                           return (
                             <div key={index} className="flex items-start gap-2 p-3 border rounded-md">
                               <div className="flex-1 space-y-2">
@@ -837,13 +850,18 @@ export default function RetailSubscriptions() {
                                       <SelectValue placeholder="Select product" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      {retailProducts.filter(p => p.isActive).map((product) => {
+                                      {retailProducts
+                                        .filter(p => p.isActive
+                                          && (p.productType !== 'single-flavor' || !p.flavorId || flavors.some(f => f.id === p.flavorId && f.isActive)))
+                                        .map((product) => {
                                         const productFlavor = product.productType === 'single-flavor' && product.flavorId
                                           ? flavors.find(f => f.id === product.flavorId)
                                           : null;
                                         return (
                                           <SelectItem key={product.id} value={product.id}>
-                                            {product.unitDescription}
+                                            {product.productType === 'multi-flavor' && (product as any).productName
+                                              ? `${(product as any).productName} — ${product.unitDescription}`
+                                              : product.unitDescription}
                                             {productFlavor && ` - ${productFlavor.name}`}
                                           </SelectItem>
                                         );
