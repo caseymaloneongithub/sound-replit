@@ -157,6 +157,7 @@ export default function AdminRetailProducts() {
     flavorId: '',
     selectedFlavorIds: [] as string[],
     allowSplit: false,
+    displayPerFlavor: false,
     unitType: '',
     unitDescription: '',
     price: 0,
@@ -195,6 +196,7 @@ export default function AdminRetailProducts() {
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
         productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
         allowSplit: data.productType === 'multi-flavor' ? !!data.allowSplit : false,
+        displayPerFlavor: data.productType === 'multi-flavor' ? !!data.displayPerFlavor : false,
         isActive: data.isActive,
         displayOrder: data.displayOrder,
       };
@@ -218,6 +220,7 @@ export default function AdminRetailProducts() {
         flavorId: '',
         selectedFlavorIds: [],
         allowSplit: false,
+        displayPerFlavor: false,
         unitType: '',
         unitDescription: '',
         price: 0,
@@ -254,6 +257,7 @@ export default function AdminRetailProducts() {
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
         productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
         allowSplit: data.productType === 'multi-flavor' ? !!data.allowSplit : false,
+        displayPerFlavor: data.productType === 'multi-flavor' ? !!data.displayPerFlavor : false,
         isActive: data.isActive,
         displayOrder: data.displayOrder,
       };
@@ -426,6 +430,16 @@ export default function AdminRetailProducts() {
                           data-testid="checkbox-allow-split"
                         />
                         <span className="text-sm">Allow splits — customer can add a second flavor for half the case of each</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer mt-2">
+                        <input
+                          type="checkbox"
+                          checked={retailProductForm.displayPerFlavor}
+                          onChange={(e) => setRetailProductForm({ ...retailProductForm, displayPerFlavor: e.target.checked })}
+                          className="rounded"
+                          data-testid="checkbox-display-per-flavor"
+                        />
+                        <span className="text-sm">Show one shop card per flavor (flavor wall) instead of a single card</span>
                       </label>
                     </div>
                   )}
@@ -622,6 +636,7 @@ export default function AdminRetailProducts() {
                               flavorId: product.flavorId || '',
                               selectedFlavorIds: product.flavors.map(f => f.id),
                               allowSplit: !!(product as any).allowSplit,
+                              displayPerFlavor: !!(product as any).displayPerFlavor,
                               unitType: product.unitType,
                               unitDescription: product.unitDescription,
                               price: Number(product.price),
@@ -722,6 +737,16 @@ export default function AdminRetailProducts() {
                                   data-testid="checkbox-edit-allow-split"
                                 />
                                 <span className="text-sm">Allow splits — customer can add a second flavor for half the case of each</span>
+                              </label>
+                              <label className="flex items-center gap-2 cursor-pointer mt-2">
+                                <input
+                                  type="checkbox"
+                                  checked={retailProductForm.displayPerFlavor}
+                                  onChange={(e) => setRetailProductForm({ ...retailProductForm, displayPerFlavor: e.target.checked })}
+                                  className="rounded"
+                                  data-testid="checkbox-edit-display-per-flavor"
+                                />
+                                <span className="text-sm">Show one shop card per flavor (flavor wall) instead of a single card</span>
                               </label>
                             </div>
                           )}

@@ -90,7 +90,10 @@ function ProductImageCarousel({
 
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
-  const [selectedFlavor, setSelectedFlavor] = useState<string>("");
+  // A flavor-wall card links here with ?flavor= so the page opens on that flavor.
+  const [selectedFlavor, setSelectedFlavor] = useState<string>(
+    () => new URLSearchParams(window.location.search).get("flavor") ?? ""
+  );
   // Split-case products: the second flavor (half the case each). Collapsed behind a
   // quiet link by default — we offer splits, we don't pitch them (owner, 2026-09-03).
   const [splitFlavor, setSplitFlavor] = useState<string>("");
@@ -214,13 +217,18 @@ export default function ProductDetail() {
   }
 
   const isMultiFlavor = product.productType === 'multi-flavor';
-  const displayName = isMultiFlavor ? product.productName : product.flavor?.name;
-  const displayDescription = isMultiFlavor ? null : product.flavor?.description;
-  const displayFlavorProfile = isMultiFlavor ? null : product.flavor?.flavorProfile;
-  const displayIngredients = isMultiFlavor ? null : product.flavor?.ingredients;
-  const imageUrl = isMultiFlavor ? product.productImageUrl : null;
-  const primaryImageUrl = isMultiFlavor ? product.productImageUrl : product.flavor?.primaryImageUrl;
-  const secondaryImageUrl = isMultiFlavor ? null : product.flavor?.secondaryImageUrl;
+  // On a multi-flavor product, the page takes on the identity of whichever flavor is
+  // selected (arriving from a flavor-wall card preselects it via ?flavor=). Before a
+  // pick, the product's own name/image carry the page.
+  const chosenFlavor = isMultiFlavor
+    ? product.flavors?.find(f => f.id === selectedFlavor) ?? null
+    : product.flavor ?? null;
+  const displayName = chosenFlavor?.name ?? product.productName;
+  const displayDescription = chosenFlavor?.description ?? null;
+  const displayFlavorProfile = chosenFlavor?.flavorProfile ?? null;
+  const displayIngredients = chosenFlavor?.ingredients ?? null;
+  const primaryImageUrl = chosenFlavor?.primaryImageUrl ?? (isMultiFlavor ? product.productImageUrl : null);
+  const secondaryImageUrl = chosenFlavor?.secondaryImageUrl ?? null;
   
   const subscriptionPrice = product.subscriptionDiscount 
     ? parseFloat(product.price) * (1 - Number(product.subscriptionDiscount) / 100)

@@ -165,6 +165,9 @@ export const retailProducts = pgTable("retail_products", {
   // Split case (owner, 2026-09-02): the customer picks TWO flavors and gets half the
   // case of each (6+6 on a 12-bottle case). Only meaningful on multi-flavor products.
   allowSplit: boolean("allow_split").notNull().default(false),
+  // Shop merchandising (owner, 2026-09-03): render one shop card per flavor for this
+  // multi-flavor product — the flavor wall — instead of a single card with a dropdown.
+  displayPerFlavor: boolean("display_per_flavor").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
   // Finished-goods product whose stock this draws down when an order is fulfilled.

@@ -3907,19 +3907,41 @@ export class PostgresStorage implements IStorage {
         }
 
         // v2 order items (everything the current shop and all subscriptions create).
-        // These reference retail_products, which link to a finished-goods product via
-        // finished_product_id. Items with no link (e.g. kegs) intentionally decrement
-        // nothing. Without this block, NO modern order ever moved stock on fulfilment.
+        // The finished-goods target resolves by the item's FLAVOR plus the container
+        // of the product's finished-goods link, so one multi-flavor case product
+        // deducts the right per-flavor stock (owner, 2026-09-03). Legacy per-flavor
+        // products resolve to the exact same row they always did; rows with no flavor
+        // at all fall back to the direct link. Items with no link (e.g. kegs)
+        // intentionally decrement nothing, and Mixed stays untracked by design.
         const v2Result = await client.query(
-          `SELECT oi.retail_product_id, oi.quantity, rp.finished_product_id
+          `SELECT oi.quantity,
+                  f.name AS flavor_name,
+                  CASE WHEN COALESCE(oi.selected_flavor_id, rp.flavor_id) IS NULL
+                       THEN rp.finished_product_id ELSE fp.id END AS target_id
            FROM retail_order_items_v2 oi
            JOIN retail_products rp ON rp.id = oi.retail_product_id
+           LEFT JOIN products anchor ON anchor.id = rp.finished_product_id
+           LEFT JOIN flavors f ON f.id = COALESCE(oi.selected_flavor_id, rp.flavor_id)
+           LEFT JOIN LATERAL (
+             SELECT p.id FROM products p
+             WHERE p.container = anchor.container
+               AND p.flavor_id = COALESCE(oi.selected_flavor_id, rp.flavor_id)
+             LIMIT 1
+           ) fp ON true
            WHERE oi.order_id = $1 AND rp.finished_product_id IS NOT NULL`,
           [id]
         );
 
-        if (v2Result.rows.length > 0) {
-          const v2ProductIds = Array.from(new Set(v2Result.rows.map((r: any) => r.finished_product_id)));
+        const v2Rows = v2Result.rows.filter((r: any) => {
+          if (r.target_id) return true;
+          if (r.flavor_name !== 'Mixed') {
+            stockWarnings.push(`No finished-goods product for ${r.flavor_name ?? 'unknown flavor'} — stock not adjusted`);
+          }
+          return false;
+        });
+
+        if (v2Rows.length > 0) {
+          const v2ProductIds = Array.from(new Set(v2Rows.map((r: any) => r.target_id)));
           const v2Stock = await client.query(
             'SELECT id, stock_quantity FROM products WHERE id = ANY($1::text[]) FOR UPDATE',
             [v2ProductIds]
@@ -3930,8 +3952,8 @@ export class PostgresStorage implements IStorage {
           // finished-goods product, and validating each in isolation would let the
           // combined quantity overdraw stock.
           const needed = new Map<string, number>();
-          for (const row of v2Result.rows) {
-            needed.set(row.finished_product_id, (needed.get(row.finished_product_id) ?? 0) + row.quantity);
+          for (const row of v2Rows) {
+            needed.set(row.target_id, (needed.get(row.target_id) ?? 0) + row.quantity);
           }
 
           for (const [productId, quantity] of Array.from(needed.entries())) {
@@ -4027,21 +4049,37 @@ export class PostgresStorage implements IStorage {
       );
 
       if (wasFulfilled.rows.length > 0) {
+        // Same flavor-aware target resolution as the fulfilment decrement, so a
+        // cancellation gives back exactly what fulfilment took.
         const v2Items = await client.query(
-          `SELECT rp.finished_product_id, SUM(oi.quantity)::int AS quantity
+          `SELECT oi.quantity,
+                  CASE WHEN COALESCE(oi.selected_flavor_id, rp.flavor_id) IS NULL
+                       THEN rp.finished_product_id ELSE fp.id END AS target_id
            FROM retail_order_items_v2 oi
            JOIN retail_products rp ON rp.id = oi.retail_product_id
-           WHERE oi.order_id = $1 AND rp.finished_product_id IS NOT NULL
-           GROUP BY rp.finished_product_id`,
+           LEFT JOIN products anchor ON anchor.id = rp.finished_product_id
+           LEFT JOIN LATERAL (
+             SELECT p.id FROM products p
+             WHERE p.container = anchor.container
+               AND p.flavor_id = COALESCE(oi.selected_flavor_id, rp.flavor_id)
+             LIMIT 1
+           ) fp ON true
+           WHERE oi.order_id = $1 AND rp.finished_product_id IS NOT NULL`,
           [id]
         );
 
-        for (const item of v2Items.rows) {
+        const restore = new Map<string, number>();
+        for (const row of v2Items.rows) {
+          if (!row.target_id) continue; // untracked (e.g. Mixed) — nothing was taken
+          restore.set(row.target_id, (restore.get(row.target_id) ?? 0) + row.quantity);
+        }
+
+        for (const [targetId, quantity] of Array.from(restore.entries())) {
           await client.query(
             `INSERT INTO inventory_adjustments
             (product_id, quantity, reason, staff_user_id, order_id, order_type)
             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [item.finished_product_id, item.quantity, reason, staffUserId, id, 'retail']
+            [targetId, quantity, reason, staffUserId, id, 'retail']
           );
 
           await client.query(
@@ -4049,7 +4087,7 @@ export class PostgresStorage implements IStorage {
              SET stock_quantity = stock_quantity + $1,
                  in_stock = CASE WHEN stock_quantity + $1 > 0 THEN true ELSE in_stock END
              WHERE id = $2`,
-            [item.quantity, item.finished_product_id]
+            [quantity, targetId]
           );
         }
       }

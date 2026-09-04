@@ -265,30 +265,52 @@ export default function ShopV2() {
                     return true;
                   })
                   .sort((a, b) => a.displayOrder - b.displayOrder)
-                  .map((product) => {
+                  // The flavor wall (owner, 2026-09-03): a multi-flavor product with
+                  // displayPerFlavor renders one card per flavor — each card locked to
+                  // its flavor with that flavor's imagery — instead of one card with a
+                  // dropdown. Every card still sells the same underlying product.
+                  .flatMap((product): Array<{ product: RetailProductWithFlavors; lockedFlavor: Flavor | null }> =>
+                    product.productType === 'multi-flavor' && (product as any).displayPerFlavor
+                      ? product.flavors.filter(f => f.isActive).map(f => ({ product, lockedFlavor: f }))
+                      : [{ product, lockedFlavor: null }]
+                  )
+                  .map(({ product, lockedFlavor }) => {
                     const isMultiFlavor = product.productType === 'multi-flavor';
-                    const imageUrl = isMultiFlavor ? product.productImageUrl : product.flavor?.primaryImageUrl;
-                    const displayName = isMultiFlavor ? product.productName : product.flavor?.name;
+                    // The single flavor this card represents, if any: the wall lock,
+                    // or a single-flavor product's own flavor.
+                    const cardFlavor = lockedFlavor ?? (isMultiFlavor ? null : product.flavor);
+                    const showFlavorDropdown = isMultiFlavor && !lockedFlavor;
+                    const cardKey = lockedFlavor ? `${product.id}|${lockedFlavor.id}` : product.id;
+                    const imageUrl = cardFlavor ? cardFlavor.primaryImageUrl : product.productImageUrl;
+                    const displayName = cardFlavor ? cardFlavor.name : product.productName;
+                    const detailHref = lockedFlavor ? `/products/${product.id}?flavor=${lockedFlavor.id}` : `/products/${product.id}`;
                     // Splitting is OPTIONAL on allowSplit products: one flavor is a
                     // normal case; a second (never Mixed, never the same) makes it
                     // half of each.
                     const isSplit = isMultiFlavor && !!(product as any).allowSplit;
-                    const firstPick = selectedFlavors[product.id] || '';
+                    const firstPick = cardFlavor?.id ?? (selectedFlavors[product.id] || '');
                     const firstPickName = product.flavors.find(f => f.id === firstPick)?.name;
                     const canSplitNow = isSplit && !!firstPick && firstPickName !== 'Mixed';
-                    const rawSplitPick = splitFlavors[product.id] || '';
+                    const rawSplitPick = splitFlavors[cardKey] || '';
                     const splitPick = canSplitNow && rawSplitPick !== firstPick ? rawSplitPick : '';
-                    const flavorsIncomplete = isMultiFlavor && !firstPick;
+                    const flavorsIncomplete = showFlavorDropdown && !firstPick;
 
                     return (
-                    <Card key={product.id} data-testid={`card-product-${product.id}`} className="overflow-hidden">
+                    <Card key={cardKey} data-testid={`card-product-${cardKey}`} className="overflow-hidden">
                       <CardHeader className="p-0">
-                        <Link href={`/products/${product.id}`} data-testid={`link-product-${product.id}`}>
+                        <Link href={detailHref} data-testid={`link-product-${cardKey}`}>
                           <div className="aspect-square bg-muted overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
-                            {isMultiFlavor ? (
+                            {cardFlavor ? (
+                              <ProductImageCarousel
+                                primaryImageUrl={cardFlavor.primaryImageUrl}
+                                secondaryImageUrl={cardFlavor.secondaryImageUrl}
+                                productName={displayName || 'Product'}
+                                productId={cardKey}
+                              />
+                            ) : (
                               imageUrl ? (
-                                <img 
-                                  src={imageUrl} 
+                                <img
+                                  src={imageUrl}
                                   alt={displayName || 'Product'}
                                   className="w-full h-full object-cover"
                                   data-testid={`image-${product.id}`}
@@ -298,36 +320,29 @@ export default function ShopV2() {
                                   <ImageIcon className="w-16 h-16 text-muted-foreground" />
                                 </div>
                               )
-                            ) : (
-                              <ProductImageCarousel
-                                primaryImageUrl={product.flavor?.primaryImageUrl}
-                                secondaryImageUrl={product.flavor?.secondaryImageUrl}
-                                productName={displayName || 'Product'}
-                                productId={product.id}
-                              />
                             )}
                           </div>
                         </Link>
                       </CardHeader>
                       <CardContent className="p-4">
                         <div className="flex items-center gap-2 flex-wrap mb-2">
-                          <Link href={`/products/${product.id}`}>
-                            <h3 className="text-xl font-semibold hover:text-primary transition-colors cursor-pointer" data-testid={`text-flavor-${product.id}`}>
+                          <Link href={detailHref}>
+                            <h3 className="text-xl font-semibold hover:text-primary transition-colors cursor-pointer" data-testid={`text-flavor-${cardKey}`}>
                               {displayName}
                             </h3>
                           </Link>
                         </div>
-                        {!isMultiFlavor && product.flavor && (
-                          <Badge variant="secondary" className="mb-2" data-testid={`badge-profile-${product.id}`}>
-                            {product.flavor.flavorProfile}
+                        {cardFlavor && (
+                          <Badge variant="secondary" className="mb-2" data-testid={`badge-profile-${cardKey}`}>
+                            {cardFlavor.flavorProfile}
                           </Badge>
                         )}
-                        {!isMultiFlavor && product.flavor && (
-                          <p className="text-sm text-muted-foreground mb-3" data-testid={`text-description-${product.id}`}>
-                            {product.flavor.description}
+                        {cardFlavor && (
+                          <p className="text-sm text-muted-foreground mb-3" data-testid={`text-description-${cardKey}`}>
+                            {cardFlavor.description}
                           </p>
                         )}
-                        {isMultiFlavor && product.flavors.length > 0 && (
+                        {showFlavorDropdown && product.flavors.length > 0 && (
                           <div className="mb-3">
                             <p className="text-xs text-muted-foreground mb-1">Flavor Options:</p>
                             <div className="flex flex-wrap gap-1">
@@ -359,8 +374,9 @@ export default function ShopV2() {
                         )}
                       </CardContent>
                       <CardFooter className="p-4 pt-0 flex-col gap-2">
-                        {/* Flavor selector for multi-flavor products */}
-                        {isMultiFlavor && product.flavors.length > 0 && (
+                        {/* Flavor selector for multi-flavor products (not on wall cards —
+                            those are locked to their flavor) */}
+                        {showFlavorDropdown && product.flavors.length > 0 && (
                           <div className="w-full mb-2">
                             <Label className="text-xs text-muted-foreground mb-1">Select Flavor</Label>
                             <Select
@@ -381,25 +397,25 @@ export default function ShopV2() {
                           </div>
                         )}
 
-                        {canSplitNow && !splitOpen[product.id] && (
+                        {canSplitNow && !splitOpen[cardKey] && (
                           <button
                             type="button"
                             className="w-full mb-2 text-left text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                            onClick={() => setSplitOpen(prev => ({ ...prev, [product.id]: true }))}
-                            data-testid={`button-open-split-${product.id}`}
+                            onClick={() => setSplitOpen(prev => ({ ...prev, [cardKey]: true }))}
+                            data-testid={`button-open-split-${cardKey}`}
                           >
                             + Split with a second flavor
                           </button>
                         )}
 
-                        {canSplitNow && splitOpen[product.id] && (
+                        {canSplitNow && splitOpen[cardKey] && (
                           <div className="w-full mb-2">
                             <Label className="text-xs text-muted-foreground mb-1">Second flavor</Label>
                             <Select
                               value={splitPick}
-                              onValueChange={(value) => setSplitFlavors(prev => ({ ...prev, [product.id]: value }))}
+                              onValueChange={(value) => setSplitFlavors(prev => ({ ...prev, [cardKey]: value }))}
                             >
-                              <SelectTrigger data-testid={`select-split-flavor-${product.id}`} className="w-full">
+                              <SelectTrigger data-testid={`select-split-flavor-${cardKey}`} className="w-full">
                                 <SelectValue placeholder="Choose a second flavor" />
                               </SelectTrigger>
                               <SelectContent>
@@ -415,8 +431,8 @@ export default function ShopV2() {
                               <button
                                 type="button"
                                 className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                                onClick={() => { setSplitOpen(prev => ({ ...prev, [product.id]: false })); setSplitFlavors(prev => ({ ...prev, [product.id]: '' })); }}
-                                data-testid={`button-cancel-split-${product.id}`}
+                                onClick={() => { setSplitOpen(prev => ({ ...prev, [cardKey]: false })); setSplitFlavors(prev => ({ ...prev, [cardKey]: '' })); }}
+                                data-testid={`button-cancel-split-${cardKey}`}
                               >
                                 Don't split
                               </button>
@@ -455,7 +471,6 @@ export default function ShopV2() {
                             ) : (
                             <Button
                               onClick={() => {
-                                const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
                                 if (flavorsIncomplete) {
                                   toast({
                                     title: "Please select a flavor",
@@ -464,7 +479,7 @@ export default function ShopV2() {
                                   });
                                   return;
                                 }
-                                oneTimePurchase(product.id, flavorId, splitPick || undefined);
+                                oneTimePurchase(product.id, firstPick || undefined, splitPick || undefined);
                               }}
                               disabled={
                                 addToCartMutation.isPending ||
@@ -472,7 +487,7 @@ export default function ShopV2() {
                                 flavorsIncomplete
                               }
                               className="w-full"
-                              data-testid={`button-add-one-time-${product.id}`}
+                              data-testid={`button-add-one-time-${cardKey}`}
                             >
                               {addedToCart.has(product.id) ? (
                                 <>
@@ -502,9 +517,8 @@ export default function ShopV2() {
                                   addToCartMutation.isPending ||
                                   flavorsIncomplete
                                 }
-                                testIdPrefix={product.id}
+                                testIdPrefix={cardKey}
                                 onSelect={(frequency) => {
-                                  const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
                                   if (flavorsIncomplete) {
                                     toast({
                                       title: "Please select a flavor",
@@ -513,7 +527,7 @@ export default function ShopV2() {
                                     });
                                     return;
                                   }
-                                  subscriptionPurchase(product.id, frequency, flavorId, splitPick || undefined);
+                                  subscriptionPurchase(product.id, frequency, firstPick || undefined, splitPick || undefined);
                                 }}
                               />
                             )}
@@ -523,16 +537,15 @@ export default function ShopV2() {
                           /* No subscription option - show only one-time purchase button */
                           <Button
                             onClick={() => {
-                              const flavorId = isMultiFlavor ? selectedFlavors[product.id] : product.flavor?.id;
                               if (flavorsIncomplete) {
                                 toast({
-                                  title: isSplit ? "Please pick two flavors" : "Please select a flavor",
-                                  description: isSplit ? "Choose two different flavors for your split case" : "Choose which flavor you'd like from the dropdown above",
+                                  title: "Please select a flavor",
+                                  description: "Choose which flavor you'd like from the dropdown above",
                                   variant: "destructive"
                                 });
                                 return;
                               }
-                              oneTimePurchase(product.id, flavorId, isSplit ? splitPick : undefined);
+                              oneTimePurchase(product.id, firstPick || undefined, splitPick || undefined);
                             }}
                             disabled={
                               addToCartMutation.isPending ||
@@ -540,7 +553,7 @@ export default function ShopV2() {
                               flavorsIncomplete
                             }
                             className="w-full"
-                            data-testid={`button-add-one-time-${product.id}`}
+                            data-testid={`button-add-one-time-${cardKey}`}
                           >
                             {addedToCart.has(product.id) ? (
                               <>
