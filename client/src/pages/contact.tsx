@@ -102,8 +102,8 @@ export default function Contact() {
                 <div className="flex items-start gap-4">
                   <div>
                     <p className="font-medium">Email</p>
-                    <a href="mailto:emily@soundkombucha.com" className="text-muted-foreground hover:text-primary transition-colors">
-                      emily@soundkombucha.com
+                    <a href="mailto:orders@soundkombucha.com" className="text-muted-foreground hover:text-primary transition-colors">
+                      orders@soundkombucha.com
                     </a>
                   </div>
                 </div>

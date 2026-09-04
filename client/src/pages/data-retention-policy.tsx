@@ -161,7 +161,7 @@ export default function DataRetentionPolicy() {
                 <li><strong>Retention Inquiry:</strong> You may inquire about how long your specific data will be retained.</li>
               </ul>
               <p className="mt-4">
-                To exercise any of these rights, please contact us at emily@soundkombucha.com. 
+                To exercise any of these rights, please contact us at orders@soundkombucha.com. 
                 We will respond to all requests within 30 days.
               </p>
             </CardContent>
@@ -178,7 +178,7 @@ export default function DataRetentionPolicy() {
                 If you have questions about this Data Retention and Disposal Policy, please contact us:
               </p>
               <ul className="space-y-2 mt-4">
-                <li><strong>Email:</strong> emily@soundkombucha.com</li>
+                <li><strong>Email:</strong> orders@soundkombucha.com</li>
                 <li><strong>Phone:</strong> 206-789-5219</li>
                 <li><strong>Address:</strong> 4501 Shilshole Ave NW, Seattle, WA 98107</li>
               </ul>

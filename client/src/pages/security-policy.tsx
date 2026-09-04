@@ -131,7 +131,7 @@ export default function SecurityPolicy() {
                 please contact us:
               </p>
               <div className="mt-4 space-y-2 not-prose">
-                <p><strong>Email:</strong> <a href="mailto:emily@soundkombucha.com" className="text-primary hover:underline">emily@soundkombucha.com</a></p>
+                <p><strong>Email:</strong> <a href="mailto:orders@soundkombucha.com" className="text-primary hover:underline">orders@soundkombucha.com</a></p>
                 <p><strong>Phone:</strong> <a href="tel:+12067895219" className="text-primary hover:underline">206-789-5219</a></p>
                 <p><strong>Address:</strong> 4501 Shilshole Ave NW, Seattle, WA 98107</p>
               </div>
@@ -142,7 +142,7 @@ export default function SecurityPolicy() {
         <div className="mt-12 text-center">
           <Link href="/shop">
             <span className="text-primary hover:underline cursor-pointer" data-testid="link-back-to-shop">
-              ← Back to Shop
+              â† Back to Shop
             </span>
           </Link>
         </div>

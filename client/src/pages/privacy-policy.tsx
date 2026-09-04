@@ -138,7 +138,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Data Portability:</strong> Request your data in a machine-readable format.</li>
               </ul>
               <p className="mt-4">
-                To exercise any of these rights, please contact us at emily@soundkombucha.com.
+                To exercise any of these rights, please contact us at orders@soundkombucha.com.
               </p>
             </CardContent>
           </Card>
@@ -173,7 +173,7 @@ export default function PrivacyPolicy() {
                 If you have any questions about this Privacy Policy or our data practices, please contact us:
               </p>
               <ul className="space-y-2 mt-4">
-                <li><strong>Email:</strong> emily@soundkombucha.com</li>
+                <li><strong>Email:</strong> orders@soundkombucha.com</li>
                 <li><strong>Phone:</strong> 206-789-5219</li>
                 <li><strong>Address:</strong> 4501 Shilshole Ave NW, Seattle, WA 98107</li>
               </ul>
@@ -196,7 +196,7 @@ export default function PrivacyPolicy() {
         <div className="mt-12 text-center">
           <Link href="/shop">
             <span className="text-primary hover:underline cursor-pointer" data-testid="link-back-to-shop">
-              ← Back to Shop
+              â† Back to Shop
             </span>
           </Link>
           <span className="mx-4 text-muted-foreground">|</span>
