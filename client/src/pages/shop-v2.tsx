@@ -105,10 +105,12 @@ type RetailProductWithFlavors = RetailProduct & {
 export default function ShopV2() {
   const [addedToCart, setAddedToCart] = useState<Set<string>>(new Set());
   const [selectedFlavors, setSelectedFlavors] = useState<Record<string, string>>({});
-  // Second flavor per split-case product (allowSplit): half the case of each.
-  // Collapsed behind a quiet link by default — offered, not pitched.
-  const [splitFlavors, setSplitFlavors] = useState<Record<string, string>>({});
-  const [splitOpen, setSplitOpen] = useState<Record<string, boolean>>({});
+  // Split cases live under the MIXED card (owner, 2026-09-03): picking Mixed asks
+  // "a little of everything, or just two flavors?" — flavor cards stay pure.
+  // pickTwo toggles the mode per card; A/B are the two chosen flavors.
+  const [pickTwo, setPickTwo] = useState<Record<string, boolean>>({});
+  const [pickTwoA, setPickTwoA] = useState<Record<string, string>>({});
+  const [pickTwoB, setPickTwoB] = useState<Record<string, string>>({});
   const { toast } = useToast();
 
   const { data: products, isLoading } = useQuery<RetailProductWithFlavors[]>({
@@ -256,11 +258,12 @@ export default function ShopV2() {
                     if (p.productType === 'single-flavor' && p.flavor) {
                       return p.flavor.isActive;
                     }
-                    // For multi-flavor products, check if all flavors are active.
-                    // `every` is true for an empty array, which would render an
-                    // un-orderable card, so require at least one flavor.
+                    // For multi-flavor products, require at least one ACTIVE flavor.
+                    // (`every` here once hid the whole keg card because a retired
+                    // flavor was still linked — inactive flavors are already
+                    // filtered out of the pickers, so they shouldn't hide the card.)
                     if (p.productType === 'multi-flavor') {
-                      return p.flavors.length > 0 && p.flavors.every(f => f.isActive);
+                      return p.flavors.some(f => f.isActive);
                     }
                     return true;
                   })
@@ -284,16 +287,21 @@ export default function ShopV2() {
                     const imageUrl = cardFlavor ? cardFlavor.primaryImageUrl : product.productImageUrl;
                     const displayName = cardFlavor ? cardFlavor.name : product.productName;
                     const detailHref = lockedFlavor ? `/products/${product.id}?flavor=${lockedFlavor.id}` : `/products/${product.id}`;
-                    // Splitting is OPTIONAL on allowSplit products: one flavor is a
-                    // normal case; a second (never Mixed, never the same) makes it
-                    // half of each.
+                    // Picking Mixed on an allowSplit product offers a choice: the full
+                    // assortment, or "pick 2 flavors — 6 of each" (a split under the
+                    // hood). Other flavors sell plain cases with no split UI.
                     const isSplit = isMultiFlavor && !!(product as any).allowSplit;
                     const firstPick = cardFlavor?.id ?? (selectedFlavors[product.id] || '');
                     const firstPickName = product.flavors.find(f => f.id === firstPick)?.name;
-                    const canSplitNow = isSplit && !!firstPick && firstPickName !== 'Mixed';
-                    const rawSplitPick = splitFlavors[cardKey] || '';
-                    const splitPick = canSplitNow && rawSplitPick !== firstPick ? rawSplitPick : '';
-                    const flavorsIncomplete = showFlavorDropdown && !firstPick;
+                    const mixedChoice = isSplit && firstPickName === 'Mixed';
+                    const pickTwoOn = mixedChoice && !!pickTwo[cardKey];
+                    const aPick = pickTwoA[cardKey] || '';
+                    const bPick = pickTwoB[cardKey] || '';
+                    const pickTwoReady = !!aPick && !!bPick && aPick !== bPick;
+                    const flavorsIncomplete = (showFlavorDropdown && !firstPick) || (pickTwoOn && !pickTwoReady);
+                    // What actually goes in the cart from this card.
+                    const addFlavorId = pickTwoOn ? aPick : firstPick;
+                    const addSplitId = pickTwoOn ? bPick : '';
 
                     return (
                     <Card key={cardKey} data-testid={`card-product-${cardKey}`} className="overflow-hidden">
@@ -397,46 +405,61 @@ export default function ShopV2() {
                           </div>
                         )}
 
-                        {canSplitNow && !splitOpen[cardKey] && (
-                          <button
-                            type="button"
-                            className="w-full mb-2 text-left text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                            onClick={() => setSplitOpen(prev => ({ ...prev, [cardKey]: true }))}
-                            data-testid={`button-open-split-${cardKey}`}
-                          >
-                            + Split with a second flavor
-                          </button>
-                        )}
-
-                        {canSplitNow && splitOpen[cardKey] && (
+                        {mixedChoice && (
                           <div className="w-full mb-2">
-                            <Label className="text-xs text-muted-foreground mb-1">Second flavor</Label>
-                            <Select
-                              value={splitPick}
-                              onValueChange={(value) => setSplitFlavors(prev => ({ ...prev, [cardKey]: value }))}
-                            >
-                              <SelectTrigger data-testid={`select-split-flavor-${cardKey}`} className="w-full">
-                                <SelectValue placeholder="Choose a second flavor" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {product.flavors.filter(f => f.isActive && f.id !== firstPick && f.name !== 'Mixed').map((flavor) => (
-                                  <SelectItem key={flavor.id} value={flavor.id}>
-                                    {flavor.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <div className="flex items-center justify-between mt-1">
-                              <p className="text-xs text-muted-foreground">You'll get 6 of each.</p>
-                              <button
+                            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mixed case style">
+                              <Button
                                 type="button"
-                                className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                                onClick={() => { setSplitOpen(prev => ({ ...prev, [cardKey]: false })); setSplitFlavors(prev => ({ ...prev, [cardKey]: '' })); }}
-                                data-testid={`button-cancel-split-${cardKey}`}
+                                size="sm"
+                                variant={pickTwoOn ? "outline" : "secondary"}
+                                onClick={() => setPickTwo(prev => ({ ...prev, [cardKey]: false }))}
+                                data-testid={`button-mixed-all-${cardKey}`}
                               >
-                                Don't split
-                              </button>
+                                A little of everything
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={pickTwoOn ? "secondary" : "outline"}
+                                onClick={() => setPickTwo(prev => ({ ...prev, [cardKey]: true }))}
+                                data-testid={`button-mixed-pick2-${cardKey}`}
+                              >
+                                Pick 2 flavors
+                              </Button>
                             </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {pickTwoOn ? "6 bottles of each flavor you pick." : "2 bottles of each flavor."}
+                            </p>
+                            {pickTwoOn && (
+                              <div className="grid grid-cols-2 gap-2 mt-2">
+                                <Select
+                                  value={aPick}
+                                  onValueChange={(value) => setPickTwoA(prev => ({ ...prev, [cardKey]: value }))}
+                                >
+                                  <SelectTrigger data-testid={`select-pick2-a-${cardKey}`}>
+                                    <SelectValue placeholder="First flavor" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {product.flavors.filter(f => f.isActive && f.name !== 'Mixed' && f.id !== bPick).map((flavor) => (
+                                      <SelectItem key={flavor.id} value={flavor.id}>{flavor.name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <Select
+                                  value={bPick}
+                                  onValueChange={(value) => setPickTwoB(prev => ({ ...prev, [cardKey]: value }))}
+                                >
+                                  <SelectTrigger data-testid={`select-pick2-b-${cardKey}`}>
+                                    <SelectValue placeholder="Second flavor" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {product.flavors.filter(f => f.isActive && f.name !== 'Mixed' && f.id !== aPick).map((flavor) => (
+                                      <SelectItem key={flavor.id} value={flavor.id}>{flavor.name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            )}
                           </div>
                         )}
                         
@@ -479,7 +502,7 @@ export default function ShopV2() {
                                   });
                                   return;
                                 }
-                                oneTimePurchase(product.id, firstPick || undefined, splitPick || undefined);
+                                oneTimePurchase(product.id, addFlavorId || undefined, addSplitId || undefined);
                               }}
                               disabled={
                                 addToCartMutation.isPending ||
@@ -527,7 +550,7 @@ export default function ShopV2() {
                                     });
                                     return;
                                   }
-                                  subscriptionPurchase(product.id, frequency, firstPick || undefined, splitPick || undefined);
+                                  subscriptionPurchase(product.id, frequency, addFlavorId || undefined, addSplitId || undefined);
                                 }}
                               />
                             )}
@@ -545,7 +568,7 @@ export default function ShopV2() {
                                 });
                                 return;
                               }
-                              oneTimePurchase(product.id, firstPick || undefined, splitPick || undefined);
+                              oneTimePurchase(product.id, addFlavorId || undefined, addSplitId || undefined);
                             }}
                             disabled={
                               addToCartMutation.isPending ||
