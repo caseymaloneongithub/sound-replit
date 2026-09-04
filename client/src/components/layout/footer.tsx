@@ -23,8 +23,8 @@ export function Footer() {
               </div>
               <div className="flex items-center gap-2">
                 <Mail className="w-4 h-4 flex-shrink-0" />
-                <a href="mailto:emily@soundkombucha.com" className="hover:text-primary transition-colors">
-                  emily@soundkombucha.com
+                <a href="mailto:orders@soundkombucha.com" className="hover:text-primary transition-colors">
+                  orders@soundkombucha.com
                 </a>
               </div>
               <div className="flex items-center gap-2">

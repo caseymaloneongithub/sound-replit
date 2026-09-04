@@ -221,7 +221,9 @@ export default function WholesaleLogin() {
                   <div data-testid="single-store-match">
                     <div className="rounded-md bg-muted/60 p-3">
                       <div className="font-semibold">{single.businessName}</div>
-                      <div className="text-sm text-muted-foreground">{[single.street, single.city].filter(Boolean).join(", ") || "No address on file"}{single.locationCount > 1 ? ` · ${single.locationCount} locations` : ""}</div>
+                      {/* Multi-location stores show only the count — naming one branch's
+                          address here misleads (owner, 2026-09-04). */}
+                      <div className="text-sm text-muted-foreground">{single.locationCount > 1 ? `${single.locationCount} locations` : ([single.street, single.city].filter(Boolean).join(", ") || "No address on file")}</div>
                     </div>
                     <Button className="w-full mt-3" onClick={() => confirmStore(single)} data-testid="button-confirm-store">
                       This is my store
@@ -246,7 +248,7 @@ export default function WholesaleLogin() {
                             <span className={`mt-1.5 h-3.5 w-3.5 rounded-full border-2 shrink-0 ${sel ? "border-primary bg-primary" : "border-muted-foreground/50"}`} />
                             <span>
                               <span className="block font-semibold">{m.businessName}</span>
-                              <span className="block text-sm text-muted-foreground">{[m.street, m.city].filter(Boolean).join(", ")}{m.locationCount > 1 ? ` · ${m.locationCount} locations` : ""}</span>
+                              <span className="block text-sm text-muted-foreground">{m.locationCount > 1 ? `${m.locationCount} locations` : [m.street, m.city].filter(Boolean).join(", ")}</span>
                             </span>
                           </button>
                         );
