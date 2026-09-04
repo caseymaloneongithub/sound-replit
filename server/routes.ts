@@ -8649,7 +8649,7 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.json(order);
       }
       
-      const order = await storage.updateWholesaleOrderStatus(req.params.id, parsed.data.status);
+      let order = await storage.updateWholesaleOrderStatus(req.params.id, parsed.data.status);
       if (!order) {
         return res.status(404).json({ message: "Order not found" });
       }
@@ -8658,6 +8658,14 @@ If you have any questions, please don't hesitate to reach out!`,
         ['delivered'].includes(parsed.data.status) ? 'apply' : 'restore',
         req.user?.id
       );
+
+      // Same rule as the orders-board path: delivered with no delivery date on
+      // file means today IS the delivery date, and net-30 runs from it.
+      if (parsed.data.status === 'delivered' && !order.deliveryDate) {
+        const now = new Date();
+        order = await storage.updateWholesaleOrderDeliveryDate(req.params.id, now) || order;
+        order = await storage.updateWholesaleOrder(req.params.id, { dueDate: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) }) || order;
+      }
 
       res.json({ ...order, stockWarnings: stock.warnings });
     } catch (error: any) {
