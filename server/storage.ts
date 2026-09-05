@@ -1,4 +1,4 @@
-import { formatPhoneNumber } from "../shared/phone";
+﻿import { formatPhoneNumber } from "../shared/phone";
 import { 
   type Flavor, type InsertFlavor,
   type RetailProduct, type InsertRetailProduct,
@@ -105,7 +105,7 @@ import { db } from "./db";
 neonConfig.webSocketConstructor = ws;
 
 // Exported so other modules (e.g. billing-cron) can run true interactive
-// transactions with advisory locks — the neon-http `db` client cannot.
+// transactions with advisory locks â€” the neon-http `db` client cannot.
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const PostgresSessionStore = connectPg(session);
@@ -232,7 +232,7 @@ export interface IStorage {
   getWholesaleOrder(id: string): Promise<WholesaleOrder | undefined>;
   getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
   getWholesaleOrdersByDeliveryDateRange(startDate: Date, endDate: Date): Promise<WholesaleOrder[]>;
-  getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean }): Promise<{
+  getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean; completedOnly?: boolean }): Promise<{
     retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; notes: string | null; items: Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }> }>;
     wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; locationName: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; notes: string | null; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
   }>;
@@ -440,7 +440,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createUser(userData: InsertUser): Promise<User> {
-    // One phone format everywhere — normalize at the door, not at every caller.
+    // One phone format everywhere â€” normalize at the door, not at every caller.
     const result = await db.insert(users).values({
       ...userData,
       ...(userData.phoneNumber ? { phoneNumber: formatPhoneNumber(userData.phoneNumber) } : {}),
@@ -657,7 +657,7 @@ export class PostgresStorage implements IStorage {
   }
 
   /**
-   * Look up an unconsumed magic-link token. Matches on the token alone — it carries its
+   * Look up an unconsumed magic-link token. Matches on the token alone â€” it carries its
    * own entropy, so the caller does not supply an email that could be probed.
    */
   async getEmailVerificationCodeByToken(token: string): Promise<EmailVerificationCode | undefined> {
@@ -1042,7 +1042,7 @@ export class PostgresStorage implements IStorage {
   }
 
   // Bill-of-materials lines for a recipe. Changing these only affects FUTURE
-  // productions — stock already drawn by past batches is deliberately untouched.
+  // productions â€” stock already drawn by past batches is deliberately untouched.
   async addProcessMaterial(data: InsertProcessMaterial): Promise<ProcessMaterial> {
     const result = await db.insert(processMaterials).values(data).returning();
     return result[0];
@@ -1081,19 +1081,19 @@ export class PostgresStorage implements IStorage {
   /**
    * Log a batch. Everything happens in ONE transaction with exact numeric SQL:
    *   1. insert the production row
-   *   2. snapshot what it consumes (units × each recipe line) into production_material_usage
+   *   2. snapshot what it consumes (units Ã— each recipe line) into production_material_usage
    *   3. deduct those exact amounts from material stock in a single statement
    *   4. add finished-goods stock if the recipe is linked to a sellable product
    *
    * The previous version did step 3 as one UPDATE per recipe line with JS float math and
-   * no transaction — a failure after the insert left a batch on record with materials only
+   * no transaction â€” a failure after the insert left a batch on record with materials only
    * partly deducted, and the deduction itself was rounded in JS before it hit the DB.
    */
   async createProduction(data: InsertProduction): Promise<Production> {
     return await db.transaction(async (tx) => {
       const [created] = await tx.insert(productions).values(data).returning();
 
-      // Snapshot consumption from the recipe AS IT IS NOW — this is the record of truth
+      // Snapshot consumption from the recipe AS IT IS NOW â€” this is the record of truth
       // for reversal, so later recipe edits can't change what this batch "used".
       await tx.execute(sql`
         INSERT INTO production_material_usage (production_id, material_id, units_consumed)
@@ -1131,7 +1131,7 @@ export class PostgresStorage implements IStorage {
   }
 
   /**
-   * Delete a batch, restoring EXACTLY what it consumed from its usage snapshot — not from
+   * Delete a batch, restoring EXACTLY what it consumed from its usage snapshot â€” not from
    * the recipe as it stands today. Batches logged before the snapshot table existed have
    * no usage rows; for those we fall back to the current recipe (the old behaviour) and
    * say so in the log, because it is the best information available.
@@ -1150,7 +1150,7 @@ export class PostgresStorage implements IStorage {
           WHERE u.production_id = ${id} AND u.material_id = m.id
         `);
       } else {
-        console.warn(`[INVENTORY] Production ${id} predates usage snapshots — restoring from the CURRENT recipe (may differ from what was consumed if the recipe changed).`);
+        console.warn(`[INVENTORY] Production ${id} predates usage snapshots â€” restoring from the CURRENT recipe (may differ from what was consumed if the recipe changed).`);
         await tx.execute(sql`
           UPDATE materials m
           SET stock = m.stock + (${String(prod.units)}::numeric * pm.units)
@@ -1278,7 +1278,7 @@ export class PostgresStorage implements IStorage {
 
   /**
    * Record a physical count (or a correction) for a material. The shelf number is SET to
-   * `counted`, and the ledger records the delta against what the system believed — which
+   * `counted`, and the ledger records the delta against what the system believed â€” which
    * is the number that matters for finding drift. Computed inside the transaction from the
    * live value, so a batch logged while the count was being typed is not lost.
    *
@@ -1327,7 +1327,7 @@ export class PostgresStorage implements IStorage {
   // ===== Analytics: smart reorder + dashboard =====
 
   // Estimate each material's consumption rate from production history, then flag
-  // what will run out before a replenishment order could arrive (usage × lead time).
+  // what will run out before a replenishment order could arrive (usage Ã— lead time).
   async getReorderReport(windowDays = 90): Promise<{
     id: string; title: string; unit: string; stock: number; supplierName: string | null;
     dailyUsage: number; daysOfCover: number | null; leadTimeDays: number;
@@ -1345,7 +1345,7 @@ export class PostgresStorage implements IStorage {
     for (const p of prods) {
       producedByProcess.set(p.processId, (producedByProcess.get(p.processId) ?? 0) + Number(p.units));
     }
-    // Material consumption = Σ (process output × per-unit BOM amount)
+    // Material consumption = Î£ (process output Ã— per-unit BOM amount)
     const consumption = new Map<string, number>();
     for (const b of bom) {
       const produced = producedByProcess.get(b.processId) ?? 0;
@@ -1375,9 +1375,9 @@ export class PostgresStorage implements IStorage {
   }
 
   // Cost of goods PRODUCED over a window: material cost actually consumed by batches,
-  // derived from each recipe's BOM × units produced × material unit cost.
+  // derived from each recipe's BOM Ã— units produced Ã— material unit cost.
   //
-  // NOTE: this is reporting only — it deliberately does NOT post transactions into the
+  // NOTE: this is reporting only â€” it deliberately does NOT post transactions into the
   // accounting ledger. Supplier payments already land there (via Plaid/manual import),
   // so booking production cost as a second expense would double-count. Use this to see
   // true production cost and margin alongside revenue.
@@ -1451,7 +1451,7 @@ export class PostgresStorage implements IStorage {
    * Production-limit report: for every recipe, the maximum output producible from raw
    * material stock on hand, and which ingredient runs out first.
    *
-   * Mirrors applyProductionStock's math exactly — that method deducts
+   * Mirrors applyProductionStock's math exactly â€” that method deducts
    * `produced units x bomLine.units` per material, so the ceiling for one line is
    * stock / perUnit and the recipe's ceiling is the minimum across its lines. Floored to
    * whole output units (you can't sell 0.7 of a case, and a conservative number is the
@@ -1508,7 +1508,7 @@ export class PostgresStorage implements IStorage {
         processId,
         title: group[0].processTitle,
         unit: group[0].processUnit,
-        // null = recipe has no usable BOM lines, so there is nothing to compute — that is
+        // null = recipe has no usable BOM lines, so there is nothing to compute â€” that is
         // "recipe not set up", which is different from a hard 0 caused by an empty shelf.
         maxUnits: lines.length ? lines[0].maxFromThis : null,
         limiting: lines.length
@@ -1518,7 +1518,7 @@ export class PostgresStorage implements IStorage {
       });
     }
 
-    // Scarcest first — the recipes about to hit a wall are the ones staff need to see.
+    // Scarcest first â€” the recipes about to hit a wall are the ones staff need to see.
     return report.sort((a, b) => (a.maxUnits ?? Infinity) - (b.maxUnits ?? Infinity));
   }
 
@@ -1535,7 +1535,7 @@ export class PostgresStorage implements IStorage {
     const mats = await this.getMaterials();
     const inventoryValue = mats.reduce((s, m) => s + Number(m.stock) * Number(m.cost), 0);
     // Negative stock is almost always a delivery that was never marked received, or a
-    // batch logged against the wrong recipe — either way it means the number is wrong and
+    // batch logged against the wrong recipe â€” either way it means the number is wrong and
     // someone should look. Silently clamping it hid the signal.
     const negativeStock = mats
       .filter(m => Number(m.stock) < 0)
@@ -1588,7 +1588,7 @@ export class PostgresStorage implements IStorage {
     let casesLast30 = 0;
 
     for (const r of rows) {
-      // "Cases" = any recipe whose OUTPUT unit is a case — bottling today, canning next
+      // "Cases" = any recipe whose OUTPUT unit is a case â€” bottling today, canning next
       // month. Keying on the "Bottle:" title prefix made can batches invisible here.
       const isBottle = String(r.processUnit).toLowerCase().startsWith('case') || r.title.startsWith('Bottle:') || r.title.startsWith('Can:');
       const d = new Date(r.date);
@@ -1689,7 +1689,7 @@ export class PostgresStorage implements IStorage {
         .from(retailProductFlavors)
         .innerJoin(flavors, eq(retailProductFlavors.flavorId, flavors.id))
         .where(inArray(retailProductFlavors.retailProductId, multiFlavorProductIds))
-        // Catalog display order (the flavors admin page manages it) — this is what
+        // Catalog display order (the flavors admin page manages it) â€” this is what
         // sequences the shop's flavor-wall cards and every flavor dropdown.
         .orderBy(asc(flavors.displayOrder), asc(flavors.name));
 
@@ -2099,7 +2099,7 @@ export class PostgresStorage implements IStorage {
     ];
 
     // For multi-flavor products, also match by selected flavor (and, for split
-    // cases, the second flavor — a different split is a different line)
+    // cases, the second flavor â€” a different split is a different line)
     if (item.selectedFlavorId) {
       conditions.push(eq(retailCartItems.selectedFlavorId, item.selectedFlavorId));
     }
@@ -2525,8 +2525,8 @@ export class PostgresStorage implements IStorage {
       .from(wholesaleOrders)
       .where(whereClause);
 
-    // Location rides along so lists can tell "Evergreens — 2nd & Pike" from
-    // "Evergreens — Capitol Hill" without a per-order lookup.
+    // Location rides along so lists can tell "Evergreens â€” 2nd & Pike" from
+    // "Evergreens â€” Capitol Hill" without a per-order lookup.
     let query = db
       .select({ order: wholesaleOrders, locationName: wholesaleLocations.locationName, locationEmail: wholesaleLocations.contactEmail })
       .from(wholesaleOrders)
@@ -2587,7 +2587,7 @@ export class PostgresStorage implements IStorage {
         and(
           sql`${wholesaleOrders.deliveryDate} >= ${startOfDay}`,
           sql`${wholesaleOrders.deliveryDate} <= ${endOfDay}`,
-          // Pickups are collected at the brewery — they are not deliveries and must never
+          // Pickups are collected at the brewery â€” they are not deliveries and must never
           // appear on the delivery report or a driver's route.
           sql`${wholesaleOrders.fulfillmentMethod} <> 'pickup'`,
           isNull(wholesaleOrders.deletedAt)
@@ -2608,7 +2608,7 @@ export class PostgresStorage implements IStorage {
         and(
           sql`${wholesaleOrders.deliveryDate} >= ${startDate}`,
           sql`${wholesaleOrders.deliveryDate} < ${endDate}`,
-          // Pickups are collected at the brewery — not deliveries, so they stay off the
+          // Pickups are collected at the brewery â€” not deliveries, so they stay off the
           // delivery report and out of route planning.
           sql`${wholesaleOrders.fulfillmentMethod} <> 'pickup'`,
           isNull(wholesaleOrders.deletedAt)
@@ -2695,26 +2695,39 @@ export class PostgresStorage implements IStorage {
 
   /**
    * Orders scheduled within [start, end) for the weekly brewery board, both channels.
-   * Retail buckets by pickupDate, wholesale by deliveryDate — the field each is actually
+   * Retail buckets by pickupDate, wholesale by deliveryDate â€” the field each is actually
    * scheduled on. Items carry human names so the board can show and total them. Cancelled
    * retail orders are excluded (nothing to prepare); soft-deleted rows are always excluded.
    */
-  async getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean }): Promise<{
+  async getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean; completedOnly?: boolean }): Promise<{
     retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; notes: string | null; items: Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }> }>;
     wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; locationName: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; notes: string | null; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
   }> {
     // --- Retail (by pickupDate) ---
     // On the ACTIVE week (retailBacklog), open orders never fall off the board: anything
     // not yet fulfilled rides along even if its pickup date slipped past a prior week or
-    // was never set (owner decision 2026-08-30). Historical weeks stay date-bucketed.
+    // was never set (owner decision 2026-08-30). Weeks BEFORE the active one
+    // (completedOnly) show only finished work â€” an open order lives solely on the
+    // active week, never on two weeks at once (owner, 2026-09-05). Future weeks stay
+    // clean date-bucketed forecasts.
     const inWindow = and(gte(retailOrders.pickupDate, start), lt(retailOrders.pickupDate, end));
+    const fulfilledInWindow = and(
+      eq(retailOrders.status, 'fulfilled'),
+      gte(retailOrders.fulfilledAt, start),
+      lt(retailOrders.fulfilledAt, end),
+    );
     const retailRows = await db
       .select()
       .from(retailOrders)
       .where(and(
         isNull(retailOrders.deletedAt),
         sql`${retailOrders.status} <> 'cancelled'`,
-        opts?.retailBacklog
+        opts?.completedOnly
+          ? and(
+              eq(retailOrders.status, 'fulfilled'),
+              or(inWindow, fulfilledInWindow),
+            )
+          : opts?.retailBacklog
           ? or(
               inWindow,
               and(
@@ -2722,15 +2735,11 @@ export class PostgresStorage implements IStorage {
                 or(isNull(retailOrders.pickupDate), lt(retailOrders.pickupDate, end)),
               ),
               // An order picked up during this week stays on this week's board no
-              // matter what its pickup date says (date-less, slipped, or skewed) —
+              // matter what its pickup date says (date-less, slipped, or skewed) â€”
               // otherwise a backlog order vanished from the board entirely the
               // moment someone tapped it done (owner, 2026-09-01; widened 2026-09-02
               // after a slipped-date order disappeared on fulfill).
-              and(
-                eq(retailOrders.status, 'fulfilled'),
-                gte(retailOrders.fulfilledAt, start),
-                lt(retailOrders.fulfilledAt, end),
-              ),
+              fulfilledInWindow,
             )
           : inWindow,
       ))
@@ -2782,8 +2791,22 @@ export class PostgresStorage implements IStorage {
         isNull(wholesaleOrders.deletedAt),
         // On the ACTIVE week, open wholesale orders ride along whether their delivery
         // date is unset OR already slipped past (owner, 2026-09-01; slipped dates added
-        // 2026-09-02 to match retail) — an unscheduled or overdue order still needs packing.
-        opts?.retailBacklog
+        // 2026-09-02 to match retail) â€” an unscheduled or overdue order still needs
+        // packing. Weeks BEFORE the active one show only completed work (2026-09-05):
+        // open orders live solely on the active week.
+        opts?.completedOnly
+          ? and(
+              sql`${wholesaleOrders.status} IN ('delivered', 'fulfilled')`,
+              or(
+                and(gte(wholesaleOrders.deliveryDate, start), lt(wholesaleOrders.deliveryDate, end)),
+                and(
+                  isNull(wholesaleOrders.deliveryDate),
+                  gte(wholesaleOrders.updatedAt, start),
+                  lt(wholesaleOrders.updatedAt, end),
+                ),
+              ),
+            )
+          : opts?.retailBacklog
           ? or(
               and(gte(wholesaleOrders.deliveryDate, start), lt(wholesaleOrders.deliveryDate, end)),
               and(
@@ -2853,7 +2876,7 @@ export class PostgresStorage implements IStorage {
 
   /**
    * Recompute an order's total as items subtotal + signed adjustments, and persist it.
-   * The single writer for totalAmount whenever adjustments change — callers never send a
+   * The single writer for totalAmount whenever adjustments change â€” callers never send a
    * client-computed total. Returns the new total.
    */
   async recomputeWholesaleOrderTotal(orderId: string): Promise<number> {
@@ -2961,7 +2984,7 @@ export class PostgresStorage implements IStorage {
 
     // Uses the WebSocket `pool`, not `db`: the neon-http driver has no transaction
     // support, so this threw "No transactions support in neon-http driver" on EVERY
-    // call — which meant no wholesale order, customer- or staff-created, could be
+    // call â€” which meant no wholesale order, customer- or staff-created, could be
     // saved at all.
     const client = await pool.connect();
     try {
@@ -3884,11 +3907,11 @@ export class PostgresStorage implements IStorage {
           for (const item of orderItems) {
             const currentStock = stockMap.get(item.productId);
             if (currentStock === undefined) {
-              stockWarnings.push(`Product ${item.productId} not found — stock not adjusted`);
+              stockWarnings.push(`Product ${item.productId} not found â€” stock not adjusted`);
               continue;
             }
 
-            // Negative stock is allowed by design (owner: warn, don't block — the pickup
+            // Negative stock is allowed by design (owner: warn, don't block â€” the pickup
             // already happened). The dashboard's below-zero flag holds it until the count.
             const newStock = currentStock - item.quantity;
             if (newStock < 0) {
@@ -3938,7 +3961,7 @@ export class PostgresStorage implements IStorage {
         const v2Rows = v2Result.rows.filter((r: any) => {
           if (r.target_id) return true;
           if (r.flavor_name !== 'Mixed') {
-            stockWarnings.push(`No finished-goods product for ${r.flavor_name ?? 'unknown flavor'} — stock not adjusted`);
+            stockWarnings.push(`No finished-goods product for ${r.flavor_name ?? 'unknown flavor'} â€” stock not adjusted`);
           }
           return false;
         });
@@ -3962,7 +3985,7 @@ export class PostgresStorage implements IStorage {
           for (const [productId, quantity] of Array.from(needed.entries())) {
             const currentStock = v2StockMap.get(productId);
             if (currentStock === undefined) {
-              stockWarnings.push(`Finished-goods product ${productId} not found — stock not adjusted`);
+              stockWarnings.push(`Finished-goods product ${productId} not found â€” stock not adjusted`);
               continue;
             }
             const newStock = currentStock - quantity;
@@ -4043,7 +4066,7 @@ export class PostgresStorage implements IStorage {
         );
       }
 
-      // Mirror of the v2 fulfilment decrement — restore stock for v2 lines too, so a
+      // Mirror of the v2 fulfilment decrement â€” restore stock for v2 lines too, so a
       // cancelled order gives back exactly what fulfilment took. Only orders that were
       // actually fulfilled consumed stock, so only those are restored.
       const wasFulfilled = await client.query(
@@ -4073,7 +4096,7 @@ export class PostgresStorage implements IStorage {
 
         const restore = new Map<string, number>();
         for (const row of v2Items.rows) {
-          if (!row.target_id) continue; // untracked (e.g. Mixed) — nothing was taken
+          if (!row.target_id) continue; // untracked (e.g. Mixed) â€” nothing was taken
           restore.set(row.target_id, (restore.get(row.target_id) ?? 0) + row.quantity);
         }
 
@@ -4114,7 +4137,7 @@ export class PostgresStorage implements IStorage {
     const currentYear = new Date().getFullYear();
     
     if (client) {
-      // 🔒 Use PostgreSQL advisory lock to prevent concurrent number generation
+      // ðŸ”’ Use PostgreSQL advisory lock to prevent concurrent number generation
       // Lock ID: hash of "retail_order_number" string for uniqueness
       const lockId = 123456789; // Arbitrary but consistent number for order generation
       await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
@@ -4155,7 +4178,7 @@ export class PostgresStorage implements IStorage {
 
   /**
    * Move finished-goods stock for a wholesale order. 'apply' when it crosses into
-   * packaged — the owner's definition: it's in bottles/cans/kegs and on the shelf, so the
+   * packaged â€” the owner's definition: it's in bottles/cans/kegs and on the shelf, so the
    * order's share leaves that shelf. 'restore' when it's walked back or deleted.
    *
    * Idempotent via the ledger: the net of this order's fulfillment rows says whether its
@@ -4163,7 +4186,7 @@ export class PostgresStorage implements IStorage {
    *
    * Lines resolve to a product by (flavor, container) through the unit type; anything
    * unresolvable becomes a warning, never a silent skip. Stock MAY GO NEGATIVE by design
-   * (owner decision: warn, don't block — the physical world already happened); warnings
+   * (owner decision: warn, don't block â€” the physical world already happened); warnings
    * surface on the board and the dashboard flags negatives until the monthly count
    * reconciles them.
    */
@@ -4200,7 +4223,7 @@ export class PostgresStorage implements IStorage {
         const label = new Map<string, string>();
         for (const row of lines.rows) {
           if (!row.product_id) {
-            warnings.push(`${row.quantity}× ${row.flavor_name} ${row.unit_name}: no finished-goods product — stock not adjusted`);
+            warnings.push(`${row.quantity}Ã— ${row.flavor_name} ${row.unit_name}: no finished-goods product â€” stock not adjusted`);
             continue;
           }
           needed.set(row.product_id, (needed.get(row.product_id) ?? 0) + row.quantity);
@@ -4216,7 +4239,7 @@ export class PostgresStorage implements IStorage {
         for (const [productId, qty] of Array.from(needed.entries())) {
           const cur = stockMap.get(productId);
           if (cur === undefined) {
-            warnings.push(`${label.get(productId)}: product row missing — stock not adjusted`);
+            warnings.push(`${label.get(productId)}: product row missing â€” stock not adjusted`);
             continue;
           }
           const next = cur - qty;
@@ -4513,7 +4536,7 @@ export class PostgresStorage implements IStorage {
 
   async deleteDeliveryStop(id: string): Promise<void> {
     // Saved routes may reference this stop; clear those rows first or the FK makes
-    // the delete fail — which surfaced as an X button that "did nothing".
+    // the delete fail â€” which surfaced as an X button that "did nothing".
     await db.delete(deliveryRouteStops).where(eq(deliveryRouteStops.deliveryStopId, id));
     await db.delete(deliveryStops).where(eq(deliveryStops.id, id));
   }

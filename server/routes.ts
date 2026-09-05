@@ -6538,8 +6538,11 @@ If you have any questions, please don't hesitate to reach out!`,
       const pacificDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }).format(new Date());
       const defaultOffset = pacificDay === 'Sat' || pacificDay === 'Sun' ? 1 : 0;
       const retailBacklog = weekOffset === 0 || weekOffset === defaultOffset;
+      // Weeks BEFORE the active one show only completed work — the open orders that
+      // rode forward would otherwise appear on two weeks at once (owner, 2026-09-05).
+      const completedOnly = weekOffset < defaultOffset;
 
-      const { retail, wholesale } = await storage.getWeeklyBoardOrders(start, end, { retailBacklog });
+      const { retail, wholesale } = await storage.getWeeklyBoardOrders(start, end, { retailBacklog: retailBacklog && !completedOnly, completedOnly });
 
       // Retail and wholesale sell the SAME physical units (owner, 2026-08-30), but the
       // names differ ("Twelve 16 oz bottles" vs "Case of 12 Bottles"), which split the
