@@ -192,6 +192,7 @@ export interface IStorage {
   createSubscriptionPlan(plan: InsertSubscriptionPlan): Promise<SubscriptionPlan>;
   
   getCartItems(sessionId: string, client?: any): Promise<CartItem[]>;
+  migrateCartToSession(oldSessionId: string, newSessionId: string): Promise<void>;
   addToCart(item: InsertCartItem): Promise<CartItem>;
   updateCartItemQuantity(id: string, quantity: number): Promise<CartItem | undefined>;
   removeFromCart(id: string): Promise<void>;
@@ -1934,6 +1935,18 @@ export class PostgresStorage implements IStorage {
   async createSubscriptionPlan(plan: InsertSubscriptionPlan): Promise<SubscriptionPlan> {
     const result = await db.insert(subscriptionPlans).values(plan).returning();
     return result[0];
+  }
+
+  /**
+   * Re-key cart rows to a new session id. req.login() regenerates the session
+   * (fixation protection), which orphaned the cart mid-checkout: the payment
+   * webhook then saw an empty cart and could never build the order (Julia
+   * Parker's keg, 2026-09-05). Call after any login that can happen with a cart.
+   */
+  async migrateCartToSession(oldSessionId: string, newSessionId: string): Promise<void> {
+    if (!oldSessionId || !newSessionId || oldSessionId === newSessionId) return;
+    await db.update(retailCartItems).set({ sessionId: newSessionId }).where(eq(retailCartItems.sessionId, oldSessionId));
+    await db.update(cartItems).set({ sessionId: newSessionId }).where(eq(cartItems.sessionId, oldSessionId));
   }
 
   async getCartItems(sessionId: string, client?: any): Promise<CartItem[]> {

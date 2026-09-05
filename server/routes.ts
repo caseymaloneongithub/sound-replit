@@ -3436,14 +3436,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("[Checkout Account Creation] Failed to create Stripe customer:", error);
       });
       
-      // Log the user in
+      // Log the user in. req.login regenerates the session (fixation protection),
+      // which used to orphan the cart — the payment webhook then saw an empty cart
+      // and never built the order (Julia Parker's keg, 2026-09-05).
+      const oldSessionId = req.sessionID;
       await new Promise((resolve, reject) => {
         req.login(user, (err: any) => {
           if (err) return reject(err);
           resolve(undefined);
         });
       });
-      
+      await storage.migrateCartToSession(oldSessionId, req.sessionID);
+
       res.json({ success: true, user: { id: user.id, username: user.username, email: user.email } });
     } catch (error: any) {
       console.error("Error creating checkout account:", error);
@@ -3589,13 +3593,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         user = result[0];
 
-        // Log the user in
+        // Log the user in — and carry the cart across the session regeneration
+        // (same orphaned-cart failure as create-account; Julia Parker, 2026-09-05).
+        const oldSessionId = req.sessionID;
         await new Promise((resolve, reject) => {
           req.login(user, (err: any) => {
             if (err) return reject(err);
             resolve(undefined);
           });
         });
+        await storage.migrateCartToSession(oldSessionId, req.sessionID);
       } else {
         // For logged-in users, update their address if provided
         if (validated.address || validated.city || validated.state || validated.zipCode) {

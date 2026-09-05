@@ -192,40 +192,14 @@ export function setupAuth(app: Express) {
       req.login(user, async (err) => {
         if (err) return next(err);
         
-        // Migrate cart items from old session to new session if they're different
-        if (oldSessionId && oldSessionId !== req.sessionID) {
-          try {
-            const oldLegacyCart = await storage.getCartItems(oldSessionId);
-            const oldRetailCart = await storage.getRetailCart(oldSessionId);
-            
-            // Add old cart items to new session
-            for (const item of oldLegacyCart) {
-              await storage.addToCart({
-                sessionId: req.sessionID,
-                productId: item.productId,
-                quantity: item.quantity,
-                isSubscription: item.isSubscription,
-                subscriptionFrequency: item.subscriptionFrequency,
-              });
-            }
-            
-            for (const item of oldRetailCart) {
-              await storage.addRetailProductToCart({
-                sessionId: req.sessionID,
-                retailProductId: item.retailProductId,
-                quantity: item.quantity,
-                isSubscription: item.isSubscription,
-                subscriptionFrequency: item.subscriptionFrequency,
-              });
-            }
-            
-            // Clear old cart
-            await storage.clearCart(oldSessionId);
-            await storage.clearRetailCart(oldSessionId);
-          } catch (cartMigrationError) {
-            console.error('[Register] Cart migration error:', cartMigrationError);
-            // Don't fail registration if cart migration fails
-          }
+        // Re-key the cart to the regenerated session. (The old copy-loop rebuilt
+        // items through addRetailProductToCart and silently dropped selected and
+        // split flavors; a straight re-key keeps every column.)
+        try {
+          await storage.migrateCartToSession(oldSessionId, req.sessionID);
+        } catch (cartMigrationError) {
+          console.error('[Register] Cart migration error:', cartMigrationError);
+          // Don't fail registration if cart migration fails
         }
         
         // Don't send password back
@@ -334,40 +308,13 @@ export function setupAuth(app: Express) {
       req.login(user, async (err) => {
         if (err) return next(err);
         
-        // Migrate cart items from old session to new session if they're different
-        if (oldSessionId && oldSessionId !== req.sessionID) {
-          try {
-            const oldLegacyCart = await storage.getCartItems(oldSessionId);
-            const oldRetailCart = await storage.getRetailCart(oldSessionId);
-            
-            // Add old cart items to new session
-            for (const item of oldLegacyCart) {
-              await storage.addToCart({
-                sessionId: req.sessionID,
-                productId: item.productId,
-                quantity: item.quantity,
-                isSubscription: item.isSubscription,
-                subscriptionFrequency: item.subscriptionFrequency,
-              });
-            }
-            
-            for (const item of oldRetailCart) {
-              await storage.addRetailProductToCart({
-                sessionId: req.sessionID,
-                retailProductId: item.retailProductId,
-                quantity: item.quantity,
-                isSubscription: item.isSubscription,
-                subscriptionFrequency: item.subscriptionFrequency,
-              });
-            }
-            
-            // Clear old cart
-            await storage.clearCart(oldSessionId);
-            await storage.clearRetailCart(oldSessionId);
-          } catch (cartMigrationError) {
-            console.error('[Login] Cart migration error:', cartMigrationError);
-            // Don't fail login if cart migration fails
-          }
+        // Re-key the cart to the regenerated session (straight re-key keeps
+        // selected and split flavors, which the old copy-loop dropped).
+        try {
+          await storage.migrateCartToSession(oldSessionId, req.sessionID);
+        } catch (cartMigrationError) {
+          console.error('[Login] Cart migration error:', cartMigrationError);
+          // Don't fail login if cart migration fails
         }
         
         // Don't send password back
@@ -435,34 +382,11 @@ export function setupAuth(app: Express) {
           return res.status(500).json({ message: "Error logging in" });
         }
         
-        // Migrate cart items from old session to new session
+        // Re-key the cart to the regenerated session (straight re-key keeps
+        // selected and split flavors, which the old copy-loop dropped).
         if (oldSessionId && oldSessionId !== req.sessionID) {
           try {
-            const oldLegacyCart = await storage.getCartItems(oldSessionId);
-            const oldRetailCart = await storage.getRetailCart(oldSessionId);
-            
-            for (const item of oldLegacyCart) {
-              await storage.addToCart({
-                sessionId: req.sessionID,
-                productId: item.productId,
-                quantity: item.quantity,
-                isSubscription: item.isSubscription,
-                subscriptionFrequency: item.subscriptionFrequency,
-              });
-            }
-            
-            for (const item of oldRetailCart) {
-              await storage.addRetailProductToCart({
-                sessionId: req.sessionID,
-                retailProductId: item.retailProductId,
-                quantity: item.quantity,
-                isSubscription: item.isSubscription,
-                subscriptionFrequency: item.subscriptionFrequency,
-              });
-            }
-            
-            await storage.clearCart(oldSessionId);
-            await storage.clearRetailCart(oldSessionId);
+            await storage.migrateCartToSession(oldSessionId, req.sessionID);
           } catch (cartMigrationError) {
             console.error('[2FA Login] Cart migration error:', cartMigrationError);
           }
