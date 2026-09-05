@@ -6557,31 +6557,17 @@ If you have any questions, please don't hesitate to reach out!`,
       // prep grid into duplicate tables. Canonicalize retail unit names to the wholesale
       // unit type sharing the same finished-goods container, so one unit = one table.
       const unitRows = (await pool.query('select name, container, unit_type from wholesale_unit_types')).rows;
+      // Container is THE canonical unit link (owner, 2026-09-05): a retail product's
+      // own container column first, the finished-goods link's container as fallback
+      // for rows created before the column existed.
       const retailUnitLinks = (await pool.query(
-        `select distinct rp.unit_description, p.container
-         from retail_products rp join products p on p.id = rp.finished_product_id`
+        `select distinct rp.unit_description, coalesce(rp.container, p.container) as container
+         from retail_products rp left join products p on p.id = rp.finished_product_id
+         where coalesce(rp.container, p.container) is not null`
       )).rows;
       const retailUnitAlias = new Map<string, string>();
       for (const r of retailUnitLinks as any[]) {
         const u = (unitRows as any[]).find((u) => u.container && u.container === r.container);
-        if (u) retailUnitAlias.set(r.unit_description, u.name);
-      }
-      // Kegs have no finished-goods link (nothing to decrement), so they can't alias
-      // by container — match on the shared unit_type code instead, or the retail
-      // "5.16 Gallon Keg" and wholesale "1/6 Barrel Keg" split into two tables
-      // (owner, 2026-09-05).
-      const retailTypeLinks = (await pool.query(
-        `select distinct rp.unit_description, rp.unit_type
-         from retail_products rp where rp.finished_product_id is null`
-      )).rows;
-      for (const r of retailTypeLinks as any[]) {
-        if (retailUnitAlias.has(r.unit_description)) continue;
-        // Legacy rows put the display name in unit_type ("1/6 Barrel Keg"), newer
-        // ones the code ("sixth_barrel_keg") — accept either.
-        const key = String(r.unit_type ?? '').toLowerCase();
-        const u = (unitRows as any[]).find((u) =>
-          (u.unit_type && u.unit_type.toLowerCase() === key) || u.name.toLowerCase() === key
-        );
         if (u) retailUnitAlias.set(r.unit_description, u.name);
       }
       const canonUnit = (unitDescription: string) => retailUnitAlias.get(unitDescription) ?? unitDescription;
@@ -6695,7 +6681,12 @@ If you have any questions, please don't hesitate to reach out!`,
         stock[it.label] = container != null ? (shelfByFlavorContainer.get(`${parts!.flavor}|${container}`) ?? null) : null;
       }
       for (const it of totals.retail) {
-        stock[it.label] = shelfByRetailLabel.get(it.label) ?? null;
+        // Fall back to (flavor, container) like wholesale — a retail unit aliased
+        // onto a wholesale table (kegs) has no per-retail-product shelf entry.
+        const parts = splitLabel(it.label);
+        const container = parts ? containerByUnit.get(parts.unit) : null;
+        stock[it.label] = shelfByRetailLabel.get(it.label)
+          ?? (container != null ? (shelfByFlavorContainer.get(`${parts!.flavor}|${container}`) ?? null) : null);
       }
 
       // Full flavor catalog per unit so the prep grid shows every flavor, zeros

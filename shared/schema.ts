@@ -174,6 +174,11 @@ export const retailProducts = pgTable("retail_products", {
   // Nullable on purpose: kegs have no finished-goods counterpart, so they decrement
   // nothing. Without this link, v2 orders never touched stock at all.
   finishedProductId: varchar("finished_product_id").references(() => products.id),
+  // The physical unit this sells (owner, 2026-09-05) — same vocabulary as
+  // products.container and wholesale_unit_types.container ('bottle-case',
+  // 'keg-sixth', …). THE canonical link between retail and wholesale units: matching
+  // containers share one prep-grid table, and stock resolves by (flavor, container).
+  container: text("container"),
 });
 
 // Retail Product Flavors - Junction table for multi-flavor products

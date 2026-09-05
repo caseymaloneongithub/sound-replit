@@ -3963,11 +3963,12 @@ export class PostgresStorage implements IStorage {
            LEFT JOIN flavors f ON f.id = COALESCE(oi.selected_flavor_id, rp.flavor_id)
            LEFT JOIN LATERAL (
              SELECT p.id FROM products p
-             WHERE p.container = anchor.container
+             WHERE p.container = COALESCE(rp.container, anchor.container)
                AND p.flavor_id = COALESCE(oi.selected_flavor_id, rp.flavor_id)
              LIMIT 1
            ) fp ON true
-           WHERE oi.order_id = $1 AND rp.finished_product_id IS NOT NULL`,
+           WHERE oi.order_id = $1
+             AND (rp.finished_product_id IS NOT NULL OR rp.container IS NOT NULL)`,
           [id]
         );
 
@@ -4099,11 +4100,12 @@ export class PostgresStorage implements IStorage {
            LEFT JOIN products anchor ON anchor.id = rp.finished_product_id
            LEFT JOIN LATERAL (
              SELECT p.id FROM products p
-             WHERE p.container = anchor.container
+             WHERE p.container = COALESCE(rp.container, anchor.container)
                AND p.flavor_id = COALESCE(oi.selected_flavor_id, rp.flavor_id)
              LIMIT 1
            ) fp ON true
-           WHERE oi.order_id = $1 AND rp.finished_product_id IS NOT NULL`,
+           WHERE oi.order_id = $1
+             AND (rp.finished_product_id IS NOT NULL OR rp.container IS NOT NULL)`,
           [id]
         );
 

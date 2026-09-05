@@ -160,6 +160,7 @@ export default function AdminRetailProducts() {
     displayPerFlavor: false,
     unitType: '',
     unitDescription: '',
+    container: '',
     price: 0,
     deposit: 0,
     subscriptionDiscount: 10,
@@ -191,6 +192,7 @@ export default function AdminRetailProducts() {
         flavorId: data.productType === 'single-flavor' ? data.flavorId : null,
         unitType: data.unitType,
         unitDescription: data.unitDescription,
+        container: data.container?.trim() || null,
         price: price.toFixed(2),
         deposit: deposit.toFixed(2),
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
@@ -223,6 +225,7 @@ export default function AdminRetailProducts() {
         displayPerFlavor: false,
         unitType: '',
         unitDescription: '',
+        container: '',
         price: 0,
         deposit: 0,
         subscriptionDiscount: 10,
@@ -252,6 +255,7 @@ export default function AdminRetailProducts() {
         flavorId: data.productType === 'single-flavor' ? data.flavorId : null,
         unitType: data.unitType,
         unitDescription: data.unitDescription,
+        container: data.container?.trim() || null,
         price: price.toFixed(2),
         deposit: deposit.toFixed(2),
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
@@ -475,6 +479,25 @@ export default function AdminRetailProducts() {
                     />
                   </div>
                   <div>
+                    <Label htmlFor="retail-container">Container</Label>
+                    <Input
+                      id="retail-container"
+                      value={retailProductForm.container}
+                      onChange={(e) => setRetailProductForm({ ...retailProductForm, container: e.target.value })}
+                      placeholder="e.g., bottle-case, keg-sixth"
+                      list="container-options"
+                      data-testid="input-retail-container"
+                    />
+                    <datalist id="container-options">
+                      {Array.from(new Set(retailProducts.map(p => (p as any).container).filter(Boolean))).map((c: any) => (
+                        <option key={c} value={c} />
+                      ))}
+                    </datalist>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      The physical unit code shared with wholesale — matching containers merge into one orders-board table and drive per-flavor stock.
+                    </p>
+                  </div>
+                  <div>
                     <Label htmlFor="retail-price">Price</Label>
                     <Input
                       id="retail-price"
@@ -639,6 +662,7 @@ export default function AdminRetailProducts() {
                               displayPerFlavor: !!(product as any).displayPerFlavor,
                               unitType: product.unitType,
                               unitDescription: product.unitDescription,
+                              container: (product as any).container || '',
                               price: Number(product.price),
                               deposit: product.deposit != null ? Number(product.deposit) : 0,
                               subscriptionDiscount: product.subscriptionDiscount != null ? Number(product.subscriptionDiscount) : 10,
@@ -775,6 +799,16 @@ export default function AdminRetailProducts() {
                               value={retailProductForm.unitDescription}
                               onChange={(e) => setRetailProductForm({ ...retailProductForm, unitDescription: e.target.value })}
                               data-testid="input-edit-retail-unit-description"
+                            />
+                          </div>
+                          <div>
+                            <Label>Container</Label>
+                            <Input
+                              value={retailProductForm.container}
+                              onChange={(e) => setRetailProductForm({ ...retailProductForm, container: e.target.value })}
+                              placeholder="e.g., bottle-case, keg-sixth"
+                              list="container-options"
+                              data-testid="input-edit-retail-container"
                             />
                           </div>
                           <div>
