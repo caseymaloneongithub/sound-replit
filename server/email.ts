@@ -533,6 +533,8 @@ interface OrderReceiptEmailParams {
   orderItems: Array<{ productName: string; quantity: number; unitPrice: string }>;
   subtotal: number;
   taxAmount?: number;
+  // Refundable keg deposit included in the total (not taxed; returned with the keg).
+  depositAmount?: number;
   total: number;
   orderType: 'one-time' | 'subscription';
 }
@@ -552,6 +554,7 @@ export async function sendOrderReceiptEmail(params: OrderReceiptEmailParams): Pr
     .join('\n');
 
   const taxLine = params.taxAmount ? `\nSales Tax: $${params.taxAmount.toFixed(2)}` : '';
+  const depositLine = params.depositAmount ? `\nRefundable keg deposit: $${params.depositAmount.toFixed(2)} (no tax — refunded when the keg comes back)` : '';
 
   const mailOptions = {
     from: process.env.GMAIL_USER,
@@ -567,7 +570,7 @@ Order Number: ${params.orderNumber}
 Items:
 ${itemsList}
 
-Subtotal: $${params.subtotal.toFixed(2)}${taxLine}
+Subtotal: $${params.subtotal.toFixed(2)}${taxLine}${depositLine}
 Total: $${params.total.toFixed(2)}
 
 ${params.orderType === 'subscription' 
@@ -606,8 +609,10 @@ Puget Sound Kombucha Co.
     <div style="text-align: right; margin-top: 24px; padding: 16px; background-color: ${BRAND_COLORS.backgroundGrey}; border-radius: 4px;">
       <p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Subtotal: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.subtotal.toFixed(2)}</strong></p>
       ${params.taxAmount ? `<p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Sales Tax: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.taxAmount.toFixed(2)}</strong></p>` : ''}
+      ${params.depositAmount ? `<p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Refundable keg deposit: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.depositAmount.toFixed(2)}</strong></p>` : ''}
       <p style="margin: 8px 0 0 0; font-size: 20px; color: ${BRAND_COLORS.black}; padding-top: 8px; border-top: 2px solid ${BRAND_COLORS.borderGrey};">Total: <strong>$${params.total.toFixed(2)}</strong></p>
     </div>
+    ${params.depositAmount ? `<p style="margin: 8px 0 0 0; font-size: 13px; color: ${BRAND_COLORS.mediumGrey}; text-align: right;">The keg deposit isn't taxed and is refunded to your card when the keg comes back.</p>` : ''}
     
     <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-left: 4px solid ${BRAND_COLORS.black}; margin-top: 24px; border-radius: 4px;">
       <p style="margin: 0; color: ${BRAND_COLORS.darkGrey};">
