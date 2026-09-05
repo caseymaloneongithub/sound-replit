@@ -7967,6 +7967,57 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
+  // Staff-triggered receipt email (owner, 2026-09-05): normally the payment webhook
+  // sends this; when an order was created or repaired by hand, staff can send it here.
+  app.post("/api/retail/orders/:id/send-receipt", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const order = await storage.getRetailOrder(req.params.id);
+      if (!order || (order as any).deletedAt) return res.status(404).json({ message: "Order not found" });
+      if (!order.customerEmail) return res.status(400).json({ message: "Order has no customer email" });
+
+      const items = await db
+        .select({
+          quantity: retailOrderItemsV2.quantity,
+          unitPrice: retailOrderItemsV2.unitPrice,
+          notes: retailOrderItemsV2.notes,
+          unitDescription: retailProducts.unitDescription,
+          flavorName: flavors.name,
+        })
+        .from(retailOrderItemsV2)
+        .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
+        .leftJoin(flavors, eq(flavors.id, sql`COALESCE(${retailOrderItemsV2.selectedFlavorId}, ${retailProducts.flavorId})`))
+        .where(eq(retailOrderItemsV2.orderId, order.id));
+      if (items.length === 0) return res.status(400).json({ message: "Order has no items" });
+
+      const orderItems = items.map(i => {
+        const split = /^Split: /.test(i.notes ?? '');
+        const flavorLabel = split ? i.notes!.replace(/^Split: /, '') : (i.flavorName ?? '');
+        return {
+          productName: flavorLabel ? `${flavorLabel} - ${i.unitDescription}` : i.unitDescription,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+        };
+      });
+
+      const { sendOrderReceiptEmail } = await import('./email');
+      await sendOrderReceiptEmail({
+        customerEmail: order.customerEmail,
+        customerName: order.customerName,
+        orderNumber: order.orderNumber,
+        orderItems,
+        subtotal: Number(order.subtotal),
+        taxAmount: Number(order.taxAmount) > 0 ? Number(order.taxAmount) : undefined,
+        total: Number(order.totalAmount),
+        orderType: order.isSubscriptionOrder ? 'subscription' : 'one-time',
+      });
+
+      res.json({ success: true, sentTo: order.customerEmail });
+    } catch (e: any) {
+      console.error("Error sending receipt:", e);
+      res.status(500).json({ message: "Error sending receipt: " + e.message });
+    }
+  });
+
   app.patch("/api/retail/orders/:id/status", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const statusSchema = z.object({

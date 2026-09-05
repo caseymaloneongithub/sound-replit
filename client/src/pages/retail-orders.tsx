@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
-import { Loader2, XCircle, ArrowUpDown, DollarSign, ChevronDown, ChevronRight, Pencil } from "lucide-react";
+import { Loader2, XCircle, ArrowUpDown, DollarSign, ChevronDown, ChevronRight, Pencil, Mail } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
@@ -197,6 +197,18 @@ export default function RetailOrders() {
         description: errorDetails ? `${errorMessage}\n${errorDetails}` : errorMessage,
         variant: "destructive",
       });
+    },
+  });
+
+  const sendReceiptMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      return await apiRequest('POST', `/api/retail/orders/${orderId}/send-receipt`);
+    },
+    onSuccess: (data: any) => {
+      toast({ title: "Receipt sent", description: `Emailed to ${data.sentTo}` });
+    },
+    onError: (error: any) => {
+      toast({ title: "Couldn't send receipt", description: error.message, variant: "destructive" });
     },
   });
 
@@ -439,6 +451,20 @@ export default function RetailOrders() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex gap-1 justify-end flex-wrap">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                title="Email the order receipt to the customer"
+                                disabled={sendReceiptMutation.isPending}
+                                onClick={() => {
+                                  if (confirm(`Email the receipt for #${order.orderNumber} to ${order.customerEmail}?`)) {
+                                    sendReceiptMutation.mutate(order.id);
+                                  }
+                                }}
+                                data-testid={`button-send-receipt-${order.id}`}
+                              >
+                                <Mail className="w-3 h-3" />
+                              </Button>
                               {Number(order.depositAmount || 0) > 0 && !order.depositRefundedAt && order.stripePaymentIntentId && (
                                 <AlertDialog>
                                   <AlertDialogTrigger asChild>
