@@ -389,11 +389,18 @@ export default function WholesaleCustomerPlaceOrder() {
                         {unitTypes
                           .filter(ut => ut.isActive)
                           .sort((a, b) => a.displayOrder - b.displayOrder)
-                          .map((unitType) => (
-                            <SelectItem key={unitType.id} value={unitType.id}>
-                              {unitType.name}
-                            </SelectItem>
-                          ))}
+                          .map((unitType) => {
+                            // "available Sep 14" while the date is ahead; silent after.
+                            const af = (unitType as any).availableFrom;
+                            const note = af && new Date(af) > new Date()
+                              ? ` — available ${new Date(af).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                              : "";
+                            return (
+                              <SelectItem key={unitType.id} value={unitType.id}>
+                                {unitType.name}{note}
+                              </SelectItem>
+                            );
+                          })}
                       </SelectContent>
                     </Select>
                   </div>

@@ -2500,6 +2500,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/wholesale-unit-types", isAdmin, async (req, res) => {
     try {
       const { flavorIds, ...unitTypeData } = req.body;
+      // The client sends the availability date as a yyyy-MM-dd string; the derived
+      // schema wants a Date. Midnight PACIFIC, so "available Sep 14" means Sep 14.
+      if (typeof unitTypeData.availableFrom === 'string') {
+        unitTypeData.availableFrom = unitTypeData.availableFrom
+          ? new Date(`${unitTypeData.availableFrom}T00:00:00-07:00`)
+          : null;
+      }
       const validatedData = insertWholesaleUnitTypeSchema.parse(unitTypeData);
       const unitType = await storage.createWholesaleUnitType(validatedData);
       
@@ -2520,6 +2527,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/wholesale-unit-types/:id", isAdmin, async (req, res) => {
     try {
       const { flavorIds, ...unitTypeData } = req.body;
+      if (typeof unitTypeData.availableFrom === 'string') {
+        unitTypeData.availableFrom = unitTypeData.availableFrom
+          ? new Date(`${unitTypeData.availableFrom}T00:00:00-07:00`)
+          : null;
+      }
       const partialUnitTypeSchema = insertWholesaleUnitTypeSchema.partial();
       const validatedUpdates = partialUnitTypeSchema.parse(unitTypeData);
       const unitType = await storage.updateWholesaleUnitType(req.params.id, validatedUpdates);

@@ -22,7 +22,15 @@ import { useToast } from "@/hooks/use-toast";
  */
 
 type Loc = { id: string; locationName: string; street: string; city: string };
-type UnitType = { id: string; name: string; description?: string; flavors: Array<{ id: string; name: string }> };
+type UnitType = { id: string; name: string; description?: string; availableFrom?: string | null; flavors: Array<{ id: string; name: string }> };
+
+// "available Sep 14" while the date is still ahead; silent once it passes.
+function availabilityNote(u: { availableFrom?: string | null }): string {
+  if (!u.availableFrom) return "";
+  const d = new Date(u.availableFrom);
+  if (d <= new Date()) return "";
+  return ` — available ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+}
 type Line = { unitTypeId: string; flavorId: string; quantity: number };
 
 export default function WholesaleGuestOrder() {
@@ -154,7 +162,7 @@ export default function WholesaleGuestOrder() {
                       <SelectTrigger className="mt-1.5" data-testid={`select-unit-${i}`}><SelectValue placeholder="Choose…" /></SelectTrigger>
                       <SelectContent>
                         {unitTypes.map((ut) => (
-                          <SelectItem key={ut.id} value={ut.id}>{ut.name}</SelectItem>
+                          <SelectItem key={ut.id} value={ut.id}>{ut.name}{availabilityNote(ut)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>

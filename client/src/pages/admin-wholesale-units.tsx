@@ -22,6 +22,8 @@ export default function AdminWholesaleUnits() {
     name: '',
     unitType: '',
     description: '',
+    container: '',
+    availableFrom: '',
     defaultPrice: 0,
     availableFlavors: [] as string[],
     isActive: true,
@@ -94,6 +96,8 @@ export default function AdminWholesaleUnits() {
           name: unitType.name,
           unitType: unitType.unitType,
           description: unitType.description || '',
+          container: (unitType as any).container || '',
+          availableFrom: (unitType as any).availableFrom ? String((unitType as any).availableFrom).slice(0, 10) : '',
           defaultPrice: Number(unitType.defaultPrice),
           availableFlavors: unitType.flavors?.map(f => f.id) || [],
           isActive: unitType.isActive,
@@ -105,6 +109,8 @@ export default function AdminWholesaleUnits() {
         name: '',
         unitType: '',
         description: '',
+        container: '',
+        availableFrom: '',
         defaultPrice: 0,
         availableFlavors: [],
         isActive: true,
@@ -132,6 +138,8 @@ export default function AdminWholesaleUnits() {
       const { availableFlavors, ...rest } = data;
       const payload = {
         ...rest,
+        container: rest.container?.trim() || null,
+        availableFrom: rest.availableFrom || null,
         defaultPrice: rest.defaultPrice.toString(),
         flavorIds: availableFlavors
       };
@@ -140,7 +148,7 @@ export default function AdminWholesaleUnits() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/wholesale-unit-types'] });
       setEditingWholesaleUnitType(null);
-      setWholesaleUnitTypeForm({ name: '', unitType: '', description: '', defaultPrice: 0, availableFlavors: [], isActive: true, displayOrder: 0 });
+      setWholesaleUnitTypeForm({ name: '', unitType: '', description: '', container: '', availableFrom: '', defaultPrice: 0, availableFlavors: [], isActive: true, displayOrder: 0 });
       toast({ title: "Wholesale unit type created", description: "Wholesale unit type has been created successfully" });
     },
     onError: (error: any) => {
@@ -154,6 +162,8 @@ export default function AdminWholesaleUnits() {
       const { availableFlavors, ...rest } = data;
       const payload = {
         ...rest,
+        container: rest.container?.trim() || null,
+        availableFrom: rest.availableFrom || null,
         ...(rest.defaultPrice !== undefined && { defaultPrice: rest.defaultPrice.toString() }),
         flavorIds: availableFlavors
       };
@@ -330,6 +340,32 @@ export default function AdminWholesaleUnits() {
                     />
                   </div>
                   <div>
+                    <Label htmlFor="wholesale-container">Container</Label>
+                    <Input
+                      id="wholesale-container"
+                      value={wholesaleUnitTypeForm.container}
+                      onChange={(e) => setWholesaleUnitTypeForm({ ...wholesaleUnitTypeForm, container: e.target.value })}
+                      placeholder="e.g., bottle-case, can-case, keg-sixth"
+                      data-testid="input-wholesale-container"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      The physical unit code shared with retail — matching containers merge into one orders-board table and drive per-flavor stock.
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="wholesale-available-from">Available from (optional)</Label>
+                    <Input
+                      id="wholesale-available-from"
+                      type="date"
+                      value={wholesaleUnitTypeForm.availableFrom}
+                      onChange={(e) => setWholesaleUnitTypeForm({ ...wholesaleUnitTypeForm, availableFrom: e.target.value })}
+                      data-testid="input-wholesale-available-from"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Customers can order right away; pickers show "available &lt;date&gt;" until this date passes. Leave blank for available now.
+                    </p>
+                  </div>
+                  <div>
                     <Label htmlFor="wholesale-display-order">Display Order</Label>
                     <Input
                       id="wholesale-display-order"
@@ -447,6 +483,8 @@ export default function AdminWholesaleUnits() {
                             name: unitType.name,
                             unitType: unitType.unitType,
                             description: unitType.description,
+                            container: (unitType as any).container || '',
+                            availableFrom: (unitType as any).availableFrom ? String((unitType as any).availableFrom).slice(0, 10) : '',
                             defaultPrice: Number(unitType.defaultPrice),
                             availableFlavors: unitType.flavors?.map(f => f.id) || [],
                             isActive: unitType.isActive,
@@ -498,6 +536,27 @@ export default function AdminWholesaleUnits() {
                             onChange={(e) => setWholesaleUnitTypeForm({ ...wholesaleUnitTypeForm, defaultPrice: parseFloat(e.target.value) || 0 })}
                             data-testid="input-edit-wholesale-price"
                           />
+                        </div>
+                        <div>
+                          <Label>Container</Label>
+                          <Input
+                            value={wholesaleUnitTypeForm.container}
+                            onChange={(e) => setWholesaleUnitTypeForm({ ...wholesaleUnitTypeForm, container: e.target.value })}
+                            placeholder="e.g., bottle-case, can-case, keg-sixth"
+                            data-testid="input-edit-wholesale-container"
+                          />
+                        </div>
+                        <div>
+                          <Label>Available from (optional)</Label>
+                          <Input
+                            type="date"
+                            value={wholesaleUnitTypeForm.availableFrom}
+                            onChange={(e) => setWholesaleUnitTypeForm({ ...wholesaleUnitTypeForm, availableFrom: e.target.value })}
+                            data-testid="input-edit-wholesale-available-from"
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Customers can order right away; pickers show "available &lt;date&gt;" until this passes.
+                          </p>
                         </div>
                         <div>
                           <Label>Display Order</Label>

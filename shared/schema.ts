@@ -200,6 +200,10 @@ export const wholesaleUnitTypes = pgTable("wholesale_unit_types", {
   container: text("container"),
   description: text("description").notNull(), // e.g., "12 bottles per case"
   defaultPrice: decimal("default_price", { precision: 10, scale: 2 }).notNull(),
+  // Orderable now, deliverable from this date (owner, 2026-09-08, for the cans
+  // launch): customer pickers show "available <date>" until it passes, then the
+  // note disappears on its own. Null = available now.
+  availableFrom: timestamp("available_from"),
   isActive: boolean("is_active").notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
 });
