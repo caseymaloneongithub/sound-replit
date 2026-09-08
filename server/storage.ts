@@ -1947,6 +1947,11 @@ export class PostgresStorage implements IStorage {
     if (!oldSessionId || !newSessionId || oldSessionId === newSessionId) return;
     await db.update(retailCartItems).set({ sessionId: newSessionId }).where(eq(retailCartItems.sessionId, oldSessionId));
     await db.update(cartItems).set({ sessionId: newSessionId }).where(eq(cartItems.sessionId, oldSessionId));
+    // A payment intent created BEFORE the login snapshots the old session id on its
+    // checkout-session row; the webhook later looks the cart up by that snapshot.
+    // Re-key it too, or the cart moves and the webhook stares at the empty old id
+    // (Larissa Molina's Mixed case, 2026-09-08).
+    await db.update(retailCheckoutSessions).set({ sessionId: newSessionId }).where(eq(retailCheckoutSessions.sessionId, oldSessionId));
   }
 
   async getCartItems(sessionId: string, client?: any): Promise<CartItem[]> {
