@@ -41,6 +41,25 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Cans announcement (owner, 2026-09-08): the bottles→cans switch, launching the
+          week of Sep 14. Remove this section once the transition is old news. */}
+      <section className="border-b" data-testid="section-cans-announcement">
+        <div className="container mx-auto px-4 py-10 max-w-5xl">
+          <p className="text-xs font-semibold tracking-wider uppercase text-cedar">Big news</p>
+          <h2 className="text-3xl font-bold mt-2">We're switching to cans!</h2>
+          <p className="text-muted-foreground mt-3 max-w-3xl">
+            Starting the week of September 14, we're moving from 16oz glass bottles to 12oz
+            aluminum cans — a lower price, a just-right everyday size, easy to take places
+            glass can't go, and easier to recycle.
+          </p>
+          <p className="text-muted-foreground mt-3 max-w-3xl">
+            Most importantly, the kombucha itself hasn't changed: still super low sugar,
+            flavored only with tea, dried herbs, and spices, all organic, and brewed right
+            here in Ballard.
+          </p>
+        </div>
+      </section>
+
       {/* Who are you, and what should you do here? Two lanes — trade and home — each with
           the one or two actions that matter, and each aware of whether you're already a
           customer. */}
