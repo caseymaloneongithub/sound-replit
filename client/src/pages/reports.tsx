@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { WholesaleOrder, RetailSubscription } from "@shared/schema";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useAuth } from "@/hooks/use-auth";
@@ -36,37 +38,64 @@ export default function Reports() {
     { name: 'Delivered', value: orders?.filter(o => o.status === 'delivered').length || 0, color: '#10b981' },
   ];
 
+  // Trend granularity (owner, 2026-09-09): weekly by default — with under two
+  // months of history, monthly buckets were two lonely bars — monthly a toggle away.
+  const [granularity, setGranularity] = useState<'weekly' | 'monthly'>('weekly');
+
   const getLast6Months = () => {
-    const months = [];
+    const months: Array<{ label: string; year: number; monthIdx: number; revenue: number; orders: number }> = [];
     const now = new Date();
     for (let i = 5; i >= 0; i--) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
       months.push({
-        month: date.toLocaleDateString('en-US', { month: 'short' }),
+        label: date.toLocaleDateString('en-US', { month: 'short' }),
+        year: date.getFullYear(),
+        monthIdx: date.getMonth(),
         revenue: 0,
         orders: 0,
       });
     }
-    
     orders?.forEach(order => {
       const orderDate = new Date(order.orderDate);
-      const monthIndex = months.findIndex(m => {
-        const date = new Date();
-        date.setMonth(date.getMonth() - (5 - months.indexOf(m)));
-        return orderDate.getMonth() === date.getMonth() && 
-               orderDate.getFullYear() === date.getFullYear();
-      });
-      
-      if (monthIndex >= 0) {
-        months[monthIndex].revenue += Number(order.totalAmount);
-        months[monthIndex].orders += 1;
+      const bucket = months.find(m => orderDate.getMonth() === m.monthIdx && orderDate.getFullYear() === m.year);
+      if (bucket) {
+        bucket.revenue += Number(order.totalAmount);
+        bucket.orders += 1;
       }
     });
-    
-    return months;
+    return months.map(({ label, revenue, orders: n }) => ({ label, revenue, orders: n }));
   };
 
-  const monthlyData = getLast6Months();
+  const getLast12Weeks = () => {
+    const now = new Date();
+    const daysSinceMonday = (now.getDay() + 6) % 7; // Mon -> 0 … Sun -> 6
+    const thisMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday);
+    const weeks: Array<{ label: string; start: Date; end: Date; revenue: number; orders: number }> = [];
+    for (let i = 11; i >= 0; i--) {
+      const start = new Date(thisMonday);
+      start.setDate(start.getDate() - i * 7);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 7);
+      weeks.push({
+        label: start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        start,
+        end,
+        revenue: 0,
+        orders: 0,
+      });
+    }
+    orders?.forEach(order => {
+      const orderDate = new Date(order.orderDate);
+      const bucket = weeks.find(w => orderDate >= w.start && orderDate < w.end);
+      if (bucket) {
+        bucket.revenue += Number(order.totalAmount);
+        bucket.orders += 1;
+      }
+    });
+    return weeks.map(({ label, revenue, orders: n }) => ({ label, revenue, orders: n }));
+  };
+
+  const trendData = granularity === 'weekly' ? getLast12Weeks() : getLast6Months();
 
   return (
     <StaffLayout>
@@ -146,15 +175,37 @@ export default function Reports() {
 
       {isAdmin && (
         <Card data-testid="card-revenue-chart">
-          <CardHeader>
-            <CardTitle>Revenue & Orders Trend</CardTitle>
-            <CardDescription>Last 6 months performance</CardDescription>
+          <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
+            <div>
+              <CardTitle>Revenue & Orders Trend</CardTitle>
+              <CardDescription>
+                {granularity === 'weekly' ? 'Last 12 weeks (weeks start Monday)' : 'Last 6 months'}
+              </CardDescription>
+            </div>
+            <div className="flex gap-1">
+              <Button
+                size="sm"
+                variant={granularity === 'weekly' ? 'secondary' : 'outline'}
+                onClick={() => setGranularity('weekly')}
+                data-testid="button-trend-weekly"
+              >
+                Weekly
+              </Button>
+              <Button
+                size="sm"
+                variant={granularity === 'monthly' ? 'secondary' : 'outline'}
+                onClick={() => setGranularity('monthly')}
+                data-testid="button-trend-monthly"
+              >
+                Monthly
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={monthlyData}>
+              <BarChart data={trendData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
+                <XAxis dataKey="label" />
                 <YAxis yAxisId="left" orientation="left" />
                 <YAxis yAxisId="right" orientation="right" />
                 <Tooltip />
