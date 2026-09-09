@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { useStripe, Elements, CardElement, useElements } from '@stripe/react-stripe-js';
+import { useStripe, Elements, PaymentElement, useElements } from '@stripe/react-stripe-js';
 import { loadStripe, Stripe } from '@stripe/stripe-js';
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -215,31 +215,18 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
     setIsProcessing(true);
 
     try {
-      const cardElement = elements.getElement(CardElement);
-      
-      if (!cardElement) {
-        throw new Error('Card element not found');
-      }
-
       // Handle subscription checkout
       if (isSubscription) {
-        // Create payment method
-        const { error: pmError, paymentMethod } = await stripe.createPaymentMethod({
-          type: 'card',
-          card: cardElement,
-          billing_details: {
-            name: customerInfo.customerName,
-            email: customerInfo.customerEmail,
-            phone: customerInfo.customerPhone,
-            address: {
-              line1: customerInfo.address,
-              city: customerInfo.city,
-              state: customerInfo.state,
-              postal_code: customerInfo.zipCode,
-              country: 'US',
-            },
-          },
-        });
+        // Deferred-intent flow: the Payment Element (mode: 'setup') validates on
+        // submit, then hands us a reusable payment method — card or wallet — that
+        // the subscription charges off-session.
+        const { error: submitError } = await elements.submit();
+        if (submitError) {
+          setIsProcessing(false);
+          return;
+        }
+
+        const { error: pmError, paymentMethod } = await stripe.createPaymentMethod({ elements });
 
         if (pmError) {
           toast({
@@ -278,27 +265,16 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
         return;
       }
 
-      // Handle one-time purchase checkout
-      const { error, paymentIntent } = await stripe.confirmCardPayment(
-        paymentInfo.clientSecret,
-        {
-          payment_method: {
-            card: cardElement,
-            billing_details: {
-              name: customerInfo.customerName,
-              email: customerInfo.customerEmail,
-              phone: customerInfo.customerPhone,
-              address: {
-                line1: customerInfo.address,
-                city: customerInfo.city,
-                state: customerInfo.state,
-                postal_code: customerInfo.zipCode,
-                country: 'US',
-              },
-            },
-          },
-        }
-      );
+      // Handle one-time purchase checkout. redirect: 'if_required' keeps card and
+      // wallet payments on this page; the return_url only matters for methods that
+      // bounce through a redirect (none with a card-only intent).
+      const { error, paymentIntent } = await stripe.confirmPayment({
+        elements,
+        confirmParams: {
+          return_url: `${window.location.origin}/checkout/success`,
+        },
+        redirect: 'if_required',
+      });
 
       if (error) {
         toast({
@@ -539,24 +515,34 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
           </Button>
         </div>
         <div className="space-y-2">
-          <label className="text-sm font-medium">Card Details</label>
-          <div className="border rounded-md p-3">
-            <CardElement 
-              options={{
-                disableLink: true,
-                style: {
-                  base: {
-                    fontSize: '16px',
-                    color: '#0F172A',
-                    '::placeholder': {
-                      color: '#94A3B8',
-                    },
+          <label className="text-sm font-medium">Payment</label>
+          {/* Payment Element renders Apple Pay / Google Pay above the card fields on
+              devices that can actually complete them (wallet enabled in the Stripe
+              dashboard + domain registered); everyone else just sees the card form. */}
+          <PaymentElement
+            options={{
+              // Link injects a "Bank" row here while it's enabled in the Stripe
+              // dashboard — this stripe-js version has no client-side off switch
+              // (the old CardElement's disableLink has no Payment Element
+              // equivalent). Turn Link off in Dashboard → Payment methods to
+              // keep this to card + Apple Pay + Google Pay.
+              wallets: { applePay: 'auto', googlePay: 'auto' },
+              defaultValues: {
+                billingDetails: {
+                  name: customerInfo?.customerName,
+                  email: customerInfo?.customerEmail,
+                  phone: customerInfo?.customerPhone,
+                  address: {
+                    line1: customerInfo?.address,
+                    city: customerInfo?.city,
+                    state: customerInfo?.state,
+                    postal_code: customerInfo?.zipCode,
+                    country: 'US',
                   },
                 },
-                hidePostalCode: false,
-              }}
-            />
-          </div>
+              },
+            }}
+          />
         </div>
       </div>
       <Button 
@@ -961,10 +947,18 @@ export default function CartCheckout() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Elements 
-                stripe={stripePromise} 
-                options={{ 
-                  ...(clientSecret && { clientSecret }), // Only include clientSecret for one-time purchases
+              <Elements
+                stripe={stripePromise}
+                options={{
+                  // One-time purchases confirm the payment intent created at page load.
+                  // Subscriptions have no intent yet: deferred 'setup' mode collects a
+                  // reusable payment method that createPaymentMethod({ elements }) reads.
+                  // paymentMethodTypes pins setup mode to card — Apple/Google Pay ride
+                  // on card, but Klarna/Cash App/ACH can't back off-session
+                  // subscription billing. One-time intents are card-only server-side.
+                  ...(hasSubscriptions
+                    ? { mode: 'setup' as const, currency: 'usd', paymentMethodCreation: 'manual' as const, paymentMethodTypes: ['card'] }
+                    : { clientSecret }),
                   loader: 'never',
                   appearance: {
                     variables: {
