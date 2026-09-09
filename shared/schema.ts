@@ -924,6 +924,9 @@ export const materials = pgTable("materials", {
   supplierId: varchar("supplier_id").references(() => suppliers.id),
   orderSize: decimal("order_size", { precision: 14, scale: 4 }).notNull().default('0'), // default reorder quantity
   stock: decimal("stock", { precision: 14, scale: 4 }).notNull().default('0'), // current on-hand
+  // Inactive = retired but kept: hidden from the list (behind a toggle), excluded from
+  // reorder/dashboard numbers and pickers. Distinct from deletedAt, which means gone.
+  isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
   deletedAt: timestamp("deleted_at"),
 });

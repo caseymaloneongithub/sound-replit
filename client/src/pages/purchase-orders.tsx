@@ -29,7 +29,7 @@ type PurchaseOrder = {
   id: string; supplierId: string; dateOrdered: string; dateDelivered: string | null;
   cost: string; notes: string | null; supplierName: string | null; lines: POLine[];
 };
-type MaterialLite = { id: string; title: string; unit: string; cost?: string };
+type MaterialLite = { id: string; title: string; unit: string; cost?: string; isActive: boolean };
 
 const n = (v: string | number | null | undefined) => {
   const x = typeof v === "number" ? v : parseFloat(v ?? "0");
@@ -121,7 +121,7 @@ function CreateOrderForm({ suppliers, materials, onClose }: {
                     <SelectValue placeholder="Material" />
                   </SelectTrigger>
                   <SelectContent>
-                    {materials.map((m) => (
+                    {materials.filter((m) => m.isActive || m.id === l.materialId).map((m) => (
                       <SelectItem key={m.id} value={m.id}>{shortMaterial(m.title)}</SelectItem>
                     ))}
                   </SelectContent>

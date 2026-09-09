@@ -30,7 +30,7 @@ type Recipe = {
   materials: BomLine[];
 };
 type ProductLite = { id: string; name: string };
-type MaterialLite = { id: string; title: string; unit: string };
+type MaterialLite = { id: string; title: string; unit: string; isActive: boolean };
 
 const n = (v: string | number | null | undefined) => {
   const x = typeof v === "number" ? v : parseFloat(v ?? "0");
@@ -181,7 +181,8 @@ function BomEditor({ recipe, materials, onClose }: {
   });
 
   // Materials not already on this recipe
-  const available = materials.filter((m) => !recipe.materials.some((b) => b.materialId === m.id));
+  // Only active materials can be added to a recipe; lines already on the BOM keep rendering.
+  const available = materials.filter((m) => m.isActive && !recipe.materials.some((b) => b.materialId === m.id));
 
   return (
     <div className="space-y-4 py-2">

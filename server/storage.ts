@@ -1336,7 +1336,8 @@ export class PostgresStorage implements IStorage {
     dailyUsage: number; daysOfCover: number | null; leadTimeDays: number;
     reorderPoint: number; suggestedQty: number; status: 'order-now' | 'watch' | 'ok';
   }[]> {
-    const mats = await this.getMaterials();
+    // Inactive materials are retired — never suggest reordering them.
+    const mats = (await this.getMaterials()).filter((m) => m.isActive);
     const bom = await db.select().from(processMaterials);
 
     const cutoff = new Date();
@@ -1535,12 +1536,16 @@ export class PostgresStorage implements IStorage {
     brewMonthlyFlavors: string[];
     negativeStock: { id: string; title: string; unit: string; stock: number }[];
   }> {
-    const mats = await this.getMaterials();
+    // Dashboard counts and value cover active materials only — retired items with
+    // leftover stock shouldn't inflate the numbers (negative-stock alerts still do,
+    // since a wrong count is a wrong count either way).
+    const allMats = await this.getMaterials();
+    const mats = allMats.filter((m) => m.isActive);
     const inventoryValue = mats.reduce((s, m) => s + Number(m.stock) * Number(m.cost), 0);
     // Negative stock is almost always a delivery that was never marked received, or a
     // batch logged against the wrong recipe â€” either way it means the number is wrong and
     // someone should look. Silently clamping it hid the signal.
-    const negativeStock = mats
+    const negativeStock = allMats
       .filter(m => Number(m.stock) < 0)
       .map(m => ({ id: m.id, title: m.title, unit: m.unit, stock: Number(m.stock) }))
       .sort((a, b) => a.stock - b.stock);

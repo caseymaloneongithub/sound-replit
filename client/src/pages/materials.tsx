@@ -16,6 +16,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Loader2, Search, Plus } from "lucide-react";
 import type { Material, Supplier } from "@shared/schema";
 
@@ -82,6 +83,7 @@ function MaterialForm({
   const [stock, setStock] = useState(material ? String(n(material.stock)) : "0");
   const [orderSize, setOrderSize] = useState(material ? String(n(material.orderSize)) : "0");
   const [supplierId, setSupplierId] = useState<string>(material?.supplierId ?? "none");
+  const [isActive, setIsActive] = useState(material?.isActive ?? true);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -94,6 +96,7 @@ function MaterialForm({
         cost: String(n(cost)),
         orderSize: String(n(orderSize)),
         supplierId: supplierId === "none" ? null : supplierId,
+        isActive,
       };
       if (!isEdit) body.stock = String(n(stock));
       return isEdit
@@ -174,6 +177,17 @@ function MaterialForm({
             onChange={(e) => setOrderSize(e.target.value)} data-testid="input-material-ordersize" />
         </div>
       </div>
+      {isEdit && (
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div>
+            <div className="text-sm font-medium">Active</div>
+            <p className="text-xs text-muted-foreground">
+              Inactive materials are hidden from this list, reports, and pickers — stock and history are kept.
+            </p>
+          </div>
+          <Switch checked={isActive} onCheckedChange={setIsActive} data-testid="switch-material-active" />
+        </div>
+      )}
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>Cancel</Button>
         <Button onClick={() => save.mutate()} disabled={!canSave || save.isPending}
@@ -276,6 +290,7 @@ export default function Materials() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string>("all");
+  const [showInactive, setShowInactive] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<EnrichedMaterial | null>(null);
   const [counting, setCounting] = useState<EnrichedMaterial | null>(null);
@@ -296,6 +311,8 @@ export default function Materials() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const inactiveCount = useMemo(() => materials.filter((m) => !m.isActive).length, [materials]);
+
   const categories = useMemo(() => {
     const set = new Set<string>();
     for (const m of materials) set.add(splitTitle(m.title).category);
@@ -305,22 +322,26 @@ export default function Materials() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return materials.filter((m) => {
+      if (!m.isActive && !showInactive) return false;
       const { category: cat } = splitTitle(m.title);
       if (category !== "all" && cat !== category) return false;
       if (q && !m.title.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [materials, search, category]);
+  }, [materials, search, category, showInactive]);
 
+  // Stats cover active materials only — matches the dashboard's numbers.
   const stats = useMemo(() => {
-    let value = 0, reorder = 0, watch = 0;
+    let value = 0, reorder = 0, watch = 0, total = 0;
     for (const m of materials) {
+      if (!m.isActive) continue;
+      total++;
       value += n(m.stock) * n(m.cost);
       const h = health(m).key;
       if (h === "reorder") reorder++;
       else if (h === "watch") watch++;
     }
-    return { value, reorder, watch, total: materials.length };
+    return { value, reorder, watch, total };
   }, [materials]);
 
   if (isLoading) {
@@ -374,6 +395,12 @@ export default function Materials() {
               ))}
             </SelectContent>
           </Select>
+          {inactiveCount > 0 && (
+            <label className="flex items-center gap-2 text-sm text-muted-foreground whitespace-nowrap sm:px-1">
+              <Switch checked={showInactive} onCheckedChange={setShowInactive} data-testid="switch-show-inactive" />
+              Show inactive ({inactiveCount})
+            </label>
+          )}
         </div>
 
         <Card>
@@ -404,12 +431,17 @@ export default function Materials() {
                   const h = health(m);
                   const pct = h.ratio === null ? 0 : Math.min(100, Math.round(h.ratio * 100));
                   return (
-                    <TableRow key={m.id} data-testid={`row-material-${m.id}`}>
+                    <TableRow key={m.id} className={m.isActive ? undefined : "opacity-50"} data-testid={`row-material-${m.id}`}>
                       <TableCell>
                         <div className="font-medium">{name}</div>
-                        {cat !== UNCATEGORIZED && (
-                          <Badge variant="secondary" className="mt-1 text-xs">{cat}</Badge>
-                        )}
+                        <div className="flex gap-1 mt-1">
+                          {cat !== UNCATEGORIZED && (
+                            <Badge variant="secondary" className="text-xs">{cat}</Badge>
+                          )}
+                          {!m.isActive && (
+                            <Badge variant="outline" className="text-xs">Inactive</Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         {m.supplierName ? (
