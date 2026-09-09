@@ -40,7 +40,7 @@ export default function OurKombucha() {
   return (
     <div className="min-h-screen bg-background">
       <section className="container mx-auto px-4 py-12">
-        <div className="max-w-2xl mb-6">
+        <div className="max-w-2xl mx-auto text-center mb-6">
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cedar">Our kombucha</p>
           <h1 className="text-4xl font-bold mt-2 mb-3" data-testid="text-flavors-title">The flavors</h1>
           <p className="text-muted-foreground">
