@@ -37,9 +37,18 @@ const n = (v: string | number | null | undefined) => {
 };
 const money = (v: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v);
-const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-US",
-  { year: "numeric", month: "short", day: "numeric" });
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// The date is stored as UTC midnight of the day typed, so format its date PART —
+// converting the instant to Pacific renders 5pm the previous evening, off by a day.
+const fmtDate = (d: string) => {
+  const [y, m, day] = d.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, day).toLocaleDateString("en-US",
+    { year: "numeric", month: "short", day: "numeric" });
+};
+// Local calendar date — toISOString() is UTC, which after 5pm Pacific is tomorrow.
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const shortMaterial = (t: string) => {
   const i = t.indexOf(":");
   return i === -1 ? t : t.slice(i + 1).trim();
