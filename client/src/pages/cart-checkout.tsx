@@ -686,15 +686,15 @@ export default function CartCheckout() {
             <CardHeader>
               <CardTitle className="text-2xl">Account Required for Subscriptions</CardTitle>
               <CardDescription>
-                To manage your subscriptions and ensure uninterrupted delivery, please create an account or sign in.
+                To manage your subscription and keep your pickups on schedule, please create an account or sign in.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="bg-muted p-4 rounded-lg space-y-2">
                 <h3 className="font-medium">Why create an account?</h3>
                 <ul className="space-y-1 text-sm text-muted-foreground">
-                  <li>• Manage your subscription preferences and delivery schedule</li>
-                  <li>• View order history and upcoming deliveries</li>
+                  <li>• Manage your subscription preferences and pickup schedule</li>
+                  <li>• View order history and upcoming pickups</li>
                   <li>• Update payment methods and contact information</li>
                   <li>• Pause, modify, or cancel subscriptions anytime</li>
                 </ul>
@@ -931,7 +931,7 @@ export default function CartCheckout() {
                       </li>
                     ))}
                     <li>• Your card is charged on the Monday of each pickup week.</li>
-                    <li>• Skip a delivery, pause, change flavours or cancel anytime from your account.</li>
+                    <li>• Skip a pickup, pause, change flavours or cancel anytime from your account.</li>
                   </ul>
                 </div>
               )}

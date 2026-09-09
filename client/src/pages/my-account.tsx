@@ -214,8 +214,8 @@ export default function MyAccount() {
           description: nextPickup ? `Your next pickup is ${nextPickup}.` : "Your subscription is active again.",
         },
         skip: {
-          title: "Delivery skipped",
-          description: nextPickup ? `You won't be charged for this cycle. Next pickup: ${nextPickup}.` : "Your next delivery was skipped.",
+          title: "Pickup skipped",
+          description: nextPickup ? `You won't be charged for this cycle. Next pickup: ${nextPickup}.` : "Your next pickup was skipped.",
         },
         reactivate: {
           title: "Subscription reactivated",
@@ -452,7 +452,7 @@ export default function MyAccount() {
     // Confirm first — this fired straight from a trash icon with no undo, permanently
     // altering a recurring order on a mis-click.
     const label = productLabel ? `"${productLabel}"` : "this product";
-    if (!confirm(`Remove ${label} from your subscription?\n\nThis applies to your next delivery onward.`)) {
+    if (!confirm(`Remove ${label} from your subscription?\n\nThis applies to your next pickup onward.`)) {
       return;
     }
     removeItemMutation.mutate({ subscriptionId, itemId });
@@ -646,7 +646,7 @@ export default function MyAccount() {
                               {isActive && nextCharge && (
                                 <div className="text-xs text-muted-foreground pt-1">
                                   ${nextCharge.subtotal} + ${nextCharge.taxAmount} tax. Card is charged on the
-                                  Monday of your pickup week, so edits made after that apply to your following delivery.
+                                  Monday of your pickup week, so edits made after that apply to your following pickup.
                                 </div>
                               )}
                             </div>
@@ -913,7 +913,7 @@ export default function MyAccount() {
                                   data-testid={`button-skip-${subscription.id}`}
                                 >
                                   <SkipForward className="w-4 h-4 mr-2" />
-                                  Skip next delivery
+                                  Skip next pickup
                                 </Button>
                                 <Button
                                   variant="outline"
@@ -1327,7 +1327,7 @@ export default function MyAccount() {
                 data-testid="button-cancel-dialog-skip"
               >
                 <SkipForward className="w-4 h-4 mr-2" />
-                Skip just the next delivery
+                Skip just the next pickup
               </Button>
               <Button
                 variant="outline"

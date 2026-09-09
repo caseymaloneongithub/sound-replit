@@ -50,7 +50,7 @@ export function SubscribeOptions({
             ${discounted.toFixed(2)}
           </p>
           <p className="text-xs text-muted-foreground">
-            per delivery &middot; cancel anytime
+            per pickup &middot; cancel anytime
           </p>
         </div>
       )}

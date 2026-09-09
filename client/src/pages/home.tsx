@@ -99,7 +99,7 @@ export default function Home() {
             {user && user.role !== "wholesale_customer" ? (
               <>
                 <h2 className="text-2xl font-bold mt-2">Retail orders</h2>
-                <p className="text-muted-foreground mt-1 flex-1">Shop 12-packs and kegs, or manage your Subscribe &amp; Save deliveries.</p>
+                <p className="text-muted-foreground mt-1 flex-1">Shop 12-packs and kegs, or manage your Subscribe &amp; Save pickups.</p>
                 <div className="flex flex-wrap gap-2 mt-4">
                   <Button asChild size="lg" data-testid="button-lane-shop">
                     <Link href="/shop">Shop kombucha</Link>
