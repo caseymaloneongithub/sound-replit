@@ -42,57 +42,54 @@ export default function Reports() {
   // months of history, monthly buckets were two lonely bars — monthly a toggle away.
   const [granularity, setGranularity] = useState<'weekly' | 'monthly'>('weekly');
 
-  const getLast6Months = () => {
-    const months: Array<{ label: string; year: number; monthIdx: number; revenue: number; orders: number }> = [];
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      months.push({
-        label: date.toLocaleDateString('en-US', { month: 'short' }),
-        year: date.getFullYear(),
-        monthIdx: date.getMonth(),
-        revenue: 0,
-        orders: 0,
-      });
-    }
+  // Revenue-only trend (owner, 2026-09-09): past buckets show DELIVERED revenue,
+  // placed by the date the order was delivered (that's when the revenue is real).
+  // The current bucket stacks everything still on the books — open orders roll
+  // forward the way they do on the orders board, whenever they were placed.
+  const isDelivered = (o: WholesaleOrder) => o.status === 'delivered' || o.status === 'fulfilled';
+  const deliveredDate = (o: WholesaleOrder) =>
+    new Date(o.deliveryDate ?? o.fulfilledAt ?? o.orderDate);
+
+  const buildTrend = (buckets: Array<{ label: string; start: Date; end: Date }>) => {
+    const rows = buckets.map(b => ({ ...b, delivered: 0, ordered: 0 }));
+    const current = rows[rows.length - 1];
     orders?.forEach(order => {
-      const orderDate = new Date(order.orderDate);
-      const bucket = months.find(m => orderDate.getMonth() === m.monthIdx && orderDate.getFullYear() === m.year);
-      if (bucket) {
-        bucket.revenue += Number(order.totalAmount);
-        bucket.orders += 1;
+      if (order.status === 'cancelled') return;
+      if (isDelivered(order)) {
+        const d = deliveredDate(order);
+        const bucket = rows.find(r => d >= r.start && d < r.end);
+        if (bucket) bucket.delivered += Number(order.totalAmount);
+      } else {
+        current.ordered += Number(order.totalAmount);
       }
     });
-    return months.map(({ label, revenue, orders: n }) => ({ label, revenue, orders: n }));
+    return rows.map(({ label, delivered, ordered }) => ({ label, delivered, ordered }));
+  };
+
+  const getLast6Months = () => {
+    const now = new Date();
+    const buckets = [];
+    for (let i = 5; i >= 0; i--) {
+      const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      buckets.push({ label: start.toLocaleDateString('en-US', { month: 'short' }), start, end });
+    }
+    return buildTrend(buckets);
   };
 
   const getLast12Weeks = () => {
     const now = new Date();
     const daysSinceMonday = (now.getDay() + 6) % 7; // Mon -> 0 … Sun -> 6
     const thisMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday);
-    const weeks: Array<{ label: string; start: Date; end: Date; revenue: number; orders: number }> = [];
+    const buckets = [];
     for (let i = 11; i >= 0; i--) {
       const start = new Date(thisMonday);
       start.setDate(start.getDate() - i * 7);
       const end = new Date(start);
       end.setDate(end.getDate() + 7);
-      weeks.push({
-        label: start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        start,
-        end,
-        revenue: 0,
-        orders: 0,
-      });
+      buckets.push({ label: start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), start, end });
     }
-    orders?.forEach(order => {
-      const orderDate = new Date(order.orderDate);
-      const bucket = weeks.find(w => orderDate >= w.start && orderDate < w.end);
-      if (bucket) {
-        bucket.revenue += Number(order.totalAmount);
-        bucket.orders += 1;
-      }
-    });
-    return weeks.map(({ label, revenue, orders: n }) => ({ label, revenue, orders: n }));
+    return buildTrend(buckets);
   };
 
   const trendData = granularity === 'weekly' ? getLast12Weeks() : getLast6Months();
@@ -177,9 +174,11 @@ export default function Reports() {
         <Card data-testid="card-revenue-chart">
           <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
             <div>
-              <CardTitle>Revenue & Orders Trend</CardTitle>
+              <CardTitle>Revenue Trend</CardTitle>
               <CardDescription>
-                {granularity === 'weekly' ? 'Last 12 weeks (weeks start Monday)' : 'Last 6 months'}
+                {granularity === 'weekly'
+                  ? 'Delivered revenue, last 12 weeks — this week also stacks orders still to deliver'
+                  : 'Delivered revenue, last 6 months — this month also stacks orders still to deliver'}
               </CardDescription>
             </div>
             <div className="flex gap-1">
@@ -206,12 +205,11 @@ export default function Reports() {
               <BarChart data={trendData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="label" />
-                <YAxis yAxisId="left" orientation="left" />
-                <YAxis yAxisId="right" orientation="right" />
-                <Tooltip />
+                <YAxis />
+                <Tooltip formatter={(v: number) => `$${v.toFixed(2)}`} />
                 <Legend />
-                <Bar yAxisId="left" dataKey="revenue" fill="#10b981" name="Revenue ($)" />
-                <Bar yAxisId="right" dataKey="orders" fill="#60a5fa" name="Orders" />
+                <Bar stackId="revenue" dataKey="delivered" fill="#10b981" name="Delivered" />
+                <Bar stackId="revenue" dataKey="ordered" fill="#60a5fa" name="Ordered (on the books)" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
