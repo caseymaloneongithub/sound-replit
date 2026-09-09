@@ -60,7 +60,7 @@ export default function WholesaleOrders() {
   const [editPoNumber, setEditPoNumber] = useState('');
   const { toast } = useToast();
 
-  const { data: ordersData, isLoading } = useQuery<{ orders: (WholesaleOrder & { locationName?: string | null })[]; total: number }>({
+  const { data: ordersData, isLoading } = useQuery<{ orders: (WholesaleOrder & { locationName?: string | null; locationEmail?: string | null; locationContactName?: string | null; locationContactPhone?: string | null })[]; total: number }>({
     queryKey: ["/api/wholesale/orders"],
   });
   const orders = ordersData?.orders ?? [];
@@ -587,18 +587,21 @@ export default function WholesaleOrders() {
                         <TableCell colSpan={8} className="bg-muted/50">
                           <div className="py-4 px-6 space-y-3">
                             <h4 className="font-semibold text-sm">Customer Details</h4>
+                            {/* This order's contact, not the account's: the store's own
+                                contact when the order has a location, then the email given
+                                at submission, then the account as a last resort. */}
                             <div className="grid grid-cols-2 gap-4 text-sm">
                               <div>
                                 <span className="text-muted-foreground">Contact:</span>{" "}
-                                <span className="font-medium">{customer?.contactName}</span>
+                                <span className="font-medium">{order.locationContactName || customer?.contactName}</span>
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Email:</span>{" "}
-                                <span className="font-medium">{customer?.email}</span>
+                                <span className="font-medium">{order.locationEmail || order.contactEmail || customer?.email}</span>
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Phone:</span>{" "}
-                                <span className="font-medium">{customer?.phone}</span>
+                                <span className="font-medium">{order.locationContactPhone || customer?.phone}</span>
                               </div>
                             </div>
                             {order.notes && (
