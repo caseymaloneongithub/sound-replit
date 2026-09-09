@@ -18,16 +18,37 @@ export function Navbar() {
   const { user, isLoading, logoutMutation } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
+  // Public pages, in the airy letterspaced style of the 2026-09 header redesign.
+  const navLinks = [
+    { href: "/our-kombucha", label: "Our Kombucha" },
+    { href: "/shop", label: "Shop" },
+    { href: "/wholesale/login", label: "Wholesale" },
+    { href: "/contact", label: "Contact" },
+  ];
+
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur">
-      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between gap-4">
         <Link href="/" data-testid="link-home">
-          <img 
-            src={logo} 
-            alt="Puget Sound Kombucha Co." 
-            className="h-10 w-auto dark:invert cursor-pointer"
+          <img
+            src={logo}
+            alt="Puget Sound Kombucha Co."
+            className="h-12 w-auto dark:invert cursor-pointer"
           />
         </Link>
+
+        <nav className="hidden md:flex items-center gap-8" data-testid="nav-desktop">
+          {navLinks.map((l) => {
+            const cls = "text-sm font-semibold uppercase tracking-[0.2em] text-foreground/80 hover:text-cedar transition-colors whitespace-nowrap";
+            const tid = `nav-link-${l.label.toLowerCase().replace(/\s+/g, "-")}`;
+            // Hash targets use a native anchor — the router ignores fragments.
+            return l.href.includes("#") ? (
+              <a key={l.href} href={l.href} className={cls} data-testid={tid}>{l.label}</a>
+            ) : (
+              <Link key={l.href} href={l.href} className={cls} data-testid={tid}>{l.label}</Link>
+            );
+          })}
+        </nav>
 
         <div className="flex items-center gap-2">
           {!isLoading && (
@@ -148,6 +169,21 @@ export function Navbar() {
                 <SheetTitle>Menu</SheetTitle>
               </SheetHeader>
               <nav className="flex flex-col gap-4 mt-6">
+                {navLinks.map((l) => (
+                  <Button
+                    key={l.href}
+                    variant="ghost"
+                    onClick={() => {
+                      if (l.href.includes("#")) window.location.href = l.href;
+                      else setLocation(l.href);
+                      setMobileMenuOpen(false);
+                    }}
+                    className="justify-start uppercase tracking-[0.15em] text-sm"
+                    data-testid={`nav-mobile-${l.label.toLowerCase().replace(/\s+/g, "-")}`}
+                  >
+                    {l.label}
+                  </Button>
+                ))}
                 {user && (
                   <Button 
                     variant={location === '/my-account' ? 'default' : 'ghost'}

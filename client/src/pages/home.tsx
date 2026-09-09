@@ -1,43 +1,45 @@
 import { Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
-import type { Flavor } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import fishermensTerminal from "@assets/stock_images/fishermens_terminal_ballard.jpg"; // Fishermen's Terminal, Ballard (Unsplash, free commercial use)
-import logo from "@assets/text-stacked-black_1762299663824.png";
 import { Footer } from "@/components/layout/footer";
 import { useAuth } from "@/hooks/use-auth";
-
-// "Mixed" is the variety-pack pseudo-flavor the shop uses for assorted cases. It is a real
-// row in `flavors` so products can reference it, but it isn't a flavor anyone drinks, so
-// the roundup leaves it out.
-const VARIETY_PSEUDO_FLAVORS = new Set(["Mixed"]);
 
 export default function Home() {
   // Drives the two audience lanes: a signed-in wholesale customer gets reorder shortcuts,
   // a signed-in retail customer gets their subscription, everyone else gets the two doors.
   const { user } = useAuth();
 
-  const { data: flavors, isLoading } = useQuery<Flavor[]>({
-    queryKey: ["/api/flavors"],
-  });
-
-  const roundup = (flavors ?? [])
-    .filter((f) => f.isActive && !VARIETY_PSEUDO_FLAVORS.has(f.name))
-    .sort((a, b) => a.displayOrder - b.displayOrder);
-
   return (
     <div className="min-h-screen bg-background">
+      {/* Hero (2026-09-09 redesign): the photograph carries it — the logo lives in the
+          header now, so no more giant logo over a heavy overlay. Just a whisper of
+          scrim at the bottom for the tagline. */}
       <div
-        className="relative h-96 bg-cover bg-center flex items-center justify-center"
-        style={{ backgroundImage: `linear-gradient(rgba(20, 50, 60, 0.45), rgba(20, 50, 60, 0.6)), url(${fishermensTerminal})` }}
+        className="relative h-[32rem] bg-cover bg-center"
+        style={{ backgroundImage: `url(${fishermensTerminal})` }}
+        data-testid="hero"
       >
-        <div className="text-center text-white px-4">
-          <img
-            src={logo}
-            alt="Puget Sound Kombucha Co."
-            className="h-48 mx-auto"
-            style={{ filter: "brightness(0) invert(1)" }}
-          />
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 via-black/20 to-transparent">
+          <div className="max-w-7xl mx-auto px-6 pb-10 pt-24 text-white">
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-white/85">Brewed in Ballard</p>
+            <h1 className="text-3xl md:text-4xl font-bold mt-2 max-w-xl">
+              Small-batch kombucha from real tea, herbs &amp; spices
+            </h1>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <Button asChild size="lg" data-testid="button-hero-shop">
+                <Link href="/shop">Shop kombucha</Link>
+              </Button>
+              <Button
+                asChild
+                size="lg"
+                variant="outline"
+                className="bg-transparent border-white/70 text-white hover:bg-white/10 hover:text-white"
+                data-testid="button-hero-flavors"
+              >
+                <Link href="/our-kombucha">Meet the flavors</Link>
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -116,49 +118,8 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Flavor roundup */}
-      <section id="flavors" className="container mx-auto px-4 py-12 scroll-mt-4">
-        <div className="max-w-2xl mb-10">
-          <h2 className="text-3xl font-bold mb-2" data-testid="text-flavors-title">Our flavors</h2>
-          <p className="text-muted-foreground">
-            Small-batch kombucha brewed in Seattle from real tea, fruit, herbs and spices.
-          </p>
-        </div>
-
-        {isLoading && (
-          <p className="text-muted-foreground py-8" data-testid="text-flavors-loading">Loading flavors...</p>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {roundup.map((flavor) => (
-            <article key={flavor.id} className="flex flex-col" data-testid={`flavor-card-${flavor.id}`}>
-              <div className="aspect-square overflow-hidden rounded-md bg-muted">
-                {flavor.primaryImageUrl ? (
-                  <img
-                    src={flavor.primaryImageUrl}
-                    alt={flavor.name}
-                    loading="lazy"
-                    className="w-full h-full object-cover"
-                    data-testid={`flavor-image-${flavor.id}`}
-                  />
-                ) : null}
-              </div>
-              <h3 className="text-2xl font-semibold mt-4" data-testid={`flavor-name-${flavor.id}`}>{flavor.name}</h3>
-              {flavor.flavorProfile && (
-                <p className="text-sm font-medium uppercase tracking-wide text-cedar mt-1">{flavor.flavorProfile}</p>
-              )}
-              <p className="mt-3 text-foreground/90 leading-relaxed">{flavor.description}</p>
-              {flavor.ingredients?.length > 0 && (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground/80">Ingredients:</span> {flavor.ingredients.join(", ")}
-                </p>
-              )}
-            </article>
-          ))}
-        </div>
-      </section>
-
-      {/* Closing doors — same two actions as the lanes, for people who read to the bottom. */}
+      {/* Closing doors — same two actions as the lanes, for people who read to the bottom.
+          The flavor roundup lives on /our-kombucha now (2026-09-09). */}
       <div className="bg-muted/50 py-12">
         <div className="container mx-auto px-4 text-center max-w-2xl">
           <h2 className="text-2xl font-bold mb-2">Ready to try them?</h2>

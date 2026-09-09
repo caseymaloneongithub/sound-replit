@@ -22,6 +22,7 @@ import WholesaleCustomerLocations from "@/pages/wholesale-customer-locations";
 import Shop from "@/pages/shop";
 import ShopV2 from "@/pages/shop-v2";
 import Home from "@/pages/home";
+import OurKombucha from "@/pages/our-kombucha";
 import MyAccount from "@/pages/my-account";
 import Subscribe from "@/pages/subscribe";
 import ProductSubscribe from "@/pages/product-subscribe";
@@ -86,6 +87,7 @@ function Router() {
       <WholesaleCustomerProtectedRoute path="/wholesale-customer/invoice/:id" component={WholesaleInvoice} />
       <WholesaleCustomerProtectedRoute path="/wholesale-customer/invoice/:id/payment-success" component={WholesalePaymentSuccess} />
       <Route path="/" component={Home} />
+      <Route path="/our-kombucha" component={OurKombucha} />
       <Route path="/shop" component={ShopV2} />
       <Route path="/products/:id" component={ProductDetail} />
       <Route path="/shop-legacy" component={Shop} />
