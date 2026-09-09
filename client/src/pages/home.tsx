@@ -1,13 +1,28 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import fishermensTerminal from "@assets/stock_images/fishermens_terminal_ballard.jpg"; // Fishermen's Terminal, Ballard (Unsplash, free commercial use)
 import { Footer } from "@/components/layout/footer";
 import { useAuth } from "@/hooks/use-auth";
 
+// The can lineup (owner, 2026-09-09): mockup renders dropped into
+// attached_assets/cans and served at /brand-assets/cans — referenced by URL so a
+// missing file hides its card instead of breaking the build.
+const CAN_LINEUP = [
+  { name: "Mist", file: "mist.png" },
+  { name: "Sunbreak", file: "sunbreak.png" },
+  { name: "Wildberry", file: "wildberry.png" },
+  { name: "Bonfire", file: "bonfire.png" },
+  { name: "Island Hop", file: "island-hop.png" },
+  { name: "Northzest", file: "northzest.png" },
+];
+
 export default function Home() {
   // Drives the two audience lanes: a signed-in wholesale customer gets reorder shortcuts,
   // a signed-in retail customer gets their subscription, everyone else gets the two doors.
   const { user } = useAuth();
+  // The lineup section stays hidden until at least one can render actually loads.
+  const [cansLoaded, setCansLoaded] = useState(false);
 
   return (
     <div className="min-h-screen bg-background">
@@ -117,6 +132,42 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* The can lineup — one card per flavor render, linking into Our Kombucha. */}
+      <section className={`container mx-auto px-4 py-14 ${cansLoaded ? "" : "hidden"}`} data-testid="section-can-lineup">
+        <div className="text-center mb-8">
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cedar">Now in cans</p>
+          <h2 className="text-3xl font-bold mt-2">Six flavors, one fridge</h2>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 max-w-6xl mx-auto">
+          {CAN_LINEUP.map((can) => (
+            <Link
+              key={can.file}
+              href="/our-kombucha"
+              className="group flex flex-col items-center"
+              data-testid={`can-${can.file.replace(".png", "")}`}
+            >
+              <div className="rounded-lg overflow-hidden bg-white w-full">
+                {/* No loading="lazy": a lazy image inside the initially-hidden section
+                    would never fetch, so the section could never reveal itself. */}
+                <img
+                  src={`/brand-assets/cans/${can.file}`}
+                  alt={`${can.name} kombucha can`}
+                  className="w-full h-auto transition-transform duration-300 group-hover:scale-105"
+                  onLoad={() => setCansLoaded(true)}
+                  onError={(e) => {
+                    // Render nothing until the file is dropped into attached_assets/cans.
+                    (e.currentTarget.closest("a") as HTMLElement).style.display = "none";
+                  }}
+                />
+              </div>
+              <span className="mt-2 text-sm font-medium uppercase tracking-wide text-muted-foreground group-hover:text-cedar transition-colors">
+                {can.name}
+              </span>
+            </Link>
+          ))}
+        </div>
+      </section>
 
       {/* Closing doors — same two actions as the lanes, for people who read to the bottom.
           The flavor roundup lives on /our-kombucha now (2026-09-09). */}

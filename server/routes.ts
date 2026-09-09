@@ -128,6 +128,12 @@ async function splitItemFields(
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Brand imagery served at runtime (owner, 2026-09-09): the can-lineup renders live
+  // in attached_assets/cans and are referenced by URL, not bundler imports, so a
+  // missing file can never break the build. ONLY the cans subfolder is exposed —
+  // attached_assets itself holds internal screenshots.
+  app.use("/brand-assets/cans", express.static("attached_assets/cans", { maxAge: "1d" }));
+
   // Auth middleware - sets up /api/register, /api/login, /api/logout, /api/user
   await setupAuth(app);
 
