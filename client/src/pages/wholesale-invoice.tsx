@@ -215,9 +215,15 @@ export default function WholesaleInvoice() {
             variant="ghost"
             size="icon"
             onClick={() => {
-              // Navigate to appropriate orders page based on user role
+              // A real back button: return to wherever the invoice was opened from
+              // (Invoices list, Orders, delivery packet…). Role-based fallback only
+              // for direct links with no history.
+              if (window.history.length > 1) {
+                window.history.back();
+                return;
+              }
               const isStaffOrAdmin = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'staff';
-              setLocation(isStaffOrAdmin ? "/wholesale/orders" : "/wholesale-customer/orders");
+              setLocation(isStaffOrAdmin ? "/staff-portal/wholesale/invoices" : "/wholesale-customer/orders");
             }}
             data-testid="button-back"
           >

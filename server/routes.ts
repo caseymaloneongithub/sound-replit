@@ -132,7 +132,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // in attached_assets/cans and are referenced by URL, not bundler imports, so a
   // missing file can never break the build. ONLY the cans subfolder is exposed —
   // attached_assets itself holds internal screenshots.
-  app.use("/brand-assets/cans", express.static("attached_assets/cans", { maxAge: "1d" }));
+  // maxAge 0 + ETag: browsers revalidate on every load (cheap 304s), so replacing
+  // or removing a render shows up immediately instead of after a day of cache.
+  app.use("/brand-assets/cans", express.static("attached_assets/cans", { maxAge: 0, etag: true }));
 
   // Auth middleware - sets up /api/register, /api/login, /api/logout, /api/user
   await setupAuth(app);
