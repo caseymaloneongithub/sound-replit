@@ -16,6 +16,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Loader2, Plus } from "lucide-react";
 import type { Flavor } from "@shared/schema";
 
@@ -27,6 +28,7 @@ type Recipe = {
   id: string; title: string; unit: string; standardBatch: string;
   flavorId: string | null; flavorName: string | null;
   finishedProductId: string | null; finishedProductName: string | null;
+  isActive: boolean;
   materials: BomLine[];
 };
 type ProductLite = { id: string; name: string };
@@ -54,6 +56,7 @@ function RecipeForm({ recipe, flavors, products, onClose }: {
   const [standardBatch, setStandardBatch] = useState(recipe ? String(n(recipe.standardBatch)) : "1");
   const [flavorId, setFlavorId] = useState<string>(recipe?.flavorId ?? "none");
   const [finishedProductId, setFinishedProductId] = useState<string>(recipe?.finishedProductId ?? "none");
+  const [isActive, setIsActive] = useState(recipe?.isActive ?? true);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -62,6 +65,7 @@ function RecipeForm({ recipe, flavors, products, onClose }: {
         standardBatch: String(n(standardBatch)),
         flavorId: flavorId === "none" ? null : flavorId,
         finishedProductId: finishedProductId === "none" ? null : finishedProductId,
+        isActive,
       };
       return isEdit
         ? apiRequest("PATCH", `/api/processes/${recipe!.id}`, body)
@@ -129,6 +133,17 @@ function RecipeForm({ recipe, flavors, products, onClose }: {
           When set, logging this recipe adds its output to the product's sellable stock.
         </p>
       </div>
+      {isEdit && (
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div>
+            <div className="text-sm font-medium">Active</div>
+            <p className="text-xs text-muted-foreground">
+              Inactive recipes are hidden from this page, the production log, and the limit report — logged batches still count.
+            </p>
+          </div>
+          <Switch checked={isActive} onCheckedChange={setIsActive} data-testid="switch-recipe-active" />
+        </div>
+      )}
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>Cancel</Button>
         <Button onClick={() => save.mutate()} disabled={!title.trim() || !unit.trim() || save.isPending}
@@ -284,6 +299,7 @@ export default function Recipes() {
   const [editing, setEditing] = useState<Recipe | null>(null);
   // Track by id so the editor always renders the freshest data after mutations
   const [bomRecipeId, setBomRecipeId] = useState<string | null>(null);
+  const [showInactive, setShowInactive] = useState(false);
 
   const { data: recipes = [], isLoading } = useQuery<Recipe[]>({
     queryKey: ["/api/processes"],
@@ -310,9 +326,12 @@ export default function Recipes() {
   const batchCost = (r: Recipe) =>
     r.materials.reduce((sum, m) => sum + n(m.units) * n(m.materialCost), 0);
 
+  const inactiveCount = useMemo(() => recipes.filter((r) => !r.isActive).length, [recipes]);
   const sorted = useMemo(
-    () => [...recipes].sort((a, b) => a.title.localeCompare(b.title)),
-    [recipes]
+    () => recipes
+      .filter((r) => r.isActive || showInactive)
+      .sort((a, b) => a.title.localeCompare(b.title)),
+    [recipes, showInactive]
   );
 
   if (isLoading) {
@@ -335,19 +354,28 @@ export default function Recipes() {
               Each recipe's bill of materials — what a batch consumes per unit produced
             </p>
           </div>
-          <Button onClick={() => setCreateOpen(true)} data-testid="button-create-recipe">
-            <Plus className="w-4 h-4 mr-2" /> Add recipe
-          </Button>
+          <div className="flex items-center gap-4">
+            {inactiveCount > 0 && (
+              <label className="flex items-center gap-2 text-sm text-muted-foreground whitespace-nowrap">
+                <Switch checked={showInactive} onCheckedChange={setShowInactive} data-testid="switch-show-inactive-recipes" />
+                Show inactive ({inactiveCount})
+              </label>
+            )}
+            <Button onClick={() => setCreateOpen(true)} data-testid="button-create-recipe">
+              <Plus className="w-4 h-4 mr-2" /> Add recipe
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {sorted.map((r) => (
-            <Card key={r.id} data-testid={`card-recipe-${r.id}`}>
+            <Card key={r.id} className={r.isActive ? undefined : "opacity-60"} data-testid={`card-recipe-${r.id}`}>
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <CardTitle className="flex items-center gap-2">
                       {r.title}
+                      {!r.isActive && <Badge variant="outline" className="text-xs font-normal">Inactive</Badge>}
                     </CardTitle>
                     <CardDescription className="mt-1">
                       Standard batch: {n(r.standardBatch).toLocaleString()} {r.unit}

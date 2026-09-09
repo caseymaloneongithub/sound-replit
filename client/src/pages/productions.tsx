@@ -21,6 +21,7 @@ import { Loader2, Plus } from "lucide-react";
 type Recipe = {
   id: string; title: string; unit: string; flavorName: string | null;
   finishedProductName: string | null;
+  isActive: boolean;
   materials: { units: string; materialCost: string }[];
 };
 type Production = {
@@ -291,7 +292,7 @@ export default function Productions() {
             <DialogTitle>Log production</DialogTitle>
             <DialogDescription>Record a completed batch. Stock is drawn down via the recipe.</DialogDescription>
           </DialogHeader>
-          <LogProductionForm recipes={recipes} onClose={() => setLogOpen(false)} />
+          <LogProductionForm recipes={recipes.filter((r) => r.isActive)} onClose={() => setLogOpen(false)} />
         </DialogContent>
       </Dialog>
     </StaffLayout>

@@ -940,6 +940,10 @@ export const processes = pgTable("processes", {
   flavorId: varchar("flavor_id").references(() => flavors.id), // optional link to a flavor (for unified production / dashboards)
   // When set, logging a production of this recipe adds its output to this finished-goods product's stock
   finishedProductId: varchar("finished_product_id").references(() => products.id),
+  // Inactive = retired but kept (e.g. Bottle:* after the cans switch): hidden from the
+  // Recipes page (behind a toggle), the production-log picker, and the limit report.
+  // Production history, COGS, and dashboards still count logged batches.
+  isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
   deletedAt: timestamp("deleted_at"),
 });

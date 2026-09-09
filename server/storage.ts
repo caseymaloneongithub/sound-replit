@@ -1481,7 +1481,8 @@ export class PostgresStorage implements IStorage {
       .from(processes)
       .leftJoin(processMaterials, eq(processMaterials.processId, processes.id))
       .leftJoin(materials, eq(materials.id, processMaterials.materialId))
-      .where(isNull(processes.deletedAt));
+      // Retired recipes don't belong in "how many can we make".
+      .where(and(isNull(processes.deletedAt), eq(processes.isActive, true)));
 
     const byProcess = new Map<string, typeof rows>();
     for (const r of rows) {
