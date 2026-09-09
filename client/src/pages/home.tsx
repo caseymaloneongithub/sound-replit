@@ -36,11 +36,7 @@ export default function Home() {
       >
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 via-black/20 to-transparent">
           <div className="max-w-7xl mx-auto px-6 pb-10 pt-24 text-white">
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-white/85">Brewed in Ballard</p>
-            <h1 className="text-3xl md:text-4xl font-bold mt-2 max-w-xl">
-              Small-batch kombucha from real tea, herbs &amp; spices
-            </h1>
-            <div className="mt-5 flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-3">
               <Button asChild size="lg" data-testid="button-hero-shop">
                 <Link href="/shop">Shop kombucha</Link>
               </Button>
