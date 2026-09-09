@@ -6,6 +6,7 @@ import {
   type WholesaleUnitType, type InsertWholesaleUnitType,
   type WholesaleUnitTypeFlavor, type InsertWholesaleUnitTypeFlavor,
   type WholesaleCustomerPricing, type InsertWholesaleCustomerPricing,
+  type WholesaleLocationPricing,
   type RetailCartItem, type InsertRetailCartItem,
   type RetailOrderItemV2, type InsertRetailOrderItemV2,
   type RetailSubscription, type InsertRetailSubscription,
@@ -41,6 +42,7 @@ import {
   wholesaleUnitTypes,
   wholesaleUnitTypeFlavors,
   wholesaleCustomerPricing,
+  wholesaleLocationPricing,
   retailCartItems,
   retailOrderItemsV2,
   retailSubscriptions,
@@ -1889,6 +1891,46 @@ export class PostgresStorage implements IStorage {
 
   async getWholesaleCustomerPricing(customerId: string): Promise<WholesaleCustomerPricing[]> {
     return await db.select().from(wholesaleCustomerPricing).where(eq(wholesaleCustomerPricing.customerId, customerId));
+  }
+
+  // --- Per-location price overrides (owner, 2026-09-09) ---
+  async getWholesaleLocationPricing(locationId: string): Promise<WholesaleLocationPricing[]> {
+    return await db.select().from(wholesaleLocationPricing).where(eq(wholesaleLocationPricing.locationId, locationId));
+  }
+
+  async setWholesaleLocationPrice(data: { locationId: string; unitTypeId: string; customPrice: string }): Promise<WholesaleLocationPricing> {
+    const [row] = await db
+      .insert(wholesaleLocationPricing)
+      .values(data)
+      .onConflictDoUpdate({
+        target: [wholesaleLocationPricing.locationId, wholesaleLocationPricing.unitTypeId],
+        set: { customPrice: data.customPrice },
+      })
+      .returning();
+    return row;
+  }
+
+  async deleteWholesaleLocationPrice(id: string): Promise<void> {
+    await db.delete(wholesaleLocationPricing).where(eq(wholesaleLocationPricing.id, id));
+  }
+
+  /**
+   * THE price for one wholesale unit on one order: the delivery location's override
+   * first, then the customer's, then the unit's list price. Every path that prices
+   * an order line goes through this (portal, guest, staff entry, item edits).
+   */
+  async resolveWholesaleUnitPrice(customerId: string, locationId: string | null, unitTypeId: string): Promise<number> {
+    if (locationId) {
+      const [loc] = await db
+        .select()
+        .from(wholesaleLocationPricing)
+        .where(and(eq(wholesaleLocationPricing.locationId, locationId), eq(wholesaleLocationPricing.unitTypeId, unitTypeId)));
+      if (loc) return Number(loc.customPrice);
+    }
+    const cust = await this.getWholesaleCustomerPrice(customerId, unitTypeId);
+    if (cust) return Number(cust.customPrice);
+    const unitType = await this.getWholesaleUnitType(unitTypeId);
+    return Number(unitType?.defaultPrice ?? 0);
   }
 
   async getWholesaleCustomerPrice(customerId: string, unitTypeId: string): Promise<WholesaleCustomerPricing | undefined> {

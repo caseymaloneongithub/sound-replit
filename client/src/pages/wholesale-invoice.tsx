@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Printer, ArrowLeft, Landmark, Loader2, Mail } from "lucide-react";
+import { Printer, ArrowLeft, Landmark, Loader2, Mail, Pencil } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -67,6 +67,25 @@ export default function WholesaleInvoice() {
       apiRequest("DELETE", `/api/wholesale/orders/${orderId}/adjustments/${adjustmentId}`),
     onSuccess: refreshInvoice,
     onError: (e: any) => toast({ title: "Couldn't remove adjustment", description: e.message, variant: "destructive" }),
+  });
+
+  // Inline line editing (owner, 2026-09-09): quantity and per-unit price, before
+  // payment starts — pallet shortages, negotiated one-offs, entry mistakes.
+  const [editingLine, setEditingLine] = useState<string | null>(null);
+  const [lineQty, setLineQty] = useState("");
+  const [linePrice, setLinePrice] = useState("");
+  const editLine = useMutation({
+    mutationFn: async () =>
+      apiRequest("PATCH", `/api/wholesale/orders/${orderId}/items/${editingLine}`, {
+        quantity: parseInt(lineQty, 10),
+        unitPrice: Number(linePrice),
+      }),
+    onSuccess: () => {
+      setEditingLine(null);
+      refreshInvoice();
+      toast({ title: "Invoice line updated" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't update line", description: e.message, variant: "destructive" }),
   });
 
   const paymentMutation = useMutation({
@@ -373,22 +392,85 @@ export default function WholesaleInvoice() {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item: any) => (
+                  {items.map((item: any) => {
+                    const isEditing = editingLine === item.id;
+                    return (
                     <tr key={item.id} className="border-b" data-testid={`invoice-item-${item.id}`}>
                       <td className="py-4">
-                        <div className="font-medium">{item.product.name}</div>
+                        <div className="font-medium flex items-center gap-1.5">
+                          {item.product.name}
+                          {isStaff && !adjustmentsLocked && !isEditing && (
+                            <button
+                              type="button"
+                              className="print:hidden text-muted-foreground hover:text-foreground"
+                              onClick={() => {
+                                setEditingLine(item.id);
+                                setLineQty(String(item.quantity));
+                                setLinePrice(parseFloat(item.unitPrice).toFixed(2));
+                              }}
+                              aria-label="Edit line"
+                              data-testid={`button-edit-line-${item.id}`}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                         <div className="text-sm text-muted-foreground">{item.product.flavor}</div>
+                        {isEditing && (
+                          <div className="print:hidden flex gap-2 mt-1.5">
+                            <Button
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              disabled={editLine.isPending || !parseInt(lineQty, 10) || !Number.isFinite(Number(linePrice))}
+                              onClick={() => editLine.mutate()}
+                              data-testid={`button-save-line-${item.id}`}
+                            >
+                              {editLine.isPending ? "Saving…" : "Save"}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setEditingLine(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                        )}
                       </td>
                       {/* Plain count — "4 cases (48 bottles)" read absurdly on keg lines. */}
                       <td className="text-right py-4">
-                        <div>{item.quantity}</div>
+                        {isEditing ? (
+                          <Input
+                            className="w-16 h-8 ml-auto text-right"
+                            inputMode="numeric"
+                            value={lineQty}
+                            onChange={(e) => setLineQty(e.target.value.replace(/\D/g, ""))}
+                            data-testid={`input-line-qty-${item.id}`}
+                          />
+                        ) : (
+                          <div>{item.quantity}</div>
+                        )}
                       </td>
-                      <td className="text-right py-4">${parseFloat(item.unitPrice).toFixed(2)}</td>
+                      <td className="text-right py-4">
+                        {isEditing ? (
+                          <div className="flex items-center gap-1 justify-end">
+                            <span className="text-muted-foreground text-sm">$</span>
+                            <Input
+                              className="w-20 h-8 text-right"
+                              inputMode="decimal"
+                              value={linePrice}
+                              onChange={(e) => setLinePrice(e.target.value)}
+                              data-testid={`input-line-price-${item.id}`}
+                            />
+                          </div>
+                        ) : (
+                          <>${parseFloat(item.unitPrice).toFixed(2)}</>
+                        )}
+                      </td>
                       <td className="text-right py-4 font-medium">
-                        ${(parseFloat(item.unitPrice) * item.quantity).toFixed(2)}
+                        ${isEditing
+                          ? ((parseInt(lineQty, 10) || 0) * (Number(linePrice) || 0)).toFixed(2)
+                          : (parseFloat(item.unitPrice) * item.quantity).toFixed(2)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

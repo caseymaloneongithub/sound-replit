@@ -227,6 +227,18 @@ export const wholesaleCustomerPricing = pgTable("wholesale_customer_pricing", {
   uniqueCustomerUnitType: unique().on(table.customerId, table.unitTypeId),
 }));
 
+// Wholesale Location Pricing (owner, 2026-09-09) - per-LOCATION overrides for
+// multi-location customers. Resolution order everywhere an order is priced:
+// location price -> customer price -> unit list price.
+export const wholesaleLocationPricing = pgTable("wholesale_location_pricing", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  locationId: varchar("location_id").notNull().references(() => wholesaleLocations.id, { onDelete: 'cascade' }),
+  unitTypeId: varchar("unit_type_id").notNull().references(() => wholesaleUnitTypes.id, { onDelete: 'cascade' }),
+  customPrice: decimal("custom_price", { precision: 10, scale: 2 }).notNull(),
+}, (table) => ({
+  uniqueLocationUnitType: unique().on(table.locationId, table.unitTypeId),
+}));
+
 // NEW SCHEMA - Retail Cart Items (references retailProducts)
 export const retailCartItems = pgTable("retail_cart_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -841,6 +853,7 @@ export type RetailProduct = typeof retailProducts.$inferSelect;
 export type WholesaleUnitType = typeof wholesaleUnitTypes.$inferSelect;
 export type WholesaleUnitTypeFlavor = typeof wholesaleUnitTypeFlavors.$inferSelect;
 export type WholesaleCustomerPricing = typeof wholesaleCustomerPricing.$inferSelect;
+export type WholesaleLocationPricing = typeof wholesaleLocationPricing.$inferSelect;
 export type RetailCartItem = typeof retailCartItems.$inferSelect;
 export type RetailOrderItemV2 = typeof retailOrderItemsV2.$inferSelect;
 export type RetailSubscription = typeof retailSubscriptions.$inferSelect;

@@ -1589,9 +1589,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           throw new OrderValidationError(400, { message: `Flavor ${item.flavorId} not found` });
         }
 
-        // Get custom pricing or default unit type price
-        const customPrice = await storage.getWholesaleCustomerPrice(customer.id, item.unitTypeId);
-        const unitPrice = customPrice ? Number(customPrice.customPrice) : Number(unitType.defaultPrice);
+        // Location override -> customer override -> list price.
+        const unitPrice = await storage.resolveWholesaleUnitPrice(customer.id, effectiveLocationId ?? null, item.unitTypeId);
         const lineTotal = unitPrice * item.quantity;
         totalAmount += lineTotal;
 
@@ -2593,6 +2592,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ message: "Customer pricing deleted successfully" });
     } catch (error: any) {
       res.status(500).json({ message: "Error deleting customer pricing: " + error.message });
+    }
+  });
+
+  // Per-LOCATION price overrides (owner, 2026-09-09): multi-location customers can
+  // pay different prices per store. Resolution: location -> customer -> list.
+  app.get("/api/wholesale-location-pricing/:locationId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      res.json(await storage.getWholesaleLocationPricing(req.params.locationId));
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching location pricing: " + error.message });
+    }
+  });
+
+  app.post("/api/wholesale-location-pricing", isAdmin, async (req, res) => {
+    try {
+      const { locationId, unitTypeId, customPrice } = req.body;
+      const value = Number(customPrice);
+      if (!locationId || !unitTypeId || !Number.isFinite(value) || value <= 0) {
+        return res.status(400).json({ message: "locationId, unitTypeId, and a positive customPrice are required" });
+      }
+      const row = await storage.setWholesaleLocationPrice({ locationId, unitTypeId, customPrice: value.toFixed(2) });
+      res.json(row);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error setting location pricing: " + error.message });
+    }
+  });
+
+  app.delete("/api/wholesale-location-pricing/:id", isAdmin, async (req, res) => {
+    try {
+      await storage.deleteWholesaleLocationPrice(req.params.id);
+      res.json({ message: "Location pricing deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error deleting location pricing: " + error.message });
     }
   });
 
@@ -6781,9 +6813,8 @@ If you have any questions, please don't hesitate to reach out!`,
           return res.status(400).json({ message: `Flavor ${item.flavorId} not found` });
         }
         
-        // Check for customer-specific pricing
-        const customPricing = await storage.getWholesaleCustomerPrice(order.customerId, item.unitTypeId);
-        const unitPrice = customPricing ? Number(customPricing.customPrice) : Number(unitType.defaultPrice);
+        // Location override -> customer override -> list price.
+        const unitPrice = await storage.resolveWholesaleUnitPrice(order.customerId, order.locationId ?? null, item.unitTypeId);
         const itemTotal = unitPrice * item.quantity;
         serverCalculatedTotal += itemTotal;
         
@@ -6938,6 +6969,44 @@ If you have any questions, please don't hesitate to reach out!`,
       res.json({ ...orderDetails, adjustments });
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching invoice: " + error.message });
+    }
+  });
+
+  // Edit one invoice line's quantity and/or unit price BEFORE payment (owner,
+  // 2026-09-09): pallet shortages, negotiated one-off prices, entry mistakes.
+  // Locked the moment payment starts, exactly like adjustments.
+  app.patch("/api/wholesale/orders/:orderId/items/:itemId", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
+    try {
+      const order = await storage.getWholesaleOrder(req.params.orderId);
+      if (!order || (order as any).deletedAt) return res.status(404).json({ message: "Order not found" });
+      if (order.paidAt) return res.status(400).json({ message: "This invoice is already paid — lines are locked." });
+      if ((order as any).paymentInitiatedAt && !(order as any).paymentFailedAt) {
+        return res.status(400).json({ message: "A bank payment is processing — lines are locked until it settles or fails." });
+      }
+
+      const [item] = await db.select().from(wholesaleOrderItems)
+        .where(and(eq(wholesaleOrderItems.id, req.params.itemId), eq(wholesaleOrderItems.orderId, order.id)));
+      if (!item) return res.status(404).json({ message: "Invoice line not found" });
+
+      const updates: { quantity?: number; unitPrice?: string } = {};
+      if (req.body.quantity !== undefined) {
+        const q = Number(req.body.quantity);
+        if (!Number.isInteger(q) || q < 1 || q > 999) return res.status(400).json({ message: "Quantity must be a whole number of at least 1" });
+        updates.quantity = q;
+      }
+      if (req.body.unitPrice !== undefined) {
+        const p = Number(req.body.unitPrice);
+        if (!Number.isFinite(p) || p < 0) return res.status(400).json({ message: "Unit price must be zero or more" });
+        updates.unitPrice = p.toFixed(2);
+      }
+      if (Object.keys(updates).length === 0) return res.json({ success: true, unchanged: true });
+
+      await db.update(wholesaleOrderItems).set(updates).where(eq(wholesaleOrderItems.id, item.id));
+      const total = await storage.recomputeWholesaleOrderTotal(order.id);
+      res.json({ success: true, totalAmount: total.toFixed(2) });
+    } catch (error: any) {
+      console.error("Error editing invoice line:", error);
+      res.status(500).json({ message: "Error editing invoice line: " + error.message });
     }
   });
 
@@ -7347,8 +7416,6 @@ If you have any questions, please don't hesitate to reach out!`,
           return res.status(400).json({ message: "Customer not found" });
         }
 
-        // Get customer-specific pricing and unit types
-        const customerPricing = await storage.getWholesaleCustomerPricing(order.customerId);
         const unitTypes = await storage.getWholesaleUnitTypes();
 
         // Calculate new total and validate items
@@ -7360,19 +7427,12 @@ If you have any questions, please don't hesitate to reach out!`,
             return res.status(400).json({ message: "Invalid item: each item must have unitTypeId, flavorId, and positive quantity" });
           }
 
-          // Get price - check for customer-specific pricing first
-          const customPrice = customerPricing.find(p => p.unitTypeId === item.unitTypeId);
-          let unitPrice: number;
-          
-          if (customPrice) {
-            unitPrice = Number(customPrice.customPrice);
-          } else {
-            const unitType = unitTypes.find(ut => ut.id === item.unitTypeId);
-            if (!unitType) {
-              return res.status(400).json({ message: `Invalid unit type: ${item.unitTypeId}` });
-            }
-            unitPrice = Number(unitType.defaultPrice);
+          const unitType = unitTypes.find(ut => ut.id === item.unitTypeId);
+          if (!unitType) {
+            return res.status(400).json({ message: `Invalid unit type: ${item.unitTypeId}` });
           }
+          // Location override -> customer override -> list price.
+          const unitPrice = await storage.resolveWholesaleUnitPrice(order.customerId, order.locationId ?? null, item.unitTypeId);
 
           validatedItems.push({
             unitTypeId: item.unitTypeId,
