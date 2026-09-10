@@ -4216,9 +4216,13 @@ export class PostgresStorage implements IStorage {
       const lockId = 123456789; // Arbitrary but consistent number for order generation
       await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
       
+      // Soft-deleted orders KEEP their number (the unique constraint doesn't care
+      // about deleted_at), so the max must include them. Excluding them made the
+      // generator re-issue RO-2026-0001 after that order was deleted — every
+      // webhook order creation then hit the unique constraint and rolled back.
       const result = await client.query(
         `SELECT order_number FROM retail_orders
-         WHERE order_number LIKE $1 AND deleted_at IS NULL
+         WHERE order_number LIKE $1
          ORDER BY order_number DESC
          LIMIT 1`,
         [`RO-${currentYear}-%`]
@@ -4233,10 +4237,11 @@ export class PostgresStorage implements IStorage {
       const nextNumber = match ? parseInt(match[1]) + 1 : 1;
       return `RO-${currentYear}-${String(nextNumber).padStart(4, '0')}`;
     } else {
+      // Same rule as the locked branch: deleted orders keep their number.
       const result = await db
         .select()
         .from(retailOrders)
-        .where(and(sql`${retailOrders.orderNumber} LIKE ${`RO-${currentYear}-%`}`, isNull(retailOrders.deletedAt)))
+        .where(sql`${retailOrders.orderNumber} LIKE ${`RO-${currentYear}-%`}`)
         .orderBy(desc(retailOrders.orderNumber));
       
       if (result.length === 0) {
