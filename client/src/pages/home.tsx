@@ -5,17 +5,10 @@ import fishermensTerminal from "@assets/stock_images/fishermens_terminal_ballard
 import { Footer } from "@/components/layout/footer";
 import { useAuth } from "@/hooks/use-auth";
 
-// The can lineup (owner, 2026-09-09): mockup renders dropped into
-// attached_assets/cans and served at /brand-assets/cans — referenced by URL so a
-// missing file hides its card instead of breaking the build.
-const CAN_LINEUP = [
-  { name: "Mist", file: "mist.png" },
-  { name: "Sunbreak", file: "sunbreak.png" },
-  { name: "Wildberry", file: "wildberry.png" },
-  { name: "Bonfire", file: "bonfire.png" },
-  { name: "Island Hop", file: "island-hop.png" },
-  { name: "Northzest", file: "northzest.png" },
-];
+// The can lineup (owner, 2026-09-10): ONE art-directed image of all six cans —
+// saved as attached_assets/cans/lineup.png and served at /brand-assets/cans —
+// referenced by URL so a missing file hides the section instead of breaking the build.
+const CAN_LINEUP_URL = "/brand-assets/cans/lineup.png";
 
 export default function Home() {
   // Drives the two audience lanes: a signed-in wholesale customer gets reorder shortcuts,
@@ -129,40 +122,30 @@ export default function Home() {
         </div>
       </div>
 
-      {/* The can lineup — one card per flavor render, linking into Our Kombucha. */}
-      <section className={`container mx-auto px-4 py-14 ${cansLoaded ? "" : "hidden"}`} data-testid="section-can-lineup">
-        <div className="text-center mb-8">
+      {/* The can lineup — a single wide image of all six cans, linking into Our
+          Kombucha. On small screens it scrolls sideways inside its own container
+          rather than shrinking the cans to thumbnails. */}
+      <section className={`py-14 ${cansLoaded ? "" : "hidden"}`} data-testid="section-can-lineup">
+        <div className="text-center mb-8 px-4">
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cedar">Now in cans</p>
-          <h2 className="text-3xl font-bold mt-2">Six flavors, one fridge</h2>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 max-w-6xl mx-auto">
-          {CAN_LINEUP.map((can) => (
-            <Link
-              key={can.file}
-              href="/our-kombucha"
-              className="group flex flex-col items-center"
-              data-testid={`can-${can.file.replace(".png", "")}`}
-            >
-              <div className="rounded-lg overflow-hidden bg-white w-full">
-                {/* No loading="lazy": a lazy image inside the initially-hidden section
-                    would never fetch, so the section could never reveal itself. */}
-                <img
-                  src={`/brand-assets/cans/${can.file}`}
-                  alt={`${can.name} kombucha can`}
-                  className="w-full h-auto transition-transform duration-300 group-hover:scale-105"
-                  onLoad={() => setCansLoaded(true)}
-                  onError={(e) => {
-                    // Render nothing until the file is dropped into attached_assets/cans.
-                    (e.currentTarget.closest("a") as HTMLElement).style.display = "none";
-                  }}
-                />
-              </div>
-              <span className="mt-2 text-sm font-medium uppercase tracking-wide text-muted-foreground group-hover:text-cedar transition-colors">
-                {can.name}
-              </span>
-            </Link>
-          ))}
+        <div className="overflow-x-auto">
+          <Link href="/our-kombucha" className="block mx-auto w-max px-4" data-testid="link-can-lineup">
+            {/* No loading="lazy": a lazy image inside the initially-hidden section
+                would never fetch, so the section could never reveal itself. */}
+            <img
+              src={CAN_LINEUP_URL}
+              alt="The six Puget Sound Kombucha flavors in cans: Sunbreak, Northzest, Wildberry, Bonfire, Island Hop, and Mist"
+              className="h-64 sm:h-80 w-auto max-w-none"
+              onLoad={() => setCansLoaded(true)}
+            />
+          </Link>
         </div>
+        <p className="text-center mt-6 px-4">
+          <Link href="/our-kombucha" className="text-sm font-semibold uppercase tracking-[0.2em] text-cedar hover:underline">
+            Meet the flavors
+          </Link>
+        </p>
       </section>
 
       {/* Closing doors — same two actions as the lanes, for people who read to the bottom.
