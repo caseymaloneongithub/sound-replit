@@ -11,6 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -54,6 +55,9 @@ export default function WholesaleOrders() {
     packaged: 'desc',
     delivered: 'desc',
   });
+  // Bulk delivery-day assignment: row checkboxes feed this; cleared on tab switch
+  // so a hidden selection can never be acted on from another tab.
+  const [selectedForBulk, setSelectedForBulk] = useState<Set<string>>(new Set());
   const [isEditMode, setIsEditMode] = useState(false);
   const [editItems, setEditItems] = useState<EditItem[]>([]);
   const [editNotes, setEditNotes] = useState('');
@@ -132,6 +136,45 @@ export default function WholesaleOrders() {
       });
     },
   });
+
+  // One PATCH per order, sequentially — reuses the single-order endpoint so each
+  // order gets the same due-date re-anchoring as a one-off date change.
+  const bulkDeliveryDateMutation = useMutation({
+    mutationFn: async ({ orderIds, date }: { orderIds: string[]; date: Date }) => {
+      for (const orderId of orderIds) {
+        await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, {
+          deliveryDate: date.toISOString(),
+        });
+      }
+      return orderIds.length;
+    },
+    onSuccess: (count, { date }) => {
+      toast({
+        title: "Delivery day set",
+        description: `${count} ${count === 1 ? 'order' : 'orders'} scheduled for ${format(date, 'MMM d, yyyy')}.`,
+      });
+      setSelectedForBulk(new Set());
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to set delivery dates — some orders may have been updated.",
+        variant: "destructive",
+      });
+      // Partial success is possible mid-loop; refetch so the table shows reality.
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
+    },
+  });
+
+  const toggleBulkSelection = (orderId: string) => {
+    setSelectedForBulk(prev => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  };
 
   const updateOrderMutation = useMutation({
     mutationFn: async ({ orderId, items, notes, poNumber }: { orderId: string; items: EditItem[]; notes: string; poNumber: string }) => {
@@ -287,6 +330,11 @@ export default function WholesaleOrders() {
     const totalOrders = filteredOrders.length;
     const totalAmount = filteredOrders.reduce((sum, order) => sum + Number(order.totalAmount), 0);
 
+    // Bulk delivery-day assignment lives on the open tabs; delivered orders keep
+    // their dates (a date change there re-anchors net-30 due dates one at a time).
+    const allowBulk = status !== 'delivered';
+    const selectedIds = filteredOrders.filter(o => selectedForBulk.has(o.id)).map(o => o.id);
+
     // Consolidate items for all orders in this status
     const orderIds = filteredOrders.map(order => order.id);
     const statusItems = allOrderItems.filter(item => 
@@ -385,7 +433,39 @@ export default function WholesaleOrders() {
           </Card>
         )}
 
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between gap-3">
+          {allowBulk && selectedIds.length > 0 ? (
+            <div className="flex items-center gap-3 rounded-md border bg-muted/40 px-3 py-1.5" data-testid={`bulk-bar-${status}`}>
+              <span className="text-sm font-medium" data-testid="text-bulk-count">
+                {selectedIds.length} selected
+              </span>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button size="sm" disabled={bulkDeliveryDateMutation.isPending} data-testid="button-bulk-delivery-date">
+                    {bulkDeliveryDateMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <CalendarIcon className="w-4 h-4 mr-2" />
+                    )}
+                    Set delivery day
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    onSelect={(date) => {
+                      if (date && !bulkDeliveryDateMutation.isPending) {
+                        bulkDeliveryDateMutation.mutate({ orderIds: selectedIds, date });
+                      }
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+              <Button variant="ghost" size="sm" onClick={() => setSelectedForBulk(new Set())} data-testid="button-bulk-clear">
+                Clear
+              </Button>
+            </div>
+          ) : <div />}
           <Button
             variant="outline"
             size="sm"
@@ -396,11 +476,23 @@ export default function WholesaleOrders() {
             {sortOrder === 'asc' ? 'Oldest to Newest' : 'Newest to Oldest'}
           </Button>
         </div>
-        
+
         <div className="border rounded-md">
           <Table>
             <TableHeader>
               <TableRow>
+                {allowBulk && (
+                  <TableHead className="w-[40px]">
+                    <Checkbox
+                      checked={filteredOrders.length > 0 && filteredOrders.every(o => selectedForBulk.has(o.id))}
+                      onCheckedChange={(checked) => {
+                        setSelectedForBulk(checked ? new Set(filteredOrders.map(o => o.id)) : new Set());
+                      }}
+                      aria-label="Select all orders"
+                      data-testid={`checkbox-select-all-${status}`}
+                    />
+                  </TableHead>
+                )}
                 <TableHead className="w-[50px]"></TableHead>
                 <TableHead>Customer</TableHead>
                 <TableHead>Order Date</TableHead>
@@ -414,7 +506,7 @@ export default function WholesaleOrders() {
             <TableBody>
               {/* Summary Row */}
               <TableRow className="bg-muted/50 font-semibold" data-testid={`row-summary-${status}`}>
-                <TableCell colSpan={6}>
+                <TableCell colSpan={allowBulk ? 7 : 6}>
                   Total {getStatusLabel(status)} Orders
                 </TableCell>
                 <TableCell className="text-right" data-testid={`text-total-amount-${status}`}>
@@ -431,6 +523,16 @@ export default function WholesaleOrders() {
                 return (
                   <Fragment key={order.id}>
                     <TableRow data-testid={`row-wholesale-order-${order.id}`}>
+                      {allowBulk && (
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedForBulk.has(order.id)}
+                            onCheckedChange={() => toggleBulkSelection(order.id)}
+                            aria-label={`Select order ${order.invoiceNumber}`}
+                            data-testid={`checkbox-bulk-${order.id}`}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell>
                         <Button
                           variant="ghost"
@@ -584,7 +686,7 @@ export default function WholesaleOrders() {
                     
                     {isExpanded && (
                       <TableRow>
-                        <TableCell colSpan={8} className="bg-muted/50">
+                        <TableCell colSpan={allowBulk ? 9 : 8} className="bg-muted/50">
                           <div className="py-4 px-6 space-y-3">
                             <h4 className="font-semibold text-sm">Customer Details</h4>
                             {/* This order's contact, not the account's: the store's own
@@ -654,7 +756,11 @@ export default function WholesaleOrders() {
             </CardContent>
           </Card>
         ) : (
-          <Tabs value={activeTab} onValueChange={setActiveTab} data-testid="tabs-wholesale-orders">
+          <Tabs
+            value={activeTab}
+            onValueChange={(tab) => { setActiveTab(tab); setSelectedForBulk(new Set()); }}
+            data-testid="tabs-wholesale-orders"
+          >
             <TabsList className="mb-6">
               <TabsTrigger value="pending" data-testid="tab-pending">
                 Pending
