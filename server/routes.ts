@@ -8184,6 +8184,7 @@ If you have any questions, please don't hesitate to reach out!`,
               retailProductId: retailOrderItemsV2.retailProductId,
               quantity: retailOrderItemsV2.quantity,
               unitPrice: retailOrderItemsV2.unitPrice,
+              notes: retailOrderItemsV2.notes,
               retailProduct: retailProducts,
               flavor: flavors,
             })
@@ -8197,9 +8198,13 @@ If you have any questions, please don't hesitate to reach out!`,
 
           for (const item of v2Items) {
             if (item.retailProduct) {
-              const productName = item.flavor
-                ? `${item.flavor.name} - ${item.retailProduct.unitDescription}`
-                : item.retailProduct.unitDescription;
+              // Same naming as receipts: split cases show both flavors from the
+              // packing note; otherwise the chosen flavor leads the line.
+              const splitMatch = item.notes?.match(/^Split: 6 (.+) \/ 6 (.+)$/);
+              const flavorLabel = splitMatch ? `${splitMatch[1]} / ${splitMatch[2]}` : item.flavor?.name;
+              const productName = flavorLabel
+                ? `${flavorLabel} — ${item.retailProduct.unitDescription}`
+                : (item.retailProduct.productName ?? item.retailProduct.unitDescription);
               orderItems.push({
                 productName,
                 quantity: item.quantity,

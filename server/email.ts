@@ -790,8 +790,9 @@ export async function sendReadyForPickupEmail(params: ReadyForPickupEmailParams)
     return;
   }
 
+  // Not everything is a "case" (kegs, future packs) — quantity only when it matters.
   const itemsList = params.orderItems
-    .map(item => `- ${item.productName} (${item.quantity} case${item.quantity > 1 ? 's' : ''})`)
+    .map(item => `- ${item.productName}${item.quantity > 1 ? ` × ${item.quantity}` : ''}`)
     .join('\n');
 
   const mailOptions = {
@@ -838,7 +839,7 @@ Puget Sound Kombucha Co.
     <h2 style="font-size: 18px; margin-top: 24px; color: ${BRAND_COLORS.darkGrey}; border-bottom: 2px solid ${BRAND_COLORS.black}; padding-bottom: 8px;">Items Ready for Pickup</h2>
     <ul style="margin: 16px 0; padding-left: 24px;">
       ${params.orderItems.map(item => `
-        <li style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey};">${item.productName} (${item.quantity} case${item.quantity > 1 ? 's' : ''})</li>
+        <li style="padding: 6px 0; color: ${BRAND_COLORS.darkGrey};">${item.productName}${item.quantity > 1 ? ` × ${item.quantity}` : ''}</li>
       `).join('')}
     </ul>
     
