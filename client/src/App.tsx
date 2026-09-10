@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/use-auth";
 import { Navbar } from "@/components/layout/navbar";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
-import { ProtectedRoute, StaffProtectedRoute, WholesaleCustomerProtectedRoute } from "@/lib/protected-route";
+import { ProtectedRoute, StaffProtectedRoute, AdminProtectedRoute, WholesaleCustomerProtectedRoute } from "@/lib/protected-route";
 import { ErrorBoundary } from "@/components/error-boundary";
 import AuthPage from "@/pages/auth-page";
 import StaffLogin from "@/pages/staff-login";
@@ -134,12 +134,14 @@ function Router() {
       <StaffProtectedRoute path="/admin/flavors" component={AdminFlavors} />
       <StaffProtectedRoute path="/admin/retail-products" component={AdminRetailProducts} />
       <StaffProtectedRoute path="/admin/wholesale-units" component={AdminWholesaleUnits} />
-      <StaffProtectedRoute path="/admin/accounting" component={AccountingDashboard} />
-      <StaffProtectedRoute path="/admin/filing-numbers" component={FilingNumbers} />
-      <StaffProtectedRoute path="/admin/accounting/transactions" component={AccountingTransactions} />
-      <StaffProtectedRoute path="/admin/accounting/categories" component={AccountingCategories} />
-      <StaffProtectedRoute path="/admin/accounting/banks" component={AccountingBanks} />
-      <StaffProtectedRoute path="/admin/accounting/income-statement" component={AccountingIncomeStatement} />
+      {/* Money pages are admin-and-up (like their APIs): a staff deep-link bounces to
+          the orders board instead of rendering a shell of 403s. */}
+      <AdminProtectedRoute path="/admin/accounting" component={AccountingDashboard} />
+      <AdminProtectedRoute path="/admin/filing-numbers" component={FilingNumbers} />
+      <AdminProtectedRoute path="/admin/accounting/transactions" component={AccountingTransactions} />
+      <AdminProtectedRoute path="/admin/accounting/categories" component={AccountingCategories} />
+      <AdminProtectedRoute path="/admin/accounting/banks" component={AccountingBanks} />
+      <AdminProtectedRoute path="/admin/accounting/income-statement" component={AccountingIncomeStatement} />
       {/* The old /inventory hub duplicated the sidebar; the dashboard is the real front door. */}
       <Route path="/inventory" component={() => <Redirect to="/inventory/dashboard" />} />
       <StaffProtectedRoute path="/inventory/dashboard" component={InventoryDashboard} />
