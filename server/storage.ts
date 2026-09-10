@@ -2095,6 +2095,10 @@ export class PostgresStorage implements IStorage {
         quantity: row.quantity,
         isSubscription: row.is_subscription,
         subscriptionFrequency: row.subscription_frequency,
+        // The chosen flavor MUST ride along: this mapping feeds webhook order
+        // creation, and omitting these stored every webhook order flavorless.
+        selectedFlavorId: row.selected_flavor_id,
+        splitFlavorId: row.split_flavor_id,
         retailProduct: {
           id: row.rp_id,
           productType: row.product_type || 'single-flavor',
