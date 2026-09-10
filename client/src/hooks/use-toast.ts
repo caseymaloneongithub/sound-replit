@@ -139,6 +139,12 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, "id">
 
+// Errors linger, confirmations don't (owner, 2026-09-09): a destructive toast is
+// something to read and act on; a success toast just needs to register. An explicit
+// `duration` on the call still wins.
+const ERROR_DURATION = 8000
+const DEFAULT_DURATION = 3000
+
 function toast({ ...props }: Toast) {
   const id = genId()
 
@@ -152,6 +158,7 @@ function toast({ ...props }: Toast) {
   dispatch({
     type: "ADD_TOAST",
     toast: {
+      duration: props.variant === "destructive" ? ERROR_DURATION : DEFAULT_DURATION,
       ...props,
       id,
       open: true,
