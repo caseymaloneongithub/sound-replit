@@ -470,17 +470,19 @@ export default function ShopV2() {
                             enabled and only fail with a destructive toast on click. */}
                         {product.subscriptionDiscount != null && Number(product.subscriptionDiscount) > 0 ? (
                           <Tabs defaultValue={hasSubscriptionItems ? "subscribe" : "one-time"} className="w-full">
+                            {/* The tabs stay clickable even when the cart blocks that order
+                                type — the panel explains the rule ("check out first"), which
+                                a greyed-out trigger never could. The add actions inside are
+                                what's actually gated. */}
                             <TabsList className="grid w-full grid-cols-2">
                               <TabsTrigger
                                 value="one-time"
-                                disabled={hasSubscriptionItems}
                                 data-testid={`tab-one-time-${product.id}`}
                               >
                                 One-time
                               </TabsTrigger>
                               <TabsTrigger
                                 value="subscribe"
-                                disabled={hasOneTimeItems}
                                 data-testid={`tab-subscribe-${product.id}`}
                               >
                                 Subscribe
