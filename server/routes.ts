@@ -3500,6 +3500,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       await storage.migrateCartToSession(oldSessionId, req.sessionID);
 
+      // Claim guest orders placed under this email — the webhook stamps user_id
+      // from the checkout snapshot, which is null for guests, so the order this
+      // account was just created FOR would otherwise never appear in their history.
+      await db.update(retailOrders)
+        .set({ userId: user.id })
+        .where(and(
+          eq(retailOrders.customerEmail, validated.customerEmail),
+          isNull(retailOrders.userId),
+          isNull(retailOrders.deletedAt),
+        ));
+
       res.json({ success: true, user: { id: user.id, username: user.username, email: user.email } });
     } catch (error: any) {
       console.error("Error creating checkout account:", error);
@@ -3655,6 +3666,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         });
         await storage.migrateCartToSession(oldSessionId, req.sessionID);
+
+        // Same guest-order claim as checkout/create-account: link any earlier
+        // guest purchases under this email to the account being created.
+        await db.update(retailOrders)
+          .set({ userId: user.id })
+          .where(and(
+            eq(retailOrders.customerEmail, validated.customerEmail),
+            isNull(retailOrders.userId),
+            isNull(retailOrders.deletedAt),
+          ));
       } else {
         // For logged-in users, update their address if provided
         if (validated.address || validated.city || validated.state || validated.zipCode) {
