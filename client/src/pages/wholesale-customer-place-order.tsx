@@ -320,7 +320,7 @@ export default function WholesaleCustomerPlaceOrder() {
           <CardHeader>
             <CardTitle className="text-lg">Your account</CardTitle>
             <CardDescription>
-              Minimum order and delivery details for{" "}
+              {minimumOrderAmount > 0 ? "Minimum order and delivery details" : "Delivery details"} for{" "}
               {customer?.businessName ?? "your business"}.
             </CardDescription>
           </CardHeader>
@@ -329,14 +329,16 @@ export default function WholesaleCustomerPlaceOrder() {
               to be the store's own rates. Account pricing is applied server-side and
               appears on the invoice. */}
           <CardContent className="grid gap-6 sm:grid-cols-2">
-            <div>
-              <p className="text-sm font-medium mb-2">Minimum order</p>
-              <p className="text-sm text-muted-foreground">
-                {minimumOrderAmount > 0
-                  ? `$${minimumOrderAmount.toFixed(2)} per order`
-                  : "No minimum — order any quantity."}
-              </p>
-            </div>
+            {/* The minimum is inactive while the setting is 0 (owner, 2026-09-11:
+                managed internally through the bottle retirement) — say nothing about
+                minimums at all rather than advertise "no minimum". Flips back on
+                its own when the admin setting is raised. */}
+            {minimumOrderAmount > 0 && (
+              <div>
+                <p className="text-sm font-medium mb-2">Minimum order</p>
+                <p className="text-sm text-muted-foreground">${minimumOrderAmount.toFixed(2)} per order</p>
+              </div>
+            )}
 
             <div>
               <p className="text-sm font-medium mb-2">
