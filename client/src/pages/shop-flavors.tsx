@@ -38,14 +38,11 @@ export default function ShopFlavors() {
       const pkgs = packagesForFlavor(flavor, products ?? []);
       const chips = availabilityChips(pkgs);
       const availablePkgs = pkgs.filter((p) => p.available);
-      const fromPrice = availablePkgs.length
-        ? Math.min(...availablePkgs.map((p) => parseFloat(p.product.price)))
-        : null;
       const bestDiscount = Math.max(
         0,
         ...availablePkgs.map((p) => Number(p.product.subscriptionDiscount ?? 0)),
       );
-      return { flavor, pkgs, chips, fromPrice, bestDiscount, soldThrough: pkgs.length > 0 && availablePkgs.length === 0 };
+      return { flavor, pkgs, chips, bestDiscount, soldThrough: pkgs.length > 0 && availablePkgs.length === 0 };
     })
     // A flavor no product offers at all isn't for sale — leave it off the wall.
     .filter((row) => row.pkgs.length > 0);
@@ -95,7 +92,7 @@ export default function ShopFlavors() {
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
-          {rows.map(({ flavor, chips, fromPrice, bestDiscount, soldThrough }) => {
+          {rows.map(({ flavor, chips, bestDiscount, soldThrough }) => {
             const displayName = flavorOptionLabel(flavor.name);
             const card = (
               <Card
@@ -156,18 +153,11 @@ export default function ShopFlavors() {
                         That's the last of it — sold through for now
                       </p>
                     ) : (
-                      <>
-                        {fromPrice != null && (
-                          <p className="text-lg font-bold" data-testid={`text-price-${flavor.id}`}>
-                            From ${fromPrice.toFixed(2)}
-                          </p>
-                        )}
-                        {bestDiscount > 0 && (
-                          <Badge variant="default" className="text-xs">
-                            Subscribe &amp; Save {bestDiscount.toFixed(0)}%
-                          </Badge>
-                        )}
-                      </>
+                      bestDiscount > 0 && (
+                        <Badge variant="default" className="text-xs">
+                          Subscribe &amp; Save {bestDiscount.toFixed(0)}%
+                        </Badge>
+                      )
                     )}
                   </div>
                 </CardContent>
