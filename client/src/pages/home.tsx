@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/use-auth";
 // The can lineup (owner, 2026-09-10): ONE art-directed image of all six cans —
 // saved as attached_assets/cans/lineup.png and served at /brand-assets/cans —
 // referenced by URL so a missing file hides the section instead of breaking the build.
-const CAN_LINEUP_URL = "/brand-assets/cans/lineup.png";
+const CAN_LINEUP_URL = "/brand-assets/cans/lineup.webp";
 
 export default function Home() {
   // Drives the two audience lanes: a signed-in wholesale customer gets reorder shortcuts,
@@ -123,25 +123,23 @@ export default function Home() {
       </div>
 
       {/* The can lineup — a single wide image of all six cans, linking into Our
-          Kombucha. On small screens it scrolls sideways inside its own container
-          rather than shrinking the cans to thumbnails. */}
-      <section className={`py-14 ${cansLoaded ? "" : "hidden"}`} data-testid="section-can-lineup">
-        <div className="text-center mb-8 px-4">
+          Kombucha. Fully fluid (owner, 2026-09-10: no scrolling): the whole lineup
+          is always visible and scales with the page. */}
+      <section className={`py-14 px-4 ${cansLoaded ? "" : "hidden"}`} data-testid="section-can-lineup">
+        <div className="text-center mb-8">
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cedar">Now in cans</p>
         </div>
-        <div className="overflow-x-auto">
-          <Link href="/our-kombucha" className="block mx-auto w-max px-4" data-testid="link-can-lineup">
-            {/* No loading="lazy": a lazy image inside the initially-hidden section
-                would never fetch, so the section could never reveal itself. */}
-            <img
-              src={CAN_LINEUP_URL}
-              alt="The six Puget Sound Kombucha flavors in cans: Sunbreak, Northzest, Wildberry, Bonfire, Island Hop, and Mist"
-              className="h-64 sm:h-80 w-auto max-w-none"
-              onLoad={() => setCansLoaded(true)}
-            />
-          </Link>
-        </div>
-        <p className="text-center mt-6 px-4">
+        <Link href="/our-kombucha" className="block max-w-5xl mx-auto" data-testid="link-can-lineup">
+          {/* No loading="lazy": a lazy image inside the initially-hidden section
+              would never fetch, so the section could never reveal itself. */}
+          <img
+            src={CAN_LINEUP_URL}
+            alt="The six Puget Sound Kombucha flavors in cans: Sunbreak, Northzest, Wildberry, Bonfire, Island Hop, and Mist"
+            className="w-full h-auto"
+            onLoad={() => setCansLoaded(true)}
+          />
+        </Link>
+        <p className="text-center mt-6">
           <Link href="/our-kombucha" className="text-sm font-semibold uppercase tracking-[0.2em] text-cedar hover:underline">
             Meet the flavors
           </Link>
