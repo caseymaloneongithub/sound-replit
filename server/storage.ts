@@ -4870,19 +4870,29 @@ export class PostgresStorage implements IStorage {
       ));
   }
 
-  async getAdminTaskCompletionsByDateRange(startDate: Date, endDate: Date): Promise<AdminTaskCompletion[]> {
+  async getAdminTaskCompletionsByDateRange(startDate: Date, endDate: Date): Promise<(AdminTaskCompletion & { completedByUser?: { firstName: string | null; lastName: string | null } })[]> {
     const rangeStart = new Date(startDate);
     rangeStart.setHours(0, 0, 0, 0);
     const rangeEnd = new Date(endDate);
     rangeEnd.setHours(23, 59, 59, 999);
-    
-    return await db
-      .select()
+
+    // The checklist shows "Completed by <name>" — join the user or it reads "Unknown".
+    const rows = await db
+      .select({
+        completion: adminTaskCompletions,
+        firstName: users.firstName,
+        lastName: users.lastName,
+      })
       .from(adminTaskCompletions)
+      .leftJoin(users, eq(adminTaskCompletions.completedByUserId, users.id))
       .where(and(
         sql`${adminTaskCompletions.instanceDate} >= ${rangeStart}`,
         sql`${adminTaskCompletions.instanceDate} <= ${rangeEnd}`
       ));
+    return rows.map((r) => ({
+      ...r.completion,
+      completedByUser: r.firstName || r.lastName ? { firstName: r.firstName, lastName: r.lastName } : undefined,
+    }));
   }
 
   async createAdminTaskCompletion(completion: InsertAdminTaskCompletion): Promise<AdminTaskCompletion> {

@@ -717,6 +717,15 @@ export default function WholesaleCustomerPlaceOrder() {
                         </AlertDescription>
                       </Alert>
                     )}
+                    {/* Same rule as the guest form: a silently-disabled button reads as
+                        "something is out of stock" — spell out what's still needed. This whole
+                        column only renders with items in the cart, and the minimum has its own
+                        alert above, so the one remaining silent case is the missing location. */}
+                    {fulfillmentMethod === "delivery" && !selectedLocationId && (
+                      <p className="mt-4 text-sm font-medium text-cedar" data-testid="text-still-needed">
+                        To place the order: choose a delivery location above.
+                      </p>
+                    )}
                     <Button
                       className="w-full mt-4"
                       onClick={() => createOrderMutation.mutate()}
