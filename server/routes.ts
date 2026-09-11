@@ -30,7 +30,7 @@ import { createStripeCustomer } from "./stripeCustomer";
 // truth for frequency conversion is @shared/subscription-frequency (imported above).
 import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange, nextPickupDateFromScheduled } from "@shared/pickup-policy";
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
-import { insertDeliveryStopSchema } from "@shared/schema";
+import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -6338,68 +6338,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // broadcast to hand-picked retail or wholesale customers.
   // ============================================================
 
-  // The body is admin-authored and rendered only in recipients' mail clients,
-  // but pasted content still gets an allowlist pass: structural tags survive
-  // (bold, bullets, headings, links), everything else — scripts, styles,
-  // images, event handlers — is dropped.
-  function sanitizeCampaignHtml(input: string): string {
-    let s = String(input)
-      .replace(/<(script|style|iframe|object|embed|title|head)[^>]*>[\s\S]*?<\/\1>/gi, '')
-      .replace(/<!--[\s\S]*?-->/g, '');
-    const allowed = new Set(['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'blockquote']);
-    s = s.replace(/<\s*(\/?)\s*([a-zA-Z0-9]+)((?:[^>"']|"[^"]*"|'[^']*')*)>/g, (_m, slash, tag, attrs) => {
-      const t = String(tag).toLowerCase();
-      if (!allowed.has(t)) return '';
-      if (slash) return `</${t}>`;
-      if (t === 'a') {
-        const href = /href\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(String(attrs));
-        const url = href ? (href[1] ?? href[2] ?? '') : '';
-        const safe = /^https?:\/\//i.test(url) ? url : '';
-        return safe ? `<a href="${safe}" style="color:#1d4ed8;">` : '<a>';
-      }
-      return `<${t}>`;
-    });
-    return s.trim();
-  }
-
+  // Validation, sanitizing, opt-out enforcement, persistence, and the
+  // resumable background send all live in server/campaigns.ts.
   app.get("/api/admin/email-campaign/status", isAdmin, async (_req, res) => {
-    const { getCampaignStatus } = await import('./email');
-    res.json(getCampaignStatus());
+    try {
+      const { getLatestCampaignStatus } = await import('./campaigns');
+      res.json(await getLatestCampaignStatus());
+    } catch (error: any) {
+      res.status(500).json({ message: "Error reading campaign status: " + error.message });
+    }
   });
 
   app.post("/api/admin/email-campaign", isAdmin, async (req, res) => {
     try {
-      const { isCampaignRunning, runEmailCampaign } = await import('./email');
-      if (isCampaignRunning()) {
-        return res.status(409).json({ message: "A campaign is already sending — wait for it to finish." });
-      }
-      const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim().slice(0, 150) : '';
-      const audience = req.body?.audience === 'wholesale' ? 'wholesale' : 'retail';
-      const bodyHtml = sanitizeCampaignHtml(req.body?.bodyHtml ?? '');
-      if (!subject) return res.status(400).json({ message: "Subject is required" });
-      if (!bodyHtml.replace(/<[^>]+>/g, '').trim()) return res.status(400).json({ message: "The email body is empty" });
-
-      const raw = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
-      const seen = new Set<string>();
-      const recipients: Array<{ email: string; name?: string }> = [];
-      for (const r of raw.slice(0, 1000)) {
-        const email = typeof r?.email === 'string' ? r.email.trim() : '';
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
-        const key = email.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        recipients.push({ email, name: typeof r?.name === 'string' ? r.name.slice(0, 120) : undefined });
-      }
-      if (recipients.length === 0) return res.status(400).json({ message: "No valid recipients selected" });
-
-      console.log(`[CAMPAIGN] ${req.user?.email ?? 'admin'} queued "${subject}" (${audience}, ${recipients.length} recipients)`);
-      // Fire and return — the page polls /status for progress.
-      void runEmailCampaign(audience, subject, bodyHtml, recipients).catch((e) =>
-        console.error('[CAMPAIGN] run failed:', e),
-      );
-      res.json({ queued: recipients.length });
+      const { startCampaign } = await import('./campaigns');
+      const result = await startCampaign({
+        subject: typeof req.body?.subject === 'string' ? req.body.subject : '',
+        audience: req.body?.audience === 'wholesale' ? 'wholesale' : 'retail',
+        bodyHtml: typeof req.body?.bodyHtml === 'string' ? req.body.bodyHtml : '',
+        recipients: Array.isArray(req.body?.recipients) ? req.body.recipients : [],
+        createdBy: req.user?.id ?? null,
+      });
+      console.log(`[CAMPAIGN] ${req.user?.email ?? 'admin'} started ${result.id}`);
+      res.json(result);
     } catch (error: any) {
-      res.status(500).json({ message: "Error starting campaign: " + error.message });
+      const status = typeof error?.status === 'number' ? error.status : 500;
+      res.status(status).json({ message: status === 500 ? "Error starting campaign: " + error.message : error.message });
+    }
+  });
+
+  app.get("/api/admin/marketing-opt-outs", isAdmin, async (_req, res) => {
+    try {
+      const { listOptOuts } = await import('./campaigns');
+      res.json(await listOptOuts());
+    } catch (error: any) {
+      res.status(500).json({ message: "Error reading opt-outs: " + error.message });
+    }
+  });
+
+  app.post("/api/admin/marketing-opt-outs", isAdmin, async (req, res) => {
+    try {
+      const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Enter a valid email" });
+      const { addOptOut } = await import('./campaigns');
+      const stored = await addOptOut(email, req.user?.id ?? null, typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 200) : null);
+      res.status(201).json({ email: stored });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error saving opt-out: " + error.message });
+    }
+  });
+
+  app.delete("/api/admin/marketing-opt-outs/:email", isAdmin, async (req, res) => {
+    try {
+      const { removeOptOut } = await import('./campaigns');
+      await removeOptOut(decodeURIComponent(req.params.email));
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error removing opt-out: " + error.message });
+    }
+  });
+
+  // Wholesale campaign audience is BY LOCATION (owner, 2026-09-11): each active
+  // location is a row carrying its own contact email(s) — a chain's stores each
+  // reach their own inbox — falling back to the account email when a location
+  // has none. A customer with no locations is one row on the account email.
+  // The client dedupes addresses across selected rows and the server dedupes
+  // again, so a shared inbox gets exactly one email.
+  app.get("/api/admin/campaign-audience/wholesale", isAdmin, async (_req, res) => {
+    try {
+      const splitEmails = (s: string | null | undefined) =>
+        String(s ?? '').split(/[,;\s]+/).map((e) => e.trim()).filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+      const customers = await storage.getWholesaleCustomers();
+      const locations = await db.select().from(wholesaleLocationsTable).where(eq(wholesaleLocationsTable.isActive, true));
+      const byCustomer = new Map<string, typeof locations>();
+      for (const l of locations) {
+        const arr = byCustomer.get(l.customerId) ?? [];
+        arr.push(l);
+        byCustomer.set(l.customerId, arr);
+      }
+      const rows: Array<{ key: string; businessName: string; locationName: string | null; emails: string[] }> = [];
+      for (const c of customers) {
+        const locs = byCustomer.get(c.id) ?? [];
+        if (locs.length === 0) {
+          rows.push({ key: `c:${c.id}`, businessName: c.businessName, locationName: null, emails: splitEmails(c.email) });
+          continue;
+        }
+        for (const l of locs) {
+          const own = splitEmails(l.contactEmail);
+          rows.push({ key: `l:${l.id}`, businessName: c.businessName, locationName: l.locationName, emails: own.length ? own : splitEmails(c.email) });
+        }
+      }
+      rows.sort((a, b) => a.businessName.localeCompare(b.businessName) || (a.locationName ?? '').localeCompare(b.locationName ?? ''));
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error building audience: " + error.message });
     }
   });
 

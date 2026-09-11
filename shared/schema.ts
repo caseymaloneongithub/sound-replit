@@ -725,6 +725,41 @@ export const adminTaskCompletions = pgTable("admin_task_completions", {
   notes: text("notes"),
 });
 
+// ---- Email campaigns (2026-09-11) ----
+// Persistent marketing opt-outs: a ticked-off name on the campaign page lasts one
+// send; an opt-out is enforced server-side on every campaign until removed.
+export const marketingOptOuts = pgTable("marketing_opt_outs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull().unique(), // stored lowercase
+  reason: text("reason"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// A campaign and each recipient's delivery state live in the database so a
+// restart mid-send RESUMES the pending rows instead of abandoning them (or, on a
+// manual re-run, duplicating the ones already sent).
+export const emailCampaigns = pgTable("email_campaigns", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  subject: text("subject").notNull(),
+  audience: text("audience").notNull(), // 'retail' | 'wholesale'
+  bodyHtml: text("body_html").notNull(),
+  status: text("status").notNull().default("sending"), // 'sending' | 'done'
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
+});
+
+export const emailCampaignRecipients = pgTable("email_campaign_recipients", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  campaignId: varchar("campaign_id").notNull().references(() => emailCampaigns.id, { onDelete: 'cascade' }),
+  email: text("email").notNull(),
+  name: text("name"),
+  status: text("status").notNull().default("pending"), // 'pending' | 'sent' | 'failed' | 'skipped'
+  error: text("error"),
+  sentAt: timestamp("sent_at"),
+});
+
 // Insert schemas - OLD SCHEMA (for backwards compatibility)
 export const insertProductTypeSchema = createInsertSchema(productTypes).omit({ id: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });

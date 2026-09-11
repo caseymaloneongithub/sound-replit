@@ -4,6 +4,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
 import { startBillingCron } from "./billing-cron";
 import { scheduleDataRetentionJobs } from "./data-retention-cron";
+import { resumeUnfinishedCampaigns } from "./campaigns";
 
 const app = express();
 
@@ -59,6 +60,8 @@ app.use((req, res, next) => {
   } else {
     startBillingCron();
     scheduleDataRetentionJobs();
+    // A campaign interrupted mid-send by the restart finishes its pending rows.
+    void resumeUnfinishedCampaigns().catch((e) => console.error('[CAMPAIGN] resume check failed:', e));
   }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

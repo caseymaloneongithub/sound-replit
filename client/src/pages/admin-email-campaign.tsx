@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,60 +12,92 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Bold, List, Loader2, Send } from "lucide-react";
 
+const MAX_RECIPIENTS = 1000; // mirrors MAX_CAMPAIGN_RECIPIENTS on the server
+
 type RetailCustomer = { id: string; firstName: string | null; lastName: string | null; email: string | null };
-type WholesaleCustomer = { id: string; businessName: string; contactName: string | null; email: string };
+type WholesaleAudienceRow = { key: string; businessName: string; locationName: string | null; emails: string[] };
+type OptOut = { email: string; createdAt: string };
 type CampaignStatus = {
-  startedAt: string; audience: string; subject: string; total: number;
-  sent: number; failed: Array<{ email: string; error: string }>; done: boolean; logOnly: boolean;
+  id: string; subject: string; audience: string; startedAt: string; completedAt: string | null;
+  done: boolean; logOnly: boolean; total: number; sent: number; pending: number; skipped: number;
+  failed: Array<{ email: string; error: string }>;
 } | null;
 
-type Recipient = { key: string; name: string; email: string };
+// One selectable row: a retail account, or a wholesale LOCATION (owner,
+// 2026-09-11) — which may carry more than one address. Addresses are deduped
+// across every selected row before sending, so a shared inbox gets one email.
+type Recipient = { key: string; name: string; emails: string[] };
+
+const norm = (e: string) => e.trim().toLowerCase();
 
 /**
- * Email campaigns (owner, 2026-09-11): pick an audience (retail or wholesale),
- * untick anyone who shouldn't get it, paste the announcement — bold and bullets
- * survive the paste — and send. The server wraps the body in the standard brand
- * header/footer and drips one email per recipient in the background; this page
- * polls for progress.
+ * Email campaigns: pick an audience (retail accounts, or wholesale by
+ * location), untick anyone who shouldn't get THIS one, opt out anyone who should
+ * never get another (persisted, enforced server-side), paste the announcement —
+ * bold and bullets survive the paste — and send. The server persists the
+ * campaign and drips one email per address in the background; this page polls.
  */
 export default function AdminEmailCampaign() {
   const { toast } = useToast();
   const [audience, setAudience] = useState<"retail" | "wholesale">("retail");
-  // Deselected keys per audience — default is everyone selected.
+  // Unticked keys per audience for THIS send — default is everyone selected.
   const [deselected, setDeselected] = useState<Record<string, Set<string>>>({ retail: new Set(), wholesale: new Set() });
   const [search, setSearch] = useState("");
   const [subject, setSubject] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [polling, setPolling] = useState(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
 
   const { data: retailCustomers = [] } = useQuery<RetailCustomer[]>({ queryKey: ["/api/retail/customers"] });
-  const { data: wholesaleCustomers = [] } = useQuery<WholesaleCustomer[]>({ queryKey: ["/api/wholesale/customers"] });
+  const { data: wholesaleRows = [] } = useQuery<WholesaleAudienceRow[]>({ queryKey: ["/api/admin/campaign-audience/wholesale"] });
+  const { data: optOuts = [] } = useQuery<OptOut[]>({ queryKey: ["/api/admin/marketing-opt-outs"] });
+  const optedOut = useMemo(() => new Set(optOuts.map((o) => norm(o.email))), [optOuts]);
 
+  // Polling is derived from the campaign itself: while the latest one is still
+  // sending, poll; reopening the page mid-campaign picks that up automatically.
   const { data: status } = useQuery<CampaignStatus>({
     queryKey: ["/api/admin/email-campaign/status"],
-    refetchInterval: polling ? 2000 : false,
+    refetchInterval: (query) => (query.state.data && !query.state.data.done ? 2000 : false),
   });
-  useEffect(() => {
-    if (polling && status?.done) setPolling(false);
-  }, [polling, status?.done]);
+  const sending = !!status && !status.done;
 
   const recipients: Recipient[] = useMemo(() => {
     if (audience === "retail") {
       return retailCustomers
         .filter((c) => !!c.email)
-        .map((c) => ({ key: c.id, name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email!, email: c.email! }));
+        .map((c) => ({ key: c.id, name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email!, emails: [c.email!] }));
     }
-    return wholesaleCustomers
-      .filter((c) => !!c.email)
-      .map((c) => ({ key: c.id, name: c.businessName + (c.contactName ? ` — ${c.contactName}` : ""), email: c.email }));
-  }, [audience, retailCustomers, wholesaleCustomers]);
+    return wholesaleRows
+      .filter((r) => r.emails.length > 0)
+      .map((r) => ({
+        key: r.key,
+        name: r.locationName && r.locationName !== "Main Location" ? `${r.businessName} — ${r.locationName}` : r.businessName,
+        emails: r.emails,
+      }));
+  }, [audience, retailCustomers, wholesaleRows]);
 
+  // A row is opted out when every address on it is.
+  const isOut = (r: Recipient) => r.emails.every((e) => optedOut.has(norm(e)));
   const visible = recipients.filter(
-    (r) => !search.trim() || (r.name + " " + r.email).toLowerCase().includes(search.trim().toLowerCase()),
+    (r) => !search.trim() || (r.name + " " + r.emails.join(" ")).toLowerCase().includes(search.trim().toLowerCase()),
   );
   const off = deselected[audience];
-  const selected = recipients.filter((r) => !off.has(r.key));
+  const eligible = recipients.filter((r) => !isOut(r));
+  const selected = eligible.filter((r) => !off.has(r.key));
+
+  // The actual send list: every address on every selected row, minus opt-outs,
+  // one entry per distinct address (first row's name wins for the greeting).
+  const sendList = useMemo(() => {
+    const seen = new Map<string, { email: string; name: string }>();
+    for (const r of selected) {
+      for (const e of r.emails) {
+        const k = norm(e);
+        if (optedOut.has(k) || seen.has(k)) continue;
+        seen.set(k, { email: e.trim(), name: r.name });
+      }
+    }
+    return Array.from(seen.values());
+  }, [selected, optedOut]);
+  const overLimit = sendList.length > MAX_RECIPIENTS;
 
   const toggle = (key: string) =>
     setDeselected((prev) => {
@@ -76,6 +108,23 @@ export default function AdminEmailCampaign() {
     });
   const setAll = (on: boolean) =>
     setDeselected((prev) => ({ ...prev, [audience]: on ? new Set() : new Set(recipients.map((r) => r.key)) }));
+
+  const optOutMutation = useMutation({
+    mutationFn: async ({ emails, remove }: { emails: string[]; remove: boolean }) => {
+      for (const email of emails) {
+        if (remove) await apiRequest("DELETE", `/api/admin/marketing-opt-outs/${encodeURIComponent(norm(email))}`);
+        else await apiRequest("POST", "/api/admin/marketing-opt-outs", { email });
+      }
+    },
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/marketing-opt-outs"] });
+      toast({
+        title: vars.remove ? "Opt-out removed" : "Opted out",
+        description: vars.remove ? `${vars.emails.join(", ")} can receive campaigns again.` : `${vars.emails.join(", ")} won't get any future campaign.`,
+      });
+    },
+    onError: (error: any) => toast({ title: "Couldn't update opt-outs", description: error.message, variant: "destructive" }),
+  });
 
   // Serialize the contentEditable into clean semantic HTML. Pasted content from
   // Word/Google Docs encodes bold as styled <span>s — computed style decides,
@@ -102,7 +151,7 @@ export default function AdminEmailCampaign() {
       case "blockquote": return `<blockquote>${inner}</blockquote>`;
       case "a": {
         const href = el.getAttribute("href") ?? "";
-        return /^https?:\/\//i.test(href) ? `<a href="${href}">${inner}</a>` : inner;
+        return /^https?:\/\//i.test(href) ? `<a href="${href.replace(/"/g, "&quot;")}">${inner}</a>` : inner;
       }
       case "p": case "div": return inner.trim() ? `<p>${inner}</p>` : "";
       default: return inner; // spans and anything else: contents only
@@ -121,12 +170,14 @@ export default function AdminEmailCampaign() {
         audience,
         subject: subject.trim(),
         bodyHtml: bodyHtml(),
-        recipients: selected.map((r) => ({ email: r.email, name: r.name })),
+        recipients: sendList,
       }),
     onSuccess: (data: any) => {
       setConfirmOpen(false);
-      setPolling(true);
-      toast({ title: "Campaign started", description: `Sending to ${data.queued} recipient(s).` });
+      // Fresh status right away so polling starts on THIS campaign, not the
+      // cached finished one.
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/email-campaign/status"] });
+      toast({ title: "Campaign started", description: `Sending to ${data.queued} address(es)${data.skipped ? ` — ${data.skipped} opted out and skipped` : ""}.` });
     },
     onError: (error: any) => {
       setConfirmOpen(false);
@@ -134,8 +185,8 @@ export default function AdminEmailCampaign() {
     },
   });
 
-  const readyToSend = subject.trim().length > 0 && selected.length > 0;
-  const sending = polling && status && !status.done;
+  const readyToSend = subject.trim().length > 0 && sendList.length > 0 && !overLimit;
+  const rowWord = audience === "wholesale" ? "location" : "customer";
 
   return (
     <StaffLayout>
@@ -147,14 +198,22 @@ export default function AdminEmailCampaign() {
 
         {status && (
           <Card>
-            <CardContent className="pt-6 flex items-center gap-3" data-testid="campaign-progress">
-              {!status.done && <Loader2 className="w-4 h-4 animate-spin" />}
-              <div className="text-sm">
-                <span className="font-medium">{status.done ? "Last campaign" : "Sending"}:</span>{" "}
-                "{status.subject}" — {status.sent}/{status.total} sent
-                {status.failed.length > 0 && <span className="text-destructive"> · {status.failed.length} failed</span>}
-                {status.logOnly && <Badge variant="outline" className="ml-2">log-only (no mail configured)</Badge>}
+            <CardContent className="pt-6 space-y-2" data-testid="campaign-progress">
+              <div className="flex items-center gap-3 text-sm">
+                {!status.done && <Loader2 className="w-4 h-4 animate-spin" />}
+                <div>
+                  <span className="font-medium">{status.done ? "Last campaign" : "Sending"}:</span>{" "}
+                  "{status.subject}" — {status.sent}/{status.total - status.skipped} sent
+                  {status.skipped > 0 && <span className="text-muted-foreground"> · {status.skipped} opted out</span>}
+                  {status.failed.length > 0 && <span className="text-destructive"> · {status.failed.length} failed</span>}
+                  {status.logOnly && <Badge variant="outline" className="ml-2">log-only (no mail configured)</Badge>}
+                </div>
               </div>
+              {status.failed.length > 0 && (
+                <ul className="text-xs text-muted-foreground pl-7 space-y-0.5">
+                  {status.failed.map((f) => <li key={f.email}>{f.email} — {f.error}</li>)}
+                </ul>
+              )}
             </CardContent>
           </Card>
         )}
@@ -163,39 +222,72 @@ export default function AdminEmailCampaign() {
           <Card>
             <CardHeader>
               <CardTitle>Recipients</CardTitle>
-              <CardDescription>Everyone starts selected — untick anyone who shouldn't get this.</CardDescription>
+              <CardDescription>
+                Everyone starts selected — untick anyone who shouldn't get <em>this</em> one. "Opt out" keeps them off every future campaign.
+                {audience === "wholesale" && " Wholesale is listed by location; a shared address still gets just one email."}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Tabs value={audience} onValueChange={(v) => setAudience(v as "retail" | "wholesale")}>
+              <Tabs value={audience} onValueChange={(v) => { setAudience(v as "retail" | "wholesale"); setSearch(""); }}>
                 <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="retail" data-testid="tab-audience-retail">Retail</TabsTrigger>
                   <TabsTrigger value="wholesale" data-testid="tab-audience-wholesale">Wholesale</TabsTrigger>
                 </TabsList>
               </Tabs>
-              <div className="flex items-center gap-2">
-                <Input placeholder="Search name or email…" value={search} onChange={(e) => setSearch(e.target.value)} data-testid="input-recipient-search" />
-                <Button type="button" variant="outline" size="sm" onClick={() => setAll(true)} data-testid="button-select-all">All</Button>
-                <Button type="button" variant="outline" size="sm" onClick={() => setAll(false)} data-testid="button-select-none">None</Button>
-              </div>
+              <Input placeholder="Search name or email…" value={search} onChange={(e) => setSearch(e.target.value)} data-testid="input-recipient-search" />
               <p className="text-sm text-muted-foreground" data-testid="text-selected-count">
-                <span className="font-semibold text-foreground">{selected.length}</span> of {recipients.length} selected
+                <span className="font-semibold text-foreground">{selected.length}</span> of {eligible.length} {rowWord}{eligible.length === 1 ? "" : "s"} selected
+                {" · "}<span className="font-semibold text-foreground">{sendList.length}</span> unique address{sendList.length === 1 ? "" : "es"}
+                {overLimit && <span className="text-destructive"> — over the {MAX_RECIPIENTS.toLocaleString()} per-campaign limit; untick some or send in batches</span>}
               </p>
               <div className="border rounded-md max-h-96 overflow-y-auto divide-y" data-testid="list-recipients">
-                {visible.map((r) => (
-                  <label key={r.key} className="flex items-center gap-3 px-3 py-2 cursor-pointer hover-elevate">
-                    <input
-                      type="checkbox"
-                      className="rounded"
-                      checked={!off.has(r.key)}
-                      onChange={() => toggle(r.key)}
-                      data-testid={`checkbox-recipient-${r.key}`}
-                    />
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium truncate">{r.name}</span>
-                      <span className="block text-xs text-muted-foreground truncate">{r.email}</span>
-                    </span>
-                  </label>
-                ))}
+                {/* Select-all: checked when everyone eligible is in, indeterminate
+                    when only some are, unchecked when none. Opted-out rows aren't
+                    eligible and don't count either way. */}
+                <label className="flex items-center gap-3 px-3 py-2 bg-muted/40 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="rounded"
+                    checked={eligible.length > 0 && selected.length === eligible.length}
+                    ref={(el) => { if (el) el.indeterminate = selected.length > 0 && selected.length < eligible.length; }}
+                    onChange={(e) => setAll(e.target.checked)}
+                    aria-label="Select all recipients"
+                    data-testid="checkbox-select-all"
+                  />
+                  <span className="text-sm font-medium">Select all ({eligible.length})</span>
+                </label>
+                {visible.map((r) => {
+                  const out = isOut(r);
+                  return (
+                    <div key={r.key} className={`flex items-center gap-3 px-3 py-2 ${out ? "opacity-60" : ""}`}>
+                      <input
+                        type="checkbox"
+                        className="rounded"
+                        checked={!out && !off.has(r.key)}
+                        disabled={out}
+                        onChange={() => toggle(r.key)}
+                        aria-label={`Include ${r.name}`}
+                        data-testid={`checkbox-recipient-${r.key}`}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium truncate">
+                          {r.name}
+                          {out && <Badge variant="outline" className="ml-2 text-xs">Opted out</Badge>}
+                        </span>
+                        <span className="block text-xs text-muted-foreground truncate">{r.emails.join(", ")}</span>
+                      </span>
+                      <button
+                        type="button"
+                        className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+                        onClick={() => optOutMutation.mutate({ emails: r.emails, remove: out })}
+                        disabled={optOutMutation.isPending}
+                        data-testid={`button-optout-${r.key}`}
+                      >
+                        {out ? "Undo opt-out" : "Opt out"}
+                      </button>
+                    </div>
+                  );
+                })}
                 {visible.length === 0 && <p className="px-3 py-6 text-sm text-muted-foreground text-center">No matches.</p>}
               </div>
             </CardContent>
@@ -248,15 +340,15 @@ export default function AdminEmailCampaign() {
             <Card>
               <CardContent className="pt-6 flex items-center justify-between gap-3 flex-wrap">
                 <p className="text-xs text-muted-foreground max-w-xs">
-                  Each recipient gets their own email (no CC), with a reply-to-unsubscribe note in the footer.
+                  Each address gets its own email (no CC), with a reply-to-unsubscribe note in the footer. Up to {MAX_RECIPIENTS.toLocaleString()} per campaign.
                 </p>
                 <Button
                   onClick={() => setConfirmOpen(true)}
-                  disabled={!readyToSend || !!sending || sendMutation.isPending}
+                  disabled={!readyToSend || sending || sendMutation.isPending}
                   data-testid="button-open-send"
                 >
                   <Send className="w-4 h-4 mr-2" />
-                  Send to {selected.length}…
+                  Send to {sendList.length}…
                 </Button>
               </CardContent>
             </Card>
@@ -269,13 +361,13 @@ export default function AdminEmailCampaign() {
           <DialogHeader>
             <DialogTitle>Send this campaign?</DialogTitle>
             <DialogDescription>
-              "{subject.trim()}" goes to {selected.length} {audience} customer{selected.length === 1 ? "" : "s"}. This can't be recalled once it starts.
+              "{subject.trim()}" goes to {sendList.length} unique address{sendList.length === 1 ? "" : "es"} ({selected.length} {audience} {rowWord}{selected.length === 1 ? "" : "s"}). This can't be recalled once it starts.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmOpen(false)} data-testid="button-cancel-send">Cancel</Button>
             <Button onClick={() => sendMutation.mutate()} disabled={sendMutation.isPending} data-testid="button-confirm-send">
-              {sendMutation.isPending ? "Starting…" : `Send to ${selected.length}`}
+              {sendMutation.isPending ? "Starting…" : `Send to ${sendList.length}`}
             </Button>
           </DialogFooter>
         </DialogContent>

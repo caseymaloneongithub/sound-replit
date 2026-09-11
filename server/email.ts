@@ -2823,31 +2823,37 @@ Puget Sound Kombucha Co.`,
 // Email campaigns — staff-composed broadcasts (owner, 2026-09-11)
 // ============================================================
 
-export interface CampaignRecipient { email: string; name?: string }
+// The runner, opt-outs, and progress live in server/campaigns.ts (persisted —
+// a restart resumes a half-sent campaign). This file only knows how to build
+// and hand off one message.
 
-export interface CampaignStatus {
-  startedAt: string;
-  audience: string;
-  subject: string;
-  total: number;
-  sent: number;
-  failed: Array<{ email: string; error: string }>;
-  done: boolean;
-  logOnly: boolean;
+/** Is a real mail provider configured? (Otherwise sends are log-only.) */
+export const isMailConfigured = (): boolean => !!createTransporter();
+
+/** One campaign message to one recipient. Throws on provider failure. */
+export async function sendCampaignMail(to: string, subject: string, built: { html: string; text: string }): Promise<void> {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[CAMPAIGN] Would send to: ${to}`);
+    return;
+  }
+  await transporter.sendMail({
+    from: process.env.GMAIL_USER,
+    to,
+    subject,
+    text: built.text,
+    html: built.html,
+    attachments: getLogoAttachment(),
+  });
 }
 
-// One campaign at a time, tracked in memory — the send runs in the background
-// after the request returns, and the admin page polls this for progress. Lost
-// on restart, which is fine: it's a progress readout, not a record.
-let currentCampaign: CampaignStatus | null = null;
-export const getCampaignStatus = (): CampaignStatus | null => currentCampaign;
-export const isCampaignRunning = (): boolean => !!currentCampaign && !currentCampaign.done;
-
 /** The branded wrapper around staff-pasted body HTML (already sanitized by the
- *  route). Same header/footer as every other mail, plus the reply-to-opt-out
- *  line marketing-style sends need. */
+ *  campaign module). Same header/footer as every other mail, plus the
+ *  reply-to-opt-out line marketing-style sends need. */
 export function buildCampaignEmail(subject: string, bodyHtml: string): { html: string; text: string } {
   const text = bodyHtml
+    // Plain-text readers keep the link destination: "label (https://…)".
+    .replace(/<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href, label) => `${label} (${href})`)
     .replace(/<li[^>]*>/gi, '\n- ')
     .replace(/<\/(p|div|h[1-3]|ul|ol|blockquote)>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -2888,50 +2894,3 @@ ${optOut}`;
   return { html, text: fullText };
 }
 
-/** Sequential background send. Each recipient gets their own message (never CC),
- *  with a small delay between sends. Progress lands in currentCampaign. */
-export async function runEmailCampaign(
-  audience: string,
-  subject: string,
-  bodyHtml: string,
-  recipients: CampaignRecipient[],
-): Promise<void> {
-  const transporter = createTransporter();
-  const built = buildCampaignEmail(subject, bodyHtml);
-  currentCampaign = {
-    startedAt: new Date().toISOString(),
-    audience,
-    subject,
-    total: recipients.length,
-    sent: 0,
-    failed: [],
-    done: false,
-    logOnly: !transporter,
-  };
-  console.log(`[CAMPAIGN] Starting "${subject}" to ${recipients.length} ${audience} recipient(s)${transporter ? '' : ' (log-only)'}`);
-  for (const r of recipients) {
-    try {
-      if (!transporter) {
-        console.log(`[CAMPAIGN] Would send to: ${r.email}`);
-      } else {
-        await transporter.sendMail({
-          from: process.env.GMAIL_USER,
-          to: r.email,
-          subject,
-          text: built.text,
-          html: built.html,
-          attachments: getLogoAttachment(),
-        });
-        console.log(`[CAMPAIGN] ${currentCampaign.sent + 1}/${recipients.length} sent to ${r.email}`);
-      }
-      currentCampaign.sent++;
-    } catch (error: any) {
-      console.error(`[CAMPAIGN] Failed for ${r.email}: ${error?.message}`);
-      currentCampaign.failed.push({ email: r.email, error: String(error?.message ?? 'send failed').slice(0, 200) });
-    }
-    // Gentle pacing — provider rate limits, and a slow drip beats a bounce storm.
-    if (transporter) await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-  currentCampaign.done = true;
-  console.log(`[CAMPAIGN] Done: ${currentCampaign.sent} sent, ${currentCampaign.failed.length} failed`);
-}
