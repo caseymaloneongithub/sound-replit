@@ -765,7 +765,10 @@ export const emailCampaignRecipients = pgTable("email_campaign_recipients", {
   // re-sent automatically (a duplicate is worse than a miss on a marketing mail).
   status: text("status").notNull().default("pending"),
   error: text("error"),
+  // claimed_at is the LEASE (refreshed on every claim, including retries);
+  // first_claimed_at is immutable and bounds the provider's idempotency window.
   claimedAt: timestamp("claimed_at"),
+  firstClaimedAt: timestamp("first_claimed_at"),
   sentAt: timestamp("sent_at"),
 });
 

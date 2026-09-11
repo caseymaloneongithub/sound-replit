@@ -219,7 +219,8 @@ export async function startCampaign(input: CampaignInput): Promise<{ id: string;
  *  SKIP LOCKED means overlapping workers never hand out the same row twice. */
 async function claimNext(campaignId: string): Promise<{ id: string; email: string } | null> {
   const result = await db.execute(sql`
-    UPDATE email_campaign_recipients SET status = 'sending', claimed_at = now()
+    UPDATE email_campaign_recipients
+    SET status = 'sending', claimed_at = now(), first_claimed_at = COALESCE(first_claimed_at, now())
     WHERE id = (
       SELECT id FROM email_campaign_recipients
       WHERE campaign_id = ${campaignId} AND status = 'pending'
@@ -243,36 +244,45 @@ const IDEMPOTENCY_WINDOW_MS = 23 * 60 * 60 * 1000;
 const SETTLE_POLL_MS = 15 * 1000;
 
 /** Resolves claims whose lease has EXPIRED: back to 'pending' when the provider
- *  dedupes by idempotency key and the claim is inside the key's lifetime (a
- *  retry then can't deliver twice), otherwise 'uncertain' (delivery unknown —
- *  NOT re-sent). Live leases are untouched. Returns what it changed. */
-async function settleExpiredClaims(campaignId: string): Promise<{ retried: string[]; uncertain: string[] }> {
-  const expired = await db
-    .select({ id: emailCampaignRecipients.id, email: emailCampaignRecipients.email, claimedAt: emailCampaignRecipients.claimedAt })
-    .from(emailCampaignRecipients)
+ *  dedupes by idempotency key and the FIRST claim is inside the key's lifetime
+ *  (a retry then can't deliver twice), otherwise 'uncertain' (delivery unknown —
+ *  NOT re-sent). Live leases are untouched.
+ *
+ *  Each branch is ONE conditional UPDATE whose predicate re-checks "still
+ *  'sending' and still expired" at write time — no read-then-write gap for a
+ *  worker recording 'sent' to fall into. Every time comparison is done in SQL
+ *  (a JS Date parameter reaches the naive timestamp column with a local offset
+ *  the column ignores). Returns what it changed. */
+export async function settleExpiredClaims(campaignId: string): Promise<{ retried: string[]; uncertain: string[] }> {
+  // Parenthesized: inside the AND chain an unwrapped OR would bind loosest and
+  // match every old claim in the TABLE, other campaigns included.
+  const expiredLease = sql`(${emailCampaignRecipients.claimedAt} IS NULL OR ${emailCampaignRecipients.claimedAt} < now() - make_interval(secs => ${CLAIM_LEASE_MS / 1000}))`;
+  const retried: string[] = [];
+  if (isMailIdempotent()) {
+    const rows = await db
+      .update(emailCampaignRecipients)
+      .set({ status: 'pending', claimedAt: null })
+      .where(and(
+        eq(emailCampaignRecipients.campaignId, campaignId),
+        eq(emailCampaignRecipients.status, 'sending'),
+        expiredLease,
+        // The window is anchored to the FIRST attempt — the lease refreshes on
+        // every retry and must not extend the provider's 24h protection.
+        sql`${emailCampaignRecipients.firstClaimedAt} IS NOT NULL AND ${emailCampaignRecipients.firstClaimedAt} > now() - make_interval(secs => ${IDEMPOTENCY_WINDOW_MS / 1000})`,
+      ))
+      .returning({ email: emailCampaignRecipients.email });
+    retried.push(...rows.map((r) => r.email));
+  }
+  const uncertainRows = await db
+    .update(emailCampaignRecipients)
+    .set({ status: 'uncertain', error: 'interrupted mid-send — delivery unknown, not retried' })
     .where(and(
       eq(emailCampaignRecipients.campaignId, campaignId),
       eq(emailCampaignRecipients.status, 'sending'),
-      // Parenthesized: inside the AND chain an unwrapped OR would bind loosest
-      // and match every old claim in the TABLE, other campaigns included.
-      // The cutoff is computed IN SQL: a JS Date parameter reaches the naive
-      // timestamp column serialized in local time with an offset the column
-      // ignores — hours off, and an expired claim never qualified.
-      sql`(${emailCampaignRecipients.claimedAt} IS NULL OR ${emailCampaignRecipients.claimedAt} < now() - make_interval(secs => ${CLAIM_LEASE_MS / 1000}))`,
-    ));
-  const retried: string[] = []; const uncertain: string[] = [];
-  for (const row of expired) {
-    const fresh = row.claimedAt != null && Date.now() - row.claimedAt.getTime() < IDEMPOTENCY_WINDOW_MS;
-    if (isMailIdempotent() && fresh) {
-      await db.update(emailCampaignRecipients).set({ status: 'pending', claimedAt: null }).where(eq(emailCampaignRecipients.id, row.id));
-      retried.push(row.email);
-    } else {
-      await db.update(emailCampaignRecipients)
-        .set({ status: 'uncertain', error: 'interrupted mid-send — delivery unknown, not retried' })
-        .where(eq(emailCampaignRecipients.id, row.id));
-      uncertain.push(row.email);
-    }
-  }
+      expiredLease,
+    ))
+    .returning({ email: emailCampaignRecipients.email });
+  const uncertain = uncertainRows.map((r) => r.email);
   if (retried.length || uncertain.length) {
     console.log(`[CAMPAIGN] ${campaignId}: expired claims —` +
       (retried.length ? ` ${retried.length} queued for idempotent retry` : '') +

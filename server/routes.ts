@@ -6459,27 +6459,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
 <style>body{font-family:Arial,sans-serif;background:#f3f4f6;margin:0;padding:40px 16px;color:#111827}main{max-width:460px;margin:0 auto;background:#fff;border-radius:8px;padding:32px 28px;box-shadow:0 2px 8px rgba(0,0,0,.06)}h1{font-size:22px;margin:0 0 12px}p{line-height:1.5;color:#374151}button{background:#111827;color:#fff;border:0;border-radius:6px;padding:12px 20px;font-size:15px;cursor:pointer}small{color:#6b7280}</style></head>
 <body><main><h1>${title}</h1>${body}<p><small>Puget Sound Kombucha Co. · 4501 Shilshole Ave NW, Seattle, WA 98107</small></p></main></body></html>`;
 
+  // Both handlers are unauthenticated and async: Express 4 does not forward a
+  // rejected promise, and Node 22 turns an unhandled rejection into a process
+  // exit — so the token must be a plain string (the query parser can hand back
+  // arrays/objects) and every path sits inside try/catch.
+  const badLinkPage = () => unsubscribePage("That link didn't work",
+    `<p>This unsubscribe link is missing or invalid. Reply to any of our emails with "unsubscribe" and we'll take care of it by hand.</p>`);
+  const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+  const tokenParam = (req: any): string | null => (typeof req.query?.token === 'string' && req.query.token.length <= 512 ? req.query.token : null);
+
   app.get("/unsubscribe", async (req, res) => {
-    const { verifyUnsubscribeToken } = await import('./campaigns');
-    const email = verifyUnsubscribeToken(String(req.query.token ?? ''));
-    if (!email) {
-      return res.status(400).type('html').send(unsubscribePage("That link didn't work",
-        `<p>This unsubscribe link is missing or invalid. Reply to any of our emails with "unsubscribe" and we'll take care of it by hand.</p>`));
+    try {
+      const token = tokenParam(req);
+      const { verifyUnsubscribeToken } = await import('./campaigns');
+      const email = token ? verifyUnsubscribeToken(token) : null;
+      if (!token || !email) return res.status(400).type('html').send(badLinkPage());
+      res.type('html').send(unsubscribePage("Unsubscribe?",
+        `<p>Stop marketing emails to <strong>${escapeHtml(email)}</strong>? Order confirmations and invoices for anything you buy from us are unaffected.</p>
+         <form method="post" action="/unsubscribe?token=${encodeURIComponent(token)}"><button type="submit">Yes, unsubscribe me</button></form>`));
+    } catch (error: any) {
+      console.error('[CAMPAIGN] unsubscribe page error:', error?.message);
+      res.status(500).type('html').send(unsubscribePage("Something went wrong", `<p>Please try the link again in a moment, or reply to any of our emails with "unsubscribe".</p>`));
     }
-    const safeEmail = email.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
-    res.type('html').send(unsubscribePage("Unsubscribe?",
-      `<p>Stop marketing emails to <strong>${safeEmail}</strong>? Order confirmations and invoices for anything you buy from us are unaffected.</p>
-       <form method="post" action="/unsubscribe?token=${encodeURIComponent(String(req.query.token))}"><button type="submit">Yes, unsubscribe me</button></form>`));
   });
 
   app.post("/unsubscribe", async (req, res) => {
-    const { verifyUnsubscribeToken, addOptOut } = await import('./campaigns');
-    const email = verifyUnsubscribeToken(String(req.query.token ?? ''));
-    if (!email) return res.status(400).type('html').send(unsubscribePage("That link didn't work", `<p>This unsubscribe link is missing or invalid.</p>`));
-    await addOptOut(email, null, 'unsubscribe link');
-    console.log(`[CAMPAIGN] unsubscribed via link: ${email}`);
-    res.type('html').send(unsubscribePage("You're unsubscribed",
-      `<p>We won't send marketing emails to <strong>${email.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string))}</strong> again. Changed your mind? Just reply to any of our emails.</p>`));
+    try {
+      const token = tokenParam(req);
+      const { verifyUnsubscribeToken, addOptOut } = await import('./campaigns');
+      const email = token ? verifyUnsubscribeToken(token) : null;
+      if (!email) return res.status(400).type('html').send(badLinkPage());
+      await addOptOut(email, null, 'unsubscribe link');
+      console.log(`[CAMPAIGN] unsubscribed via link: ${email}`);
+      res.type('html').send(unsubscribePage("You're unsubscribed",
+        `<p>We won't send marketing emails to <strong>${escapeHtml(email)}</strong> again. Changed your mind? Just reply to any of our emails.</p>`));
+    } catch (error: any) {
+      console.error('[CAMPAIGN] unsubscribe error:', error?.message);
+      res.status(500).type('html').send(unsubscribePage("Something went wrong", `<p>Please try the link again in a moment, or reply to any of our emails with "unsubscribe".</p>`));
+    }
   });
 
   // Resend delivery events: hard bounces and spam complaints opt the address out
