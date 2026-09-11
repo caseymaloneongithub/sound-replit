@@ -6,7 +6,7 @@ import Stripe from "stripe";
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { storage } from "./storage";
 import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, insertMaterialSchema, insertSupplierSchema, insertProcessSchema, insertProductionSchema, insertMaterialOrderSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings, wholesaleOrderItems, wholesaleUnitTypes, deliveryRoutes, deliveryRouteStops } from "@shared/schema";
-import { eq, sql, and, desc, isNull, inArray } from "drizzle-orm";
+import { eq, sql, and, desc, isNull, inArray, gte } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
 import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
@@ -3787,7 +3787,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
           byFrequency.set(freq, [...(byFrequency.get(freq) ?? []), item]);
         }
 
+        // Duplicate-submit guard: an advisory lock serializes concurrent requests
+        // for the same user, and inside the lock a same-frequency subscription
+        // created in the last few minutes means THIS request is the duplicate — a
+        // double-click, a retried request after a lost response, a reloaded tab.
+        // Each duplicate used to mint its own subscription and its own idempotency
+        // key, so both charges went through.
+        const lockClient = await pool.connect();
+        await lockClient.query('SELECT pg_advisory_lock(hashtext($1))', [`subcheckout:${user.id}`]);
+        try {
+        const recentSubs = await db
+          .select({ id: retailSubscriptions.id, subscriptionFrequency: retailSubscriptions.subscriptionFrequency, startDate: retailSubscriptions.startDate })
+          .from(retailSubscriptions)
+          .where(and(
+            eq(retailSubscriptions.userId, user.id),
+            eq(retailSubscriptions.status, 'active'),
+            gte(retailSubscriptions.startDate, new Date(Date.now() - 5 * 60_000)),
+          ));
+        const recentByFreq = new Set(recentSubs.map(s => s.subscriptionFrequency));
+
         for (const [frequency, groupItems] of Array.from(byFrequency.entries())) {
+          if (recentByFreq.has(frequency)) {
+            console.warn(`[SUBSCRIPTION] Duplicate ${frequency} checkout for user ${user.id} within 5 min — skipping create+charge`);
+            const dup = recentSubs.find(s => s.subscriptionFrequency === frequency);
+            if (dup) createdSubscriptions.push(dup);
+            continue;
+          }
           // Price every line in the group
           const TAX_RATE = 0.1035;
           const pricedLines: Array<{ item: (typeof groupItems)[number]; unitPrice: number }> = [];
@@ -3898,8 +3923,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           createdSubscriptions.push(subscription);
         }
+        } finally {
+          await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))', [`subcheckout:${user.id}`]);
+          lockClient.release();
+        }
 
-        res.json({ 
+        res.json({
           success: true,
           subscriptions: createdSubscriptions,
         });
@@ -7503,6 +7532,15 @@ If you have any questions, please don't hesitate to reach out!`,
 
       // Handle order items update (replace all items)
       if (items && Array.isArray(items)) {
+        // Same payment locks as the invoice line editor — this endpoint used to
+        // bypass them, letting a paid invoice's items (and total) be rewritten.
+        if (order.paidAt) {
+          return res.status(409).json({ message: "This invoice is paid — its items can't be changed." });
+        }
+        if (order.paymentInitiatedAt && !order.paymentFailedAt) {
+          return res.status(409).json({ message: "A payment is processing on this invoice — items can't be changed right now." });
+        }
+
         // Get the customer to determine pricing
         const customer = await storage.getWholesaleCustomer(order.customerId);
         if (!customer) {
@@ -7551,8 +7589,10 @@ If you have any questions, please don't hesitate to reach out!`,
           });
         }
 
-        // Update order total
-        updated = await storage.updateWholesaleOrder(req.params.id, { totalAmount: newTotal.toString() }) || updated;
+        // Recompute the total through the shared path so invoice ADJUSTMENTS
+        // survive — summing just the items silently dropped them from the total.
+        await storage.recomputeWholesaleOrderTotal(req.params.id);
+        updated = await storage.getWholesaleOrder(req.params.id) || updated;
       }
 
       res.json({ ...updated, stockWarnings });

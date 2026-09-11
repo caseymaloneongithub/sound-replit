@@ -3964,6 +3964,23 @@ export class PostgresStorage implements IStorage {
       try {
         await client.query('BEGIN');
 
+        // Claim the transition FIRST, atomically: only the request that actually
+        // flips the order to fulfilled deducts stock. A double-tap, a retry, or two
+        // staff acting at once serialize on this row lock — the loser matches zero
+        // rows and skips deduction entirely (repeated fulfillment used to deduct
+        // repeatedly).
+        const claim = await client.query(
+          `UPDATE retail_orders
+           SET status = 'fulfilled', fulfilled_at = now(), fulfilled_by_user_id = $2, updated_at = now()
+           WHERE id = $1 AND deleted_at IS NULL AND status <> 'fulfilled'
+           RETURNING id`,
+          [id, userId]
+        );
+        if (claim.rows.length === 0) {
+          await client.query('COMMIT');
+          return await this.getRetailOrder(id);
+        }
+
         const orderItems = await db
           .select()
           .from(retailOrderItems)
@@ -4084,11 +4101,7 @@ export class PostgresStorage implements IStorage {
           }
         }
 
-        await client.query(
-          'UPDATE retail_orders SET status = $1, fulfilled_at = $2, fulfilled_by_user_id = $3, updated_at = $4 WHERE id = $5 AND deleted_at IS NULL',
-          [status, new Date(), userId, new Date(), id]
-        );
-
+        // (Status already flipped by the claiming UPDATE at the top.)
         await client.query('COMMIT');
 
         const updatedOrder: any = await this.getRetailOrder(id);
@@ -4101,13 +4114,53 @@ export class PostgresStorage implements IStorage {
         client.release();
       }
     } else {
-      const updates: any = { status, updatedAt: new Date() };
-      const result = await db
-        .update(retailOrders)
-        .set(updates)
-        .where(and(eq(retailOrders.id, id), isNull(retailOrders.deletedAt)))
-        .returning();
-      return result[0];
+      // Non-fulfilled transitions. Walking an order back OUT of fulfilled restores
+      // its stock by reversing this order's net fulfillment ledger — without this,
+      // an unfulfill/refulfill cycle deducted twice. The ledger (not the recipe of
+      // the moment) is the source of truth, mirroring the wholesale apply/restore.
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await client.query(
+          `UPDATE retail_orders ro
+           SET status = $1, updated_at = now()
+           FROM (SELECT status AS old_status FROM retail_orders WHERE id = $2 AND deleted_at IS NULL FOR UPDATE) prev
+           WHERE ro.id = $2 AND ro.deleted_at IS NULL
+           RETURNING ro.*, prev.old_status`,
+          [status, id]
+        );
+        const row = result.rows[0];
+        if (row && row.old_status === 'fulfilled' && status !== 'fulfilled') {
+          const { rows: nets } = await client.query(
+            `SELECT product_id, SUM(quantity)::int AS net
+             FROM inventory_adjustments
+             WHERE order_id = $1 AND order_type = 'retail'
+               AND reason IN ('fulfillment', 'fulfillment_reversal')
+             GROUP BY product_id HAVING SUM(quantity) <> 0`,
+            [id]
+          );
+          for (const n of nets) {
+            await client.query(
+              `UPDATE products SET stock_quantity = stock_quantity - $1, in_stock = (stock_quantity - $1) > 0 WHERE id = $2`,
+              [n.net, n.product_id]
+            );
+            await client.query(
+              `INSERT INTO inventory_adjustments (product_id, quantity, reason, staff_user_id, order_id, order_type)
+               VALUES ($1, $2, 'fulfillment_reversal', $3, $4, 'retail')`,
+              [n.product_id, -n.net, userId ?? null, id]
+            );
+          }
+        }
+        await client.query('COMMIT');
+        if (!row) return undefined;
+        const { old_status: _oldStatus, ...order } = row;
+        return await this.getRetailOrder(id) ?? (order as any);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
     }
   }
 

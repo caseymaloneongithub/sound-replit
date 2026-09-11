@@ -347,20 +347,24 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
     const [owner] = await db.select().from(users).where(eq(users.id, subscription.userId)).limit(1);
     if (owner?.stripeCustomerId) subscription.stripeCustomerId = owner.stripeCustomerId;
   }
-  if (!subscription.stripePaymentMethodId && subscription.stripeCustomerId) {
+  if (subscription.stripeCustomerId) {
     try {
       const cust: any = await stripe.customers.retrieve(subscription.stripeCustomerId);
-      let adopted = cust?.invoice_settings?.default_payment_method ?? null;
-      if (adopted && typeof adopted !== 'string') adopted = adopted.id;
-      if (!adopted) {
+      let currentDefault = cust?.invoice_settings?.default_payment_method ?? null;
+      if (currentDefault && typeof currentDefault !== 'string') currentDefault = currentDefault.id;
+      if (!currentDefault && !subscription.stripePaymentMethodId) {
         // No type filter: portal-saved cards often arrive as type 'link', and ACH
         // would be us_bank_account — any of them can carry an off-session charge.
         const pms = await stripe.paymentMethods.list({ customer: subscription.stripeCustomerId, limit: 10 });
-        adopted = pms.data.find((pm) => pm.card || pm.link || pm.us_bank_account)?.id ?? null;
+        currentDefault = pms.data.find((pm) => pm.card || pm.link || pm.us_bank_account)?.id ?? null;
       }
-      if (adopted) {
-        subscription.stripePaymentMethodId = adopted;
-        console.log(`[BILLING] Adopted card ${adopted} for subscription ${subscription.id} from the customer's Stripe profile`);
+      // The customer's CURRENT default wins over the card stored at signup: a
+      // replaced card updates the Stripe default, but the subscription kept
+      // explicitly charging the old id forever (declining after expiry even
+      // though a good card was on file).
+      if (currentDefault && currentDefault !== subscription.stripePaymentMethodId) {
+        console.log(`[BILLING] Subscription ${subscription.id} switching to the customer's current card ${currentDefault} (was ${subscription.stripePaymentMethodId ?? 'none'})`);
+        subscription.stripePaymentMethodId = currentDefault;
       }
     } catch (e: any) {
       console.warn(`[BILLING] Payment-method lookup failed for ${subscription.id}: ${e.message}`);
