@@ -215,8 +215,32 @@ export async function startCampaign(input: CampaignInput): Promise<{ id: string;
   return { id: campaignId, queued: rows.length - skipped, skipped };
 }
 
+// Resend honors an idempotency key for 24 hours; stay inside that with margin.
+// (Declared up here because claimNext enforces it too.)
+const IDEMPOTENCY_WINDOW_SECS = 23 * 60 * 60;
+
+/** A pending row that was attempted before (first_claimed_at set) is a RETRY,
+ *  and a retry is only safe while the provider's duplicate protection for the
+ *  original attempt is alive. A retry that sat pending through downtime past
+ *  that window is retired to 'uncertain' rather than delivered late. */
+async function expireStaleRetries(campaignId: string): Promise<string[]> {
+  const rows = await db
+    .update(emailCampaignRecipients)
+    .set({ status: 'uncertain', error: 'retry window expired — delivery of the first attempt unknown, not retried' })
+    .where(and(
+      eq(emailCampaignRecipients.campaignId, campaignId),
+      eq(emailCampaignRecipients.status, 'pending'),
+      sql`${emailCampaignRecipients.firstClaimedAt} IS NOT NULL AND ${emailCampaignRecipients.firstClaimedAt} <= now() - make_interval(secs => ${IDEMPOTENCY_WINDOW_SECS})`,
+    ))
+    .returning({ email: emailCampaignRecipients.email });
+  if (rows.length) console.log(`[CAMPAIGN] ${campaignId}: ${rows.length} stale retry(ies) marked uncertain: ${rows.map((r) => r.email).join(', ')}`);
+  return rows.map((r) => r.email);
+}
+
 /** Atomically claims one pending row for this worker, or null when none remain.
- *  SKIP LOCKED means overlapping workers never hand out the same row twice. */
+ *  SKIP LOCKED means overlapping workers never hand out the same row twice, and
+ *  the deadline sits INSIDE the claim predicate so a retry can't slip through
+ *  between an expiry sweep and the claim. */
 async function claimNext(campaignId: string): Promise<{ id: string; email: string } | null> {
   const result = await db.execute(sql`
     UPDATE email_campaign_recipients
@@ -224,6 +248,7 @@ async function claimNext(campaignId: string): Promise<{ id: string; email: strin
     WHERE id = (
       SELECT id FROM email_campaign_recipients
       WHERE campaign_id = ${campaignId} AND status = 'pending'
+        AND (first_claimed_at IS NULL OR first_claimed_at > now() - make_interval(secs => ${IDEMPOTENCY_WINDOW_SECS}))
       ORDER BY id
       LIMIT 1
       FOR UPDATE SKIP LOCKED
@@ -238,8 +263,7 @@ async function claimNext(campaignId: string): Promise<{ id: string; email: strin
 // Younger claims are someone else's active work — overlapping deployments run
 // two workers for a while — and must be left alone.
 const CLAIM_LEASE_MS = 5 * 60 * 1000;
-// Resend honors an idempotency key for 24 hours; stay inside that with margin.
-const IDEMPOTENCY_WINDOW_MS = 23 * 60 * 60 * 1000;
+const IDEMPOTENCY_WINDOW_MS = IDEMPOTENCY_WINDOW_SECS * 1000;
 // How long a worker with nothing to claim waits for other workers' leases.
 const SETTLE_POLL_MS = 15 * 1000;
 
@@ -350,8 +374,11 @@ export async function runCampaign(campaignId: string): Promise<void> {
       continue;
     }
 
-    // Nothing to claim. Settle any claims whose lease ran out (a dead worker's),
-    // then look again — settling may have returned rows to 'pending'.
+    // Nothing claimable. Retire retries that outlived their window (they're
+    // pending but claimNext refuses them), settle any claims whose lease ran
+    // out (a dead worker's), then look again — settling may have returned
+    // rows to 'pending'.
+    await expireStaleRetries(campaignId);
     const settled = await settleExpiredClaims(campaignId);
     if (settled.retried.length) continue;
 
