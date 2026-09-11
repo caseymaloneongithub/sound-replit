@@ -507,6 +507,22 @@ function BoardSheet({ orders, flavorOrder, stock, catalog, onAdvance, advancing 
  * red when the shelf can't cover the week. Item labels arrive as "Flavor — Unit".
  */
 function PrepGrid({ retail, wholesale, stock, catalog, flavorOrder }: { retail: BoardItem[]; wholesale: BoardItem[]; stock: Record<string, { quantity: number; productId: string } | null>; catalog: Record<string, Array<{ flavor: string; quantity: number; productId: string }>>; flavorOrder: string[] }) {
+  // Full flavor names when they fit, 2-letter abbreviations when they don't
+  // (owner, 2026-09-11): table-fixed + nowrap headers OVERLAP instead of
+  // scrolling once ~7+ columns share a tablet width. Measured, not a fixed
+  // breakpoint, because the column count varies with the week's catalog.
+  const prepRef = useRef<HTMLDivElement | null>(null);
+  const [prepWidth, setPrepWidth] = useState(0);
+  useEffect(() => {
+    if (!prepRef.current) return;
+    const ro = new ResizeObserver((entries) => setPrepWidth(entries[0].contentRect.width));
+    ro.observe(prepRef.current);
+    return () => ro.disconnect();
+  }, []);
+  // Widest realistic header ("Hummingbrew") at text-sm plus px-3 padding.
+  const FULL_NAME_COL = 110;
+  const LABEL_COL = 112; // the w-28 row-label column
+
   const parse = (label: string) => {
     const idx = label.lastIndexOf(" — ");
     return idx === -1
@@ -568,12 +584,15 @@ function PrepGrid({ retail, wholesale, stock, catalog, flavorOrder }: { retail: 
   const dash = (n: number) => (n > 0 ? n : "—");
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" ref={prepRef}>
       {unitGroups.map((g) => {
         const sum = (key: "wholesale" | "retail" | "total") => g.columns.reduce((acc, c) => acc + c[key], 0);
         const stockSum = g.columns.every((c) => c.stock === null)
           ? null
           : g.columns.reduce((acc, c) => acc + (c.stock ?? 0), 0);
+        // +1 column for "All". Until the first measurement lands (width 0),
+        // abbreviate — a flash of overlap is worse than a flash of initials.
+        const useAbbr = prepWidth < LABEL_COL + (g.columns.length + 1) * FULL_NAME_COL;
         return (
           <div key={g.unit} className="overflow-x-auto" data-testid={`prep-table-${g.unit}`}>
             <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{g.unit}</div>
@@ -582,7 +601,13 @@ function PrepGrid({ retail, wholesale, stock, catalog, flavorOrder }: { retail: 
                 <tr>
                   <th className="text-left font-medium text-muted-foreground py-2 pr-3 border-b w-28"></th>
                   {g.columns.map((c) => (
-                    <th key={c.flavor} className="px-3 py-2 text-center font-medium border-b whitespace-nowrap">{c.flavor}</th>
+                    <th
+                      key={c.flavor}
+                      title={useAbbr ? c.flavor : undefined}
+                      className="px-3 py-2 text-center font-medium border-b whitespace-nowrap"
+                    >
+                      {useAbbr ? flavorAbbr(c.flavor) : c.flavor}
+                    </th>
                   ))}
                   <th className="px-3 py-2 text-center font-semibold border-b">All</th>
                 </tr>
