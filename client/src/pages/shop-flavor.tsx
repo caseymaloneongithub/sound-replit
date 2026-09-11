@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Flavor, RetailCartItem } from "@shared/schema";
-import { Button } from "@/components/ui/button";
+import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -244,17 +246,22 @@ export default function ShopFlavor() {
             ) : (
               <div className="mt-10 max-w-2xl">
                 <h2 className="font-semibold text-lg mb-3">Choose your package</h2>
-                <div className="grid sm:grid-cols-2 gap-3" role="radiogroup" aria-label="Package" data-testid="grid-packages">
+                {/* Radix radio group: roving tab stop + arrow-key selection, which
+                    hand-rolled role="radio" buttons couldn't give the keyboard. */}
+                <RadioGroupPrimitive.Root
+                  value={product?.id ?? ""}
+                  onValueChange={(id) => { setSelectedProductId(id); setAdded(false); }}
+                  aria-label="Package"
+                  className="grid sm:grid-cols-2 gap-3"
+                  data-testid="grid-packages"
+                >
                   {packages.map(({ product: p }) => {
                     const selected = product?.id === p.id;
                     return (
-                      <button
+                      <RadioGroupPrimitive.Item
                         key={p.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        onClick={() => { setSelectedProductId(p.id); setAdded(false); }}
-                        className={`text-left rounded-md border p-4 bg-card transition-colors ${selected ? "border-primary ring-1 ring-primary" : "hover:border-primary/50"}`}
+                        value={p.id}
+                        className={`text-left rounded-md border p-4 bg-card transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected ? "border-primary ring-1 ring-primary" : "hover:border-primary/50"}`}
                         data-testid={`button-package-${p.id}`}
                       >
                         <p className="font-semibold">{p.productName || p.unitType.replace(/-/g, " ")}</p>
@@ -268,21 +275,34 @@ export default function ShopFlavor() {
                         {Number(p.subscriptionDiscount ?? 0) > 0 && (
                           <Badge variant="default" className="text-xs mt-2">Subscribe &amp; Save {Number(p.subscriptionDiscount).toFixed(0)}%</Badge>
                         )}
-                      </button>
+                      </RadioGroupPrimitive.Item>
                     );
                   })}
-                </div>
+                </RadioGroupPrimitive.Root>
 
                 {splitCapable && (
                   <div className="mt-5">
-                    <div className="grid grid-cols-2 gap-2 max-w-md" role="radiogroup" aria-label="Mixed case style">
-                      <Button type="button" size="sm" role="radio" aria-checked={!splitOn} variant={splitOn ? "outline" : "secondary"} onClick={() => setPickTwo(false)} data-testid="button-mixed-all">
+                    <RadioGroupPrimitive.Root
+                      value={splitOn ? "pick2" : "all"}
+                      onValueChange={(v) => setPickTwo(v === "pick2")}
+                      aria-label="Mixed case style"
+                      className="grid grid-cols-2 gap-2 max-w-md"
+                    >
+                      <RadioGroupPrimitive.Item
+                        value="all"
+                        className={cn(buttonVariants({ variant: splitOn ? "outline" : "secondary", size: "sm" }))}
+                        data-testid="button-mixed-all"
+                      >
                         A little of everything
-                      </Button>
-                      <Button type="button" size="sm" role="radio" aria-checked={splitOn} variant={splitOn ? "secondary" : "outline"} onClick={() => setPickTwo(true)} data-testid="button-mixed-pick2">
+                      </RadioGroupPrimitive.Item>
+                      <RadioGroupPrimitive.Item
+                        value="pick2"
+                        className={cn(buttonVariants({ variant: splitOn ? "secondary" : "outline", size: "sm" }))}
+                        data-testid="button-mixed-pick2"
+                      >
                         Pick 2 flavors
-                      </Button>
-                    </div>
+                      </RadioGroupPrimitive.Item>
+                    </RadioGroupPrimitive.Root>
                     <p className="text-xs text-muted-foreground mt-1">
                       {splitOn ? "6 bottles of each flavor you pick." : "2 bottles of each flavor."}
                     </p>
