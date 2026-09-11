@@ -63,6 +63,17 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
       .limit(1);
 
     if (existing.length > 0) {
+      // Finalization is AUTHORITATIVE: a completed first charge must leave the
+      // subscription billable even when a racing timeout handler parked it
+      // AFTER the order was created — later webhook deliveries land here, so
+      // this early return also repairs any downgraded status.
+      await db.update(retailSubscriptions)
+        .set({ status: 'active', billingStatus: 'active' })
+        .where(and(
+          eq(retailSubscriptions.lastPaymentIntentId, paymentIntentId),
+          eq(retailSubscriptions.status, 'pending'),
+          eq(retailSubscriptions.billingStatus, 'first_charge_uncertain'),
+        ));
       console.log(`[BILLING] Order already exists for PaymentIntent ${paymentIntentId}, skipping`);
       return true;
     }

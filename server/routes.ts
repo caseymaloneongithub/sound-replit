@@ -3875,6 +3875,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // the ORIGINAL idempotency key: Stripe replays the outcome if the charge
         // succeeded, or attempts it fresh if it never processed — either way,
         // exactly one charge.
+        // NO age cutoff: an unresolved attempt blocks new same-frequency
+        // checkouts until it is reconciled, however old — a next-day checkout
+        // must not mint a second subscription while the first payment's fate is
+        // unknown. Age changes HOW we reconcile (see the Stripe lookup below),
+        // never whether we do.
         const uncertainSubs = await db
           .select()
           .from(retailSubscriptions)
@@ -3882,13 +3887,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
             eq(retailSubscriptions.userId, user.id),
             eq(retailSubscriptions.status, 'pending'),
             eq(retailSubscriptions.billingStatus, 'first_charge_uncertain'),
-            gte(retailSubscriptions.startDate, new Date(Date.now() - 24 * 60 * 60 * 1000)),
           ));
 
         for (const [frequency, groupItems] of Array.from(byFrequency.entries())) {
           const uncertain = uncertainSubs.find(s => s.subscriptionFrequency === frequency);
           if (uncertain) {
-            console.warn(`[SUBSCRIPTION] Reconciling uncertain first charge for ${uncertain.id} with its original idempotency key`);
+            console.warn(`[SUBSCRIPTION] Reconciling uncertain first charge for ${uncertain.id}`);
+
+            // FIRST ask Stripe whether the original charge actually happened —
+            // authoritative at any age (idempotency keys expire after 24h, so
+            // replaying an old key would charge FRESH; and if the stored card
+            // was lost, a found charge still recovers without one). A succeeded
+            // intent means finalize + activate, never a new charge.
+            try {
+              const existing = await stripe.paymentIntents.search({
+                query: `metadata['retailSubscriptionId']:'${uncertain.id}' AND status:'succeeded'`,
+              });
+              if (existing.data.length > 0) {
+                console.warn(`[SUBSCRIPTION] Found the original succeeded charge ${existing.data[0].id} — finalizing, no new charge`);
+                await db.update(retailSubscriptions)
+                  .set({ status: 'active', billingStatus: 'active' })
+                  .where(eq(retailSubscriptions.id, uncertain.id));
+                const { finalizeRetailSubscriptionCharge } = await import('./billing-cron');
+                await finalizeRetailSubscriptionCharge(existing.data[0].id);
+                for (const item of groupItems) {
+                  await db.delete(retailCartItems).where(eq(retailCartItems.id, item.id));
+                }
+                createdSubscriptions.push(uncertain);
+                continue;
+              }
+            } catch (searchError: any) {
+              // Search unavailable (indexing lag, transient). Within the
+              // idempotency key's lifetime the retry below is still safe — Stripe
+              // replays rather than double-charges. BEYOND it the key would
+              // charge fresh with no proof the original didn't succeed, so
+              // refuse rather than gamble.
+              const ageMs = Date.now() - new Date(uncertain.startDate as any).getTime();
+              if (ageMs > 23 * 60 * 60 * 1000) {
+                throw new Error("We couldn't verify an earlier payment attempt on this subscription. Please try again in a few minutes — no charge has been made now.");
+              }
+              console.warn(`[SUBSCRIPTION] Stripe search failed (${searchError?.message}) — falling back to idempotent retry`);
+            }
             // Amount MUST match the original request (same key + different params
             // is a Stripe idempotency error), so recompute from the parked
             // subscription's own locked items — not from today's cart.
@@ -4023,6 +4062,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // cycle despite signup never completing. Remove the row and its items,
           // then rethrow so the customer sees the failure.
           let paymentIntent;
+          let recoveredByWebhook = false;
           try {
             paymentIntent = await stripe.paymentIntents.create({
               amount: amountInCents,
@@ -4054,13 +4094,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
               await db.delete(retailSubscriptionItems).where(eq(retailSubscriptionItems.subscriptionId, subscription.id));
               await db.delete(retailSubscriptions).where(eq(retailSubscriptions.id, subscription.id));
               console.warn(`[SUBSCRIPTION] First charge declined — removed unpaid subscription ${subscription.id}`);
-            } else {
-              await db.update(retailSubscriptions)
-                .set({ status: 'pending', billingStatus: 'first_charge_uncertain' })
-                .where(eq(retailSubscriptions.id, subscription.id));
-              console.warn(`[SUBSCRIPTION] First charge AMBIGUOUS for ${subscription.id} (${chargeError?.type ?? 'unknown'}) — parked pending reconcile`);
+              throw chargeError;
             }
-            throw chargeError;
+            // CONDITIONAL park: the webhook may have already finalized this very
+            // charge (timeout on our side, success on Stripe's — finalize stamps
+            // last_payment_intent_id). Parking unconditionally used to DOWNGRADE
+            // that finalized subscription back to pending, and later webhook
+            // deliveries early-returned without repairing it — renewals stopped.
+            const parked = await db.update(retailSubscriptions)
+              .set({ status: 'pending', billingStatus: 'first_charge_uncertain' })
+              .where(and(
+                eq(retailSubscriptions.id, subscription.id),
+                isNull(retailSubscriptions.lastPaymentIntentId),
+              ))
+              .returning({ id: retailSubscriptions.id });
+            if (parked.length === 0) {
+              // Finalized while we were timing out: the charge WON. This is a
+              // success, not an error — fall through to cart clearing.
+              console.warn(`[SUBSCRIPTION] Charge reply lost but webhook finalized ${subscription.id} — treating as success`);
+              recoveredByWebhook = true;
+            } else {
+              console.warn(`[SUBSCRIPTION] First charge AMBIGUOUS for ${subscription.id} (${chargeError?.type ?? 'unknown'}) — parked pending reconcile`);
+              // The parked subscription's stored payment method IS the recovery
+              // path — the outer catch must not detach it.
+              chargeError.preservePaymentMethod = true;
+              throw chargeError;
+            }
           }
 
           // Create the first order through the SAME finalizer the webhook uses — it is
@@ -4069,15 +4128,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // insert here raced the webhook for the next order number and could lose,
           // failing checkout AFTER the charge — the customer saw an error, retried,
           // and got charged twice (Kirk, 2026-08-31).
-          if (paymentIntent.status === 'succeeded') {
+          if (recoveredByWebhook) {
+            // Order and activation already handled by the webhook's finalize.
+          } else if (paymentIntent!.status === 'succeeded') {
             const { finalizeRetailSubscriptionCharge } = await import('./billing-cron');
-            const finalized = await finalizeRetailSubscriptionCharge(paymentIntent.id);
+            const finalized = await finalizeRetailSubscriptionCharge(paymentIntent!.id);
             if (finalized) {
               console.log(`[SUBSCRIPTION] ✅ First order finalized for subscription ${subscription.id}`);
             } else {
-              console.error(`[SUBSCRIPTION] ⚠️ First-order finalize incomplete for ${paymentIntent.id} — the payment_intent.succeeded webhook will finish it`);
+              console.error(`[SUBSCRIPTION] ⚠️ First-order finalize incomplete for ${paymentIntent!.id} — the payment_intent.succeeded webhook will finish it`);
             }
-          } else if (paymentIntent.status === 'processing') {
+          } else if (paymentIntent!.status === 'processing') {
             // Genuinely pending (e.g. delayed settlement) — the succeeded webhook
             // finalizes the first order when it lands. The subscription stays.
             console.warn(`[SUBSCRIPTION] First charge processing for ${subscription.id} — webhook will finalize`);
@@ -4108,14 +4169,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } catch (transactionError: any) {
         console.error("Subscription creation failed:", transactionError);
-        
-        // If transaction failed after payment method was attached, detach it
-        try {
-          await stripe.paymentMethods.detach(validated.paymentMethodId);
-        } catch (detachError) {
-          console.error("Failed to detach payment method after error:", detachError);
+
+        // If the transaction failed after the payment method was attached,
+        // detach it — UNLESS a parked (uncertain) subscription still references
+        // it: that stored method is the reconcile path's only way to retry the
+        // charge, and a detached method can never be reused.
+        if (transactionError?.preservePaymentMethod) {
+          console.warn("[SUBSCRIPTION] Keeping payment method attached — an unresolved attempt references it");
+        } else {
+          try {
+            await stripe.paymentMethods.detach(validated.paymentMethodId);
+          } catch (detachError) {
+            console.error("Failed to detach payment method after error:", detachError);
+          }
         }
-        
+
         throw transactionError;
       }
     } catch (error: any) {
