@@ -616,20 +616,20 @@ function PrepGrid({ retail, wholesale, stock, catalog, flavorOrder }: { retail: 
                 <tr className="text-muted-foreground">
                   <td className="py-2 pr-3 whitespace-nowrap">In Stock</td>
                   {g.columns.map((c, i) => {
-                    // Orders exist but there's NO finished-goods item to draw from —
-                    // cans ordered ahead of the first canning run (allowed on
-                    // purpose). Shout, so it's produced or created before delivery.
-                    // Mixed is exempt: mixed cases are packed from the per-flavor
-                    // stocks and never have their own finished-goods row, so the
-                    // shout was a false alarm there — it shows an untracked "—".
-                    const noStockItemButOrdered = c.offered && c.total > 0 && c.productId === null && c.stock === null && c.flavor !== "Mixed";
+                    // Ordered with no finished-goods item to draw from: a red 0,
+                    // the same as a tracked shortage. (This was an amber "none!"
+                    // shout during the pre-canning window when cans were orderable
+                    // ahead of their first run — retired 2026-09-11, canning is
+                    // live.) Mixed stays exempt: mixed cases are packed from the
+                    // per-flavor stocks and never have their own stock row.
+                    const orderedNoItem = c.offered && c.total > 0 && c.productId === null && c.stock === null && c.flavor !== "Mixed";
                     return (
                       <td
                         key={i}
-                        className={`px-3 py-2 text-center text-lg ${c.stock !== null && c.stock < c.total ? "text-destructive font-semibold" : ""} ${noStockItemButOrdered ? "text-amber-600 dark:text-amber-400 font-semibold" : ""}`}
-                        title={noStockItemButOrdered ? "Ordered, but no finished-goods item exists yet — produce or create it before delivery" : undefined}
+                        className={`px-3 py-2 text-center text-lg ${(c.stock !== null && c.stock < c.total) || orderedNoItem ? "text-destructive font-semibold" : ""}`}
+                        title={orderedNoItem ? "No finished-goods item yet — it appears here once the first count is entered" : undefined}
                       >
-                        {c.productId ? <StockCell productId={c.productId} quantity={c.stock ?? 0} /> : (!c.offered ? "" : noStockItemButOrdered ? "none!" : c.stock === null ? "—" : c.stock)}
+                        {c.productId ? <StockCell productId={c.productId} quantity={c.stock ?? 0} /> : (!c.offered ? "" : orderedNoItem ? 0 : c.stock === null ? "—" : c.stock)}
                       </td>
                     );
                   })}
