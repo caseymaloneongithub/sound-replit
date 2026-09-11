@@ -81,7 +81,10 @@ export default function WholesaleGuestOrder() {
   // server enforces the minimum at submit regardless).
   const [precheckKey, setPrecheckKey] = useState("");
   useEffect(() => {
-    const items = lines.filter((l) => l.unitTypeId).map((l) => ({ unitTypeId: l.unitTypeId, quantity: l.quantity }));
+    // EXACTLY the lines the submission will send (product AND flavor chosen) —
+    // counting half-finished rows here let the button enable on a total the
+    // submit would then fail (reviewer, 2026-09-11).
+    const items = lines.filter((l) => l.unitTypeId && l.flavorId).map((l) => ({ unitTypeId: l.unitTypeId, quantity: l.quantity }));
     const key = items.length > 0
       ? JSON.stringify({ customerId, locationId: fulfillment === "delivery" ? locationId || null : null, items })
       : "";

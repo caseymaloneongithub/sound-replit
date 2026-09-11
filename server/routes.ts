@@ -1597,8 +1597,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedItems = [];
 
       for (const item of items) {
-        if (!item.unitTypeId || !item.flavorId || !item.quantity || item.quantity <= 0) {
-          throw new OrderValidationError(400, { message: "Invalid item data: unitTypeId, flavorId, and quantity are required" });
+        // Whole units only — the quantity column is an integer, and a fractional
+        // value would otherwise surface as a 500 at insert time.
+        if (!item.unitTypeId || !item.flavorId || !Number.isInteger(Number(item.quantity)) || item.quantity <= 0) {
+          throw new OrderValidationError(400, { message: "Invalid item data: unitTypeId, flavorId, and a whole-number quantity are required" });
         }
 
         const unitType = await storage.getWholesaleUnitType(item.unitTypeId);
@@ -1793,7 +1795,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/wholesale/guest-order/precheck", async (req: any, res) => {
     try {
       const ip = req.ip || req.socket?.remoteAddress || "unknown";
-      if (!checkSubmissionRateLimit(`guest-precheck-hr:${ip}`, 120, 60 * 60 * 1000)) {
+      if (!checkSubmissionRateLimit(`guest-precheck-hr:${ip}`, 60, 60 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many checks from this connection." });
       }
       const customer = await storage.getWholesaleCustomer(String(req.body?.customerId || ""));
@@ -1811,9 +1813,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const items = Array.isArray(req.body?.items) ? req.body.items : [];
       let total = 0;
-      for (const item of items.slice(0, 50)) {
+      for (const item of items.slice(0, 20)) {
         const qty = Number(item?.quantity);
-        if (!item?.unitTypeId || !Number.isFinite(qty) || qty <= 0) continue;
+        // Whole units only, in the form's own 1-99 range: fractional quantities
+        // would let a binary search recover a store's negotiated rate to the
+        // cent from the boolean (reviewer, 2026-09-11). Integers cap what one
+        // answer reveals at "price is between minimum/(q) and minimum/(q-1)".
+        if (!item?.unitTypeId || !Number.isInteger(qty) || qty <= 0 || qty > 99) continue;
         const unitPrice = await storage.resolveWholesaleUnitPrice(customer.id, locationId, String(item.unitTypeId));
         total += unitPrice * qty;
       }
