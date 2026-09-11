@@ -185,7 +185,7 @@ export default function OrdersBoard() {
             <h2 className="text-xl font-semibold mb-3">To prepare this week</h2>
             {isLoading ? (
               <p className="text-muted-foreground">Loading…</p>
-            ) : (data?.totals.retail.length ?? 0) + (data?.totals.wholesale.length ?? 0) === 0 ? (
+            ) : (data?.totals.retail.length ?? 0) + (data?.totals.wholesale.length ?? 0) + Object.keys(data?.catalog ?? {}).length === 0 ? (
               <p className="text-muted-foreground">Nothing scheduled this week.</p>
             ) : (
               <PrepGrid retail={data!.totals.retail} wholesale={data!.totals.wholesale} stock={data!.stock ?? {}} catalog={data!.catalog ?? {}} flavorOrder={data!.flavorOrder ?? []} />
@@ -547,8 +547,15 @@ function PrepGrid({ retail, wholesale, stock, catalog, flavorOrder }: { retail: 
   add(wholesale, "wholesale");
   add(retail, "retail");
 
-  // Every flavor shows, zeros included — but only for units that have SOME activity
-  // this week (an all-zero unit table is noise, an all-zero flavor column is signal).
+  // Every sellable unit ALWAYS gets a table, orders or not (owner, 2026-09-11 —
+  // reversing the earlier "an all-zero unit table is noise" rule): the grid
+  // doubles as the stock readout, and keg inventory was invisible exactly when
+  // nothing was on order. The catalog carries every unit type with a container.
+  for (const unit of Object.keys(catalog)) {
+    if (!units.has(unit)) units.set(unit, new Map());
+  }
+
+  // Every flavor shows, zeros included.
   for (const [unit, flavors] of Array.from(units.entries())) {
     for (const entry of catalog[unit] ?? []) {
       if (!flavors.has(entry.flavor)) {
@@ -579,6 +586,7 @@ function PrepGrid({ retail, wholesale, stock, catalog, flavorOrder }: { retail: 
     }))
     .sort((a, b) =>
       b.columns.reduce((sum, c) => sum + c.total, 0) - a.columns.reduce((sum, c) => sum + c.total, 0)
+      || a.unit.localeCompare(b.unit)
     );
 
   const dash = (n: number) => (n > 0 ? n : "—");
