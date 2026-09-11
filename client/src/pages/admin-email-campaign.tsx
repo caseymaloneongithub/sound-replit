@@ -20,7 +20,8 @@ type OptOut = { email: string; createdAt: string };
 type CampaignStatus = {
   id: string; subject: string; audience: string; startedAt: string; completedAt: string | null;
   done: boolean; logOnly: boolean; total: number; sent: number; pending: number; skipped: number;
-  failed: Array<{ email: string; error: string }>;
+  uncertain: number; failedCount: number;
+  failed: Array<{ email: string; error: string }>; // a sample — failedCount is the truth
 } | null;
 
 // One selectable row: a retail account, or a wholesale LOCATION (owner,
@@ -109,18 +110,19 @@ export default function AdminEmailCampaign() {
   const setAll = (on: boolean) =>
     setDeselected((prev) => ({ ...prev, [audience]: on ? new Set() : new Set(recipients.map((r) => r.key)) }));
 
+  // Opt-outs are per ADDRESS, never per row: a location's row can carry two
+  // addresses with different histories, and undoing one must not resurrect the
+  // other's earlier unsubscribe.
   const optOutMutation = useMutation({
-    mutationFn: async ({ emails, remove }: { emails: string[]; remove: boolean }) => {
-      for (const email of emails) {
-        if (remove) await apiRequest("DELETE", `/api/admin/marketing-opt-outs/${encodeURIComponent(norm(email))}`);
-        else await apiRequest("POST", "/api/admin/marketing-opt-outs", { email });
-      }
-    },
+    mutationFn: async ({ email, remove }: { email: string; remove: boolean }) =>
+      remove
+        ? apiRequest("DELETE", `/api/admin/marketing-opt-outs/${encodeURIComponent(norm(email))}`)
+        : apiRequest("POST", "/api/admin/marketing-opt-outs", { email }),
     onSuccess: (_d, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/marketing-opt-outs"] });
       toast({
         title: vars.remove ? "Opt-out removed" : "Opted out",
-        description: vars.remove ? `${vars.emails.join(", ")} can receive campaigns again.` : `${vars.emails.join(", ")} won't get any future campaign.`,
+        description: vars.remove ? `${vars.email} can receive campaigns again.` : `${vars.email} won't get any future campaign.`,
       });
     },
     onError: (error: any) => toast({ title: "Couldn't update opt-outs", description: error.message, variant: "destructive" }),
@@ -205,13 +207,21 @@ export default function AdminEmailCampaign() {
                   <span className="font-medium">{status.done ? "Last campaign" : "Sending"}:</span>{" "}
                   "{status.subject}" — {status.sent}/{status.total - status.skipped} sent
                   {status.skipped > 0 && <span className="text-muted-foreground"> · {status.skipped} opted out</span>}
-                  {status.failed.length > 0 && <span className="text-destructive"> · {status.failed.length} failed</span>}
+                  {status.failedCount > 0 && <span className="text-destructive"> · {status.failedCount} failed</span>}
+                  {status.uncertain > 0 && (
+                    <span className="text-amber-600 dark:text-amber-400" title="A restart interrupted these mid-send; delivery is unknown and they were not re-sent.">
+                      {" "}· {status.uncertain} uncertain
+                    </span>
+                  )}
                   {status.logOnly && <Badge variant="outline" className="ml-2">log-only (no mail configured)</Badge>}
                 </div>
               </div>
-              {status.failed.length > 0 && (
+              {status.failedCount > 0 && (
                 <ul className="text-xs text-muted-foreground pl-7 space-y-0.5">
                   {status.failed.map((f) => <li key={f.email}>{f.email} — {f.error}</li>)}
+                  {status.failedCount > status.failed.length && (
+                    <li className="italic">…and {status.failedCount - status.failed.length} more</li>
+                  )}
                 </ul>
               )}
             </CardContent>
@@ -274,17 +284,25 @@ export default function AdminEmailCampaign() {
                           {r.name}
                           {out && <Badge variant="outline" className="ml-2 text-xs">Opted out</Badge>}
                         </span>
-                        <span className="block text-xs text-muted-foreground truncate">{r.emails.join(", ")}</span>
+                        {/* Each address carries its own opt-out state and control. */}
+                        {r.emails.map((e) => {
+                          const eOut = optedOut.has(norm(e));
+                          return (
+                            <span key={e} className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <span className={`truncate ${eOut ? "line-through" : ""}`}>{e}</span>
+                              <button
+                                type="button"
+                                className="shrink-0 hover:text-foreground underline-offset-2 hover:underline"
+                                onClick={() => optOutMutation.mutate({ email: e, remove: eOut })}
+                                disabled={optOutMutation.isPending}
+                                data-testid={`button-optout-${r.key}-${norm(e)}`}
+                              >
+                                {eOut ? "Undo opt-out" : "Opt out"}
+                              </button>
+                            </span>
+                          );
+                        })}
                       </span>
-                      <button
-                        type="button"
-                        className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
-                        onClick={() => optOutMutation.mutate({ emails: r.emails, remove: out })}
-                        disabled={optOutMutation.isPending}
-                        data-testid={`button-optout-${r.key}`}
-                      >
-                        {out ? "Undo opt-out" : "Opt out"}
-                      </button>
                     </div>
                   );
                 })}

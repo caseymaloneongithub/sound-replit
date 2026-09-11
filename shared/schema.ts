@@ -755,8 +755,12 @@ export const emailCampaignRecipients = pgTable("email_campaign_recipients", {
   campaignId: varchar("campaign_id").notNull().references(() => emailCampaigns.id, { onDelete: 'cascade' }),
   email: text("email").notNull(),
   name: text("name"),
-  status: text("status").notNull().default("pending"), // 'pending' | 'sent' | 'failed' | 'skipped'
+  // 'pending' -> claimed 'sending' -> 'sent' | 'failed'; 'skipped' = opted out;
+  // 'uncertain' = a worker died between delivery and the 'sent' stamp — never
+  // re-sent automatically (a duplicate is worse than a miss on a marketing mail).
+  status: text("status").notNull().default("pending"),
   error: text("error"),
+  claimedAt: timestamp("claimed_at"),
   sentAt: timestamp("sent_at"),
 });
 

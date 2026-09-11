@@ -1,22 +1,26 @@
 import sanitizeHtml from 'sanitize-html';
 import { db } from './db';
 import { emailCampaigns, emailCampaignRecipients, marketingOptOuts } from '../shared/schema';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { buildCampaignEmail, isMailConfigured, sendCampaignMail } from './email';
 
 /**
- * Email campaigns (owner, 2026-09-11; hardened after review the same day).
+ * Email campaigns (owner, 2026-09-11; hardened across two review rounds).
  *
  * Everything that matters is in the database: the campaign, its body, and one
- * row per recipient with that recipient's delivery state. The runner walks the
- * PENDING rows and stamps each sent/failed as it goes, so a restart mid-send
- * resumes the remainder (resumeUnfinishedCampaigns, called at boot) instead of
- * abandoning it — and never re-sends a row already marked sent. Marketing
- * opt-outs are a separate persistent list enforced here, server-side, on every
- * campaign regardless of what the admin page ticked.
+ * row per recipient with that recipient's delivery state. Delivery is a state
+ * machine per row — pending -> (claimed) sending -> sent | failed — where the
+ * claim is an atomic UPDATE ... FOR UPDATE SKIP LOCKED, so two workers can never
+ * take the same row. A row still 'sending' when a worker died is UNCERTAIN: the
+ * mail may or may not have gone out, and it is never re-sent automatically (a
+ * duplicate marketing email is worse than one missed). Only one campaign may be
+ * 'sending' at a time, enforced by a partial unique index — not a check that two
+ * concurrent requests could both pass. Marketing opt-outs are a separate
+ * persistent list enforced here on every campaign, per address.
  */
 
 export const MAX_CAMPAIGN_RECIPIENTS = 1000;
+const FAILED_SAMPLE = 50;
 
 export type CampaignInput = {
   subject: string;
@@ -38,6 +42,9 @@ export type CampaignStatus = {
   sent: number;
   pending: number;
   skipped: number;
+  uncertain: number;
+  failedCount: number;
+  /** First FAILED_SAMPLE failures with their errors — the count above is the truth. */
   failed: Array<{ email: string; error: string }>;
 };
 
@@ -76,21 +83,12 @@ export async function removeOptOut(email: string) {
 
 // ---- Campaigns ----
 
-async function isCampaignRunning(): Promise<boolean> {
-  const [row] = await db
-    .select({ id: emailCampaigns.id })
-    .from(emailCampaigns)
-    .where(eq(emailCampaigns.status, 'sending'))
-    .limit(1);
-  return !!row;
-}
+const isUniqueViolation = (e: any) =>
+  e?.code === '23505' || e?.cause?.code === '23505' || /email_campaigns_one_sending_idx/.test(String(e?.message ?? ''));
 
-/** Validates, persists, and kicks off the background send. Throws a message
- *  suitable for a 400/409 on bad input. */
+/** Validates, persists (one transaction), and kicks off the background send.
+ *  Throws with .status for 400/409 on bad input or a campaign already running. */
 export async function startCampaign(input: CampaignInput): Promise<{ id: string; queued: number; skipped: number }> {
-  if (await isCampaignRunning()) {
-    throw Object.assign(new Error('A campaign is already sending — wait for it to finish.'), { status: 409 });
-  }
   const subject = input.subject.trim().slice(0, 150);
   const bodyHtml = sanitizeCampaignHtml(input.bodyHtml);
   if (!subject) throw Object.assign(new Error('Subject is required'), { status: 400 });
@@ -102,7 +100,7 @@ export async function startCampaign(input: CampaignInput): Promise<{ id: string;
     );
   }
 
-  // Validate + dedupe, then apply the persistent opt-out list.
+  // Validate + dedupe, then apply the persistent opt-out list per address.
   const seen = new Set<string>();
   const cleaned: Array<{ email: string; name: string | null }> = [];
   for (const r of input.recipients) {
@@ -115,33 +113,55 @@ export async function startCampaign(input: CampaignInput): Promise<{ id: string;
   }
   if (cleaned.length === 0) throw Object.assign(new Error('No valid recipients selected'), { status: 400 });
   const optedOut = new Set((await listOptOuts()).map((o) => o.email));
+  const rows = cleaned.map((r) => {
+    const isOut = optedOut.has(normalizeEmail(r.email));
+    return { email: r.email, name: r.name, status: isOut ? 'skipped' : 'pending', error: isOut ? 'opted out' : null };
+  });
+  const skipped = rows.filter((r) => r.status === 'skipped').length;
 
-  const [campaign] = await db
-    .insert(emailCampaigns)
-    .values({ subject, audience: input.audience, bodyHtml, createdBy: input.createdBy ?? null })
-    .returning({ id: emailCampaigns.id });
-  let skipped = 0;
-  await db.insert(emailCampaignRecipients).values(
-    cleaned.map((r) => {
-      const isOut = optedOut.has(normalizeEmail(r.email));
-      if (isOut) skipped++;
-      return {
-        campaignId: campaign.id,
-        email: r.email,
-        name: r.name,
-        status: isOut ? 'skipped' : 'pending',
-        error: isOut ? 'opted out' : null,
-      };
-    }),
-  );
+  // Campaign + recipients land together or not at all; the partial unique index
+  // on status='sending' turns a concurrent second campaign into 23505 -> 409.
+  let campaignId: string;
+  try {
+    campaignId = await db.transaction(async (tx) => {
+      const [campaign] = await tx
+        .insert(emailCampaigns)
+        .values({ subject, audience: input.audience, bodyHtml, createdBy: input.createdBy ?? null })
+        .returning({ id: emailCampaigns.id });
+      await tx.insert(emailCampaignRecipients).values(rows.map((r) => ({ ...r, campaignId: campaign.id })));
+      return campaign.id;
+    });
+  } catch (e: any) {
+    if (isUniqueViolation(e)) {
+      throw Object.assign(new Error('A campaign is already sending — wait for it to finish.'), { status: 409 });
+    }
+    throw e;
+  }
 
-  console.log(`[CAMPAIGN] ${campaign.id} "${subject}" queued: ${cleaned.length - skipped} to send, ${skipped} opted out`);
-  void runCampaign(campaign.id).catch((e) => console.error('[CAMPAIGN] run failed:', e));
-  return { id: campaign.id, queued: cleaned.length - skipped, skipped };
+  console.log(`[CAMPAIGN] ${campaignId} "${subject}" queued: ${rows.length - skipped} to send, ${skipped} opted out`);
+  void runCampaign(campaignId).catch((e) => console.error('[CAMPAIGN] run failed:', e));
+  return { id: campaignId, queued: rows.length - skipped, skipped };
 }
 
-/** Walks the campaign's pending rows. Safe to call again after a restart: rows
- *  already sent/failed/skipped are never touched. */
+/** Atomically claims one pending row for this worker, or null when none remain.
+ *  SKIP LOCKED means overlapping workers never hand out the same row twice. */
+async function claimNext(campaignId: string): Promise<{ id: string; email: string } | null> {
+  const result = await db.execute(sql`
+    UPDATE email_campaign_recipients SET status = 'sending', claimed_at = now()
+    WHERE id = (
+      SELECT id FROM email_campaign_recipients
+      WHERE campaign_id = ${campaignId} AND status = 'pending'
+      ORDER BY id
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING id, email`);
+  const row = (result as any).rows?.[0];
+  return row ? { id: String(row.id), email: String(row.email) } : null;
+}
+
+/** Walks the campaign's pending rows, claiming each before sending. Safe to call
+ *  again after a restart: sent/failed/skipped/uncertain rows are never touched. */
 export async function runCampaign(campaignId: string): Promise<void> {
   const [campaign] = await db.select().from(emailCampaigns).where(eq(emailCampaigns.id, campaignId));
   if (!campaign || campaign.status !== 'sending') return;
@@ -149,11 +169,7 @@ export async function runCampaign(campaignId: string): Promise<void> {
   const live = isMailConfigured();
 
   for (;;) {
-    const [next] = await db
-      .select()
-      .from(emailCampaignRecipients)
-      .where(and(eq(emailCampaignRecipients.campaignId, campaignId), eq(emailCampaignRecipients.status, 'pending')))
-      .limit(1);
+    const next = await claimNext(campaignId);
     if (!next) break;
     try {
       await sendCampaignMail(next.email, campaign.subject, built);
@@ -173,16 +189,33 @@ export async function runCampaign(campaignId: string): Promise<void> {
     if (live) await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
-  await db.update(emailCampaigns).set({ status: 'done', completedAt: new Date() }).where(eq(emailCampaigns.id, campaignId));
-  console.log(`[CAMPAIGN] ${campaignId} done`);
+  // Finish only when nothing is left in flight — another worker may still hold
+  // a claim, and a dead worker's claim is resolved to 'uncertain' at boot.
+  const [{ inFlight }] = await db
+    .select({ inFlight: sql<number>`count(*)::int` })
+    .from(emailCampaignRecipients)
+    .where(and(eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ['pending', 'sending'])));
+  if (inFlight === 0) {
+    await db.update(emailCampaigns).set({ status: 'done', completedAt: new Date() }).where(eq(emailCampaigns.id, campaignId));
+    console.log(`[CAMPAIGN] ${campaignId} done`);
+  }
 }
 
-/** Boot hook: any campaign still marked 'sending' was interrupted by a restart;
- *  finish its pending rows. */
+/** Boot hook: any campaign still 'sending' was interrupted by a restart. Rows a
+ *  dead worker had claimed become 'uncertain' (delivery unknown — NOT re-sent);
+ *  the remaining pending rows are finished. */
 export async function resumeUnfinishedCampaigns(): Promise<void> {
-  const unfinished = await db.select({ id: emailCampaigns.id, subject: emailCampaigns.subject }).from(emailCampaigns).where(eq(emailCampaigns.status, 'sending'));
+  const unfinished = await db
+    .select({ id: emailCampaigns.id, subject: emailCampaigns.subject })
+    .from(emailCampaigns)
+    .where(eq(emailCampaigns.status, 'sending'));
   for (const c of unfinished) {
-    console.log(`[CAMPAIGN] resuming interrupted campaign ${c.id} "${c.subject}"`);
+    const orphaned = await db
+      .update(emailCampaignRecipients)
+      .set({ status: 'uncertain', error: 'interrupted mid-send — delivery unknown, not retried' })
+      .where(and(eq(emailCampaignRecipients.campaignId, c.id), eq(emailCampaignRecipients.status, 'sending')))
+      .returning({ email: emailCampaignRecipients.email });
+    console.log(`[CAMPAIGN] resuming interrupted campaign ${c.id} "${c.subject}"${orphaned.length ? ` — ${orphaned.length} row(s) marked uncertain: ${orphaned.map((o) => o.email).join(', ')}` : ''}`);
     void runCampaign(c.id).catch((e) => console.error('[CAMPAIGN] resume failed:', e));
   }
 }
@@ -202,7 +235,7 @@ export async function getLatestCampaignStatus(): Promise<CampaignStatus | null> 
     .select({ email: emailCampaignRecipients.email, error: emailCampaignRecipients.error })
     .from(emailCampaignRecipients)
     .where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.status, 'failed')))
-    .limit(50);
+    .limit(FAILED_SAMPLE);
   return {
     id: campaign.id,
     subject: campaign.subject,
@@ -213,8 +246,10 @@ export async function getLatestCampaignStatus(): Promise<CampaignStatus | null> 
     logOnly: !isMailConfigured(),
     total: Object.values(byStatus).reduce((a, b) => a + b, 0),
     sent: byStatus.sent ?? 0,
-    pending: byStatus.pending ?? 0,
+    pending: (byStatus.pending ?? 0) + (byStatus.sending ?? 0),
     skipped: byStatus.skipped ?? 0,
+    uncertain: byStatus.uncertain ?? 0,
+    failedCount: byStatus.failed ?? 0,
     failed: failedRows.map((r) => ({ email: r.email, error: r.error ?? 'send failed' })),
   };
 }
