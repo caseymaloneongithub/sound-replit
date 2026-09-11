@@ -619,7 +619,10 @@ function PrepGrid({ retail, wholesale, stock, catalog, flavorOrder }: { retail: 
                     // Orders exist but there's NO finished-goods item to draw from —
                     // cans ordered ahead of the first canning run (allowed on
                     // purpose). Shout, so it's produced or created before delivery.
-                    const noStockItemButOrdered = c.offered && c.total > 0 && c.productId === null && c.stock === null;
+                    // Mixed is exempt: mixed cases are packed from the per-flavor
+                    // stocks and never have their own finished-goods row, so the
+                    // shout was a false alarm there — it shows an untracked "—".
+                    const noStockItemButOrdered = c.offered && c.total > 0 && c.productId === null && c.stock === null && c.flavor !== "Mixed";
                     return (
                       <td
                         key={i}
