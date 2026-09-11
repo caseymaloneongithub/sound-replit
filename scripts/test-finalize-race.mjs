@@ -99,14 +99,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const id = await mkSub();
   const pi = 'pi_race_overlap_' + Date.now();
   const fin = await openFinalizer(id, pi); // uncommitted: order invisible, row lock held
-  const t0 = Date.now();
   const parkPromise = park(id);           // must block on FOR UPDATE
-  await sleep(700);                        // let the park reach the lock wait
+  // Prove the park is genuinely lock-waiting (elapsed time would also count our
+  // own sleeps): poll pg_stat_activity for its FOR UPDATE statement sitting in a
+  // Lock wait BEFORE releasing the finalizer.
+  let observedBlocked = false;
+  for (let i = 0; i < 50 && !observedBlocked; i++) {
+    const waiting = await pool.query(`
+      SELECT 1 FROM pg_stat_activity
+      WHERE wait_event_type = 'Lock'
+        AND query LIKE '%retail_subscriptions%FOR UPDATE%'`);
+    observedBlocked = waiting.rows.length > 0;
+    if (!observedBlocked) await sleep(100);
+  }
   await fin.commit();                      // release while the park is waiting
   const result = await parkPromise;
-  const waited = Date.now() - t0;
   const s = await state(id);
-  assert('overlapping park blocked on the finalizer lock (waited >= 600ms)', waited >= 600, { waited });
+  assert('overlapping park observed lock-waiting in pg_stat_activity', observedBlocked, { observedBlocked });
   assert('overlapping park does NOT park', result.parked === false, result);
   assert('overlapping: sub stays active/active', s.status === 'active' && s.billing_status === 'active', s);
   await cleanup(id, pi);
