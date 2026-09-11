@@ -4147,6 +4147,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
               }
             }
+            if (!confirmedPaid) {
+              // The verification above is a READ — the webhook can finalize in
+              // the gap before we write. So the park itself is conditional,
+              // evaluated under the row lock AT WRITE TIME: the finalizer
+              // creates the paid order and stamps last_payment_intent_id in ONE
+              // transaction, so "a paid order exists for the stamped intent" is
+              // an atomic no-park condition. If finalize is mid-commit, this
+              // UPDATE blocks on its row lock and then sees the order.
+              const parked = await db.update(retailSubscriptions)
+                .set({ status: 'pending', billingStatus: 'first_charge_uncertain' })
+                .where(and(
+                  eq(retailSubscriptions.id, subscription.id),
+                  sql`NOT EXISTS (
+                    SELECT 1 FROM retail_orders ro
+                    WHERE ro.stripe_payment_intent_id = ${retailSubscriptions.lastPaymentIntentId}
+                      AND ro.deleted_at IS NULL
+                  )`,
+                ))
+                .returning({ id: retailSubscriptions.id });
+              if (parked.length === 0) {
+                // Zero rows with the row present means the no-park condition
+                // failed: finalization committed between our read and this
+                // write. The payment is proven paid after all.
+                console.warn(`[SUBSCRIPTION] Finalization won the race for ${subscription.id} — payment proven, not parking`);
+                confirmedPaid = true;
+              }
+            }
             if (confirmedPaid) {
               await db.update(retailSubscriptions)
                 .set({ status: 'active', billingStatus: 'active' })
@@ -4154,9 +4181,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.warn(`[SUBSCRIPTION] Charge reply lost but payment VERIFIED for ${subscription.id} — treating as success`);
               recoveredByWebhook = true;
             } else {
-              await db.update(retailSubscriptions)
-                .set({ status: 'pending', billingStatus: 'first_charge_uncertain' })
-                .where(eq(retailSubscriptions.id, subscription.id));
               console.warn(`[SUBSCRIPTION] First charge AMBIGUOUS for ${subscription.id} (${chargeError?.type ?? 'unknown'}) — parked pending reconcile`);
               // The parked subscription's stored payment method IS the recovery
               // path — the outer catch must not detach it.
