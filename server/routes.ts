@@ -3893,6 +3893,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const uncertain = uncertainSubs.find(s => s.subscriptionFrequency === frequency);
           if (uncertain) {
             console.warn(`[SUBSCRIPTION] Reconciling uncertain first charge for ${uncertain.id}`);
+            // Beyond the idempotency key's ~24h lifetime a "retry" charges FRESH,
+            // and Stripe documents search indexing delays — so past this window
+            // only a POSITIVE search result may proceed; neither an empty result
+            // nor a search failure can prove another charge is safe.
+            const withinKeyLifetime = (Date.now() - new Date(uncertain.startDate as any).getTime()) <= 23 * 60 * 60 * 1000;
+            const refuseStale = () => {
+              const e: any = new Error("This subscription has an earlier payment attempt we couldn't verify. No charge has been made now — please contact us and we'll sort it out.");
+              e.preservePaymentMethod = true;
+              // Manual review needs a human: alert staff once per process.
+              if (!notifiedOrderFailures.has(`sub:${uncertain.id}`)) {
+                notifiedOrderFailures.add(`sub:${uncertain.id}`);
+                import('./email').then(({ sendStaffPaymentFailureNotification }) =>
+                  sendStaffPaymentFailureNotification({
+                    customerEmail: uncertain.customerEmail || '(unknown)',
+                    customerName: `UNRESOLVED SIGNUP — subscription ${uncertain.id}`,
+                    subscriptionItems: [{ productName: 'First-charge attempt older than the idempotency window; customer blocked pending manual reconciliation', quantity: 1 }],
+                    amount: 0,
+                    errorMessage: `Check Stripe for a charge with metadata retailSubscriptionId=${uncertain.id}; activate or remove the parked subscription accordingly.`,
+                  })
+                ).catch(() => notifiedOrderFailures.delete(`sub:${uncertain.id}`));
+              }
+              return e;
+            };
 
             // FIRST ask Stripe whether the original charge actually happened —
             // authoritative at any age (idempotency keys expire after 24h, so
@@ -3917,17 +3940,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 continue;
               }
             } catch (searchError: any) {
-              // Search unavailable (indexing lag, transient). Within the
-              // idempotency key's lifetime the retry below is still safe — Stripe
-              // replays rather than double-charges. BEYOND it the key would
-              // charge fresh with no proof the original didn't succeed, so
-              // refuse rather than gamble.
-              const ageMs = Date.now() - new Date(uncertain.startDate as any).getTime();
-              if (ageMs > 23 * 60 * 60 * 1000) {
-                throw new Error("We couldn't verify an earlier payment attempt on this subscription. Please try again in a few minutes — no charge has been made now.");
-              }
+              if (!withinKeyLifetime) throw refuseStale();
               console.warn(`[SUBSCRIPTION] Stripe search failed (${searchError?.message}) — falling back to idempotent retry`);
             }
+            // The age guard applies to EVERY fallback creation: an empty search
+            // result past the key window is indistinguishable from indexing lag.
+            if (!withinKeyLifetime) throw refuseStale();
             // Amount MUST match the original request (same key + different params
             // is a Stripe idempotency error), so recompute from the parked
             // subscription's own locked items — not from today's cart.
@@ -3971,10 +3989,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
               throw new Error(`Payment came back ${reconciled.status}`);
             } catch (reconcileError: any) {
               if (reconcileError?.type === 'StripeCardError') {
-                // NOW a definitive decline — safe to clean up.
+                // NOW a definitive decline — safe to clean up (and to detach).
                 await db.delete(retailSubscriptionItems).where(eq(retailSubscriptionItems.subscriptionId, uncertain.id));
                 await db.delete(retailSubscriptions).where(eq(retailSubscriptions.id, uncertain.id));
                 console.warn(`[SUBSCRIPTION] Reconcile confirmed decline — removed ${uncertain.id}`);
+              } else {
+                // Still unresolved (another timeout, refusal, etc.): the parked
+                // subscription lives on, so its card must too — a second failure
+                // used to reach the outer catch unflagged and detach it.
+                reconcileError.preservePaymentMethod = true;
               }
               throw reconcileError;
             }
@@ -4096,24 +4119,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.warn(`[SUBSCRIPTION] First charge declined — removed unpaid subscription ${subscription.id}`);
               throw chargeError;
             }
-            // CONDITIONAL park: the webhook may have already finalized this very
-            // charge (timeout on our side, success on Stripe's — finalize stamps
-            // last_payment_intent_id). Parking unconditionally used to DOWNGRADE
-            // that finalized subscription back to pending, and later webhook
-            // deliveries early-returned without repairing it — renewals stopped.
-            const parked = await db.update(retailSubscriptions)
-              .set({ status: 'pending', billingStatus: 'first_charge_uncertain' })
-              .where(and(
-                eq(retailSubscriptions.id, subscription.id),
-                isNull(retailSubscriptions.lastPaymentIntentId),
-              ))
-              .returning({ id: retailSubscriptions.id });
-            if (parked.length === 0) {
-              // Finalized while we were timing out: the charge WON. This is a
-              // success, not an error — fall through to cart clearing.
-              console.warn(`[SUBSCRIPTION] Charge reply lost but webhook finalized ${subscription.id} — treating as success`);
+            // The webhook may have raced us — but webhook ACTIVITY is not webhook
+            // SUCCESS: the payment_failed handler also stamps
+            // last_payment_intent_id, so that field alone must never be read as
+            // "finalized". Recovery requires proof: an existing PAID ORDER for
+            // the stamped intent, or Stripe confirming the intent succeeded (in
+            // which case finalize runs now, idempotently).
+            let confirmedPaid = false;
+            const [fresh] = await db.select().from(retailSubscriptions).where(eq(retailSubscriptions.id, subscription.id));
+            if (fresh?.lastPaymentIntentId) {
+              const [paidOrder] = await db
+                .select({ id: retailOrders.id })
+                .from(retailOrders)
+                .where(eq(retailOrders.stripePaymentIntentId, fresh.lastPaymentIntentId))
+                .limit(1);
+              if (paidOrder) {
+                confirmedPaid = true;
+              } else {
+                try {
+                  const pi = await stripe.paymentIntents.retrieve(fresh.lastPaymentIntentId);
+                  if (pi.status === 'succeeded' && pi.metadata?.retailSubscriptionId === subscription.id) {
+                    const { finalizeRetailSubscriptionCharge } = await import('./billing-cron');
+                    confirmedPaid = await finalizeRetailSubscriptionCharge(pi.id);
+                  }
+                } catch (verifyError: any) {
+                  console.warn(`[SUBSCRIPTION] Could not verify ${fresh.lastPaymentIntentId} during recovery: ${verifyError?.message}`);
+                }
+              }
+            }
+            if (confirmedPaid) {
+              await db.update(retailSubscriptions)
+                .set({ status: 'active', billingStatus: 'active' })
+                .where(eq(retailSubscriptions.id, subscription.id));
+              console.warn(`[SUBSCRIPTION] Charge reply lost but payment VERIFIED for ${subscription.id} — treating as success`);
               recoveredByWebhook = true;
             } else {
+              await db.update(retailSubscriptions)
+                .set({ status: 'pending', billingStatus: 'first_charge_uncertain' })
+                .where(eq(retailSubscriptions.id, subscription.id));
               console.warn(`[SUBSCRIPTION] First charge AMBIGUOUS for ${subscription.id} (${chargeError?.type ?? 'unknown'}) — parked pending reconcile`);
               // The parked subscription's stored payment method IS the recovery
               // path — the outer catch must not detach it.
@@ -4173,8 +4216,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // If the transaction failed after the payment method was attached,
         // detach it — UNLESS a parked (uncertain) subscription still references
         // it: that stored method is the reconcile path's only way to retry the
-        // charge, and a detached method can never be reused.
-        if (transactionError?.preservePaymentMethod) {
+        // charge, and a detached method can never be reused. The flag covers
+        // the paths that know they parked; the DB lookup is the backstop for
+        // any failure path that didn't set it.
+        let preservePm = !!transactionError?.preservePaymentMethod;
+        if (!preservePm) {
+          try {
+            const refs = await db
+              .select({ id: retailSubscriptions.id })
+              .from(retailSubscriptions)
+              .where(and(
+                eq(retailSubscriptions.stripePaymentMethodId, validated.paymentMethodId),
+                eq(retailSubscriptions.status, 'pending'),
+                eq(retailSubscriptions.billingStatus, 'first_charge_uncertain'),
+              ))
+              .limit(1);
+            preservePm = refs.length > 0;
+          } catch {
+            // If we can't check, err on the side of keeping the card.
+            preservePm = true;
+          }
+        }
+        if (preservePm) {
           console.warn("[SUBSCRIPTION] Keeping payment method attached — an unresolved attempt references it");
         } else {
           try {
