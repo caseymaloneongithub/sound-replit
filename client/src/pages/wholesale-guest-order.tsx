@@ -74,9 +74,18 @@ export default function WholesaleGuestOrder() {
 
   const byId = useMemo(() => new Map(unitTypes.map((u) => [u.id, u])), [unitTypes]);
   const min = Number(minOrder?.value ?? 0);
-  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail.trim());
+  // Email is optional: blank means the confirmation goes to the store's contact on
+  // file (server-side — the address itself is never shown on this no-login form).
+  const emailOk = contactEmail.trim() === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail.trim());
   const linesOk = lines.some((l) => l.unitTypeId && l.flavorId);
   const locationOk = fulfillment === "pickup" || !!locationId;
+  // A silently-disabled button reads as "something is out of stock" — spell out
+  // what's still needed instead.
+  const stillNeeded = [
+    !linesOk && "add at least one item",
+    !emailOk && "fix the email address (or leave it blank)",
+    !locationOk && "choose a delivery location",
+  ].filter(Boolean) as string[];
 
   const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
 
@@ -120,7 +129,7 @@ export default function WholesaleGuestOrder() {
             <p className="text-xs font-semibold tracking-wider uppercase text-cedar">Order received</p>
             <CardTitle>Thanks — we're on it</CardTitle>
             <CardDescription>
-              Order {placed.invoiceNumber} for {storeInfo?.businessName}. A confirmation is on its way to {contactEmail.trim()}.
+              Order {placed.invoiceNumber} for {storeInfo?.businessName}. A confirmation is on its way to {contactEmail.trim() || "your store's contact on file"}.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -230,7 +239,7 @@ export default function WholesaleGuestOrder() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <Label htmlFor="fyi-email">Email for this order</Label>
+              <Label htmlFor="fyi-email">Email for this order (optional)</Label>
               <Input
                 id="fyi-email"
                 type="email"
@@ -240,7 +249,7 @@ export default function WholesaleGuestOrder() {
                 onChange={(e) => setContactEmail(e.target.value)}
                 data-testid="input-guest-email"
               />
-              <p className="text-xs text-muted-foreground mt-1.5">The order confirmation goes here.</p>
+              <p className="text-xs text-muted-foreground mt-1.5">The order confirmation goes here — or to your store's contact on file if left blank.</p>
             </div>
             <div>
               <Label htmlFor="guest-po">PO # (optional)</Label>
@@ -262,6 +271,11 @@ export default function WholesaleGuestOrder() {
             <div className="text-sm text-muted-foreground">
               {min > 0 && <span data-testid="text-min-order">Minimum order: ${min.toFixed(2)}. </span>}
               Your store's pricing is applied automatically and shown on the invoice.
+              {stillNeeded.length > 0 && (
+                <span className="block mt-1 text-cedar font-medium" data-testid="text-still-needed">
+                  To place the order: {stillNeeded.join(", ")}.
+                </span>
+              )}
             </div>
             <Button
               size="lg"

@@ -1699,16 +1699,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       }));
 
-      // Confirmation goes to whoever placed the order (owner decision 2026-08-23) —
-      // stores with several buyers kept confusing the primary contact with someone
-      // else's order. Falls back to the store's primary email when the placer is
-      // unknown (claim-approval edge cases, legacy rows).
-      const placer = opts.placedByUserId ? await storage.getUser(opts.placedByUserId) : undefined;
-      const confirmationEmail = contactEmail || placer?.email || customer.email;
-
       // Multi-location stores: emails name the store, not just the chain
       // ("Evergreens — Thomas & Boren"), so everyone knows which site ordered.
       const emailLocation = createdOrder.locationId ? await storage.getWholesaleLocation(createdOrder.locationId) : null;
+
+      // Confirmation goes to whoever placed the order (owner decision 2026-08-23) —
+      // stores with several buyers kept confusing the primary contact with someone
+      // else's order. With no placer (guest flow) and no email given, fall back
+      // location contact -> store primary, same chain the invoices use.
+      const placer = opts.placedByUserId ? await storage.getUser(opts.placedByUserId) : undefined;
+      const confirmationEmail = contactEmail || placer?.email || (emailLocation as any)?.contactEmail || customer.email;
       const emailBusinessName = emailLocation?.locationName && emailLocation.locationName !== 'Main Location'
         ? `${customer.businessName} — ${emailLocation.locationName}`
         : customer.businessName;
@@ -1796,16 +1796,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           !checkSubmissionRateLimit(`guest-order-day:${ip}`, 20, 24 * 60 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many orders from this connection — give us a call and we'll take it by phone." });
       }
+      // Optional: blank routes the confirmation to the contact on file (never shown
+      // on this no-login form — prefilling it would publish the store's email).
       const contactEmail = typeof req.body?.contactEmail === "string" ? req.body.contactEmail.trim() : "";
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
-        return res.status(400).json({ message: "Enter an email address for the order confirmation." });
+      if (contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+        return res.status(400).json({ message: "That email address doesn't look right — fix it or leave it blank." });
       }
       const customer = await storage.getWholesaleCustomer(String(req.body?.customerId || ""));
       if (!customer) {
         return res.status(400).json({ message: "Pick your store first." });
       }
       const order = await placeCustomerOrder(customer, req.body, { placedByUserId: null });
-      console.log(`[GUEST ORDER] ${order.invoiceNumber} for ${customer.businessName} (${contactEmail}) from ${ip}`);
+      console.log(`[GUEST ORDER] ${order.invoiceNumber} for ${customer.businessName} (${contactEmail || "contact on file"}) from ${ip}`);
       res.status(201).json({ id: order.id, invoiceNumber: order.invoiceNumber });
     } catch (e: any) {
       if (e instanceof OrderValidationError) return res.status(e.status).json(e.body);
