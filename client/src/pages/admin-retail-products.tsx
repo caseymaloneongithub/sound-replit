@@ -52,7 +52,8 @@ function ImageUploadField({
       // Get a signed upload URL from the backend
       const { uploadUrl } = await apiRequest('POST', '/api/object-storage/upload-url', {
         filename,
-        directory: 'product-images'
+        directory: 'product-images',
+        contentType: file.type,
       });
 
       // Upload the file to object storage
@@ -68,8 +69,11 @@ function ImageUploadField({
         throw new Error('Failed to upload file');
       }
 
-      // Use our local /public/ endpoint to serve the image
-      const publicPath = `/public/product-images/${filename}`;
+      // The stored URL comes from the PUT response — the server may have renamed
+      // the object (PNG/JPEG become .webp), so a URL derived from the original
+      // filename would 404 (the broken Mist photo, 2026-09-11).
+      const stored = await uploadResponse.json().catch(() => null);
+      const publicPath = stored?.publicUrl || `/public/product-images/${filename}`;
 
       onChange(publicPath);
       toast({

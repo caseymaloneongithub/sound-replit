@@ -2768,10 +2768,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // with "Failed to fetch" and nothing lands. Same-origin needs nothing.
       if (isS3Configured()) {
         const key = buildObjectKey(filename, directory === 'public' ? 'images' : directory);
+        // The PUT below stores PNG/JPEG uploads under the .webp key (it converts
+        // them), so the publicUrl handed out HERE must anticipate that rename —
+        // clients save this URL, and a .png URL for a .webp object 404s (the
+        // broken Mist photo, 2026-09-11). The PUT renames unconditionally for
+        // these types, so the two stay in lockstep.
+        const willConvert = /^image\/(png|jpe?g)$/.test(String(contentType || ''));
+        const publicKey = willConvert ? key.replace(/\.(png|jpe?g)$/i, '') + '.webp' : key;
         return res.json({
           uploadUrl: `/api/object-storage/upload/${key.split('/').map(encodeURIComponent).join('/')}`,
-          key,
-          publicUrl: getPublicUrl(key),
+          key: publicKey,
+          publicUrl: getPublicUrl(publicKey),
           storage: 's3',
         });
       }
@@ -2827,6 +2834,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let outBody = body;
         let outType = contentType;
         if (/^image\/(png|jpe?g)$/.test(contentType)) {
+          // The .webp key rename is UNCONDITIONAL for these types — upload-url
+          // already promised the .webp publicUrl, so the object must land there
+          // even if conversion fails (original bytes under a .webp name still
+          // serve fine: browsers go by the stored content-type, not extension).
+          outKey = key.replace(/\.(png|jpe?g)$/i, '') + '.webp';
           try {
             const sharp = (await import('sharp')).default;
             const converted = await sharp(body)
@@ -2837,11 +2849,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Always take the converted output — the guarantee is uniform format,
             // orientation, and the 2400px cap, not merely byte savings (a rare
             // tiny PNG may grow slightly; uniformity wins).
-            outKey = key.replace(/\.(png|jpe?g)$/i, '') + '.webp';
             outBody = converted;
             outType = 'image/webp';
           } catch (convError: any) {
-            console.warn(`[UPLOAD] WebP conversion failed for ${key} — storing original: ${convError.message}`);
+            console.warn(`[UPLOAD] WebP conversion failed for ${key} — storing original bytes: ${convError.message}`);
           }
         }
 
