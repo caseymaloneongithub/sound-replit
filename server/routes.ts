@@ -127,6 +127,30 @@ async function splitItemFields(
   return { selectedFlavorId: mixed?.id ?? selectedFlavorId, notes: `Split: 6 ${a} / 6 ${b}` };
 }
 
+/**
+ * Bottle sell-through, wholesale side (cans launch 2026-09-11): bottles are being
+ * retired, so bottle-case unit flavors whose finished-goods stock is gone are
+ * marked soldOut for the ORDER FORMS to hide. Bottles only — cans may be ordered
+ * ahead of stock on purpose (the board warns instead), and kegs oversell by design.
+ */
+async function markSoldOutBottleFlavors<T extends { container?: string | null; flavors?: any[] }>(unitTypes: T[]): Promise<T[]> {
+  const stockRows = await db
+    .select({ flavorId: products.flavorId, stock: products.stockQuantity })
+    .from(products)
+    .where(eq(products.container, 'bottle-case'));
+  const byFlavor = new Map(stockRows.filter(r => r.flavorId).map(r => [r.flavorId as string, r.stock]));
+  return unitTypes.map((ut: any) =>
+    ut.container === 'bottle-case' && Array.isArray(ut.flavors)
+      ? {
+          ...ut,
+          flavors: ut.flavors.map((f: any) =>
+            byFlavor.has(f.id) ? { ...f, soldOut: (byFlavor.get(f.id) ?? 0) <= 0 } : f
+          ),
+        }
+      : ut
+  );
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Brand imagery served at runtime (owner, 2026-09-09): the can-lineup renders live
   // in attached_assets/cans and are referenced by URL, not bundler imports, so a
@@ -1585,6 +1609,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           throw new OrderValidationError(400, { message: `Flavor ${item.flavorId} not found` });
         }
 
+        // Bottle sell-through (cans launch): bottles are being retired, so a
+        // sold-out bottle flavor can't be ordered even by a stale open form.
+        // Bottles ONLY — cans may be ordered ahead of stock (the board warns),
+        // and kegs oversell by design. No finished-goods row = not gated.
+        if ((unitType as any).container === 'bottle-case') {
+          const [stockRow] = await db
+            .select({ stock: products.stockQuantity })
+            .from(products)
+            .where(and(eq(products.container, 'bottle-case'), eq(products.flavorId, item.flavorId)));
+          if (stockRow && stockRow.stock <= 0) {
+            throw new OrderValidationError(409, { message: `${flavor.name} is sold out in bottles.` });
+          }
+        }
+
         // Location override -> customer override -> list price.
         const unitPrice = await storage.resolveWholesaleUnitPrice(customer.id, effectiveLocationId ?? null, item.unitTypeId);
         const lineTotal = unitPrice * item.quantity;
@@ -1722,7 +1760,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Anonymous menu for guest ordering — the same catalogue the shop shows, list prices.
   app.get("/api/wholesale/guest/unit-types", async (_req, res) => {
     try {
-      const unitTypes = await storage.getAllWholesaleUnitTypesWithFlavors();
+      const unitTypes = await markSoldOutBottleFlavors(await storage.getAllWholesaleUnitTypesWithFlavors());
       // No prices to the public endpoint (owner, 2026-09-02): the guest flow shows
       // none, and list prices would misstate any store's agreed rates.
       res.json(
@@ -2498,7 +2536,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ordering was impossible for everyone except a super_admin testing it. Active only.
   app.get("/api/wholesale/customer/unit-types", isAuthenticated, isWholesaleCustomer, async (req: any, res) => {
     try {
-      const unitTypes = await storage.getAllWholesaleUnitTypesWithFlavors();
+      const unitTypes = await markSoldOutBottleFlavors(await storage.getAllWholesaleUnitTypesWithFlavors());
       res.json(unitTypes.filter((ut: any) => ut.isActive !== false));
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching wholesale unit types: " + error.message });

@@ -172,7 +172,7 @@ export default function WholesaleGuestOrder() {
                     <Select value={line.flavorId} onValueChange={(v) => setLine(i, { flavorId: v })} disabled={!u}>
                       <SelectTrigger className="mt-1.5" data-testid={`select-flavor-${i}`}><SelectValue placeholder="Flavor…" /></SelectTrigger>
                       <SelectContent>
-                        {(u?.flavors ?? []).map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
+                        {(u?.flavors ?? []).filter((f: any) => !f.soldOut).map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>

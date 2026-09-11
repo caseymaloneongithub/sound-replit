@@ -615,11 +615,21 @@ function PrepGrid({ retail, wholesale, stock, catalog, flavorOrder }: { retail: 
                 </tr>
                 <tr className="text-muted-foreground">
                   <td className="py-2 pr-3 whitespace-nowrap">In Stock</td>
-                  {g.columns.map((c, i) => (
-                    <td key={i} className={`px-3 py-2 text-center text-lg ${c.stock !== null && c.stock < c.total ? "text-destructive font-semibold" : ""}`}>
-                      {c.productId ? <StockCell productId={c.productId} quantity={c.stock ?? 0} /> : (!c.offered ? "" : c.stock === null ? "—" : c.stock)}
-                    </td>
-                  ))}
+                  {g.columns.map((c, i) => {
+                    // Orders exist but there's NO finished-goods item to draw from —
+                    // cans ordered ahead of the first canning run (allowed on
+                    // purpose). Shout, so it's produced or created before delivery.
+                    const noStockItemButOrdered = c.offered && c.total > 0 && c.productId === null && c.stock === null;
+                    return (
+                      <td
+                        key={i}
+                        className={`px-3 py-2 text-center text-lg ${c.stock !== null && c.stock < c.total ? "text-destructive font-semibold" : ""} ${noStockItemButOrdered ? "text-amber-600 dark:text-amber-400 font-semibold" : ""}`}
+                        title={noStockItemButOrdered ? "Ordered, but no finished-goods item exists yet — produce or create it before delivery" : undefined}
+                      >
+                        {c.productId ? <StockCell productId={c.productId} quantity={c.stock ?? 0} /> : (!c.offered ? "" : noStockItemButOrdered ? "none!" : c.stock === null ? "—" : c.stock)}
+                      </td>
+                    );
+                  })}
                   <td className={`px-3 py-2 text-center text-lg ${stockSum !== null && stockSum < sum("total") ? "text-destructive font-semibold" : ""}`}>
                     {stockSum === null ? "—" : stockSum}
                   </td>

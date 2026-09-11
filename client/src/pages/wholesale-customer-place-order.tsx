@@ -106,7 +106,9 @@ export default function WholesaleCustomerPlaceOrder() {
     if (saved.length > 0) {
       const isStillAvailable = (item: { unitTypeId: string; flavorId: string }) => {
         const ut = unitTypes.find((u) => u.id === item.unitTypeId);
-        return !!ut?.flavors?.some((f) => f.id === item.flavorId);
+        // soldOut = retired bottle flavor with no stock left — prune it from a
+        // saved cart the same as a delisted flavor.
+        return !!ut?.flavors?.some((f) => f.id === item.flavorId && !(f as Flavor & { soldOut?: boolean }).soldOut);
       };
       const kept = saved.filter(isStillAvailable);
       const dropped = saved.length - kept.length;
@@ -127,10 +129,13 @@ export default function WholesaleCustomerPlaceOrder() {
     if (cartHydrated && customer?.id) saveWholesaleCart(customer.id, cart);
   }, [cart, cartHydrated, customer?.id]);
 
-  // Get available flavors for selected unit type
-  const availableFlavors = selectedUnitTypeId
+  // Get available flavors for selected unit type. Bottle sell-through (cans
+  // launch): the API marks retired bottle flavors soldOut once their stock is
+  // gone — they leave the picker; other containers never carry the flag.
+  const availableFlavors = (selectedUnitTypeId
     ? unitTypes.find(ut => ut.id === selectedUnitTypeId)?.flavors || []
-    : [];
+    : []
+  ).filter((f) => !(f as Flavor & { soldOut?: boolean }).soldOut);
 
   // Reset flavor selection when unit type changes
   useEffect(() => {
