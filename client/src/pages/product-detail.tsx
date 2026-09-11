@@ -262,9 +262,13 @@ export default function ProductDetail() {
   // The selection must be one of the AVAILABLE flavors — a ?flavor= preselect can
   // name a sold-out or retired flavor, which is truthy but not orderable.
   const selectionAvailable = activeFlavors.some((f) => f.id === selectedFlavor);
-  const canAddToCart = isMultiFlavor
+  // Product-level sell-through: a single-flavor bottle product whose flavor's
+  // stock is gone carries soldOut from the API — the whole page goes unavailable
+  // (both one-time and subscription controls gate on canAddToCart).
+  const productSoldOut = (product as RetailProductWithFlavors & { soldOut?: boolean }).soldOut === true;
+  const canAddToCart = !productSoldOut && (isMultiFlavor
     ? activeFlavors.length > 0 && selectionAvailable && (!pickTwoActive || pickTwoReady)
-    : true;
+    : true);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -337,6 +341,11 @@ export default function ProductDetail() {
 
             <Card className="order-1">
               <CardContent className="p-6">
+                {productSoldOut && (
+                  <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950 px-4 py-3 text-sm text-amber-800 dark:text-amber-200" data-testid="notice-sold-out">
+                    <span className="font-semibold">Sold out in bottles.</span> We're switching to cans — check the shop for what's pouring now.
+                  </div>
+                )}
                 <div className="flex items-baseline gap-3 mb-4">
                   <span className="text-3xl font-bold" data-testid="text-price">
                     ${parseFloat(product.price).toFixed(2)}

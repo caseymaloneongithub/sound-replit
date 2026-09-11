@@ -3870,7 +3870,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ));
         const recentByFreq = new Set(recentSubs.map(s => s.subscriptionFrequency));
 
+        // Uncertain first charges parked by a previous attempt (timeout after the
+        // charge may or may not have landed). A retry reconciles them HERE with
+        // the ORIGINAL idempotency key: Stripe replays the outcome if the charge
+        // succeeded, or attempts it fresh if it never processed — either way,
+        // exactly one charge.
+        const uncertainSubs = await db
+          .select()
+          .from(retailSubscriptions)
+          .where(and(
+            eq(retailSubscriptions.userId, user.id),
+            eq(retailSubscriptions.status, 'pending'),
+            eq(retailSubscriptions.billingStatus, 'first_charge_uncertain'),
+            gte(retailSubscriptions.startDate, new Date(Date.now() - 24 * 60 * 60 * 1000)),
+          ));
+
         for (const [frequency, groupItems] of Array.from(byFrequency.entries())) {
+          const uncertain = uncertainSubs.find(s => s.subscriptionFrequency === frequency);
+          if (uncertain) {
+            console.warn(`[SUBSCRIPTION] Reconciling uncertain first charge for ${uncertain.id} with its original idempotency key`);
+            // Amount MUST match the original request (same key + different params
+            // is a Stripe idempotency error), so recompute from the parked
+            // subscription's own locked items — not from today's cart.
+            const parkedItems = await db
+              .select({ quantity: retailSubscriptionItems.quantity, unitPriceAtSignup: retailSubscriptionItems.unitPriceAtSignup })
+              .from(retailSubscriptionItems)
+              .where(eq(retailSubscriptionItems.subscriptionId, uncertain.id));
+            const rSubtotal = parkedItems.reduce((s, it) => s + parseFloat(it.unitPriceAtSignup ?? '0') * it.quantity, 0);
+            const rTax = rSubtotal * 0.1035;
+            const rTotal = rSubtotal + rTax;
+            try {
+              const reconciled = await stripe.paymentIntents.create({
+                amount: Math.round(rTotal * 100),
+                currency: 'usd',
+                customer: uncertain.stripeCustomerId!,
+                payment_method: uncertain.stripePaymentMethodId!,
+                off_session: true,
+                confirm: true,
+                metadata: {
+                  retailSubscriptionId: uncertain.id,
+                  type: 'retail_subscription_first_order',
+                  subtotal: rSubtotal.toFixed(2),
+                  taxAmount: rTax.toFixed(2),
+                  totalAmount: rTotal.toFixed(2),
+                },
+              }, { idempotencyKey: `retailsub_first_${uncertain.id}` });
+              if (reconciled.status === 'succeeded' || reconciled.status === 'processing') {
+                await db.update(retailSubscriptions)
+                  .set({ status: 'active', billingStatus: reconciled.status === 'succeeded' ? 'active' : 'awaiting_confirmation' })
+                  .where(eq(retailSubscriptions.id, uncertain.id));
+                if (reconciled.status === 'succeeded') {
+                  const { finalizeRetailSubscriptionCharge } = await import('./billing-cron');
+                  await finalizeRetailSubscriptionCharge(reconciled.id);
+                }
+                for (const item of groupItems) {
+                  await db.delete(retailCartItems).where(eq(retailCartItems.id, item.id));
+                }
+                createdSubscriptions.push(uncertain);
+                continue;
+              }
+              throw new Error(`Payment came back ${reconciled.status}`);
+            } catch (reconcileError: any) {
+              if (reconcileError?.type === 'StripeCardError') {
+                // NOW a definitive decline — safe to clean up.
+                await db.delete(retailSubscriptionItems).where(eq(retailSubscriptionItems.subscriptionId, uncertain.id));
+                await db.delete(retailSubscriptions).where(eq(retailSubscriptions.id, uncertain.id));
+                console.warn(`[SUBSCRIPTION] Reconcile confirmed decline — removed ${uncertain.id}`);
+              }
+              throw reconcileError;
+            }
+          }
           if (recentByFreq.has(frequency)) {
             console.warn(`[SUBSCRIPTION] Duplicate ${frequency} checkout for user ${user.id} within 5 min — skipping create+charge`);
             const dup = recentSubs.find(s => s.subscriptionFrequency === frequency);
@@ -3970,10 +4039,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 totalAmount: totalAmount.toFixed(2),
               },
             }, { idempotencyKey: `retailsub_first_${subscription.id}` });
-          } catch (chargeError) {
-            await db.delete(retailSubscriptionItems).where(eq(retailSubscriptionItems.subscriptionId, subscription.id));
-            await db.delete(retailSubscriptions).where(eq(retailSubscriptions.id, subscription.id));
-            console.warn(`[SUBSCRIPTION] First charge failed — removed unpaid subscription ${subscription.id}`);
+          } catch (chargeError: any) {
+            // A StripeCardError is a DEFINITIVE decline — Stripe processed and
+            // refused, no money moved: remove the unpaid subscription. Anything
+            // else (timeout, 5xx, connection reset) is AMBIGUOUS: the charge may
+            // have succeeded and we lost the reply. Deleting the row then would
+            // orphan a real payment (its webhook couldn't finalize) AND let a
+            // retried checkout mint a new subscription id — a NEW idempotency
+            // key, so a second real charge. Park it instead: non-billable
+            // (status 'pending' fails both the cron's and the duplicate guard's
+            // status='active' filters), reconciled by the retry path below with
+            // the ORIGINAL idempotency key, or by the webhook if the charge won.
+            if (chargeError?.type === 'StripeCardError') {
+              await db.delete(retailSubscriptionItems).where(eq(retailSubscriptionItems.subscriptionId, subscription.id));
+              await db.delete(retailSubscriptions).where(eq(retailSubscriptions.id, subscription.id));
+              console.warn(`[SUBSCRIPTION] First charge declined — removed unpaid subscription ${subscription.id}`);
+            } else {
+              await db.update(retailSubscriptions)
+                .set({ status: 'pending', billingStatus: 'first_charge_uncertain' })
+                .where(eq(retailSubscriptions.id, subscription.id));
+              console.warn(`[SUBSCRIPTION] First charge AMBIGUOUS for ${subscription.id} (${chargeError?.type ?? 'unknown'}) — parked pending reconcile`);
+            }
             throw chargeError;
           }
 
@@ -4852,6 +4938,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               // process so the payment can be reconciled by hand — the exact
               // procedure used for the Sept incidents.
               if (!notifiedOrderFailures.has(paymentIntent.id)) {
+                // Claim the slot up front (concurrent redeliveries), but RELEASE it
+                // if the email itself fails — otherwise a transient mail outage
+                // permanently suppressed the alert while Stripe kept redelivering.
                 notifiedOrderFailures.add(paymentIntent.id);
                 import('./email').then(({ sendStaffPaymentFailureNotification }) =>
                   sendStaffPaymentFailureNotification({
@@ -4861,7 +4950,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     amount: paymentIntent.amount / 100,
                     errorMessage: `payment_intent ${paymentIntent.id} charged $${(paymentIntent.amount / 100).toFixed(2)} but order creation failed. Stripe retries for ~3 days; if this keeps failing, create the order manually from the checkout snapshot.`,
                   })
-                ).catch(e => console.error('[WEBHOOK] Failed to send paid-no-order alert:', e));
+                ).catch(e => {
+                  notifiedOrderFailures.delete(paymentIntent.id);
+                  console.error('[WEBHOOK] Failed to send paid-no-order alert (will retry on next redelivery):', e);
+                });
               }
               throw error;
             } finally {

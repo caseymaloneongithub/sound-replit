@@ -220,7 +220,11 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
         `UPDATE retail_subscriptions
          SET next_charge_at = $1, next_delivery_date = $2, billing_status = 'active',
              retry_count = 0, last_payment_intent_id = $3, last_refunded_at = NULL,
-             processing_lock = false, processing_locked_at = NULL
+             processing_lock = false, processing_locked_at = NULL,
+             -- A charge finalizing proves the money moved: a signup parked as
+             -- 'pending' after an AMBIGUOUS first-charge failure (timeout after
+             -- success) becomes a normal active subscription here.
+             status = CASE WHEN status = 'pending' THEN 'active' ELSE status END
          WHERE id = $4`,
         [nextBillingDate, normalizedNextPickupDate, paymentIntentId, sub.id]
       );

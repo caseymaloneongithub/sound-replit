@@ -178,7 +178,7 @@ export default function StaffLogin() {
 
       // Populate the auth cache SYNCHRONOUSLY before redirecting. Invalidate alone only
       // kicks off a background refetch, so the StaffProtectedRoute guard could mount with
-      // user still null (isLoading false) and bounce straight back to /staff/login â€” which
+      // user still null (isLoading false) and bounce straight back to /staff/login — which
       // looked like "logged in but didn't go anywhere". The email and 2FA paths already do
       // this; the password path didn't.
       resetCachesForIdentityChange(response);

@@ -261,13 +261,13 @@ export default function AuthPage() {
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold mb-2">Puget Sound Kombucha Co.</h1>
           <p className="text-muted-foreground">Artisanal craft kombucha from the Pacific Northwest</p>
-          <p className="text-sm text-muted-foreground mt-2">Shop â€¢ Subscribe â€¢ Pickup</p>
+          <p className="text-sm text-muted-foreground mt-2">Shop • Subscribe • Pickup</p>
           
           <div className="flex items-center justify-center gap-4 mt-6">
             <Link href="/staff/login" className="text-lg text-muted-foreground hover:text-primary hover:underline" data-testid="link-to-staff-login">
               Staff Login
             </Link>
-            <span className="text-lg text-muted-foreground">â€¢</span>
+            <span className="text-lg text-muted-foreground">•</span>
             <Link href="/wholesale/login" className="text-lg text-muted-foreground hover:text-primary hover:underline" data-testid="link-to-wholesale-login">
               Wholesale Login
             </Link>

@@ -123,11 +123,11 @@ export function WholesaleCustomerLayout({ children }: WholesaleCustomerLayoutPro
           </div>
         </div>
       )}
-      {/* The layout owns the portal's width and gutters â€” pages supply only vertical
+      {/* The layout owns the portal's width and gutters — pages supply only vertical
           spacing. Tailwind's `container` sets a max-width but NO horizontal padding (this
           project doesn't configure container.padding), and the pages used a bare
           `container mx-auto`, so content sat flush against the viewport edge while the two
-          header bars â€” which do use px-4 â€” were inset. Matching the header's exact
+          header bars — which do use px-4 — were inset. Matching the header's exact
           `container mx-auto px-4` here keeps the page body aligned with them, and means a
           new portal page can't reintroduce either bug. */}
       <main className="container mx-auto px-4">
