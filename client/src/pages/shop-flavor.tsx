@@ -49,16 +49,19 @@ export default function ShopFlavor() {
     setPickTwoB("");
   }, [flavorId]);
 
-  const { data: flavors, isLoading: flavorsLoading } = useQuery<Flavor[]>({
+  const { data: flavors, isLoading: flavorsLoading, isError: flavorsError, refetch: refetchFlavors } = useQuery<Flavor[]>({
     queryKey: ["/api/flavors"],
   });
-  const { data: products, isLoading: productsLoading } = useQuery<ShopProduct[]>({
+  const { data: products, isLoading: productsLoading, isError: productsError, refetch: refetchProducts } = useQuery<ShopProduct[]>({
     queryKey: ["/api/retail-products"],
   });
   const { data: cartItems = [] } = useQuery<CartItemWithProduct[]>({
     queryKey: ["/api/retail-cart"],
   });
   const isLoading = flavorsLoading || productsLoading;
+  // A failed catalogue request must NOT read as "sold through" or "not found" —
+  // it gets its own state with a retry.
+  const loadFailed = flavorsError || productsError;
 
   const hasSubscriptionItems = cartItems.some((item) => item.isSubscription);
   const hasOneTimeItems = cartItems.some((item) => !item.isSubscription);
@@ -132,6 +135,22 @@ export default function ShopFlavor() {
       variant: "destructive",
     });
 
+  if (loadFailed) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-16 text-center">
+          <h1 className="text-2xl font-bold mb-3">Couldn't load the shop</h1>
+          <p className="text-muted-foreground mb-5">Something went wrong on our end — give it another try.</p>
+          <div className="flex justify-center gap-2">
+            <Button onClick={() => { refetchFlavors(); refetchProducts(); }} data-testid="button-retry-load">Try again</Button>
+            <Button asChild variant="outline"><Link href="/shop">Back to the shop</Link></Button>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
   if (!isLoading && !flavor) {
     return (
       <div className="min-h-screen bg-background">
@@ -159,18 +178,22 @@ export default function ShopFlavor() {
 
         {flavor && (
           <>
-            <div className="grid md:grid-cols-2 gap-8 md:gap-12 items-center">
+            {/* Mobile is purchase-first (same call as the product page's 2026-09-11
+                review fix): compact photo + name up top, packages and Add next, the
+                long description and ingredients after. Desktop keeps the two-column
+                hero with the story beside the photo. */}
+            <div className="grid md:grid-cols-2 gap-5 md:gap-12 items-center">
               <div>
-                <div className="bg-card border rounded-md p-4 flex items-center justify-center">
+                <div className="bg-card border rounded-md p-3 md:p-4 flex items-center justify-center">
                   {images.length > 0 ? (
                     <img
                       src={images[imageIndex]}
                       alt={`${flavor.name} kombucha`}
-                      className="max-h-[22rem] w-auto max-w-full object-contain"
+                      className="max-h-48 md:max-h-[22rem] w-auto max-w-full object-contain"
                       data-testid={`image-flavor-${flavor.id}`}
                     />
                   ) : (
-                    <div className="h-64" />
+                    <div className="h-40 md:h-64" />
                   )}
                 </div>
                 {images.length > 1 && (
@@ -187,25 +210,29 @@ export default function ShopFlavor() {
                   </div>
                 )}
               </div>
-              <div>
+              <div className="min-w-0">
                 {flavor.flavorProfile && (
                   <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cedar mb-2" data-testid="text-flavor-profile">
                     {flavor.flavorProfile}
                   </p>
                 )}
+                {/* Sized and tracked down on small screens so long names like
+                    "Hummingbrew" wrap instead of forcing horizontal scroll. */}
                 <h1
-                  className="text-4xl md:text-5xl font-bold uppercase tracking-[0.1em] leading-tight"
+                  className="text-3xl sm:text-4xl md:text-5xl font-bold uppercase tracking-[0.05em] md:tracking-[0.1em] leading-tight break-words"
                   style={{ color: accent }}
                   data-testid="text-flavor-name"
                 >
                   {flavorOptionLabel(flavor.name)}
                 </h1>
-                <p className="mt-4 text-foreground/90 leading-relaxed" data-testid="text-flavor-description">{flavor.description}</p>
-                {flavor.ingredients?.length > 0 && (
-                  <p className="mt-3 text-sm text-muted-foreground" data-testid="text-flavor-ingredients">
-                    <span className="font-medium text-foreground/80">Ingredients:</span> {flavor.ingredients.join(", ")}
-                  </p>
-                )}
+                <div className="hidden md:block">
+                  <p className="mt-4 text-foreground/90 leading-relaxed" data-testid="text-flavor-description">{flavor.description}</p>
+                  {flavor.ingredients?.length > 0 && (
+                    <p className="mt-3 text-sm text-muted-foreground" data-testid="text-flavor-ingredients">
+                      <span className="font-medium text-foreground/80">Ingredients:</span> {flavor.ingredients.join(", ")}
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -217,13 +244,15 @@ export default function ShopFlavor() {
             ) : (
               <div className="mt-10 max-w-2xl">
                 <h2 className="font-semibold text-lg mb-3">Choose your package</h2>
-                <div className="grid sm:grid-cols-2 gap-3" data-testid="grid-packages">
+                <div className="grid sm:grid-cols-2 gap-3" role="radiogroup" aria-label="Package" data-testid="grid-packages">
                   {packages.map(({ product: p }) => {
                     const selected = product?.id === p.id;
                     return (
                       <button
                         key={p.id}
                         type="button"
+                        role="radio"
+                        aria-checked={selected}
                         onClick={() => { setSelectedProductId(p.id); setAdded(false); }}
                         className={`text-left rounded-md border p-4 bg-card transition-colors ${selected ? "border-primary ring-1 ring-primary" : "hover:border-primary/50"}`}
                         data-testid={`button-package-${p.id}`}
@@ -247,10 +276,10 @@ export default function ShopFlavor() {
                 {splitCapable && (
                   <div className="mt-5">
                     <div className="grid grid-cols-2 gap-2 max-w-md" role="radiogroup" aria-label="Mixed case style">
-                      <Button type="button" size="sm" variant={splitOn ? "outline" : "secondary"} onClick={() => setPickTwo(false)} data-testid="button-mixed-all">
+                      <Button type="button" size="sm" role="radio" aria-checked={!splitOn} variant={splitOn ? "outline" : "secondary"} onClick={() => setPickTwo(false)} data-testid="button-mixed-all">
                         A little of everything
                       </Button>
-                      <Button type="button" size="sm" variant={splitOn ? "secondary" : "outline"} onClick={() => setPickTwo(true)} data-testid="button-mixed-pick2">
+                      <Button type="button" size="sm" role="radio" aria-checked={splitOn} variant={splitOn ? "secondary" : "outline"} onClick={() => setPickTwo(true)} data-testid="button-mixed-pick2">
                         Pick 2 flavors
                       </Button>
                     </div>
@@ -260,9 +289,9 @@ export default function ShopFlavor() {
                     {splitOn && product && (
                       <div className="grid grid-cols-2 gap-2 mt-2 max-w-md">
                         <div>
-                          <Label className="text-xs text-muted-foreground">First flavor</Label>
+                          <Label htmlFor="pick2-a" className="text-xs text-muted-foreground">First flavor</Label>
                           <Select value={pickTwoA} onValueChange={setPickTwoA}>
-                            <SelectTrigger data-testid="select-pick2-a" className="mt-1"><SelectValue placeholder="First flavor" /></SelectTrigger>
+                            <SelectTrigger id="pick2-a" data-testid="select-pick2-a" className="mt-1"><SelectValue placeholder="First flavor" /></SelectTrigger>
                             <SelectContent>
                               {product.flavors.filter((f) => f.isActive && flavorInStock(f) && f.name !== "Mixed" && f.id !== pickTwoB).map((f) => (
                                 <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
@@ -271,9 +300,9 @@ export default function ShopFlavor() {
                           </Select>
                         </div>
                         <div>
-                          <Label className="text-xs text-muted-foreground">Second flavor</Label>
+                          <Label htmlFor="pick2-b" className="text-xs text-muted-foreground">Second flavor</Label>
                           <Select value={pickTwoB} onValueChange={setPickTwoB}>
-                            <SelectTrigger data-testid="select-pick2-b" className="mt-1"><SelectValue placeholder="Second flavor" /></SelectTrigger>
+                            <SelectTrigger id="pick2-b" data-testid="select-pick2-b" className="mt-1"><SelectValue placeholder="Second flavor" /></SelectTrigger>
                             <SelectContent>
                               {product.flavors.filter((f) => f.isActive && flavorInStock(f) && f.name !== "Mixed" && f.id !== pickTwoA).map((f) => (
                                 <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
@@ -344,6 +373,17 @@ export default function ShopFlavor() {
                 )}
               </div>
             )}
+
+            {/* The story the desktop hero shows beside the photo — on phones it
+                lives down here, after the purchase controls. */}
+            <div className="md:hidden mt-8 max-w-2xl">
+              <p className="text-foreground/90 leading-relaxed" data-testid="text-flavor-description-mobile">{flavor.description}</p>
+              {flavor.ingredients?.length > 0 && (
+                <p className="mt-3 text-sm text-muted-foreground" data-testid="text-flavor-ingredients-mobile">
+                  <span className="font-medium text-foreground/80">Ingredients:</span> {flavor.ingredients.join(", ")}
+                </p>
+              )}
+            </div>
           </>
         )}
       </div>

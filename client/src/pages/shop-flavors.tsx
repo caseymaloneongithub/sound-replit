@@ -1,6 +1,7 @@
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import type { Flavor } from "@shared/schema";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Image as ImageIcon } from "lucide-react";
@@ -19,13 +20,16 @@ import { Footer } from "@/components/layout/footer";
  * flavor greys out instead of vanishing.
  */
 export default function ShopFlavors() {
-  const { data: flavors, isLoading: flavorsLoading } = useQuery<Flavor[]>({
+  const { data: flavors, isLoading: flavorsLoading, isError: flavorsError, refetch: refetchFlavors } = useQuery<Flavor[]>({
     queryKey: ["/api/flavors"],
   });
-  const { data: products, isLoading: productsLoading } = useQuery<ShopProduct[]>({
+  const { data: products, isLoading: productsLoading, isError: productsError, refetch: refetchProducts } = useQuery<ShopProduct[]>({
     queryKey: ["/api/retail-products"],
   });
   const isLoading = flavorsLoading || productsLoading;
+  // A failed request must NOT render as an empty (sold-out-looking) wall — it
+  // gets its own state with a retry.
+  const loadFailed = flavorsError || productsError;
 
   const rows = (flavors ?? [])
     .filter((f) => f.isActive)
@@ -83,6 +87,13 @@ export default function ShopFlavors() {
           <p className="text-muted-foreground py-12" data-testid="text-products-loading">Loading flavors...</p>
         )}
 
+        {loadFailed && (
+          <div className="rounded-md border bg-muted/40 p-6 text-center max-w-md mx-auto my-8" data-testid="text-load-failed">
+            <p className="font-medium mb-3">Couldn't load the shop — give it another try.</p>
+            <Button onClick={() => { refetchFlavors(); refetchProducts(); }} data-testid="button-retry-load">Try again</Button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
           {rows.map(({ flavor, chips, fromPrice, bestDiscount, soldThrough }) => {
             const displayName = flavorOptionLabel(flavor.name);
@@ -108,7 +119,7 @@ export default function ShopFlavors() {
                 </div>
                 <CardContent className="p-4">
                   <h3
-                    className="text-xl font-bold uppercase tracking-[0.08em]"
+                    className="text-xl font-bold uppercase tracking-[0.08em] break-words"
                     style={{ color: FLAVOR_ACCENTS[flavor.name] }}
                     data-testid={`text-flavor-${flavor.id}`}
                   >
