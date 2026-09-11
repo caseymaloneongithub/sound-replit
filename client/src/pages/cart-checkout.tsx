@@ -295,6 +295,9 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
               state: customerInfo.state,
               zipCode: customerInfo.zipCode,
               password: customerInfo.password,
+              // Proof of purchase: lets the server link THIS paid order to the new
+              // account without a claim-by-email (which would be spoofable).
+              paymentIntentId: paymentIntent.id,
             });
             
             // Refresh user auth state

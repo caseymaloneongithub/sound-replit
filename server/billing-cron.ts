@@ -663,6 +663,12 @@ export async function runDailyBilling() {
             retailProductId: retailSubscriptionItems.retailProductId,
             selectedFlavorId: retailSubscriptionItems.selectedFlavorId,
             quantity: retailSubscriptionItems.quantity,
+            // The price agreed at signup MUST ride along: resolveUnitPrice prefers
+            // it, but this select used to omit it, so every renewal silently
+            // re-priced at the current catalog — a catalog price change changed
+            // what customers were charged mid-subscription.
+            unitPriceAtSignup: retailSubscriptionItems.unitPriceAtSignup,
+            notes: retailSubscriptionItems.notes,
             retailProduct: retailProducts,
           })
           .from(retailSubscriptionItems)

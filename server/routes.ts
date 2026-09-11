@@ -3452,6 +3452,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     state: z.string().optional(),
     zipCode: z.string().optional(),
     password: z.string().min(6),
+    // The payment intent the caller just paid — possession of this unguessable id
+    // is the ownership proof for claiming that order (see below).
+    paymentIntentId: z.string().regex(/^pi_[A-Za-z0-9]+$/).optional(),
   });
 
   app.post("/api/checkout/create-account", async (req: any, res) => {
@@ -3530,16 +3533,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       await storage.migrateCartToSession(oldSessionId, req.sessionID);
 
-      // Claim guest orders placed under this email — the webhook stamps user_id
-      // from the checkout snapshot, which is null for guests, so the order this
-      // account was just created FOR would otherwise never appear in their history.
-      await db.update(retailOrders)
-        .set({ userId: user.id })
-        .where(and(
-          eq(retailOrders.customerEmail, validated.customerEmail),
-          isNull(retailOrders.userId),
-          isNull(retailOrders.deletedAt),
-        ));
+      // Claim ONLY the order this account is being created for, proven by
+      // possession of its payment-intent id (unguessable, known only to the payer).
+      // A blanket claim-by-email here would let anyone who knows a guest's email
+      // mint the account for it and inherit their order history — the endpoint is
+      // unauthenticated and the email unverified.
+      if (validated.paymentIntentId) {
+        await db.update(retailOrders)
+          .set({ userId: user.id })
+          .where(and(
+            eq(retailOrders.stripePaymentIntentId, validated.paymentIntentId),
+            eq(retailOrders.customerEmail, validated.customerEmail),
+            isNull(retailOrders.userId),
+            isNull(retailOrders.deletedAt),
+          ));
+        // The webhook may not have built the order yet — stamp the checkout
+        // snapshot too, so whichever side wins the race links the order: the
+        // UPDATE above catches an existing order, the snapshot's user_id covers
+        // one created later.
+        await db.update(retailCheckoutSessions)
+          .set({ userId: user.id })
+          .where(and(
+            eq(retailCheckoutSessions.paymentIntentId, validated.paymentIntentId),
+            eq(retailCheckoutSessions.customerEmail, validated.customerEmail),
+            isNull(retailCheckoutSessions.userId),
+          ));
+      }
 
       res.json({ success: true, user: { id: user.id, username: user.username, email: user.email } });
     } catch (error: any) {
@@ -3696,16 +3715,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         });
         await storage.migrateCartToSession(oldSessionId, req.sessionID);
-
-        // Same guest-order claim as checkout/create-account: link any earlier
-        // guest purchases under this email to the account being created.
-        await db.update(retailOrders)
-          .set({ userId: user.id })
-          .where(and(
-            eq(retailOrders.customerEmail, validated.customerEmail),
-            isNull(retailOrders.userId),
-            isNull(retailOrders.deletedAt),
-          ));
+        // (No blanket order claim here — an unverified email must not inherit
+        // guest history. The subscription's own orders carry this user id already.)
       } else {
         // For logged-in users, update their address if provided
         if (validated.address || validated.city || validated.state || validated.zipCode) {
@@ -4420,7 +4431,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (success) {
               console.log(`[WEBHOOK] ✅ Successfully finalized retail subscription charge for PaymentIntent ${paymentIntent.id}`);
             } else {
-              console.error(`[WEBHOOK] ❌ Failed to finalize retail subscription charge for PaymentIntent ${paymentIntent.id}`);
+              // A paid charge with no order MUST NOT be acknowledged: throwing makes
+              // this response non-2xx, so Stripe redelivers the event and finalize
+              // (idempotent on the payment intent) gets another chance.
+              throw new Error(`Finalize incomplete for ${paymentIntent.id} — asking Stripe to redeliver`);
             }
             break;
           }
@@ -4428,7 +4442,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Handle cart purchase payments
           if (paymentIntent.metadata?.type === 'cart_purchase') {
             const sessionId = paymentIntent.metadata.sessionId;
-            
+            // Post-transaction cart clearing must hit the cart's CURRENT session id
+            // (see cartSessionId below) — default to the metadata id until the
+            // checkout session row tells us better.
+            let clearSessionId = sessionId;
+
             // Use transaction for atomic order creation
             const client = await pool.connect();
             try {
@@ -4458,10 +4476,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
                 
                 const checkoutSession = checkoutSessionResult.rows[0];
-                
+
+                // Read carts by the CHECKOUT SESSION's session id, not the one frozen
+                // into PI metadata at intent creation: post-payment account creation
+                // regenerates the session and migrateCartToSession re-keys the cart
+                // and this snapshot row to the new id. The metadata id is then stale —
+                // reading by it found an empty cart and the order was never created
+                // whenever account creation beat the webhook (the Julia Parker race,
+                // still live for fast webhooks until now).
+                const cartSessionId = checkoutSession.session_id || sessionId;
+                clearSessionId = cartSessionId;
+
                 // 🔒 SECURITY: Lock cart rows to prevent concurrent modifications
-                const cartItems = await storage.getCartItems(sessionId, client);
-                const retailItems = await storage.getRetailCart(sessionId, client);
+                const cartItems = await storage.getCartItems(cartSessionId, client);
+                const retailItems = await storage.getRetailCart(cartSessionId, client);
                 
                 // Cart must not be empty - fail if it is (prevents race conditions and tampering)
                 if (cartItems.length === 0 && retailItems.length === 0) {
@@ -4706,10 +4734,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
             
             // Always clear both carts (outside transaction)
-            if (sessionId) {
-              await storage.clearCart(sessionId);
-              await storage.clearRetailCart(sessionId);
-              console.log(`[WEBHOOK] Cleared carts for session ${sessionId} after successful payment`);
+            if (clearSessionId) {
+              await storage.clearCart(clearSessionId);
+              await storage.clearRetailCart(clearSessionId);
+              console.log(`[WEBHOOK] Cleared carts for session ${clearSessionId} after successful payment`);
             }
           }
           break;
@@ -4771,10 +4799,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             paymentIntent.last_payment_error?.message || 'Payment failed';
           console.warn(`[WEBHOOK] ⚠️ Payment failed for retail subscription ${subId}: ${failureMessage}`);
 
+          // Record the failure WITHOUT stomping retry state: the cron already saw a
+          // synchronous decline and set billingStatus back to 'active' with a retry
+          // scheduled — and the retry query only selects 'active', so overwriting it
+          // here silently killed every scheduled retry. Only the async states
+          // (awaiting_auth / awaiting_confirmation), where the cron never saw the
+          // outcome, transition to payment_failed from this event.
           await db
             .update(retailSubscriptions)
             .set({
-              billingStatus: 'payment_failed',
+              billingStatus: sql`CASE WHEN ${retailSubscriptions.billingStatus} IN ('awaiting_auth', 'awaiting_confirmation') THEN 'payment_failed' ELSE ${retailSubscriptions.billingStatus} END`,
               lastPaymentIntentId: paymentIntent.id,
               // Release any lock so the retry path can pick it up again.
               processingLock: false,
