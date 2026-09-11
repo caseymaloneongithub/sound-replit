@@ -1579,7 +1579,7 @@ ${locationLine ? `Deliver To: ${locationLine}` : ''}
 Items:
 ${itemsText}
 
-Your store's pricing is shown on the invoice.
+Pricing is shown on the invoice.
 ${params.notes ? `\nNotes: ${params.notes}` : ''}
 
 ---
@@ -1648,7 +1648,7 @@ orders@soundkombucha.com
     </table>
 
     <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 13px; margin: 0 0 8px 0; padding: 12px 0 0 0; border-top: 2px solid ${BRAND_COLORS.borderGrey};">
-      Your store's pricing is shown on the invoice.
+      Pricing is shown on the invoice.
     </p>
     
     ${params.notes ? `

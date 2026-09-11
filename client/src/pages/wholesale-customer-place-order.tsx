@@ -707,7 +707,7 @@ export default function WholesaleCustomerPlaceOrder() {
                         </div>
                       )}
                       <p className="text-sm text-muted-foreground">
-                        Your account pricing is applied automatically and shown on the invoice.
+                        Pricing is shown on the invoice.
                       </p>
                     </div>
                     {minimumOrderAmount > 0 && getCartTotal() < minimumOrderAmount && (

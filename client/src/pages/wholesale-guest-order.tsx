@@ -303,7 +303,7 @@ export default function WholesaleGuestOrder() {
           <div className="flex items-center justify-between gap-3 flex-wrap border-t pt-4">
             <div className="text-sm text-muted-foreground">
               {min > 0 && <span data-testid="text-min-order">Minimum order: ${min.toFixed(2)}. </span>}
-              Your store's pricing is applied automatically and shown on the invoice.
+              Pricing is shown on the invoice.
               {stillNeeded.length > 0 && (
                 <span className="block mt-1 text-cedar font-medium" data-testid="text-still-needed">
                   To place the order: {stillNeeded.join(", ")}.
