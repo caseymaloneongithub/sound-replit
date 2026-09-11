@@ -2403,8 +2403,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Only admins can view inactive products" });
       }
       
-      const products = await storage.getRetailProducts(includeInactive);
-      res.json(products);
+      const retailProds = await storage.getRetailProducts(includeInactive);
+
+      // Bottle sell-through (owner, cans launch 2026-09-11): bottles stay on sale
+      // until each flavor's finished-goods stock reaches zero, then that flavor
+      // falls off the shop by itself. Scoped to the bottle-case container ONLY —
+      // kegs deliberately oversell (stock may go negative and the sale still
+      // happens), and can stock rows may not exist yet at launch. A flavor with no
+      // matching finished-goods row stays available: unknown is not sold out.
+      const bottleStock = await db
+        .select({ flavorId: products.flavorId, stock: products.stockQuantity })
+        .from(products)
+        .where(eq(products.container, 'bottle-case'));
+      const bottleStockByFlavor = new Map(
+        bottleStock.filter(r => r.flavorId).map(r => [r.flavorId as string, r.stock])
+      );
+      const enriched = retailProds.map((p: any) => {
+        if (p.container !== 'bottle-case') return p;
+        // Multi-flavor: mark each flavor. Single-flavor (legacy per-flavor
+        // products): mark the product itself, so any straggler card also falls off.
+        const flavorsMarked = Array.isArray(p.flavors)
+          ? p.flavors.map((f: any) =>
+              bottleStockByFlavor.has(f.id)
+                ? { ...f, soldOut: (bottleStockByFlavor.get(f.id) ?? 0) <= 0 }
+                : f
+            )
+          : p.flavors;
+        const ownFlavorSoldOut =
+          p.flavorId && bottleStockByFlavor.has(p.flavorId)
+            ? (bottleStockByFlavor.get(p.flavorId) ?? 0) <= 0
+            : false;
+        return { ...p, flavors: flavorsMarked, soldOut: ownFlavorSoldOut };
+      });
+      res.json(enriched);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching retail products: " + error.message });
     }
@@ -7785,6 +7816,27 @@ If you have any questions, please don't hesitate to reach out!`,
         }
         if (!selectedFlavorId || selectedFlavorId === splitFlavorId) {
           return res.status(400).json({ message: "Pick two different flavors for your split case" });
+        }
+      }
+
+      // Bottle sell-through enforcement (cans launch): the shop hides sold-out
+      // bottle flavors, but the cart endpoint is reachable directly. Same scope as
+      // the catalogue: bottle-case only, and only flavors with a finished-goods
+      // row. Mixed has no row, so it passes.
+      if ((product as any).container === 'bottle-case') {
+        // Multi-flavor lines check the chosen (and split) flavor; legacy
+        // single-flavor products check their own fixed flavor.
+        const flavorIdsToCheck = [selectedFlavorId, splitFlavorId, selectedFlavorId ? null : (product as any).flavorId].filter(Boolean);
+        if (flavorIdsToCheck.length > 0) {
+          const stockRows = await db
+            .select({ flavorId: products.flavorId, stock: products.stockQuantity, name: flavors.name })
+            .from(products)
+            .leftJoin(flavors, eq(flavors.id, products.flavorId))
+            .where(and(eq(products.container, 'bottle-case'), inArray(products.flavorId, flavorIdsToCheck)));
+          const soldOut = stockRows.find(r => r.stock <= 0);
+          if (soldOut) {
+            return res.status(409).json({ message: `${soldOut.name ?? 'That flavor'} is sold out in bottles.` });
+          }
         }
       }
 

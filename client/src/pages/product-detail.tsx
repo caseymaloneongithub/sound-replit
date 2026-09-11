@@ -244,7 +244,9 @@ export default function ProductDetail() {
   // The selector only lists active flavors, so gate on those — otherwise a product
   // whose flavors are all inactive shows an empty dropdown and a permanently
   // disabled button with no explanation.
-  const activeFlavors = product.flavors?.filter((f) => f.isActive) ?? [];
+  // Bottle sell-through (cans launch): the API marks flavors soldOut when their
+  // bottle stock is gone; sold-out flavors leave the pickers entirely.
+  const activeFlavors = product.flavors?.filter((f) => f.isActive && !(f as any).soldOut) ?? [];
   const needsFlavorSelection = isMultiFlavor && activeFlavors.length > 0;
   // Picking Mixed on an allowSplit product offers a choice: the full assortment,
   // or "pick 2 flavors — 6 of each" (a split under the hood).
@@ -313,7 +315,7 @@ export default function ProductDetail() {
               <div>
                 <h2 className="font-semibold mb-2">Available Flavors</h2>
                 <div className="flex flex-wrap gap-2 mb-4">
-                  {product.flavors.filter(f => f.isActive).map((flavor) => (
+                  {activeFlavors.map((flavor) => (
                     <Badge key={flavor.id} variant="secondary">
                       {flavor.name}
                     </Badge>
@@ -351,7 +353,7 @@ export default function ProductDetail() {
                         <SelectValue placeholder="Choose a flavor" />
                       </SelectTrigger>
                       <SelectContent>
-                        {product.flavors.filter(f => f.isActive).map((flavor) => (
+                        {activeFlavors.map((flavor) => (
                           <SelectItem key={flavor.id} value={flavor.id}>
                             {flavorOptionLabel(flavor.name)}
                           </SelectItem>

@@ -21,6 +21,11 @@ type RetailCartItemWithProduct = RetailCartItem & {
   retailProduct: RetailProduct & { flavor: Flavor | null; flavors: Flavor[] };
 };
 
+// Bottle sell-through (cans launch): the API marks a flavor soldOut once its
+// bottle-case finished-goods stock hits zero. Flavors without the flag (kegs,
+// Mixed, future cans) are always considered in stock.
+const flavorInStock = (f: Flavor) => !(f as Flavor & { soldOut?: boolean }).soldOut;
+
 function ProductImageCarousel({ 
   primaryImageUrl, 
   secondaryImageUrl, 
@@ -255,6 +260,9 @@ export default function ShopV2() {
                 {unitProducts
                   .filter(p => {
                     if (!p.isActive) return false;
+                    // Bottle sell-through: a single-flavor bottle product whose
+                    // flavor's stock is gone falls off with it.
+                    if ((p as RetailProductWithFlavors & { soldOut?: boolean }).soldOut) return false;
                     // For single-flavor products, check if the flavor is active
                     if (p.productType === 'single-flavor' && p.flavor) {
                       return p.flavor.isActive;
@@ -264,7 +272,7 @@ export default function ShopV2() {
                     // flavor was still linked — inactive flavors are already
                     // filtered out of the pickers, so they shouldn't hide the card.)
                     if (p.productType === 'multi-flavor') {
-                      return p.flavors.some(f => f.isActive);
+                      return p.flavors.some(f => f.isActive && flavorInStock(f));
                     }
                     return true;
                   })
@@ -275,7 +283,7 @@ export default function ShopV2() {
                   // dropdown. Every card still sells the same underlying product.
                   .flatMap((product): Array<{ product: RetailProductWithFlavors; lockedFlavor: Flavor | null }> =>
                     product.productType === 'multi-flavor' && (product as any).displayPerFlavor
-                      ? product.flavors.filter(f => f.isActive).map(f => ({ product, lockedFlavor: f }))
+                      ? product.flavors.filter(f => f.isActive && flavorInStock(f)).map(f => ({ product, lockedFlavor: f }))
                       : [{ product, lockedFlavor: null }]
                   )
                   .map(({ product, lockedFlavor }) => {
@@ -355,7 +363,7 @@ export default function ShopV2() {
                           <div className="mb-3">
                             <p className="text-xs text-muted-foreground mb-1">Flavor Options:</p>
                             <div className="flex flex-wrap gap-1">
-                              {product.flavors.map((flavor) => (
+                              {product.flavors.filter(f => f.isActive && flavorInStock(f)).map((flavor) => (
                                 <Badge key={flavor.id} variant="secondary" className="text-xs">
                                   {flavor.name}
                                 </Badge>
@@ -396,7 +404,7 @@ export default function ShopV2() {
                                 <SelectValue placeholder="Choose a flavor" />
                               </SelectTrigger>
                               <SelectContent>
-                                {product.flavors.filter(f => f.isActive).map((flavor) => (
+                                {product.flavors.filter(f => f.isActive && flavorInStock(f)).map((flavor) => (
                                   <SelectItem key={flavor.id} value={flavor.id}>
                                     {flavorOptionLabel(flavor.name)}
                                   </SelectItem>
@@ -441,7 +449,7 @@ export default function ShopV2() {
                                     <SelectValue placeholder="First flavor" />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    {product.flavors.filter(f => f.isActive && f.name !== 'Mixed' && f.id !== bPick).map((flavor) => (
+                                    {product.flavors.filter(f => f.isActive && flavorInStock(f) && f.name !== 'Mixed' && f.id !== bPick).map((flavor) => (
                                       <SelectItem key={flavor.id} value={flavor.id}>{flavor.name}</SelectItem>
                                     ))}
                                   </SelectContent>
@@ -454,7 +462,7 @@ export default function ShopV2() {
                                     <SelectValue placeholder="Second flavor" />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    {product.flavors.filter(f => f.isActive && f.name !== 'Mixed' && f.id !== aPick).map((flavor) => (
+                                    {product.flavors.filter(f => f.isActive && flavorInStock(f) && f.name !== 'Mixed' && f.id !== aPick).map((flavor) => (
                                       <SelectItem key={flavor.id} value={flavor.id}>{flavor.name}</SelectItem>
                                     ))}
                                   </SelectContent>
