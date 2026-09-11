@@ -2628,8 +2628,22 @@ export class PostgresStorage implements IStorage {
   }
 
   async createWholesaleOrder(order: InsertWholesaleOrder): Promise<WholesaleOrder> {
-    const result = await db.insert(wholesaleOrders).values(order).returning();
-    return result[0];
+    // generateNextInvoiceNumber's advisory lock ends at its own COMMIT — before
+    // this insert runs — so two simultaneous orders can be handed the same number.
+    // Rather than restructure callers, absorb the (rare) collision here: regenerate
+    // and retry on the unique violation.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const result = await db.insert(wholesaleOrders).values(order).returning();
+        return result[0];
+      } catch (e: any) {
+        const isNumberCollision = e?.code === '23505' && String(e?.constraint ?? e?.message ?? '').includes('invoice_number');
+        if (!isNumberCollision || attempt >= 3) throw e;
+        const regenerated = await this.generateNextInvoiceNumber();
+        console.warn(`[WHOLESALE] Invoice number collision on ${order.invoiceNumber} — retrying as ${regenerated}`);
+        order = { ...order, invoiceNumber: regenerated };
+      }
+    }
   }
 
   async updateWholesaleOrderStatus(id: string, status: string): Promise<WholesaleOrder> {
@@ -3406,6 +3420,33 @@ export class PostgresStorage implements IStorage {
     await db.delete(transactionAllocations).where(eq(transactionAllocations.transactionId, transactionId));
   }
 
+  // Plaid sync corrections. `modified` updates the stored row in place (amount,
+  // date, name, pending state — banks revise these when a pending charge settles);
+  // `removed` deletes the row and its allocations (Plaid removes a pending tx when
+  // the posted version arrives under a new id). Ignoring both left the books
+  // permanently holding stale and duplicate entries.
+  async updateAccountingTransactionByTransactionId(transactionId: string, fields: {
+    date?: Date; name?: string; merchantName?: string | null; amount?: string; category?: string | null; pending?: boolean;
+  }): Promise<boolean> {
+    const result = await db
+      .update(accountingTransactions)
+      .set(fields)
+      .where(eq(accountingTransactions.transactionId, transactionId))
+      .returning({ id: accountingTransactions.id });
+    return result.length > 0;
+  }
+
+  async deleteAccountingTransactionByTransactionId(transactionId: string): Promise<boolean> {
+    const existing = await db
+      .select({ id: accountingTransactions.id })
+      .from(accountingTransactions)
+      .where(eq(accountingTransactions.transactionId, transactionId));
+    if (existing.length === 0) return false;
+    await db.delete(transactionAllocations).where(eq(transactionAllocations.transactionId, existing[0].id));
+    await db.delete(accountingTransactions).where(eq(accountingTransactions.id, existing[0].id));
+    return true;
+  }
+
   async bulkAllocateTransactions(transactionIds: string[], categoryId: string): Promise<void> {
     // Get all transactions to allocate
     const transactions = await db.select().from(accountingTransactions)
@@ -3468,19 +3509,26 @@ export class PostgresStorage implements IStorage {
           incomeByCategoryMap.set(null, (incomeByCategoryMap.get(null) || 0) + Math.abs(amount));
         }
       } else {
-        // Allocated transaction
+        // Allocated transaction. Direction comes from the PARENT transaction, not
+        // Math.abs of the allocation: a $20 refund (negative amount) categorized
+        // with a $100 expense used to report $120 of spending instead of $80.
+        // Allocation rows carry inconsistent signs historically (the split
+        // endpoint stored whatever the client sent), so sign(tx) x |allocation|
+        // is the convention-proof effective value.
+        const txSign = amount > 0 ? 1 : amount < 0 ? -1 : 0;
         for (const allocation of tx.allocations) {
           const category = categoryMap.get(allocation.categoryId);
-          const allocAmount = Number(allocation.amount);
+          const effective = txSign * Math.abs(Number(allocation.amount));
 
           if (category?.type === 'income') {
-            totalIncome += Math.abs(allocAmount);
-            incomeByCategoryMap.set(allocation.categoryId, (incomeByCategoryMap.get(allocation.categoryId) || 0) + Math.abs(allocAmount));
+            // Credits are negative in the bank feed, so income = -effective.
+            totalIncome += -effective;
+            incomeByCategoryMap.set(allocation.categoryId, (incomeByCategoryMap.get(allocation.categoryId) || 0) + -effective);
           } else if (category?.type === 'expense') {
-            totalExpenses += Math.abs(allocAmount);
-            expensesByCategoryMap.set(allocation.categoryId, (expensesByCategoryMap.get(allocation.categoryId) || 0) + Math.abs(allocAmount));
+            totalExpenses += effective;
+            expensesByCategoryMap.set(allocation.categoryId, (expensesByCategoryMap.get(allocation.categoryId) || 0) + effective);
           } else if (category?.type === 'transfer') {
-            transfersByCategoryMap.set(allocation.categoryId, (transfersByCategoryMap.get(allocation.categoryId) || 0) + Math.abs(allocAmount));
+            transfersByCategoryMap.set(allocation.categoryId, (transfersByCategoryMap.get(allocation.categoryId) || 0) + effective);
           }
         }
       }

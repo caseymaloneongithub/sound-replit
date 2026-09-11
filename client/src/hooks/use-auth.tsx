@@ -41,12 +41,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
   });
 
+  // On any identity change, drop EVERY cached query except the fresh user: private
+  // data (orders, subscriptions, wholesale account) is cached under shared keys, so
+  // a second login in the same browser could briefly see the previous customer's
+  // data until each query happened to refetch.
+  const resetCachesForIdentityChange = (user: User | null) => {
+    queryClient.clear();
+    queryClient.setQueryData(["/api/user"], user);
+  };
+
   const loginMutation = useMutation({
     mutationFn: async (credentials: LoginData) => {
       return await apiRequest("POST", "/api/login", credentials);
     },
     onSuccess: (user: User) => {
-      queryClient.setQueryData(["/api/user"], user);
+      resetCachesForIdentityChange(user);
     },
     onError: (error: Error) => {
       toast({
@@ -62,7 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return await apiRequest("POST", "/api/register", credentials);
     },
     onSuccess: (user: User) => {
-      queryClient.setQueryData(["/api/user"], user);
+      resetCachesForIdentityChange(user);
     },
     onError: (error: Error) => {
       toast({
@@ -78,7 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await apiRequest("POST", "/api/logout");
     },
     onSuccess: () => {
-      queryClient.setQueryData(["/api/user"], null);
+      resetCachesForIdentityChange(null);
     },
     onError: (error: Error) => {
       toast({

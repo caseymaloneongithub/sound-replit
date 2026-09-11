@@ -1278,49 +1278,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .where(eq(retailSubscriptions.id, sub.id));
       }
 
-      // Anonymize PII in subscription records (regardless of Stripe status - GDPR right to be forgotten)
-      await db
-        .update(retailSubscriptions)
-        .set({
-          customerName: 'DELETED',
-          customerEmail: 'deleted@deleted.local',
-          customerPhone: null,
-        })
-        .where(eq(retailSubscriptions.userId, user.id));
-
-      // Anonymize PII in order records
-      await db
-        .update(retailOrders)
-        .set({
-          customerName: 'DELETED',
-          customerEmail: 'deleted@deleted.local',
-          customerPhone: null,
-          deliveryAddress: null,
-          deliveryCity: null,
-          deliveryState: null,
-          deliveryZipCode: null,
-        })
-        .where(eq(retailOrders.userId, user.id));
-
-      // Anonymize ALL user PII (for order history integrity, we keep the record but remove identifying info)
-      await db
-        .update(users)
-        .set({
-          username: `deleted_${user.id.slice(0, 8)}`,
-          email: null,
-          firstName: null,
-          lastName: null,
-          phoneNumber: null,
-          address: null,
-          city: null,
-          state: null,
-          zipCode: null,
-          stripeCustomerId: null,
-          password: 'DELETED',
-          deletedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, user.id));
+      // Anonymize PII (GDPR right to be forgotten) — one transaction, so a failure
+      // can't leave the account half-anonymized. customer_phone columns are NOT
+      // NULL: writing null here made deletion fail for anyone with purchase
+      // history, after their subscriptions were already cancelled.
+      const anonClient = await pool.connect();
+      try {
+        await anonClient.query('BEGIN');
+        await anonClient.query(
+          `UPDATE retail_subscriptions SET customer_name = 'DELETED', customer_email = 'deleted@deleted.local', customer_phone = '' WHERE user_id = $1`,
+          [user.id]
+        );
+        await anonClient.query(
+          `UPDATE retail_orders SET customer_name = 'DELETED', customer_email = 'deleted@deleted.local', customer_phone = '',
+             delivery_address = NULL, delivery_city = NULL, delivery_state = NULL, delivery_zip_code = NULL
+           WHERE user_id = $1`,
+          [user.id]
+        );
+        await anonClient.query(
+          `UPDATE users SET username = $2, email = NULL, first_name = NULL, last_name = NULL, phone_number = NULL,
+             address = NULL, city = NULL, state = NULL, zip_code = NULL, stripe_customer_id = NULL,
+             password = 'DELETED', deleted_at = now(), updated_at = now()
+           WHERE id = $1`,
+          [user.id, `deleted_${user.id.slice(0, 8)}`]
+        );
+        await anonClient.query('COMMIT');
+      } catch (anonError) {
+        await anonClient.query('ROLLBACK');
+        throw anonError;
+      } finally {
+        anonClient.release();
+      }
 
       // Log the user out
       req.logout((err) => {
@@ -9712,6 +9700,26 @@ If you have any questions, please don't hesitate to reach out!`,
         await storage.createAccountingTransactions(newTransactions);
       }
 
+      // Apply corrections — these used to be counted in the response and then
+      // dropped on the floor while the cursor advanced past them forever.
+      let modifiedApplied = 0;
+      for (const tx of modified) {
+        const updated = await storage.updateAccountingTransactionByTransactionId(tx.transaction_id, {
+          date: new Date(tx.date),
+          name: tx.name,
+          merchantName: tx.merchant_name || null,
+          amount: tx.amount.toString(),
+          category: tx.category?.[0] || null,
+          pending: tx.pending,
+        });
+        if (updated) modifiedApplied++;
+      }
+
+      let removedApplied = 0;
+      for (const tx of removed) {
+        if (await storage.deleteAccountingTransactionByTransactionId(tx.transaction_id)) removedApplied++;
+      }
+
       // Update the cursor for next sync
       if (cursor) {
         await storage.updatePlaidItemCursor(plaidItem.id, cursor);
@@ -9720,8 +9728,8 @@ If you have any questions, please don't hesitate to reach out!`,
       res.json({
         success: true,
         added: newTransactions.length,
-        modified: modified.length,
-        removed: removed.length,
+        modified: modifiedApplied,
+        removed: removedApplied,
       });
     } catch (error: any) {
       console.error("Error syncing Plaid transactions:", error);
