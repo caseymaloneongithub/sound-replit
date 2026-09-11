@@ -232,8 +232,76 @@ async function claimNext(campaignId: string): Promise<{ id: string; email: strin
   return row ? { id: String(row.id), email: String(row.email) } : null;
 }
 
-/** Walks the campaign's pending rows, claiming each before sending. Safe to call
- *  again after a restart: sent/failed/skipped/uncertain rows are never touched. */
+// A claim is a LEASE: a live worker finishes one send in seconds, so a claim
+// older than this belongs to a worker that died (or a deploy that was killed).
+// Younger claims are someone else's active work — overlapping deployments run
+// two workers for a while — and must be left alone.
+const CLAIM_LEASE_MS = 5 * 60 * 1000;
+// Resend honors an idempotency key for 24 hours; stay inside that with margin.
+const IDEMPOTENCY_WINDOW_MS = 23 * 60 * 60 * 1000;
+// How long a worker with nothing to claim waits for other workers' leases.
+const SETTLE_POLL_MS = 15 * 1000;
+
+/** Resolves claims whose lease has EXPIRED: back to 'pending' when the provider
+ *  dedupes by idempotency key and the claim is inside the key's lifetime (a
+ *  retry then can't deliver twice), otherwise 'uncertain' (delivery unknown —
+ *  NOT re-sent). Live leases are untouched. Returns what it changed. */
+async function settleExpiredClaims(campaignId: string): Promise<{ retried: string[]; uncertain: string[] }> {
+  const expired = await db
+    .select({ id: emailCampaignRecipients.id, email: emailCampaignRecipients.email, claimedAt: emailCampaignRecipients.claimedAt })
+    .from(emailCampaignRecipients)
+    .where(and(
+      eq(emailCampaignRecipients.campaignId, campaignId),
+      eq(emailCampaignRecipients.status, 'sending'),
+      // Parenthesized: inside the AND chain an unwrapped OR would bind loosest
+      // and match every old claim in the TABLE, other campaigns included.
+      // The cutoff is computed IN SQL: a JS Date parameter reaches the naive
+      // timestamp column serialized in local time with an offset the column
+      // ignores — hours off, and an expired claim never qualified.
+      sql`(${emailCampaignRecipients.claimedAt} IS NULL OR ${emailCampaignRecipients.claimedAt} < now() - make_interval(secs => ${CLAIM_LEASE_MS / 1000}))`,
+    ));
+  const retried: string[] = []; const uncertain: string[] = [];
+  for (const row of expired) {
+    const fresh = row.claimedAt != null && Date.now() - row.claimedAt.getTime() < IDEMPOTENCY_WINDOW_MS;
+    if (isMailIdempotent() && fresh) {
+      await db.update(emailCampaignRecipients).set({ status: 'pending', claimedAt: null }).where(eq(emailCampaignRecipients.id, row.id));
+      retried.push(row.email);
+    } else {
+      await db.update(emailCampaignRecipients)
+        .set({ status: 'uncertain', error: 'interrupted mid-send — delivery unknown, not retried' })
+        .where(eq(emailCampaignRecipients.id, row.id));
+      uncertain.push(row.email);
+    }
+  }
+  if (retried.length || uncertain.length) {
+    console.log(`[CAMPAIGN] ${campaignId}: expired claims —` +
+      (retried.length ? ` ${retried.length} queued for idempotent retry` : '') +
+      (uncertain.length ? ` ${uncertain.length} marked uncertain: ${uncertain.join(', ')}` : ''));
+  }
+  return { retried, uncertain };
+}
+
+/** Records a delivery the provider ACCEPTED. Delivery is already a fact, so a
+ *  database hiccup here must never turn into 'failed' (that would invite a
+ *  resend): retry the write, and if it still won't land, leave the row on its
+ *  lease — the settle logic resolves it conservatively later. */
+async function markSent(rowId: string, email: string): Promise<void> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await db.update(emailCampaignRecipients).set({ status: 'sent', sentAt: new Date() }).where(eq(emailCampaignRecipients.id, rowId));
+      return;
+    } catch (error: any) {
+      console.error(`[CAMPAIGN] delivered to ${email} but could not record 'sent' (attempt ${attempt}): ${error?.message}`);
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  console.error(`[CAMPAIGN] delivered to ${email}; 'sent' NOT recorded after 3 attempts — row left on its lease`);
+}
+
+/** Walks the campaign's pending rows, claiming each before sending. Safe to run
+ *  from more than one worker at once (rolling deploys) and again after a
+ *  restart: sent/failed/skipped/uncertain rows are never touched, live leases
+ *  held by another worker are waited for, expired ones are settled. */
 export async function runCampaign(campaignId: string): Promise<void> {
   const [campaign] = await db.select().from(emailCampaigns).where(eq(emailCampaigns.id, campaignId));
   if (!campaign || campaign.status !== 'sending') return;
@@ -242,76 +310,66 @@ export async function runCampaign(campaignId: string): Promise<void> {
 
   for (;;) {
     const next = await claimNext(campaignId);
-    if (!next) break;
-    try {
-      await sendCampaignMail(next.email, campaign.subject, built, {
-        unsubscribeUrl: unsubscribeUrlFor(next.email),
-        // Stable per campaign+row: a retry after an interrupted send is
-        // deduplicated by the provider instead of delivered twice.
-        idempotencyKey: `campaign:${campaignId}:${next.id}`,
-      });
-      await db
-        .update(emailCampaignRecipients)
-        .set({ status: 'sent', sentAt: new Date() })
-        .where(eq(emailCampaignRecipients.id, next.id));
-      if (live) console.log(`[CAMPAIGN] sent to ${next.email}`);
-    } catch (error: any) {
-      console.error(`[CAMPAIGN] failed for ${next.email}: ${error?.message}`);
-      await db
-        .update(emailCampaignRecipients)
-        .set({ status: 'failed', error: String(error?.message ?? 'send failed').slice(0, 200) })
-        .where(eq(emailCampaignRecipients.id, next.id));
+    if (next) {
+      // Delivery and its bookkeeping are separate steps with separate
+      // failure meanings: a provider error is a failed send; a database
+      // error AFTER the provider accepted is a recorded-delivery problem.
+      let delivered = false;
+      try {
+        await sendCampaignMail(next.email, campaign.subject, built, {
+          unsubscribeUrl: unsubscribeUrlFor(next.email),
+          // Stable per campaign+row: a retry after an interrupted send is
+          // deduplicated by the provider instead of delivered twice.
+          idempotencyKey: `campaign:${campaignId}:${next.id}`,
+        });
+        delivered = true;
+      } catch (error: any) {
+        console.error(`[CAMPAIGN] failed for ${next.email}: ${error?.message}`);
+        await db
+          .update(emailCampaignRecipients)
+          .set({ status: 'failed', error: String(error?.message ?? 'send failed').slice(0, 200) })
+          .where(eq(emailCampaignRecipients.id, next.id))
+          .catch((e: any) => console.error(`[CAMPAIGN] could not record failure for ${next.email}: ${e?.message}`));
+      }
+      if (delivered) {
+        await markSent(next.id, next.email);
+        if (live) console.log(`[CAMPAIGN] sent to ${next.email}`);
+      }
+      // Gentle pacing — provider rate limits, and a slow drip beats a bounce storm.
+      if (live) await new Promise((resolve) => setTimeout(resolve, 300));
+      continue;
     }
-    // Gentle pacing — provider rate limits, and a slow drip beats a bounce storm.
-    if (live) await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Nothing to claim. Settle any claims whose lease ran out (a dead worker's),
+    // then look again — settling may have returned rows to 'pending'.
+    const settled = await settleExpiredClaims(campaignId);
+    if (settled.retried.length) continue;
+
+    const [{ inFlight }] = await db
+      .select({ inFlight: sql<number>`count(*)::int` })
+      .from(emailCampaignRecipients)
+      .where(and(eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ['pending', 'sending'])));
+    if (inFlight === 0) break;
+    // Another worker holds live leases — wait for them rather than declaring
+    // the campaign done underneath it.
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
   }
 
-  // Finish only when nothing is left in flight — another worker may still hold
-  // a claim, and a dead worker's claim is resolved to 'uncertain' at boot.
-  const [{ inFlight }] = await db
-    .select({ inFlight: sql<number>`count(*)::int` })
-    .from(emailCampaignRecipients)
-    .where(and(eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ['pending', 'sending'])));
-  if (inFlight === 0) {
-    await db.update(emailCampaigns).set({ status: 'done', completedAt: new Date() }).where(eq(emailCampaigns.id, campaignId));
-    console.log(`[CAMPAIGN] ${campaignId} done`);
-  }
+  await db.update(emailCampaigns).set({ status: 'done', completedAt: new Date() }).where(eq(emailCampaigns.id, campaignId));
+  console.log(`[CAMPAIGN] ${campaignId} done`);
 }
 
-// Resend honors an idempotency key for 24 hours; stay inside that with margin.
-const IDEMPOTENCY_WINDOW_MS = 23 * 60 * 60 * 1000;
-
-/** Boot hook: any campaign still 'sending' was interrupted by a restart. Rows a
- *  dead worker had claimed are RETRIED when the provider dedupes by idempotency
- *  key and the claim is inside the key's lifetime (a retry then can't deliver
- *  twice); otherwise they become 'uncertain' (delivery unknown — NOT re-sent).
- *  The remaining pending rows are finished either way. */
+/** Boot hook: any campaign still 'sending' was interrupted by a restart — or is
+ *  being drained by the previous deployment's worker. runCampaign handles both:
+ *  it takes whatever is pending, settles only EXPIRED leases, and waits on live
+ *  ones instead of finishing the campaign out from under another worker. */
 export async function resumeUnfinishedCampaigns(): Promise<void> {
   const unfinished = await db
     .select({ id: emailCampaigns.id, subject: emailCampaigns.subject })
     .from(emailCampaigns)
     .where(eq(emailCampaigns.status, 'sending'));
   for (const c of unfinished) {
-    const claimed = await db
-      .select({ id: emailCampaignRecipients.id, email: emailCampaignRecipients.email, claimedAt: emailCampaignRecipients.claimedAt })
-      .from(emailCampaignRecipients)
-      .where(and(eq(emailCampaignRecipients.campaignId, c.id), eq(emailCampaignRecipients.status, 'sending')));
-    const retried: string[] = []; const uncertain: string[] = [];
-    for (const row of claimed) {
-      const fresh = row.claimedAt != null && Date.now() - row.claimedAt.getTime() < IDEMPOTENCY_WINDOW_MS;
-      if (isMailIdempotent() && fresh) {
-        await db.update(emailCampaignRecipients).set({ status: 'pending', claimedAt: null }).where(eq(emailCampaignRecipients.id, row.id));
-        retried.push(row.email);
-      } else {
-        await db.update(emailCampaignRecipients)
-          .set({ status: 'uncertain', error: 'interrupted mid-send — delivery unknown, not retried' })
-          .where(eq(emailCampaignRecipients.id, row.id));
-        uncertain.push(row.email);
-      }
-    }
-    console.log(`[CAMPAIGN] resuming interrupted campaign ${c.id} "${c.subject}"` +
-      (retried.length ? ` — ${retried.length} interrupted row(s) queued for idempotent retry` : '') +
-      (uncertain.length ? ` — ${uncertain.length} marked uncertain: ${uncertain.join(', ')}` : ''));
+    console.log(`[CAMPAIGN] resuming unfinished campaign ${c.id} "${c.subject}"`);
     void runCampaign(c.id).catch((e) => console.error('[CAMPAIGN] resume failed:', e));
   }
 }

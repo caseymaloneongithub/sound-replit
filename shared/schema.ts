@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, decimal, timestamp, boolean, index, jsonb, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, decimal, timestamp, boolean, index, jsonb, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -748,7 +748,12 @@ export const emailCampaigns = pgTable("email_campaigns", {
   createdBy: varchar("created_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
-});
+}, (table) => ({
+  // At most ONE campaign may be 'sending' at a time — the concurrency guard the
+  // campaign module relies on (a second insert gets 23505 -> 409). Declared here
+  // as well as in the migration so a schema push never drops it.
+  oneSending: uniqueIndex("email_campaigns_one_sending_idx").on(table.status).where(sql`status = 'sending'`),
+}));
 
 export const emailCampaignRecipients = pgTable("email_campaign_recipients", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
