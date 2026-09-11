@@ -4151,29 +4151,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
             if (!confirmedPaid) {
               // The verification above is a READ — the webhook can finalize in
-              // the gap before we write. So the park itself is conditional,
-              // evaluated under the row lock AT WRITE TIME: the finalizer
-              // creates the paid order and stamps last_payment_intent_id in ONE
-              // transaction, so "a paid order exists for the stamped intent" is
-              // an atomic no-park condition. If finalize is mid-commit, this
-              // UPDATE blocks on its row lock and then sees the order.
-              const parked = await db.update(retailSubscriptions)
-                .set({ status: 'pending', billingStatus: 'first_charge_uncertain' })
-                .where(and(
-                  eq(retailSubscriptions.id, subscription.id),
-                  sql`NOT EXISTS (
-                    SELECT 1 FROM retail_orders ro
-                    WHERE ro.stripe_payment_intent_id = ${retailSubscriptions.lastPaymentIntentId}
-                      AND ro.deleted_at IS NULL
-                  )`,
-                ))
-                .returning({ id: retailSubscriptions.id });
-              if (parked.length === 0) {
-                // Zero rows with the row present means the no-park condition
-                // failed: finalization committed between our read and this
-                // write. The payment is proven paid after all.
+              // the gap before we write. The park must therefore decide UNDER
+              // the subscription's row lock, and the paid-order check must be
+              // its own statement AFTER the lock is held: under READ COMMITTED,
+              // a single conditional UPDATE that waits on the finalizer's lock
+              // re-checks only the locked row's new version — its NOT-EXISTS
+              // subquery keeps the statement's pre-wait snapshot and misses the
+              // order the finalizer committed. Lock first (any finalizer that
+              // held it has committed; later ones queue behind us and their
+              // early-return repair heals a park they lose to), then a fresh
+              // statement sees the committed order, then decide before commit.
+              const parkOutcome = await db.transaction(async (tx) => {
+                const [locked] = await tx
+                  .select({ lastPaymentIntentId: retailSubscriptions.lastPaymentIntentId })
+                  .from(retailSubscriptions)
+                  .where(eq(retailSubscriptions.id, subscription.id))
+                  .for('update');
+                if (!locked) return 'missing' as const;
+                if (locked.lastPaymentIntentId) {
+                  const [paidOrder] = await tx
+                    .select({ id: retailOrders.id })
+                    .from(retailOrders)
+                    .where(and(
+                      eq(retailOrders.stripePaymentIntentId, locked.lastPaymentIntentId),
+                      isNull(retailOrders.deletedAt),
+                    ))
+                    .limit(1);
+                  if (paidOrder) return 'paid' as const;
+                }
+                await tx.update(retailSubscriptions)
+                  .set({ status: 'pending', billingStatus: 'first_charge_uncertain' })
+                  .where(eq(retailSubscriptions.id, subscription.id));
+                return 'parked' as const;
+              });
+              if (parkOutcome === 'paid') {
                 console.warn(`[SUBSCRIPTION] Finalization won the race for ${subscription.id} — payment proven, not parking`);
                 confirmedPaid = true;
+              } else if (parkOutcome === 'missing') {
+                // The row is gone — nothing to park, nothing referencing the
+                // payment method. Surface the original failure.
+                console.error(`[SUBSCRIPTION] Subscription ${subscription.id} vanished during ambiguous-charge recovery`);
+                throw chargeError;
               }
             }
             if (confirmedPaid) {
