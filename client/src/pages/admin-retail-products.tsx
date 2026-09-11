@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Upload, X } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import type { Flavor, RetailProduct } from "@shared/schema";
 
@@ -18,139 +18,6 @@ type RetailProductWithFlavors = RetailProduct & {
   flavor: Flavor | null;
   flavors: Flavor[];
 };
-
-// Image Upload Component
-function ImageUploadField({ 
-  value, 
-  onChange 
-}: { 
-  value: string; 
-  onChange: (url: string) => void;
-}) {
-  const { toast } = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-
-  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      toast({
-        title: "Invalid file type",
-        description: "Please select an image file",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    try {
-      setUploading(true);
-
-      const filename = `product-${Date.now()}-${file.name}`;
-      
-      // Get a signed upload URL from the backend
-      const { uploadUrl } = await apiRequest('POST', '/api/object-storage/upload-url', {
-        filename,
-        directory: 'product-images',
-        contentType: file.type,
-      });
-
-      // Upload the file to object storage
-      const uploadResponse = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'Content-Type': file.type,
-        },
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error('Failed to upload file');
-      }
-
-      // The stored URL comes from the PUT response — the server may have renamed
-      // the object (PNG/JPEG become .webp), so a URL derived from the original
-      // filename would 404 (the broken Mist photo, 2026-09-11).
-      const stored = await uploadResponse.json().catch(() => null);
-      const publicPath = stored?.publicUrl || `/public/product-images/${filename}`;
-
-      onChange(publicPath);
-      toast({
-        title: "Image uploaded",
-        description: "Product image has been uploaded successfully"
-      });
-    } catch (error: any) {
-      toast({
-        title: "Upload failed",
-        description: error.message || "Failed to upload image",
-        variant: "destructive"
-      });
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex gap-2">
-        <Input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="https://... or upload below"
-          data-testid="input-product-image-url"
-        />
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileSelect}
-          className="hidden"
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          data-testid="button-upload-image"
-        >
-          {uploading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Upload className="w-4 h-4" />
-          )}
-        </Button>
-        {value && (
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={() => onChange('')}
-            data-testid="button-clear-image"
-          >
-            <X className="w-4 h-4" />
-          </Button>
-        )}
-      </div>
-      {value && (
-        <div className="w-full h-32 rounded-md overflow-hidden bg-muted border">
-          <img 
-            src={value} 
-            alt="Product preview" 
-            className="w-full h-full object-contain"
-          />
-        </div>
-      )}
-      <p className="text-xs text-muted-foreground">
-        Upload an image or paste a URL
-      </p>
-    </div>
-  );
-}
 
 export default function AdminRetailProducts() {
   const { toast } = useToast();
@@ -439,29 +306,13 @@ export default function AdminRetailProducts() {
                         />
                         <span className="text-sm">Allow splits — customer can add a second flavor for half the case of each</span>
                       </label>
-                      <label className="flex items-center gap-2 cursor-pointer mt-2">
-                        <input
-                          type="checkbox"
-                          checked={retailProductForm.displayPerFlavor}
-                          onChange={(e) => setRetailProductForm({ ...retailProductForm, displayPerFlavor: e.target.checked })}
-                          className="rounded"
-                          data-testid="checkbox-display-per-flavor"
-                        />
-                        <span className="text-sm">Show one shop card per flavor (flavor wall) instead of a single card</span>
-                      </label>
                     </div>
                   )}
-
-                  {/* Product Image Upload (multi-flavor only) */}
-                  {retailProductForm.productType === 'multi-flavor' && (
-                    <div>
-                      <Label htmlFor="retail-product-image">Product Image</Label>
-                      <ImageUploadField
-                        value={retailProductForm.productImageUrl}
-                        onChange={(url) => setRetailProductForm({ ...retailProductForm, productImageUrl: url })}
-                      />
-                    </div>
-                  )}
+                  {/* displayPerFlavor and productImageUrl are no longer editable here:
+                      the flavor-first shop is per-flavor by construction and shows
+                      flavor photography everywhere, so both settings only fed the
+                      retired package-first pages. The columns remain (stored values
+                      pass through untouched on edit) in case an old page returns. */}
                   <div>
                     <Label htmlFor="retail-unit-type">Unit Type</Label>
                     <Input
@@ -766,29 +617,11 @@ export default function AdminRetailProducts() {
                                 />
                                 <span className="text-sm">Allow splits — customer can add a second flavor for half the case of each</span>
                               </label>
-                              <label className="flex items-center gap-2 cursor-pointer mt-2">
-                                <input
-                                  type="checkbox"
-                                  checked={retailProductForm.displayPerFlavor}
-                                  onChange={(e) => setRetailProductForm({ ...retailProductForm, displayPerFlavor: e.target.checked })}
-                                  className="rounded"
-                                  data-testid="checkbox-edit-display-per-flavor"
-                                />
-                                <span className="text-sm">Show one shop card per flavor (flavor wall) instead of a single card</span>
-                              </label>
                             </div>
                           )}
-
-                          {/* Product Image Upload (multi-flavor only) */}
-                          {retailProductForm.productType === 'multi-flavor' && (
-                            <div>
-                              <Label htmlFor="edit-product-image">Product Image</Label>
-                              <ImageUploadField
-                                value={retailProductForm.productImageUrl}
-                                onChange={(url) => setRetailProductForm({ ...retailProductForm, productImageUrl: url })}
-                              />
-                            </div>
-                          )}
+                          {/* displayPerFlavor / productImageUrl hidden here too — see the
+                              create form's note. Edit seeds them from the product, so the
+                              stored values round-trip untouched. */}
                           <div>
                             <Label>Unit Type</Label>
                             <Input

@@ -678,7 +678,7 @@ export default function CartCheckout() {
           <Button
             variant="ghost"
             className="mb-6 gap-2"
-            onClick={() => setLocation('/shop-v2')}
+            onClick={() => setLocation('/shop')}
             data-testid="button-back-to-shop"
           >
             <ArrowLeft className="w-4 h-4" />

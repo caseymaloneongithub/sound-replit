@@ -20,8 +20,6 @@ import ResetPassword from "@/pages/reset-password";
 import WholesaleCustomerPlaceOrder from "@/pages/wholesale-customer-place-order";
 import WholesaleCustomerOrders from "@/pages/wholesale-customer-orders";
 import WholesaleCustomerLocations from "@/pages/wholesale-customer-locations";
-import Shop from "@/pages/shop";
-import ShopV2 from "@/pages/shop-v2";
 import ShopFlavors from "@/pages/shop-flavors";
 import ShopFlavor from "@/pages/shop-flavor";
 import Home from "@/pages/home";
@@ -29,7 +27,6 @@ import OurKombucha from "@/pages/our-kombucha";
 import MyAccount from "@/pages/my-account";
 import Subscribe from "@/pages/subscribe";
 import ProductSubscribe from "@/pages/product-subscribe";
-import ProductDetail from "@/pages/product-detail";
 import Checkout from "@/pages/checkout";
 import CartCheckout from "@/pages/cart-checkout";
 import CheckoutSuccess from "@/pages/checkout-success";
@@ -92,13 +89,13 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/our-kombucha" component={OurKombucha} />
       {/* Flavor-first shop (owner, 2026-09-12): grid of flavors, then a flavor
-          page picking package + one-time/subscribe. The package-first grid stays
-          reachable at /shop-classic while the new flow settles. */}
+          page picking package + one-time/subscribe. The package-first pages are
+          retired (owner, 2026-09-11) — old links land on the flavor grid. */}
       <Route path="/shop" component={ShopFlavors} />
       <Route path="/shop/:flavorId" component={ShopFlavor} />
-      <Route path="/shop-classic" component={ShopV2} />
-      <Route path="/products/:id" component={ProductDetail} />
-      <Route path="/shop-legacy" component={Shop} />
+      <Route path="/shop-classic" component={() => <Redirect to="/shop" />} />
+      <Route path="/products/:id" component={() => <Redirect to="/shop" />} />
+      <Route path="/shop-legacy" component={() => <Redirect to="/shop" />} />
       <Route path="/shop-v2" component={() => <Redirect to="/shop" />} />
       <Route path="/contact" component={Contact} />
       <Route path="/security" component={SecurityPolicy} />
