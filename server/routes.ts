@@ -2749,12 +2749,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!/^image\//.test(contentType)) {
           return res.status(415).json({ message: "Only image uploads are accepted" });
         }
-        const { publicUrl } = await putObject(key, body, contentType);
+
+        // Every PNG/JPEG upload becomes WebP on the way to the bucket (owner,
+        // 2026-09-10) — a phone photo shrinks ~4-8x with no visible loss, and the
+        // stored URL (which the client reads from this response) is already the
+        // .webp one. Also caps dimensions: nothing on the site renders wider than
+        // ~2400px, so an 8MB 6000px photo needn't be stored at full size. GIFs
+        // (animation) and SVGs pass through untouched, and any conversion failure
+        // falls back to storing the original bytes — an odd file must never make
+        // an upload fail.
+        let outKey = key;
+        let outBody = body;
+        let outType = contentType;
+        if (/^image\/(png|jpe?g)$/.test(contentType)) {
+          try {
+            const sharp = (await import('sharp')).default;
+            const converted = await sharp(body)
+              .rotate() // bake in EXIF orientation so phones' sideways photos display upright
+              .resize({ width: 2400, height: 2400, fit: 'inside', withoutEnlargement: true })
+              .webp({ quality: 85 })
+              .toBuffer();
+            if (converted.length < body.length) {
+              outKey = key.replace(/\.(png|jpe?g)$/i, '') + '.webp';
+              outBody = converted;
+              outType = 'image/webp';
+            }
+          } catch (convError: any) {
+            console.warn(`[UPLOAD] WebP conversion failed for ${key} — storing original: ${convError.message}`);
+          }
+        }
+
+        const { publicUrl } = await putObject(outKey, outBody, outType);
         // Uppy's S3 plugin takes the response's Location header as the file's final URL,
         // so the client gets the public CDN URL back through Uppy itself rather than
         // having to remember it across the upload.
         res.setHeader("Location", publicUrl);
-        res.json({ publicUrl, key, size: body.length });
+        res.json({ publicUrl, key: outKey, size: outBody.length });
       } catch (error: any) {
         console.error("Error storing upload:", error);
         res.status(500).json({ message: "Error storing upload: " + error.message });
