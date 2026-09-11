@@ -29,15 +29,19 @@ export function Navbar() {
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur">
       <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between gap-4">
-        <Link href="/" data-testid="link-home">
+        {/* shrink-0: as a flex child the logo used to compress horizontally when
+            the row got tight (~43px wide at 768px), visibly distorting the mark. */}
+        <Link href="/" className="shrink-0" data-testid="link-home">
           <img
             src={logo}
             alt="Puget Sound Kombucha Co."
-            className="h-12 w-auto dark:invert cursor-pointer"
+            className="h-12 w-auto shrink-0 dark:invert cursor-pointer"
           />
         </Link>
 
-        <nav className="hidden md:flex items-center gap-8" data-testid="nav-desktop">
+        {/* lg, not md: at 768px the four tracked links + logo + icons don't fit
+            without squeezing something — the sheet menu takes over below 1024px. */}
+        <nav className="hidden lg:flex items-center gap-8" data-testid="nav-desktop">
           {navLinks.map((l) => {
             const cls = "text-sm font-semibold uppercase tracking-[0.2em] text-foreground/80 hover:text-cedar transition-colors whitespace-nowrap";
             const tid = `nav-link-${l.label.toLowerCase().replace(/\s+/g, "-")}`;
@@ -160,7 +164,7 @@ export function Navbar() {
           <CartDrawer />
           <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="md:hidden" data-testid="button-menu">
+              <Button variant="ghost" size="icon" className="lg:hidden" data-testid="button-menu">
                 <Menu className="w-5 h-5" />
               </Button>
             </SheetTrigger>

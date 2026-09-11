@@ -177,7 +177,7 @@ export default function WholesaleLogin() {
   // who is already being signed in.
   if (redeemingToken) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/20 p-4">
+      <div className="min-h-screen flex items-start pt-8 md:items-center md:pt-4 justify-center bg-gradient-to-b from-background to-muted/20 p-4">
         <div className="text-center space-y-4">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
           <p className="text-muted-foreground" data-testid="text-signing-in">Signing you inâ€¦</p>
@@ -187,7 +187,7 @@ export default function WholesaleLogin() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/20 p-4">
+    <div className="min-h-screen flex items-start pt-8 md:items-center md:pt-4 justify-center bg-gradient-to-b from-background to-muted/20 p-4">
       <div className="w-full max-w-md">
         <Card>
           <CardHeader>

@@ -23,7 +23,7 @@ export default function Home() {
           header now, so no more giant logo over a heavy overlay. Just a whisper of
           scrim at the bottom for the tagline. */}
       <div
-        className="relative h-[32rem] bg-cover bg-center"
+        className="relative h-[20rem] md:h-[32rem] bg-cover bg-center"
         style={{ backgroundImage: `url(${fishermensTerminal})` }}
         data-testid="hero"
       >
@@ -52,8 +52,9 @@ export default function Home() {
           customer. */}
       <div className="bg-muted/50 py-10">
         <div className="container mx-auto px-4 grid gap-6 md:grid-cols-2 max-w-5xl">
-          {/* Trade lane */}
-          <div className="bg-card border border-card-border rounded-lg p-6 flex flex-col shadow-[0_10px_24px_-16px_hsl(189_56%_27%/0.35)]" data-testid="lane-wholesale">
+          {/* Trade lane — SECOND on phones (2026-09-11 review): the home shopper
+              is the mobile majority and shouldn't scroll past the trade pitch. */}
+          <div className="order-2 md:order-none bg-card border border-card-border rounded-lg p-6 flex flex-col shadow-[0_10px_24px_-16px_hsl(189_56%_27%/0.35)]" data-testid="lane-wholesale">
             <p className="text-xs font-semibold tracking-wider uppercase text-cedar">For shops, cafés &amp; restaurants</p>
             {user?.role === "wholesale_customer" ? (
               <>
@@ -86,8 +87,8 @@ export default function Home() {
             )}
           </div>
 
-          {/* Home lane */}
-          <div className="bg-card border border-card-border rounded-lg p-6 flex flex-col shadow-[0_10px_24px_-16px_hsl(189_56%_27%/0.35)]" data-testid="lane-retail">
+          {/* Home lane — first on phones */}
+          <div className="order-1 md:order-none bg-card border border-card-border rounded-lg p-6 flex flex-col shadow-[0_10px_24px_-16px_hsl(189_56%_27%/0.35)]" data-testid="lane-retail">
             <p className="text-xs font-semibold tracking-wider uppercase text-cedar">For your fridge</p>
             {user && user.role !== "wholesale_customer" ? (
               <>

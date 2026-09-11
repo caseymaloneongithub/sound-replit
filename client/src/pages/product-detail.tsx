@@ -285,7 +285,11 @@ export default function ProductDetail() {
             />
           </div>
 
-          <div className="space-y-6">
+          {/* Purchase-first order (2026-09-11 review): name → pack → price →
+              options → Add to Cart together, before descriptions and ingredients —
+              on phones the buying controls used to sit below all the prose. Flex
+              order does the move so the source blocks stay readable. */}
+          <div className="flex flex-col gap-6">
             <div>
               <h1 className="text-3xl md:text-4xl font-bold mb-2" data-testid="text-product-name">
                 {displayName}
@@ -301,7 +305,7 @@ export default function ProductDetail() {
             </div>
 
             {displayDescription && (
-              <div>
+              <div className="order-2">
                 <h2 className="font-semibold mb-2">About This Flavor</h2>
                 <p className="text-muted-foreground" data-testid="text-description">
                   {displayDescription}
@@ -310,7 +314,7 @@ export default function ProductDetail() {
             )}
 
             {displayIngredients && displayIngredients.length > 0 && (
-              <div>
+              <div className="order-3">
                 <h2 className="font-semibold mb-2">Ingredients</h2>
                 <p className="text-muted-foreground" data-testid="text-ingredients">
                   {displayIngredients.join(", ")}
@@ -319,7 +323,7 @@ export default function ProductDetail() {
             )}
 
             {isMultiFlavor && product.flavors.length > 0 && (
-              <div>
+              <div className="order-4">
                 <h2 className="font-semibold mb-2">Available Flavors</h2>
                 <div className="flex flex-wrap gap-2 mb-4">
                   {activeFlavors.map((flavor) => (
@@ -331,7 +335,7 @@ export default function ProductDetail() {
               </div>
             )}
 
-            <Card>
+            <Card className="order-1">
               <CardContent className="p-6">
                 <div className="flex items-baseline gap-3 mb-4">
                   <span className="text-3xl font-bold" data-testid="text-price">

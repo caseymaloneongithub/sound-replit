@@ -1,4 +1,5 @@
 import { Switch, Route, Redirect, useLocation } from "wouter";
+import { useEffect, useRef } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -164,13 +165,38 @@ function Router() {
   );
 }
 
+/**
+ * Route-aware scroll reset: navigating to a NEW page starts at the top (clicking
+ * a product used to open its detail page wherever the shop was scrolled), while
+ * Back/Forward (popstate) leaves scrolling to the browser so returning to the
+ * shop restores your place.
+ */
+function ScrollToTop() {
+  const [location] = useLocation();
+  const cameFromHistoryNav = useRef(false);
+  useEffect(() => {
+    const onPop = () => { cameFromHistoryNav.current = true; };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  useEffect(() => {
+    if (cameFromHistoryNav.current) {
+      cameFromHistoryNav.current = false;
+      return;
+    }
+    window.scrollTo(0, 0);
+  }, [location]);
+  return null;
+}
+
 function AppContent() {
   const [location] = useLocation();
-  
+
   const isWholesaleCustomerRoute = location.startsWith('/wholesale-customer');
-  
+
   return (
     <>
+      <ScrollToTop />
       <ImpersonationBanner />
       {!isWholesaleCustomerRoute && <Navbar />}
       <Toaster />

@@ -217,26 +217,29 @@ export default function ShopV2() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div 
-        className="relative h-96 bg-cover bg-center flex items-center justify-center"
+      {/* Compact on phones (2026-09-11 review): the tall banner pushed the first
+          Add to Cart ~1,350px down at 390px wide. Products come first on mobile;
+          the photographic banner stays for desktop. */}
+      <div
+        className="relative h-36 md:h-96 bg-cover bg-center flex items-center justify-center"
         style={{ backgroundImage: `linear-gradient(rgba(20, 50, 60, 0.45), rgba(20, 50, 60, 0.6)), url(${fishermensTerminal})` }}
       >
         <div className="text-center text-white px-4">
-          <img 
-            src={logo} 
-            alt="Puget Sound Kombucha Co." 
-            className="h-48 mx-auto"
+          <img
+            src={logo}
+            alt="Puget Sound Kombucha Co."
+            className="h-20 md:h-48 mx-auto"
             style={{ filter: 'brightness(0) invert(1)' }}
           />
         </div>
       </div>
 
       <div id="shop" className="container mx-auto px-4 py-8 scroll-mt-4">
-        <div className="mb-8 text-center">
-          <h2 className="text-3xl font-bold mb-2" data-testid="text-products-title">Shop Our Kombucha</h2>
+        <div className="mb-6 md:mb-8 text-center">
+          <h2 className="text-2xl md:text-3xl font-bold mb-2" data-testid="text-products-title">Shop Our Kombucha</h2>
 
           {/* Pickup Location Notice */}
-          <div className="bg-primary text-primary-foreground py-3 px-4 rounded-md mt-4 inline-flex items-center gap-3">
+          <div className="bg-primary text-primary-foreground py-2 md:py-3 px-4 rounded-md mt-3 md:mt-4 inline-flex items-center gap-3 text-sm md:text-base">
             <div>
               <span className="font-semibold">Pickup Only at Our Ballard Location:</span>{" "}
               <span className="opacity-90">4501 Shilshole Ave NW, Seattle, WA 98107</span>
@@ -256,7 +259,9 @@ export default function ShopV2() {
               {unitType === 'case' ? 'Cases (12 Bottles)' : unitType.replace(/-/g, ' ')}
             </h3>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* items-start: expanding one card's subscription panel used to
+                stretch the whole row, leaving big blank areas in its neighbors. */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
                 {unitProducts
                   .filter(p => {
                     if (!p.isActive) return false;
@@ -355,7 +360,7 @@ export default function ShopV2() {
                           </Badge>
                         )}
                         {cardFlavor && (
-                          <p className="text-sm text-muted-foreground mb-3" data-testid={`text-description-${cardKey}`}>
+                          <p className="text-sm text-muted-foreground mb-3 line-clamp-2" data-testid={`text-description-${cardKey}`}>
                             {cardFlavor.description}
                           </p>
                         )}
