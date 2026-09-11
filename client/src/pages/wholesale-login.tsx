@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+﻿import { useState, useEffect, useMemo } from "react";
 import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, resetCachesForIdentityChange } from "@/lib/queryClient";
 
 /**
  * Store-first wholesale ordering (owner decision 2026-08-26): visitors go straight to
@@ -24,11 +24,11 @@ export default function WholesaleLogin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [redeemingToken, setRedeemingToken] = useState(false);
-  // Ordering needs no sign-in (owner decision 2026-08-27) — this is the side door for
+  // Ordering needs no sign-in (owner decision 2026-08-27) â€” this is the side door for
   // order history and invoices, still email-verified because it exposes account data.
   const [signInMode, setSignInMode] = useState(false);
 
-  // Step 1 — store
+  // Step 1 â€” store
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -37,7 +37,7 @@ export default function WholesaleLogin() {
   const [locOptions, setLocOptions] = useState<Loc[]>([]);
   const [chosenLoc, setChosenLoc] = useState<Loc | null>(null);
 
-  // Step 2 — email (+ code fallback)
+  // Step 2 â€” email (+ code fallback)
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [sent, setSent] = useState(false);
@@ -46,7 +46,7 @@ export default function WholesaleLogin() {
 
   /**
    * Redeem a magic link on arrival. The email leads with a sign-in button, so most
-   * customers land here with ?token=… and never type anything.
+   * customers land here with ?token=â€¦ and never type anything.
    */
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get("token");
@@ -56,7 +56,7 @@ export default function WholesaleLogin() {
     (async () => {
       try {
         const data = await apiRequest("POST", "/api/wholesale/verify-magic-link", { token });
-        queryClient.setQueryData(["/api/user"], data.user);
+        resetCachesForIdentityChange(data.user);
         await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
         if (data.needsClaim) {
           // Verified email, no account and no store picked: "which store are you ordering for?"
@@ -69,7 +69,7 @@ export default function WholesaleLogin() {
         // Strip the spent token from the URL so a refresh doesn't retry it and re-toast.
         window.history.replaceState({}, "", "/wholesale/login");
         setRedeemingToken(false);
-        // Fixed copy rather than error.message: apiRequest surfaces raw `400: {"message":…}`
+        // Fixed copy rather than error.message: apiRequest surfaces raw `400: {"message":â€¦}`
         // JSON, and every failure here means the same thing to the customer anyway.
         toast({
           title: "That sign-in link has expired",
@@ -122,7 +122,7 @@ export default function WholesaleLogin() {
       const body = await res.json();
       if (res.ok) setLocOptions(body.locations ?? []);
     } catch {
-      setPickingLocation(false); // picker unavailable — email step works without it
+      setPickingLocation(false); // picker unavailable â€” email step works without it
     }
   };
 
@@ -158,7 +158,7 @@ export default function WholesaleLogin() {
     setVerifying(true);
     try {
       const data = await apiRequest("POST", "/api/wholesale/verify-email-code", { email: email.trim(), code });
-      queryClient.setQueryData(["/api/user"], data.user);
+      resetCachesForIdentityChange(data.user);
       await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
       if (data.needsClaim) {
         setTimeout(() => setLocation("/wholesale/claim"), 100);
@@ -180,7 +180,7 @@ export default function WholesaleLogin() {
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/20 p-4">
         <div className="text-center space-y-4">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
-          <p className="text-muted-foreground" data-testid="text-signing-in">Signing you in…</p>
+          <p className="text-muted-foreground" data-testid="text-signing-in">Signing you inâ€¦</p>
         </div>
       </div>
     );
@@ -208,7 +208,7 @@ export default function WholesaleLogin() {
                     id="store"
                     value={query}
                     onChange={(e) => { setQuery(e.target.value); setSelectedId(null); }}
-                    placeholder="Start typing — we'll match it"
+                    placeholder="Start typing â€” we'll match it"
                     autoFocus
                     autoComplete="off"
                     data-testid="input-store-search"
@@ -221,7 +221,7 @@ export default function WholesaleLogin() {
                   <div data-testid="single-store-match">
                     <div className="rounded-md bg-muted/60 p-3">
                       <div className="font-semibold">{single.businessName}</div>
-                      {/* Multi-location stores show only the count — naming one branch's
+                      {/* Multi-location stores show only the count â€” naming one branch's
                           address here misleads (owner, 2026-09-04). */}
                       <div className="text-sm text-muted-foreground">{single.locationCount > 1 ? `${single.locationCount} locations` : ([single.street, single.city].filter(Boolean).join(", ") || "No address on file")}</div>
                     </div>
@@ -268,7 +268,7 @@ export default function WholesaleLogin() {
 
                 {debounced.length >= MIN_CHARS && !isFetching && !error && matches.length === 0 && (
                   <p className="text-sm text-muted-foreground" data-testid="text-no-store-match">
-                    No match — try the name as it appears on your invoices, or{" "}
+                    No match â€” try the name as it appears on your invoices, or{" "}
                     <Link href="/wholesale/apply" className="text-primary font-medium">apply for a wholesale account</Link>.
                   </p>
                 )}
@@ -303,14 +303,14 @@ export default function WholesaleLogin() {
                       </button>
                     );
                   })}
-                  {locOptions.length === 0 && <p className="px-3 py-3 text-sm text-muted-foreground">Loading locations…</p>}
+                  {locOptions.length === 0 && <p className="px-3 py-3 text-sm text-muted-foreground">Loading locationsâ€¦</p>}
                 </div>
                 <Button className="w-full mt-3" disabled={!chosenLoc} onClick={() => chosenLoc && goToOrder(store.id, chosenLoc.id)} data-testid="button-confirm-location">
                   Continue
                 </Button>
                 <p className="text-sm text-muted-foreground mt-2 text-center">
                   <button type="button" className="text-primary font-medium" onClick={() => goToOrder(store.id, null)} data-testid="button-skip-location">
-                    Not sure — skip for now
+                    Not sure â€” skip for now
                   </button>
                 </p>
               </div>
@@ -336,7 +336,7 @@ export default function WholesaleLogin() {
                       onKeyDown={(e) => { if (e.key === "Enter" && !sent) { e.preventDefault(); sendLink(); } }}
                     />
                     <Button type="button" onClick={sendLink} disabled={sending || sent || !email.trim()} data-testid="button-send-wholesale-email-code">
-                      {sending ? "Sending…" : sent ? "Sent" : "Email me a link"}
+                      {sending ? "Sendingâ€¦" : sent ? "Sent" : "Email me a link"}
                     </Button>
                   </div>
                 </div>
@@ -356,7 +356,7 @@ export default function WholesaleLogin() {
                         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); verifyCode(); } }}
                       />
                       <Button type="button" onClick={verifyCode} disabled={verifying || code.length !== 6} data-testid="button-wholesale-email-login-submit">
-                        {verifying ? "Checking…" : "Continue"}
+                        {verifying ? "Checkingâ€¦" : "Continue"}
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground mt-2">

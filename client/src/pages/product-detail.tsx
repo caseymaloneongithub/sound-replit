@@ -155,6 +155,10 @@ export default function ProductDetail() {
   // chosen flavors as a split; otherwise the selected flavor as a plain case.
   const cartFlavors = (): { flavorId?: string; splitId?: string } => {
     if (!product) return {};
+    // Defensive twin of the canAddToCart availability gate: never send a flavor
+    // that isn't currently offered (sold-out bottle via ?flavor=, retired, etc.).
+    const available = product.flavors?.some((f) => f.id === selectedFlavor && f.isActive && !(f as any).soldOut);
+    if (selectedFlavor && !available) return {};
     const chosenName = product.flavors?.find((f) => f.id === selectedFlavor)?.name;
     if ((product as any).allowSplit && chosenName === 'Mixed' && pickTwoOn && pickA && pickB && pickA !== pickB) {
       return { flavorId: pickA, splitId: pickB };
@@ -255,8 +259,11 @@ export default function ProductDetail() {
   const mixedChoice = isSplit && firstFlavorName === 'Mixed';
   const pickTwoActive = mixedChoice && pickTwoOn;
   const pickTwoReady = !!pickA && !!pickB && pickA !== pickB;
+  // The selection must be one of the AVAILABLE flavors — a ?flavor= preselect can
+  // name a sold-out or retired flavor, which is truthy but not orderable.
+  const selectionAvailable = activeFlavors.some((f) => f.id === selectedFlavor);
   const canAddToCart = isMultiFlavor
-    ? activeFlavors.length > 0 && !!selectedFlavor && (!pickTwoActive || pickTwoReady)
+    ? activeFlavors.length > 0 && selectionAvailable && (!pickTwoActive || pickTwoReady)
     : true;
 
   return (

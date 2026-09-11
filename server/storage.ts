@@ -3428,6 +3428,25 @@ export class PostgresStorage implements IStorage {
   async updateAccountingTransactionByTransactionId(transactionId: string, fields: {
     date?: Date; name?: string; merchantName?: string | null; amount?: string; category?: string | null; pending?: boolean;
   }): Promise<boolean> {
+    // If the bank REVISED THE AMOUNT of an already-categorized transaction, the
+    // existing allocations no longer sum to it — clear them so the transaction
+    // returns to Unallocated and shows up for re-categorization, instead of
+    // silently reporting the old allocated amount against the new total.
+    if (fields.amount !== undefined) {
+      const [existing] = await db
+        .select({ id: accountingTransactions.id, amount: accountingTransactions.amount })
+        .from(accountingTransactions)
+        .where(eq(accountingTransactions.transactionId, transactionId));
+      if (existing && Number(existing.amount) !== Number(fields.amount)) {
+        const cleared = await db
+          .delete(transactionAllocations)
+          .where(eq(transactionAllocations.transactionId, existing.id))
+          .returning({ id: transactionAllocations.id });
+        if (cleared.length > 0) {
+          console.warn(`[PLAID] Amount revised on ${transactionId} (${existing.amount} -> ${fields.amount}) — ${cleared.length} allocation(s) cleared for re-categorization`);
+        }
+      }
+    }
     const result = await db
       .update(accountingTransactions)
       .set(fields)
@@ -4379,6 +4398,11 @@ export class PostgresStorage implements IStorage {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Lock the ORDER ROW before reading the ledger: two concurrent calls could
+      // both see a zero net (neither had inserted yet), pass the idempotency
+      // check, and each deduct. Serializing on the order row makes the second
+      // caller wait, re-read the ledger the first one committed, and no-op.
+      await client.query('SELECT id FROM wholesale_orders WHERE id = $1 FOR UPDATE', [orderId]);
       const netRes = await client.query(
         `SELECT COALESCE(SUM(quantity), 0)::int AS net FROM inventory_adjustments
          WHERE order_id = $1 AND order_type = 'wholesale' AND reason IN ('fulfillment', 'fulfillment-restore')`,

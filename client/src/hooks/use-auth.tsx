@@ -5,7 +5,7 @@ import {
   UseMutationResult,
 } from "@tanstack/react-query";
 import { insertUserSchema, User, InsertUser } from "@shared/schema";
-import { apiRequest, queryClient } from "../lib/queryClient";
+import { apiRequest, queryClient, resetCachesForIdentityChange } from "../lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 type AuthContextType = {
@@ -40,15 +40,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     },
   });
-
-  // On any identity change, drop EVERY cached query except the fresh user: private
-  // data (orders, subscriptions, wholesale account) is cached under shared keys, so
-  // a second login in the same browser could briefly see the previous customer's
-  // data until each query happened to refetch.
-  const resetCachesForIdentityChange = (user: User | null) => {
-    queryClient.clear();
-    queryClient.setQueryData(["/api/user"], user);
-  };
 
   const loginMutation = useMutation({
     mutationFn: async (credentials: LoginData) => {

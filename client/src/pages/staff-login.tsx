@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation, Link } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/form";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, resetCachesForIdentityChange } from "@/lib/queryClient";
 
 const loginSchema = z.object({
   username: z.string().min(1, "Email or username is required"),
@@ -129,7 +129,7 @@ export default function StaffLogin() {
       }
 
       // Update the auth context with the logged-in user
-      queryClient.setQueryData(["/api/user"], data.user);
+      resetCachesForIdentityChange(data.user);
       queryClient.invalidateQueries({ queryKey: ["/api/user"] });
       
       toast({
@@ -178,10 +178,10 @@ export default function StaffLogin() {
 
       // Populate the auth cache SYNCHRONOUSLY before redirecting. Invalidate alone only
       // kicks off a background refetch, so the StaffProtectedRoute guard could mount with
-      // user still null (isLoading false) and bounce straight back to /staff/login — which
+      // user still null (isLoading false) and bounce straight back to /staff/login â€” which
       // looked like "logged in but didn't go anywhere". The email and 2FA paths already do
       // this; the password path didn't.
-      queryClient.setQueryData(["/api/user"], response);
+      resetCachesForIdentityChange(response);
       queryClient.invalidateQueries({ queryKey: ["/api/user"] });
       
       toast({
@@ -232,7 +232,7 @@ export default function StaffLogin() {
         return;
       }
       
-      queryClient.setQueryData(["/api/user"], response.user);
+      resetCachesForIdentityChange(response.user);
       queryClient.invalidateQueries({ queryKey: ["/api/user"] });
       
       toast({

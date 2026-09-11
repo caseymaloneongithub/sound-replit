@@ -48,6 +48,17 @@ export const getQueryFn: <T>(options: {
     return await res.json();
   };
 
+/**
+ * EVERY identity change (login, logout, register — any flow, any portal) must go
+ * through this: private data (orders, subscriptions, wholesale account) is cached
+ * under shared keys, so an account switch that only swaps /api/user can briefly
+ * show the previous identity's data until each query happens to refetch.
+ */
+export function resetCachesForIdentityChange(user: unknown) {
+  queryClient.clear();
+  queryClient.setQueryData(["/api/user"], user);
+}
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

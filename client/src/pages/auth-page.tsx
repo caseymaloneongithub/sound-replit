@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation, Link } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, resetCachesForIdentityChange } from "@/lib/queryClient";
 
 const loginSchema = z.object({
   username: z.string().min(1, "Email or username is required"),
@@ -145,7 +145,7 @@ export default function AuthPage() {
       });
       
       // Update the auth context with the logged-in user
-      queryClient.setQueryData(["/api/user"], data.user);
+      resetCachesForIdentityChange(data.user);
       
       toast({
         title: "Success",
@@ -179,7 +179,7 @@ export default function AuthPage() {
       }
       
       // Regular login success - update auth state
-      queryClient.setQueryData(["/api/user"], response);
+      resetCachesForIdentityChange(response);
       setLocation(redirectUrl);
     } catch (error: any) {
       toast({
@@ -207,7 +207,7 @@ export default function AuthPage() {
         code: twoFACode,
       });
       
-      queryClient.setQueryData(["/api/user"], response.user);
+      resetCachesForIdentityChange(response.user);
       toast({
         title: "Success",
         description: "Logged in successfully",
@@ -261,13 +261,13 @@ export default function AuthPage() {
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold mb-2">Puget Sound Kombucha Co.</h1>
           <p className="text-muted-foreground">Artisanal craft kombucha from the Pacific Northwest</p>
-          <p className="text-sm text-muted-foreground mt-2">Shop • Subscribe • Pickup</p>
+          <p className="text-sm text-muted-foreground mt-2">Shop â€¢ Subscribe â€¢ Pickup</p>
           
           <div className="flex items-center justify-center gap-4 mt-6">
             <Link href="/staff/login" className="text-lg text-muted-foreground hover:text-primary hover:underline" data-testid="link-to-staff-login">
               Staff Login
             </Link>
-            <span className="text-lg text-muted-foreground">•</span>
+            <span className="text-lg text-muted-foreground">â€¢</span>
             <Link href="/wholesale/login" className="text-lg text-muted-foreground hover:text-primary hover:underline" data-testid="link-to-wholesale-login">
               Wholesale Login
             </Link>

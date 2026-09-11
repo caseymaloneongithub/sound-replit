@@ -5,7 +5,7 @@ import crypto from "crypto";
 import Stripe from "stripe";
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { storage } from "./storage";
-import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, insertMaterialSchema, insertSupplierSchema, insertProcessSchema, insertProductionSchema, insertMaterialOrderSchema, retailProducts, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings, wholesaleOrderItems, wholesaleUnitTypes, deliveryRoutes, deliveryRouteStops } from "@shared/schema";
+import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, insertMaterialSchema, insertSupplierSchema, insertProcessSchema, insertProductionSchema, insertMaterialOrderSchema, retailProducts, retailProductFlavors, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings, wholesaleOrderItems, wholesaleUnitTypes, deliveryRoutes, deliveryRouteStops } from "@shared/schema";
 import { eq, sql, and, desc, isNull, inArray, gte } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
@@ -126,6 +126,10 @@ async function splitItemFields(
   const mixed = all.find(f => f.name === 'Mixed');
   return { selectedFlavorId: mixed?.id ?? selectedFlavorId, notes: `Split: 6 ${a} / 6 ${b}` };
 }
+
+// Paid-but-no-order alerts already sent this process, keyed by payment intent —
+// Stripe redelivers failing events many times; one email per incident is enough.
+const notifiedOrderFailures = new Set<string>();
 
 /**
  * Bottle sell-through, wholesale side (cans launch 2026-09-11): bottles are being
@@ -1714,7 +1718,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerEmail: confirmationEmail,
         businessName: emailBusinessName,
         contactName: (emailLocation as any)?.contactName || customer.contactName,
-        invoiceNumber,
+        // From the CREATED row, not the pre-generated variable — a number
+        // collision regenerates it during insert, and the email must match.
+        invoiceNumber: createdOrder.invoiceNumber,
         orderDate,
         deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
         dueDate,
@@ -1743,7 +1749,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             adminEmails,
             businessName: emailBusinessName,
             contactName: customer.contactName,
-            invoiceNumber,
+            invoiceNumber: createdOrder.invoiceNumber,
             orderDate,
             deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
             totalAmount,
@@ -2826,11 +2832,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               .resize({ width: 2400, height: 2400, fit: 'inside', withoutEnlargement: true })
               .webp({ quality: 85 })
               .toBuffer();
-            if (converted.length < body.length) {
-              outKey = key.replace(/\.(png|jpe?g)$/i, '') + '.webp';
-              outBody = converted;
-              outType = 'image/webp';
-            }
+            // Always take the converted output — the guarantee is uniform format,
+            // orientation, and the 2400px cap, not merely byte savings (a rare
+            // tiny PNG may grow slightly; uniformity wins).
+            outKey = key.replace(/\.(png|jpe?g)$/i, '') + '.webp';
+            outBody = converted;
+            outType = 'image/webp';
           } catch (convError: any) {
             console.warn(`[UPLOAD] WebP conversion failed for ${key} — storing original: ${convError.message}`);
           }
@@ -3939,21 +3946,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Charge immediately for first order.
           // Keyed on the subscription id so a double-submitted checkout (or a retry
           // after a lost response) cannot charge the customer twice.
-          const paymentIntent = await stripe.paymentIntents.create({
-            amount: amountInCents,
-            currency: 'usd',
-            customer: stripeCustomer.id,
-            payment_method: validated.paymentMethodId,
-            off_session: true,
-            confirm: true,
-            metadata: {
-              retailSubscriptionId: subscription.id,
-              type: 'retail_subscription_first_order',
-              subtotal: subtotal.toFixed(2),
-              taxAmount: taxAmount.toFixed(2),
-              totalAmount: totalAmount.toFixed(2),
-            },
-          }, { idempotencyKey: `retailsub_first_${subscription.id}` });
+          //
+          // If this charge FAILS (declined card throws), the just-created
+          // subscription must not survive as 'active': it would satisfy the
+          // duplicate guard above — so a retry would "succeed" with no charge and
+          // no order — and the billing cron would happily charge it at its next
+          // cycle despite signup never completing. Remove the row and its items,
+          // then rethrow so the customer sees the failure.
+          let paymentIntent;
+          try {
+            paymentIntent = await stripe.paymentIntents.create({
+              amount: amountInCents,
+              currency: 'usd',
+              customer: stripeCustomer.id,
+              payment_method: validated.paymentMethodId,
+              off_session: true,
+              confirm: true,
+              metadata: {
+                retailSubscriptionId: subscription.id,
+                type: 'retail_subscription_first_order',
+                subtotal: subtotal.toFixed(2),
+                taxAmount: taxAmount.toFixed(2),
+                totalAmount: totalAmount.toFixed(2),
+              },
+            }, { idempotencyKey: `retailsub_first_${subscription.id}` });
+          } catch (chargeError) {
+            await db.delete(retailSubscriptionItems).where(eq(retailSubscriptionItems.subscriptionId, subscription.id));
+            await db.delete(retailSubscriptions).where(eq(retailSubscriptions.id, subscription.id));
+            console.warn(`[SUBSCRIPTION] First charge failed — removed unpaid subscription ${subscription.id}`);
+            throw chargeError;
+          }
 
           // Create the first order through the SAME finalizer the webhook uses — it is
           // idempotent on the payment intent, so whichever of this call and the
@@ -3969,8 +3991,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             } else {
               console.error(`[SUBSCRIPTION] ⚠️ First-order finalize incomplete for ${paymentIntent.id} — the payment_intent.succeeded webhook will finish it`);
             }
+          } else if (paymentIntent.status === 'processing') {
+            // Genuinely pending (e.g. delayed settlement) — the succeeded webhook
+            // finalizes the first order when it lands. The subscription stays.
+            console.warn(`[SUBSCRIPTION] First charge processing for ${subscription.id} — webhook will finalize`);
           } else {
-            console.error(`[SUBSCRIPTION] ⚠️ Payment status ${paymentIntent.status} for first order`);
+            // requires_action and friends: this off-session flow can't complete a
+            // challenge, so treat it like a decline — same cleanup as the throw
+            // path, or the active-but-unpaid row poisons the duplicate guard.
+            await db.delete(retailSubscriptionItems).where(eq(retailSubscriptionItems.subscriptionId, subscription.id));
+            await db.delete(retailSubscriptions).where(eq(retailSubscriptions.id, subscription.id));
+            throw new Error(`Your card requires additional verification we can't complete here — please try a different card.`);
           }
 
           // Clear the group's lines from the cart
@@ -4811,9 +4842,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
               }
               
               await client.query('COMMIT');
-            } catch (error) {
+            } catch (error: any) {
               await client.query('ROLLBACK');
               console.error(`[WEBHOOK] Error creating retail order for payment intent ${paymentIntent.id}:`, error);
+              // Durable recovery path for MONEY-TAKEN-NO-ORDER: Stripe will retry
+              // this event, but if the failure is deterministic (cart drift, price
+              // change, verification mismatch) every retry fails the same way and
+              // after ~3 days the event dies silently. Tell a human once per
+              // process so the payment can be reconciled by hand — the exact
+              // procedure used for the Sept incidents.
+              if (!notifiedOrderFailures.has(paymentIntent.id)) {
+                notifiedOrderFailures.add(paymentIntent.id);
+                import('./email').then(({ sendStaffPaymentFailureNotification }) =>
+                  sendStaffPaymentFailureNotification({
+                    customerEmail: paymentIntent.receipt_email || '(see Stripe)',
+                    customerName: `PAID BUT NO ORDER — payment ${paymentIntent.id}`,
+                    subscriptionItems: [{ productName: `Webhook order creation failing: ${error?.message ?? 'unknown error'}`, quantity: 1 }],
+                    amount: paymentIntent.amount / 100,
+                    errorMessage: `payment_intent ${paymentIntent.id} charged $${(paymentIntent.amount / 100).toFixed(2)} but order creation failed. Stripe retries for ~3 days; if this keeps failing, create the order manually from the checkout snapshot.`,
+                  })
+                ).catch(e => console.error('[WEBHOOK] Failed to send paid-no-order alert:', e));
+              }
               throw error;
             } finally {
               client.release();
@@ -7072,7 +7121,8 @@ If you have any questions, please don't hesitate to reach out!`,
           customerEmail: confirmationRecipients,
           businessName: emailBusinessName,
           contactName: (emailLocation as any)?.contactName || customer.contactName,
-          invoiceNumber,
+          // Created row, not the pre-generated variable — collisions regenerate.
+          invoiceNumber: createdOrder.invoiceNumber,
           orderDate,
           deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
           dueDate,
@@ -7101,7 +7151,7 @@ If you have any questions, please don't hesitate to reach out!`,
               adminEmails,
               businessName: emailBusinessName,
               contactName: customer.contactName,
-              invoiceNumber,
+              invoiceNumber: createdOrder.invoiceNumber,
               orderDate,
               deliveryDate: createdOrder.deliveryDate ? new Date(createdOrder.deliveryDate) : null,
               totalAmount: serverCalculatedTotal,
@@ -7605,14 +7655,24 @@ If you have any questions, please don't hesitate to reach out!`,
         }
 
         const unitTypes = await storage.getWholesaleUnitTypes();
+        const knownFlavorIds = new Set((await storage.getFlavors()).map(f => f.id));
 
-        // Calculate new total and validate items
+        // Calculate new total and validate items. EVERYTHING must validate before
+        // the existing lines are deleted — a fractional quantity or unknown
+        // flavor used to pass this loop and then fail at the database AFTER the
+        // delete, stranding the order itemless.
         let newTotal = 0;
         const validatedItems: Array<{ unitTypeId: string; flavorId: string; quantity: number; unitPrice: string }> = [];
 
         for (const item of items) {
           if (!item.unitTypeId || !item.flavorId || !item.quantity || item.quantity <= 0) {
             return res.status(400).json({ message: "Invalid item: each item must have unitTypeId, flavorId, and positive quantity" });
+          }
+          if (!Number.isInteger(item.quantity)) {
+            return res.status(400).json({ message: "Quantities must be whole numbers" });
+          }
+          if (!knownFlavorIds.has(item.flavorId)) {
+            return res.status(400).json({ message: `Invalid flavor: ${item.flavorId}` });
           }
 
           const unitType = unitTypes.find(ut => ut.id === item.unitTypeId);
@@ -7857,14 +7917,35 @@ If you have any questions, please don't hesitate to reach out!`,
         }
       }
 
+      // Chosen flavors must actually BELONG to the product — an arbitrary flavor
+      // id used to sail through into the cart (and, on bottle products, could
+      // stand in for the real flavor in the sell-through check below).
+      if (product.productType === 'multi-flavor') {
+        const chosen = [selectedFlavorId, splitFlavorId].filter(Boolean) as string[];
+        if (chosen.length > 0) {
+          const memberRows = await db
+            .select({ flavorId: retailProductFlavors.flavorId })
+            .from(retailProductFlavors)
+            .where(and(eq(retailProductFlavors.retailProductId, retailProductId), inArray(retailProductFlavors.flavorId, chosen)));
+          const members = new Set(memberRows.map(r => r.flavorId));
+          if (chosen.some(id => !members.has(id))) {
+            return res.status(400).json({ message: "That flavor isn't offered on this product" });
+          }
+        }
+      }
+
       // Bottle sell-through enforcement (cans launch): the shop hides sold-out
       // bottle flavors, but the cart endpoint is reachable directly. Same scope as
       // the catalogue: bottle-case only, and only flavors with a finished-goods
       // row. Mixed has no row, so it passes.
       if ((product as any).container === 'bottle-case') {
-        // Multi-flavor lines check the chosen (and split) flavor; legacy
-        // single-flavor products check their own fixed flavor.
-        const flavorIdsToCheck = [selectedFlavorId, splitFlavorId, selectedFlavorId ? null : (product as any).flavorId].filter(Boolean);
+        // Single-flavor products ALWAYS check their own fixed flavor (a
+        // client-supplied selectedFlavorId must not stand in for it);
+        // multi-flavor products check the chosen and split flavors.
+        const flavorIdsToCheck = (product.productType === 'single-flavor'
+          ? [(product as any).flavorId]
+          : [selectedFlavorId, splitFlavorId]
+        ).filter(Boolean);
         if (flavorIdsToCheck.length > 0) {
           const stockRows = await db
             .select({ flavorId: products.flavorId, stock: products.stockQuantity, name: flavors.name })

@@ -1,9 +1,9 @@
-import { Link, useLocation } from "wouter";
+﻿import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { ShoppingCart, FileText, LogOut, Building2, Mail, Phone, MapPin } from "lucide-react";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, resetCachesForIdentityChange } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { WholesaleCustomer } from "@shared/schema";
 
@@ -23,7 +23,7 @@ export function WholesaleCustomerLayout({ children }: WholesaleCustomerLayoutPro
   const handleLogout = async () => {
     try {
       await apiRequest("POST", "/api/logout");
-      queryClient.setQueryData(["/api/user"], null);
+      resetCachesForIdentityChange(null);
       await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
       toast({
         title: "Logged out",
@@ -123,11 +123,11 @@ export function WholesaleCustomerLayout({ children }: WholesaleCustomerLayoutPro
           </div>
         </div>
       )}
-      {/* The layout owns the portal's width and gutters — pages supply only vertical
+      {/* The layout owns the portal's width and gutters â€” pages supply only vertical
           spacing. Tailwind's `container` sets a max-width but NO horizontal padding (this
           project doesn't configure container.padding), and the pages used a bare
           `container mx-auto`, so content sat flush against the viewport edge while the two
-          header bars — which do use px-4 — were inset. Matching the header's exact
+          header bars â€” which do use px-4 â€” were inset. Matching the header's exact
           `container mx-auto px-4` here keeps the page body aligned with them, and means a
           new portal page can't reintroduce either bug. */}
       <main className="container mx-auto px-4">
