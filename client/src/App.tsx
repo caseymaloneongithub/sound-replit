@@ -22,6 +22,8 @@ import WholesaleCustomerOrders from "@/pages/wholesale-customer-orders";
 import WholesaleCustomerLocations from "@/pages/wholesale-customer-locations";
 import Shop from "@/pages/shop";
 import ShopV2 from "@/pages/shop-v2";
+import ShopFlavors from "@/pages/shop-flavors";
+import ShopFlavor from "@/pages/shop-flavor";
 import Home from "@/pages/home";
 import OurKombucha from "@/pages/our-kombucha";
 import MyAccount from "@/pages/my-account";
@@ -89,7 +91,12 @@ function Router() {
       <WholesaleCustomerProtectedRoute path="/wholesale-customer/invoice/:id/payment-success" component={WholesalePaymentSuccess} />
       <Route path="/" component={Home} />
       <Route path="/our-kombucha" component={OurKombucha} />
-      <Route path="/shop" component={ShopV2} />
+      {/* Flavor-first shop (owner, 2026-09-12): grid of flavors, then a flavor
+          page picking package + one-time/subscribe. The package-first grid stays
+          reachable at /shop-classic while the new flow settles. */}
+      <Route path="/shop" component={ShopFlavors} />
+      <Route path="/shop/:flavorId" component={ShopFlavor} />
+      <Route path="/shop-classic" component={ShopV2} />
       <Route path="/products/:id" component={ProductDetail} />
       <Route path="/shop-legacy" component={Shop} />
       <Route path="/shop-v2" component={() => <Redirect to="/shop" />} />

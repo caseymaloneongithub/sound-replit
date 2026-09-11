@@ -3,25 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import type { Flavor } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Footer } from "@/components/layout/footer";
+import { FLAVOR_ACCENTS } from "@/lib/flavor-display";
 
 // "Mixed" is the variety-pack pseudo-flavor the shop uses for assorted cases. It is a real
 // row in `flavors` so products can reference it, but it isn't a flavor anyone drinks, so
 // the roundup leaves it out.
 const VARIETY_PSEUDO_FLAVORS = new Set(["Mixed"]);
-
-// Each flavor's display accent — the big name is set in its color, Camellia Grove style.
-// Mid-tone hues so they hold on both light and dark grounds; unknown names fall back to
-// the normal foreground.
-const FLAVOR_ACCENTS: Record<string, string> = {
-  Mist: "#5b7a94",
-  Sunbreak: "#d97b16",
-  Wildberry: "#9d3c6c",
-  Bonfire: "#b5451f",
-  "Island Hop": "#1f8a70",
-  Evergreen: "#38684a",
-  Hummingbrew: "#c25e6a",
-  Northzest: "#7a8c1e",
-};
 
 /**
  * Our Kombucha (2026-09-09, second pass): alternating stack — each flavor gets a full
@@ -95,7 +82,7 @@ export default function OurKombucha() {
                   className="mt-6 uppercase tracking-[0.2em] border-cedar/60 text-cedar hover:text-cedar"
                   data-testid={`button-shop-flavor-${flavor.id}`}
                 >
-                  <Link href="/shop">Find it in the shop</Link>
+                  <Link href={`/shop/${flavor.id}`}>Find it in the shop</Link>
                 </Button>
               </div>
             </article>
