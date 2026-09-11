@@ -6333,6 +6333,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================
+  // Email campaigns (owner, 2026-09-11): admin composes a branded
+  // broadcast to hand-picked retail or wholesale customers.
+  // ============================================================
+
+  // The body is admin-authored and rendered only in recipients' mail clients,
+  // but pasted content still gets an allowlist pass: structural tags survive
+  // (bold, bullets, headings, links), everything else — scripts, styles,
+  // images, event handlers — is dropped.
+  function sanitizeCampaignHtml(input: string): string {
+    let s = String(input)
+      .replace(/<(script|style|iframe|object|embed|title|head)[^>]*>[\s\S]*?<\/\1>/gi, '')
+      .replace(/<!--[\s\S]*?-->/g, '');
+    const allowed = new Set(['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'blockquote']);
+    s = s.replace(/<\s*(\/?)\s*([a-zA-Z0-9]+)((?:[^>"']|"[^"]*"|'[^']*')*)>/g, (_m, slash, tag, attrs) => {
+      const t = String(tag).toLowerCase();
+      if (!allowed.has(t)) return '';
+      if (slash) return `</${t}>`;
+      if (t === 'a') {
+        const href = /href\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(String(attrs));
+        const url = href ? (href[1] ?? href[2] ?? '') : '';
+        const safe = /^https?:\/\//i.test(url) ? url : '';
+        return safe ? `<a href="${safe}" style="color:#1d4ed8;">` : '<a>';
+      }
+      return `<${t}>`;
+    });
+    return s.trim();
+  }
+
+  app.get("/api/admin/email-campaign/status", isAdmin, async (_req, res) => {
+    const { getCampaignStatus } = await import('./email');
+    res.json(getCampaignStatus());
+  });
+
+  app.post("/api/admin/email-campaign", isAdmin, async (req, res) => {
+    try {
+      const { isCampaignRunning, runEmailCampaign } = await import('./email');
+      if (isCampaignRunning()) {
+        return res.status(409).json({ message: "A campaign is already sending — wait for it to finish." });
+      }
+      const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim().slice(0, 150) : '';
+      const audience = req.body?.audience === 'wholesale' ? 'wholesale' : 'retail';
+      const bodyHtml = sanitizeCampaignHtml(req.body?.bodyHtml ?? '');
+      if (!subject) return res.status(400).json({ message: "Subject is required" });
+      if (!bodyHtml.replace(/<[^>]+>/g, '').trim()) return res.status(400).json({ message: "The email body is empty" });
+
+      const raw = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
+      const seen = new Set<string>();
+      const recipients: Array<{ email: string; name?: string }> = [];
+      for (const r of raw.slice(0, 1000)) {
+        const email = typeof r?.email === 'string' ? r.email.trim() : '';
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+        const key = email.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        recipients.push({ email, name: typeof r?.name === 'string' ? r.name.slice(0, 120) : undefined });
+      }
+      if (recipients.length === 0) return res.status(400).json({ message: "No valid recipients selected" });
+
+      console.log(`[CAMPAIGN] ${req.user?.email ?? 'admin'} queued "${subject}" (${audience}, ${recipients.length} recipients)`);
+      // Fire and return — the page polls /status for progress.
+      void runEmailCampaign(audience, subject, bodyHtml, recipients).catch((e) =>
+        console.error('[CAMPAIGN] run failed:', e),
+      );
+      res.json({ queued: recipients.length });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error starting campaign: " + error.message });
+    }
+  });
+
   app.get("/api/wholesale/customers/:id", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const customer = await storage.getWholesaleCustomer(req.params.id);

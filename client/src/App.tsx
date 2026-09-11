@@ -59,6 +59,7 @@ import AccountingTransactions from "@/pages/accounting-transactions";
 import AccountingCategories from "@/pages/accounting-categories";
 import AccountingBanks from "@/pages/accounting-banks";
 import AccountingIncomeStatement from "@/pages/accounting-income-statement";
+import AdminEmailCampaign from "@/pages/admin-email-campaign";
 import DeliveryRoutes from "@/pages/delivery-routes";
 import AdminChecklist from "@/pages/admin-checklist";
 import OrdersBoard from "@/pages/orders-board";
@@ -147,6 +148,7 @@ function Router() {
       <AdminProtectedRoute path="/admin/accounting/categories" component={AccountingCategories} />
       <AdminProtectedRoute path="/admin/accounting/banks" component={AccountingBanks} />
       <AdminProtectedRoute path="/admin/accounting/income-statement" component={AccountingIncomeStatement} />
+      <AdminProtectedRoute path="/admin/email-campaign" component={AdminEmailCampaign} />
       {/* The old /inventory hub duplicated the sidebar; the dashboard is the real front door. */}
       <Route path="/inventory" component={() => <Redirect to="/inventory/dashboard" />} />
       <StaffProtectedRoute path="/inventory/dashboard" component={InventoryDashboard} />

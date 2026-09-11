@@ -29,6 +29,7 @@ import {
   LayoutDashboard,
   CalendarDays,
   FileSpreadsheet,
+  Send,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useNewContactCount } from "@/components/staff/contact-requests-panel";
@@ -184,7 +185,10 @@ export function StaffSidebar({ onLinkClick, headerAction }: StaffSidebarProps) {
     {
       title: "Admin",
       adminOnly: true,
-      items: [{ title: "User Management", href: "/user-management", icon: UserCog, adminOnly: true }],
+      items: [
+        { title: "User Management", href: "/user-management", icon: UserCog, adminOnly: true },
+        { title: "Email Campaign", href: "/admin/email-campaign", icon: Send, adminOnly: true },
+      ],
     },
   ];
 
