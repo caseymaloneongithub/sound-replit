@@ -74,6 +74,35 @@ export default function WholesaleGuestOrder() {
 
   const byId = useMemo(() => new Map(unitTypes.map((u) => [u.id, u])), [unitTypes]);
   const min = Number(minOrder?.value ?? 0);
+
+  // Pre-flight minimum check: prices are private to the store, so the server
+  // answers "does this clear the minimum?" as a bare boolean. Debounced so
+  // quantity typing doesn't fire a request per keystroke; fails OPEN (the
+  // server enforces the minimum at submit regardless).
+  const [precheckKey, setPrecheckKey] = useState("");
+  useEffect(() => {
+    const items = lines.filter((l) => l.unitTypeId).map((l) => ({ unitTypeId: l.unitTypeId, quantity: l.quantity }));
+    const key = items.length > 0
+      ? JSON.stringify({ customerId, locationId: fulfillment === "delivery" ? locationId || null : null, items })
+      : "";
+    const t = setTimeout(() => setPrecheckKey(key), 400);
+    return () => clearTimeout(t);
+  }, [lines, locationId, fulfillment, customerId]);
+  const { data: precheck } = useQuery<{ meetsMinimum: boolean; minimumOrderAmount: number }>({
+    queryKey: ["guest-order-precheck", precheckKey],
+    queryFn: async () => {
+      const res = await fetch("/api/wholesale/guest-order/precheck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: precheckKey,
+      });
+      if (!res.ok) throw new Error("precheck failed");
+      return res.json();
+    },
+    enabled: !!precheckKey,
+    retry: false,
+  });
+  const belowMin = precheck?.meetsMinimum === false;
   // Email is optional: blank means the confirmation goes to the store's contact on
   // file (server-side — the address itself is never shown on this no-login form).
   const emailOk = contactEmail.trim() === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail.trim());
@@ -85,6 +114,7 @@ export default function WholesaleGuestOrder() {
     !linesOk && "add at least one item",
     !emailOk && "fix the email address (or leave it blank)",
     !locationOk && "choose a delivery location",
+    belowMin && `add more items to reach the $${min.toFixed(2)} minimum`,
   ].filter(Boolean) as string[];
 
   const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -280,7 +310,7 @@ export default function WholesaleGuestOrder() {
             <Button
               size="lg"
               onClick={() => submit.mutate()}
-              disabled={submit.isPending || !linesOk || !emailOk || !locationOk}
+              disabled={submit.isPending || !linesOk || !emailOk || !locationOk || belowMin}
               data-testid="button-submit-guest-order"
             >
               {submit.isPending ? "Placing…" : "Place order"}

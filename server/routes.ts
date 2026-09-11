@@ -1784,6 +1784,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // contacts on file, and staff filter incoming orders as they arrive. Bot guards: the
   // honeypot field and per-IP rate limits; store-specific pricing is applied server-side
   // by placeCustomerOrder like any other order.
+  // Pre-flight minimum check for the guest form (owner, 2026-09-11): the form
+  // can't price the order client-side (store rates are private, deliberately not
+  // in the anon unit-types payload), so it asks whether the items clear the
+  // minimum and gets ONLY a boolean back. This exposes strictly less than the
+  // accepted guest-order surface — a placed order already emails full pricing to
+  // whatever mailbox the guest typed. Rate-limited per IP; fires on form edits.
+  app.post("/api/wholesale/guest-order/precheck", async (req: any, res) => {
+    try {
+      const ip = req.ip || req.socket?.remoteAddress || "unknown";
+      if (!checkSubmissionRateLimit(`guest-precheck-hr:${ip}`, 120, 60 * 60 * 1000)) {
+        return res.status(429).json({ message: "Too many checks from this connection." });
+      }
+      const customer = await storage.getWholesaleCustomer(String(req.body?.customerId || ""));
+      if (!customer) {
+        return res.status(400).json({ message: "Pick your store first." });
+      }
+      const minRow = await db.select().from(siteSettings).where(eq(siteSettings.key, 'wholesale_minimum_order'));
+      const minimumOrderAmount = minRow[0] ? parseFloat(minRow[0].value) : 0;
+      // Location overrides only apply to the customer's OWN locations — an
+      // arbitrary locationId must not probe another store's negotiated rates.
+      let locationId: string | null = typeof req.body?.locationId === 'string' ? req.body.locationId : null;
+      if (locationId) {
+        const location = await storage.getWholesaleLocation(locationId);
+        if (!location || location.customerId !== customer.id) locationId = null;
+      }
+      const items = Array.isArray(req.body?.items) ? req.body.items : [];
+      let total = 0;
+      for (const item of items.slice(0, 50)) {
+        const qty = Number(item?.quantity);
+        if (!item?.unitTypeId || !Number.isFinite(qty) || qty <= 0) continue;
+        const unitPrice = await storage.resolveWholesaleUnitPrice(customer.id, locationId, String(item.unitTypeId));
+        total += unitPrice * qty;
+      }
+      res.json({ meetsMinimum: minimumOrderAmount <= 0 || total >= minimumOrderAmount, minimumOrderAmount });
+    } catch (e: any) {
+      console.error("[GUEST PRECHECK] error:", e);
+      res.status(500).json({ message: "Couldn't check the order" });
+    }
+  });
+
   app.post("/api/wholesale/guest-order", async (req: any, res) => {
     try {
       // Honeypot: bots fill every field. Pretend success so they don't adapt.

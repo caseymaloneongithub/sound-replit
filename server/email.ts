@@ -1548,22 +1548,19 @@ export function buildWholesaleOrderConfirmationEmail(params: WholesaleOrderConfi
     ? `${params.location.locationName && params.location.locationName !== 'Main Location' ? params.location.locationName + ' — ' : ''}${params.location.address}, ${params.location.city}, ${params.location.state} ${params.location.zipCode}`
     : null;
   
-  const itemsHtml = params.items.map(item => {
-    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
-    return `
+  // NO PRICES in the confirmation (owner, 2026-09-11): this email goes to
+  // whoever placed the order — on the guest form, any typed mailbox — so the
+  // store's negotiated rates stay off it. Pricing lives on the invoice, which
+  // goes to the billing contacts. (unitPrice/totalAmount stay in the params so
+  // callers and the staff preview dialog didn't all need changing.)
+  const itemsHtml = params.items.map(item => `
       <tr>
         <td style="padding: 10px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${item.productName}</td>
         <td style="padding: 10px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: center; color: ${BRAND_COLORS.darkGrey};">${item.quantity}</td>
-        <td style="padding: 10px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">$${parseFloat(item.unitPrice).toFixed(2)}</td>
-        <td style="padding: 10px 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; text-align: right; color: ${BRAND_COLORS.darkGrey};">$${lineTotal.toFixed(2)}</td>
       </tr>
-    `;
-  }).join('');
-  
-  const itemsText = params.items.map(item => {
-    const lineTotal = parseFloat(item.unitPrice) * item.quantity;
-    return `- ${item.productName} x ${item.quantity} @ $${parseFloat(item.unitPrice).toFixed(2)} = $${lineTotal.toFixed(2)}`;
-  }).join('\n');
+    `).join('');
+
+  const itemsText = params.items.map(item => `- ${item.productName} x ${item.quantity}`).join('\n');
 
   const bodyParagraph = params.bodyText?.trim()
     || "Thank you for your order! We've received your order and will contact you to confirm delivery details.";
@@ -1582,7 +1579,7 @@ ${locationLine ? `Deliver To: ${locationLine}` : ''}
 Items:
 ${itemsText}
 
-Total: $${params.totalAmount.toFixed(2)}
+Your store's pricing is shown on the invoice.
 ${params.notes ? `\nNotes: ${params.notes}` : ''}
 
 ---
@@ -1643,18 +1640,16 @@ orders@soundkombucha.com
         <tr style="background-color: ${BRAND_COLORS.backgroundGrey};">
           <th style="padding: 10px 8px; text-align: left; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Item</th>
           <th style="padding: 10px 8px; text-align: center; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Qty</th>
-          <th style="padding: 10px 8px; text-align: right; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Price</th>
-          <th style="padding: 10px 8px; text-align: right; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">Total</th>
         </tr>
       </thead>
       <tbody>
         ${itemsHtml}
       </tbody>
     </table>
-    
-    <div style="text-align: right; padding: 16px 0; border-top: 2px solid ${BRAND_COLORS.borderGrey};">
-      <span style="font-size: 18px; color: ${BRAND_COLORS.darkGrey}; font-weight: bold;">Total: $${params.totalAmount.toFixed(2)}</span>
-    </div>
+
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 13px; margin: 0 0 8px 0; padding: 12px 0 0 0; border-top: 2px solid ${BRAND_COLORS.borderGrey};">
+      Your store's pricing is shown on the invoice.
+    </p>
     
     ${params.notes ? `
     <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin-top: 16px;">
