@@ -44,6 +44,12 @@ export default function AdminEmailCampaign() {
   // Unticked keys per audience for THIS send — default is everyone selected.
   const [deselected, setDeselected] = useState<Record<string, Set<string>>>({ retail: new Set(), wholesale: new Set() });
   const [search, setSearch] = useState("");
+  // Addresses typed in by hand (owner, 2026-09-11) — a prospect, a press contact,
+  // someone not on either customer list. Live for this page session only, ride
+  // along with whichever audience is being sent, and honor opt-outs like any row.
+  const [manual, setManual] = useState<Array<{ email: string; name: string }>>([]);
+  const [manualEmail, setManualEmail] = useState("");
+  const [manualName, setManualName] = useState("");
   const [subject, setSubject] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
@@ -62,19 +68,43 @@ export default function AdminEmailCampaign() {
   const sending = !!status && !status.done;
 
   const recipients: Recipient[] = useMemo(() => {
+    const manualRows: Recipient[] = manual.map((m) => ({ key: `manual:${norm(m.email)}`, name: m.name || m.email, emails: [m.email] }));
     if (audience === "retail") {
-      return retailCustomers
-        .filter((c) => !!c.email)
-        .map((c) => ({ key: c.id, name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email!, emails: [c.email!] }));
+      return [
+        ...manualRows,
+        ...retailCustomers
+          .filter((c) => !!c.email)
+          .map((c) => ({ key: c.id, name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email!, emails: [c.email!] })),
+      ];
     }
-    return wholesaleRows
-      .filter((r) => r.emails.length > 0)
-      .map((r) => ({
-        key: r.key,
-        name: r.locationName && r.locationName !== "Main Location" ? `${r.businessName} — ${r.locationName}` : r.businessName,
-        emails: r.emails,
-      }));
-  }, [audience, retailCustomers, wholesaleRows]);
+    return [
+      ...manualRows,
+      ...wholesaleRows
+        .filter((r) => r.emails.length > 0)
+        .map((r) => ({
+          key: r.key,
+          name: r.locationName && r.locationName !== "Main Location" ? `${r.businessName} — ${r.locationName}` : r.businessName,
+          emails: r.emails,
+        })),
+    ];
+  }, [audience, retailCustomers, wholesaleRows, manual]);
+
+  const addManual = () => {
+    const email = manualEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast({ title: "That doesn't look like an email address", variant: "destructive" });
+      return;
+    }
+    const already = recipients.some((r) => r.emails.some((e) => norm(e) === norm(email)));
+    if (already) {
+      toast({ title: "Already on the list", description: `${email} is already a recipient.` });
+    } else {
+      setManual((prev) => [...prev, { email, name: manualName.trim() }]);
+    }
+    setManualEmail("");
+    setManualName("");
+  };
+  const removeManual = (key: string) => setManual((prev) => prev.filter((m) => `manual:${norm(m.email)}` !== key));
 
   // A row is opted out when every address on it is.
   const isOut = (r: Recipient) => r.emails.every((e) => optedOut.has(norm(e)));
@@ -245,6 +275,34 @@ export default function AdminEmailCampaign() {
                 </TabsList>
               </Tabs>
               <Input placeholder="Search name or email…" value={search} onChange={(e) => setSearch(e.target.value)} data-testid="input-recipient-search" />
+              <div className="flex items-end gap-2 flex-wrap">
+                <div className="flex-1 min-w-[180px]">
+                  <Label htmlFor="manual-email" className="text-xs text-muted-foreground">Add an address by hand</Label>
+                  <Input
+                    id="manual-email"
+                    className="mt-1"
+                    type="email"
+                    placeholder="someone@example.com"
+                    value={manualEmail}
+                    onChange={(e) => setManualEmail(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addManual(); } }}
+                    data-testid="input-manual-email"
+                  />
+                </div>
+                <div className="w-36">
+                  <Label htmlFor="manual-name" className="text-xs text-muted-foreground">Name (optional)</Label>
+                  <Input
+                    id="manual-name"
+                    className="mt-1"
+                    placeholder="Name"
+                    value={manualName}
+                    onChange={(e) => setManualName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addManual(); } }}
+                    data-testid="input-manual-name"
+                  />
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={addManual} disabled={!manualEmail.trim()} data-testid="button-add-manual">Add</Button>
+              </div>
               <p className="text-sm text-muted-foreground" data-testid="text-selected-count">
                 <span className="font-semibold text-foreground">{selected.length}</span> of {eligible.length} {rowWord}{eligible.length === 1 ? "" : "s"} selected
                 {" · "}<span className="font-semibold text-foreground">{sendList.length}</span> unique address{sendList.length === 1 ? "" : "es"}
@@ -282,6 +340,7 @@ export default function AdminEmailCampaign() {
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-medium truncate">
                           {r.name}
+                          {r.key.startsWith("manual:") && <Badge variant="secondary" className="ml-2 text-xs">Added by hand</Badge>}
                           {out && <Badge variant="outline" className="ml-2 text-xs">Opted out</Badge>}
                         </span>
                         {/* Each address carries its own opt-out state and control. */}
@@ -299,6 +358,16 @@ export default function AdminEmailCampaign() {
                               >
                                 {eOut ? "Undo opt-out" : "Opt out"}
                               </button>
+                              {r.key.startsWith("manual:") && (
+                                <button
+                                  type="button"
+                                  className="shrink-0 hover:text-foreground underline-offset-2 hover:underline"
+                                  onClick={() => removeManual(r.key)}
+                                  data-testid={`button-remove-manual-${r.key}`}
+                                >
+                                  Remove
+                                </button>
+                              )}
                             </span>
                           );
                         })}
