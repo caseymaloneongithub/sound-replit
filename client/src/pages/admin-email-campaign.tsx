@@ -217,6 +217,14 @@ export default function AdminEmailCampaign() {
     },
   });
 
+  // A test copy to the signed-in admin's own inbox — the first move before any
+  // real send, and the way to catch a broken paste or a wrong subject.
+  const testMutation = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/admin/email-campaign/test", { subject: subject.trim(), bodyHtml: bodyHtml() }),
+    onSuccess: (data: any) => toast({ title: "Test sent", description: `Check ${data.to} for "[TEST] ${subject.trim()}".` }),
+    onError: (error: any) => toast({ title: "Couldn't send the test", description: error.message || "Try again.", variant: "destructive" }),
+  });
+
   const readyToSend = subject.trim().length > 0 && sendList.length > 0 && !overLimit;
   const rowWord = audience === "wholesale" ? "location" : "customer";
 
@@ -427,16 +435,26 @@ export default function AdminEmailCampaign() {
             <Card>
               <CardContent className="pt-6 flex items-center justify-between gap-3 flex-wrap">
                 <p className="text-xs text-muted-foreground max-w-xs">
-                  Each address gets its own email (no CC), with a reply-to-unsubscribe note in the footer. Up to {MAX_RECIPIENTS.toLocaleString()} per campaign.
+                  Each address gets its own email (no CC) with a one-click unsubscribe link. Up to {MAX_RECIPIENTS.toLocaleString()} per campaign.
                 </p>
-                <Button
-                  onClick={() => setConfirmOpen(true)}
-                  disabled={!readyToSend || sending || sendMutation.isPending}
-                  data-testid="button-open-send"
-                >
-                  <Send className="w-4 h-4 mr-2" />
-                  Send to {sendList.length}…
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => testMutation.mutate()}
+                    disabled={subject.trim().length === 0 || testMutation.isPending}
+                    data-testid="button-send-test"
+                  >
+                    {testMutation.isPending ? "Sending…" : "Send a test to me"}
+                  </Button>
+                  <Button
+                    onClick={() => setConfirmOpen(true)}
+                    disabled={!readyToSend || sending || sendMutation.isPending}
+                    data-testid="button-open-send"
+                  >
+                    <Send className="w-4 h-4 mr-2" />
+                    Send to {sendList.length}…
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>

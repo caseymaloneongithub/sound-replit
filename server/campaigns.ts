@@ -1,8 +1,9 @@
 import sanitizeHtml from 'sanitize-html';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { db } from './db';
 import { emailCampaigns, emailCampaignRecipients, marketingOptOuts } from '../shared/schema';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
-import { buildCampaignEmail, isMailConfigured, sendCampaignMail } from './email';
+import { buildCampaignEmail, isMailConfigured, isMailIdempotent, sendCampaignMail } from './email';
 
 /**
  * Email campaigns (owner, 2026-09-11; hardened across two review rounds).
@@ -79,6 +80,77 @@ export async function addOptOut(email: string, createdBy?: string | null, reason
 
 export async function removeOptOut(email: string) {
   await db.delete(marketingOptOuts).where(eq(marketingOptOuts.email, normalizeEmail(email)));
+}
+
+// ---- Unsubscribe links (RFC 8058 one-click) ----
+// Each recipient gets a link carrying their address and an HMAC over it, so the
+// link works with no login and can't be forged for someone else. Signed with
+// the session secret — no new config to set.
+
+const unsubscribeSecret = () => process.env.UNSUBSCRIBE_SECRET || process.env.SESSION_SECRET || 'dev-unsubscribe-secret';
+const b64url = (s: string) => Buffer.from(s, 'utf8').toString('base64url');
+const sign = (email: string) => createHmac('sha256', unsubscribeSecret()).update(normalizeEmail(email)).digest('base64url');
+
+export function makeUnsubscribeToken(email: string): string {
+  return `${b64url(normalizeEmail(email))}.${sign(email)}`;
+}
+
+/** Returns the address the token was issued for, or null if it doesn't verify. */
+export function verifyUnsubscribeToken(token: string): string | null {
+  const [payload, mac] = String(token ?? '').split('.');
+  if (!payload || !mac) return null;
+  let email: string;
+  try { email = Buffer.from(payload, 'base64url').toString('utf8'); } catch { return null; }
+  const expected = sign(email);
+  const a = Buffer.from(mac); const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  return normalizeEmail(email);
+}
+
+export const baseUrl = () => (process.env.APP_URL || 'http://localhost:5000').replace(/\/+$/, '');
+export const unsubscribeUrlFor = (email: string) => `${baseUrl()}/unsubscribe?token=${encodeURIComponent(makeUnsubscribeToken(email))}`;
+
+// ---- Provider events (Resend webhook) ----
+
+/** Verifies a Svix-signed Resend webhook (headers svix-id / svix-timestamp /
+ *  svix-signature over "id.timestamp.rawBody"). Returns the parsed event or
+ *  null when the signature doesn't check out. */
+export function verifyResendWebhook(rawBody: Buffer, headers: Record<string, string | undefined>): any | null {
+  const secret = process.env.RESEND_WEBHOOK_SECRET;
+  if (!secret) return null;
+  const id = headers['svix-id']; const ts = headers['svix-timestamp']; const sigHeader = headers['svix-signature'];
+  if (!id || !ts || !sigHeader) return null;
+  // Reject stale deliveries (replay window: 5 minutes).
+  if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return null;
+  const key = Buffer.from(secret.replace(/^whsec_/, ''), 'base64');
+  const expected = createHmac('sha256', key).update(`${id}.${ts}.`).update(rawBody).digest('base64');
+  const ok = sigHeader.split(' ').some((part) => {
+    const [, sig] = part.split(',');
+    if (!sig) return false;
+    const a = Buffer.from(sig); const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
+  });
+  if (!ok) return null;
+  try { return JSON.parse(rawBody.toString('utf8')); } catch { return null; }
+}
+
+/** Hard bounces and spam complaints opt the address out automatically — emailing
+ *  either again is what sinks a sender's reputation. Soft bounces are left alone. */
+export async function handleResendEvent(event: any): Promise<{ optedOut: string[] }> {
+  const type = String(event?.type ?? '');
+  const to: string[] = Array.isArray(event?.data?.to) ? event.data.to : [];
+  const optedOut: string[] = [];
+  const bounceType = String(event?.data?.bounce?.type ?? '').toLowerCase();
+  const hardBounce = type === 'email.bounced' && bounceType !== 'transient';
+  if (hardBounce || type === 'email.complained') {
+    const reason = type === 'email.complained' ? 'spam complaint (provider webhook)' : 'hard bounce (provider webhook)';
+    for (const addr of to) {
+      if (typeof addr !== 'string' || !addr.includes('@')) continue;
+      await addOptOut(addr, null, reason);
+      optedOut.push(normalizeEmail(addr));
+    }
+  }
+  return { optedOut };
 }
 
 // ---- Campaigns ----
@@ -172,7 +244,12 @@ export async function runCampaign(campaignId: string): Promise<void> {
     const next = await claimNext(campaignId);
     if (!next) break;
     try {
-      await sendCampaignMail(next.email, campaign.subject, built);
+      await sendCampaignMail(next.email, campaign.subject, built, {
+        unsubscribeUrl: unsubscribeUrlFor(next.email),
+        // Stable per campaign+row: a retry after an interrupted send is
+        // deduplicated by the provider instead of delivered twice.
+        idempotencyKey: `campaign:${campaignId}:${next.id}`,
+      });
       await db
         .update(emailCampaignRecipients)
         .set({ status: 'sent', sentAt: new Date() })
@@ -201,23 +278,52 @@ export async function runCampaign(campaignId: string): Promise<void> {
   }
 }
 
+// Resend honors an idempotency key for 24 hours; stay inside that with margin.
+const IDEMPOTENCY_WINDOW_MS = 23 * 60 * 60 * 1000;
+
 /** Boot hook: any campaign still 'sending' was interrupted by a restart. Rows a
- *  dead worker had claimed become 'uncertain' (delivery unknown — NOT re-sent);
- *  the remaining pending rows are finished. */
+ *  dead worker had claimed are RETRIED when the provider dedupes by idempotency
+ *  key and the claim is inside the key's lifetime (a retry then can't deliver
+ *  twice); otherwise they become 'uncertain' (delivery unknown — NOT re-sent).
+ *  The remaining pending rows are finished either way. */
 export async function resumeUnfinishedCampaigns(): Promise<void> {
   const unfinished = await db
     .select({ id: emailCampaigns.id, subject: emailCampaigns.subject })
     .from(emailCampaigns)
     .where(eq(emailCampaigns.status, 'sending'));
   for (const c of unfinished) {
-    const orphaned = await db
-      .update(emailCampaignRecipients)
-      .set({ status: 'uncertain', error: 'interrupted mid-send — delivery unknown, not retried' })
-      .where(and(eq(emailCampaignRecipients.campaignId, c.id), eq(emailCampaignRecipients.status, 'sending')))
-      .returning({ email: emailCampaignRecipients.email });
-    console.log(`[CAMPAIGN] resuming interrupted campaign ${c.id} "${c.subject}"${orphaned.length ? ` — ${orphaned.length} row(s) marked uncertain: ${orphaned.map((o) => o.email).join(', ')}` : ''}`);
+    const claimed = await db
+      .select({ id: emailCampaignRecipients.id, email: emailCampaignRecipients.email, claimedAt: emailCampaignRecipients.claimedAt })
+      .from(emailCampaignRecipients)
+      .where(and(eq(emailCampaignRecipients.campaignId, c.id), eq(emailCampaignRecipients.status, 'sending')));
+    const retried: string[] = []; const uncertain: string[] = [];
+    for (const row of claimed) {
+      const fresh = row.claimedAt != null && Date.now() - row.claimedAt.getTime() < IDEMPOTENCY_WINDOW_MS;
+      if (isMailIdempotent() && fresh) {
+        await db.update(emailCampaignRecipients).set({ status: 'pending', claimedAt: null }).where(eq(emailCampaignRecipients.id, row.id));
+        retried.push(row.email);
+      } else {
+        await db.update(emailCampaignRecipients)
+          .set({ status: 'uncertain', error: 'interrupted mid-send — delivery unknown, not retried' })
+          .where(eq(emailCampaignRecipients.id, row.id));
+        uncertain.push(row.email);
+      }
+    }
+    console.log(`[CAMPAIGN] resuming interrupted campaign ${c.id} "${c.subject}"` +
+      (retried.length ? ` — ${retried.length} interrupted row(s) queued for idempotent retry` : '') +
+      (uncertain.length ? ` — ${uncertain.length} marked uncertain: ${uncertain.join(', ')}` : ''));
     void runCampaign(c.id).catch((e) => console.error('[CAMPAIGN] resume failed:', e));
   }
+}
+
+/** "Send a test to me": one message to the admin's own address, never persisted
+ *  as a campaign, subject prefixed so it can't be mistaken for the real thing. */
+export async function sendTestCampaign(to: string, subject: string, bodyHtml: string): Promise<void> {
+  const clean = sanitizeCampaignHtml(bodyHtml);
+  const subj = subject.trim().slice(0, 150) || '(no subject)';
+  if (!clean.replace(/<[^>]+>/g, '').trim()) throw Object.assign(new Error('The email body is empty'), { status: 400 });
+  const built = buildCampaignEmail(subj, clean);
+  await sendCampaignMail(to, `[TEST] ${subj}`, built, { unsubscribeUrl: unsubscribeUrlFor(to) });
 }
 
 /** The most recent campaign with live counts — what the admin page polls. */

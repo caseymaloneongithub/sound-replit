@@ -6435,6 +6435,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // "Send a test to me": the signed-in admin's own inbox, never persisted.
+  app.post("/api/admin/email-campaign/test", isAdmin, async (req, res) => {
+    try {
+      const to = req.user?.email;
+      if (!to) return res.status(400).json({ message: "Your account has no email address to send to" });
+      const { sendTestCampaign } = await import('./campaigns');
+      await sendTestCampaign(to, typeof req.body?.subject === 'string' ? req.body.subject : '', typeof req.body?.bodyHtml === 'string' ? req.body.bodyHtml : '');
+      res.json({ to });
+    } catch (error: any) {
+      const status = typeof error?.status === 'number' ? error.status : 500;
+      res.status(status).json({ message: status === 500 ? "Error sending test: " + error.message : error.message });
+    }
+  });
+
+  // ---- Unsubscribe (RFC 8058 one-click) ----
+  // The token rides in the query string on both verbs, so the same URL serves
+  // the footer link and the List-Unsubscribe header. GET shows a confirm page
+  // (mail scanners prefetch GET links — a bare GET must not unsubscribe anyone);
+  // POST performs it, whether from the confirm page's button or a mail client's
+  // one-click "List-Unsubscribe=One-Click" request.
+  const unsubscribePage = (title: string, body: string) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} — Puget Sound Kombucha Co.</title>
+<style>body{font-family:Arial,sans-serif;background:#f3f4f6;margin:0;padding:40px 16px;color:#111827}main{max-width:460px;margin:0 auto;background:#fff;border-radius:8px;padding:32px 28px;box-shadow:0 2px 8px rgba(0,0,0,.06)}h1{font-size:22px;margin:0 0 12px}p{line-height:1.5;color:#374151}button{background:#111827;color:#fff;border:0;border-radius:6px;padding:12px 20px;font-size:15px;cursor:pointer}small{color:#6b7280}</style></head>
+<body><main><h1>${title}</h1>${body}<p><small>Puget Sound Kombucha Co. · 4501 Shilshole Ave NW, Seattle, WA 98107</small></p></main></body></html>`;
+
+  app.get("/unsubscribe", async (req, res) => {
+    const { verifyUnsubscribeToken } = await import('./campaigns');
+    const email = verifyUnsubscribeToken(String(req.query.token ?? ''));
+    if (!email) {
+      return res.status(400).type('html').send(unsubscribePage("That link didn't work",
+        `<p>This unsubscribe link is missing or invalid. Reply to any of our emails with "unsubscribe" and we'll take care of it by hand.</p>`));
+    }
+    const safeEmail = email.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+    res.type('html').send(unsubscribePage("Unsubscribe?",
+      `<p>Stop marketing emails to <strong>${safeEmail}</strong>? Order confirmations and invoices for anything you buy from us are unaffected.</p>
+       <form method="post" action="/unsubscribe?token=${encodeURIComponent(String(req.query.token))}"><button type="submit">Yes, unsubscribe me</button></form>`));
+  });
+
+  app.post("/unsubscribe", async (req, res) => {
+    const { verifyUnsubscribeToken, addOptOut } = await import('./campaigns');
+    const email = verifyUnsubscribeToken(String(req.query.token ?? ''));
+    if (!email) return res.status(400).type('html').send(unsubscribePage("That link didn't work", `<p>This unsubscribe link is missing or invalid.</p>`));
+    await addOptOut(email, null, 'unsubscribe link');
+    console.log(`[CAMPAIGN] unsubscribed via link: ${email}`);
+    res.type('html').send(unsubscribePage("You're unsubscribed",
+      `<p>We won't send marketing emails to <strong>${email.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string))}</strong> again. Changed your mind? Just reply to any of our emails.</p>`));
+  });
+
+  // Resend delivery events: hard bounces and spam complaints opt the address out
+  // automatically. Signature-verified (Svix) against RESEND_WEBHOOK_SECRET; the
+  // raw body comes from the global express.json verify hook (same as Stripe).
+  app.post("/api/webhooks/resend", async (req: any, res) => {
+    try {
+      if (!process.env.RESEND_WEBHOOK_SECRET) {
+        return res.status(503).send("Resend webhook secret not configured");
+      }
+      const { verifyResendWebhook, handleResendEvent } = await import('./campaigns');
+      const event = verifyResendWebhook(req.rawBody as Buffer, {
+        'svix-id': req.header('svix-id'),
+        'svix-timestamp': req.header('svix-timestamp'),
+        'svix-signature': req.header('svix-signature'),
+      });
+      if (!event) return res.status(401).send("Invalid signature");
+      const { optedOut } = await handleResendEvent(event);
+      if (optedOut.length) console.log(`[CAMPAIGN] ${event.type}: opted out ${optedOut.join(', ')}`);
+      res.json({ received: true, optedOut: optedOut.length });
+    } catch (error: any) {
+      console.error('[CAMPAIGN] resend webhook error:', error);
+      res.status(500).send("Webhook error");
+    }
+  });
+
   app.get("/api/wholesale/customers/:id", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const customer = await storage.getWholesaleCustomer(req.params.id);

@@ -73,13 +73,22 @@ async function resendSendMail(mailOptions: any): Promise<void> {
   }));
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+      // Same key on a retry = Resend suppresses the duplicate (campaign sends
+      // key each message, so an interrupted send can be retried safely).
+      ...(mailOptions.idempotencyKey ? { 'Idempotency-Key': String(mailOptions.idempotencyKey) } : {}),
+    },
     body: JSON.stringify({
       from: process.env.RESEND_FROM || mailOptions.from,
       to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
       subject: mailOptions.subject,
       html: mailOptions.html,
       text: mailOptions.text,
+      ...(mailOptions.replyTo ? { reply_to: mailOptions.replyTo } : {}),
+      // Custom headers (List-Unsubscribe etc.) pass straight through.
+      ...(mailOptions.headers ? { headers: mailOptions.headers } : {}),
       ...(attachments.length ? { attachments } : {}),
     }),
   });
@@ -2830,26 +2839,46 @@ Puget Sound Kombucha Co.`,
 /** Is a real mail provider configured? (Otherwise sends are log-only.) */
 export const isMailConfigured = (): boolean => !!createTransporter();
 
-/** One campaign message to one recipient. Throws on provider failure. */
-export async function sendCampaignMail(to: string, subject: string, built: { html: string; text: string }): Promise<void> {
+/** Does the configured provider honor idempotency keys? Only Resend does; over
+ *  SMTP a retry is a second copy, so callers must stay conservative there. */
+export const isMailIdempotent = (): boolean => !!process.env.RESEND_API_KEY;
+
+export const UNSUBSCRIBE_PLACEHOLDER = '{{UNSUBSCRIBE_URL}}';
+
+/** One campaign message to one recipient. The built template carries an
+ *  UNSUBSCRIBE_PLACEHOLDER that becomes this recipient's own tokenized link,
+ *  and the message carries RFC 8058 one-click headers so mail clients can offer
+ *  their own Unsubscribe button. Throws on provider failure. */
+export async function sendCampaignMail(
+  to: string,
+  subject: string,
+  built: { html: string; text: string },
+  opts: { unsubscribeUrl: string; idempotencyKey?: string },
+): Promise<void> {
   const transporter = createTransporter();
   if (!transporter) {
-    console.log(`[CAMPAIGN] Would send to: ${to}`);
+    console.log(`[CAMPAIGN] Would send to: ${to} (unsubscribe: ${opts.unsubscribeUrl})`);
     return;
   }
   await transporter.sendMail({
     from: process.env.GMAIL_USER,
     to,
     subject,
-    text: built.text,
-    html: built.html,
+    replyTo: 'orders@soundkombucha.com',
+    text: built.text.split(UNSUBSCRIBE_PLACEHOLDER).join(opts.unsubscribeUrl),
+    html: built.html.split(UNSUBSCRIBE_PLACEHOLDER).join(opts.unsubscribeUrl),
+    headers: {
+      'List-Unsubscribe': `<${opts.unsubscribeUrl}>, <mailto:orders@soundkombucha.com?subject=unsubscribe>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
+    idempotencyKey: opts.idempotencyKey,
     attachments: getLogoAttachment(),
   });
 }
 
 /** The branded wrapper around staff-pasted body HTML (already sanitized by the
- *  campaign module). Same header/footer as every other mail, plus the
- *  reply-to-opt-out line marketing-style sends need. */
+ *  campaign module). Same header/footer as every other mail, plus a real
+ *  unsubscribe link (per-recipient, substituted at send time). */
 export function buildCampaignEmail(subject: string, bodyHtml: string): { html: string; text: string } {
   const text = bodyHtml
     // Plain-text readers keep the link destination: "label (https://…)".
@@ -2865,7 +2894,7 @@ export function buildCampaignEmail(subject: string, bodyHtml: string): { html: s
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
-  const optOut = `You're receiving this because you're a Puget Sound Kombucha customer. Don't want these updates? Reply with "unsubscribe" and we'll take you off the list.`;
+  const optOut = `You're receiving this because you're a Puget Sound Kombucha customer. Don't want these updates? <a href="${UNSUBSCRIBE_PLACEHOLDER}" style="color:#6B7280;">Unsubscribe</a> — one click, no login.`;
 
   const html = `
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
@@ -2889,7 +2918,7 @@ Puget Sound Kombucha Co.
 4501 Shilshole Ave NW, Seattle, WA 98107
 orders@soundkombucha.com · (206) 789-5219
 
-${optOut}`;
+You're receiving this because you're a Puget Sound Kombucha customer. Don't want these updates? Unsubscribe here (one click, no login): ${UNSUBSCRIBE_PLACEHOLDER}`;
 
   return { html, text: fullText };
 }
