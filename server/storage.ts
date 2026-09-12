@@ -2270,12 +2270,66 @@ export class PostgresStorage implements IStorage {
     }));
   }
 
+  // Identical lines consolidate (owner, 2026-09-12): the same item added twice to
+  // one parent is ONE line with the quantities summed, enforced here at the write
+  // boundary so every caller (checkout, admin add-item, staff entry, renewals)
+  // inherits it. The packing note is part of a line's identity because a split
+  // case's composition lives there — two different splits must stay two lines.
   async addRetailSubscriptionItem(item: InsertRetailSubscriptionItem): Promise<RetailSubscriptionItem> {
+    const note = (item.notes ?? '').trim();
+    const [existing] = await db
+      .select()
+      .from(retailSubscriptionItems)
+      .where(and(
+        eq(retailSubscriptionItems.subscriptionId, item.subscriptionId),
+        eq(retailSubscriptionItems.retailProductId, item.retailProductId),
+        sql`${retailSubscriptionItems.selectedFlavorId} IS NOT DISTINCT FROM ${item.selectedFlavorId ?? null}`,
+        sql`COALESCE(${retailSubscriptionItems.notes}, '') = ${note}`,
+      ))
+      .limit(1);
+    if (existing) {
+      const [updated] = await db
+        .update(retailSubscriptionItems)
+        .set({
+          quantity: existing.quantity + (item.quantity ?? 1),
+          // The earliest locked-in price stands; only fill it if the line had none.
+          unitPriceAtSignup: existing.unitPriceAtSignup ?? item.unitPriceAtSignup ?? null,
+        })
+        .where(eq(retailSubscriptionItems.id, existing.id))
+        .returning();
+      return updated;
+    }
     const result = await db
       .insert(retailSubscriptionItems)
-      .values(item)
+      .values({ ...item, notes: note || null })
       .returning();
     return result[0];
+  }
+
+  /** Same consolidation for order lines: (product, flavor, unit price, note). */
+  async addRetailOrderItemV2(item: typeof retailOrderItemsV2.$inferInsert): Promise<typeof retailOrderItemsV2.$inferSelect> {
+    const note = (item.notes ?? '').trim();
+    const [existing] = await db
+      .select()
+      .from(retailOrderItemsV2)
+      .where(and(
+        eq(retailOrderItemsV2.orderId, item.orderId),
+        eq(retailOrderItemsV2.retailProductId, item.retailProductId),
+        sql`${retailOrderItemsV2.selectedFlavorId} IS NOT DISTINCT FROM ${item.selectedFlavorId ?? null}`,
+        eq(retailOrderItemsV2.unitPrice, item.unitPrice),
+        sql`COALESCE(${retailOrderItemsV2.notes}, '') = ${note}`,
+      ))
+      .limit(1);
+    if (existing) {
+      const [updated] = await db
+        .update(retailOrderItemsV2)
+        .set({ quantity: existing.quantity + item.quantity })
+        .where(eq(retailOrderItemsV2.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [row] = await db.insert(retailOrderItemsV2).values({ ...item, notes: note || null }).returning();
+    return row;
   }
 
   async getWholesaleCustomers(): Promise<WholesaleCustomer[]> {
@@ -3115,7 +3169,27 @@ export class PostgresStorage implements IStorage {
     return await db.select().from(wholesaleOrderItems);
   }
 
+  // Identical lines consolidate (owner, 2026-09-12): same unit + flavor on one
+  // order = one line, quantities summed — a form with "Sunbreak x2" and
+  // "Sunbreak x1" on separate rows lands as Sunbreak x3.
   async createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem> {
+    const [existing] = await db
+      .select()
+      .from(wholesaleOrderItems)
+      .where(and(
+        eq(wholesaleOrderItems.orderId, item.orderId),
+        sql`${wholesaleOrderItems.unitTypeId} IS NOT DISTINCT FROM ${item.unitTypeId ?? null}`,
+        sql`${wholesaleOrderItems.flavorId} IS NOT DISTINCT FROM ${item.flavorId ?? null}`,
+      ))
+      .limit(1);
+    if (existing) {
+      const [updated] = await db
+        .update(wholesaleOrderItems)
+        .set({ quantity: existing.quantity + item.quantity })
+        .where(eq(wholesaleOrderItems.id, existing.id))
+        .returning();
+      return updated;
+    }
     const result = await db.insert(wholesaleOrderItems).values(item).returning();
     return result[0];
   }

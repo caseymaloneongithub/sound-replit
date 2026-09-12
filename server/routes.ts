@@ -4125,7 +4125,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Mixed + a packing note, which renewals copy onto each order.
           for (const { item, unitPrice } of pricedLines) {
             const itemFields = await splitItemFields(item.selectedFlavorId, (item as any).splitFlavorId ?? null);
-            await db.insert(retailSubscriptionItems).values({
+            // Consolidates identical lines (storage-level invariant).
+            await storage.addRetailSubscriptionItem({
               subscriptionId: subscription.id,
               retailProductId: item.retailProductId,
               selectedFlavorId: itemFields.selectedFlavorId,
@@ -6169,18 +6170,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // land on the board as 0.5 under each chosen flavor.
       const itemFields = await splitItemFields(validated.selectedFlavorId || null, validated.splitFlavorId || null);
 
-      // Create the subscription item
-      const [newItem] = await db
-        .insert(retailSubscriptionItems)
-        .values({
-          subscriptionId,
-          retailProductId: validated.retailProductId,
-          selectedFlavorId: itemFields.selectedFlavorId,
-          notes: itemFields.notes,
-          quantity: validated.quantity,
-        })
-        .returning();
-      
+      // Create the subscription item (consolidates into an identical existing line).
+      const newItem = await storage.addRetailSubscriptionItem({
+        subscriptionId,
+        retailProductId: validated.retailProductId,
+        selectedFlavorId: itemFields.selectedFlavorId,
+        notes: itemFields.notes,
+        quantity: validated.quantity,
+      });
+
       res.json(newItem);
     } catch (error: any) {
       console.error("Error adding product to retail subscription:", error);
@@ -6973,7 +6971,7 @@ If you have any questions, please don't hesitate to reach out!`,
         }
       }
       for (const line of lines) {
-        await db.insert(retailOrderItemsV2).values({ orderId: order.id, ...line });
+        await storage.addRetailOrderItemV2({ orderId: order.id, ...line });
       }
       console.log(`[RETAIL] Staff order ${order.orderNumber} for ${user.email}: ${total.toFixed(2)} (pay at pickup)`);
       res.status(201).json(order);
@@ -9329,9 +9327,9 @@ If you have any questions, please don't hesitate to reach out!`,
         })
         .returning();
       
-      // Create subscription items
+      // Create subscription items (identical lines consolidate)
       for (const item of validated.items) {
-        await db.insert(retailSubscriptionItems).values({
+        await storage.addRetailSubscriptionItem({
           subscriptionId: newSubscription.id,
           retailProductId: item.retailProductId,
           selectedFlavorId: item.selectedFlavorId || null,
@@ -9500,17 +9498,15 @@ If you have any questions, please don't hesitate to reach out!`,
       // renewals land on the board as 0.5 under each chosen flavor.
       const itemFields = await splitItemFields(validated.selectedFlavorId || null, validated.splitFlavorId || null);
 
-      const [newItem] = await db
-        .insert(retailSubscriptionItems)
-        .values({
-          subscriptionId: req.params.id,
-          retailProductId: validated.retailProductId,
-          selectedFlavorId: itemFields.selectedFlavorId,
-          notes: itemFields.notes,
-          quantity: validated.quantity,
-        })
-        .returning();
-      
+      // Consolidates into an identical existing line rather than adding a twin.
+      const newItem = await storage.addRetailSubscriptionItem({
+        subscriptionId: req.params.id,
+        retailProductId: validated.retailProductId,
+        selectedFlavorId: itemFields.selectedFlavorId,
+        notes: itemFields.notes,
+        quantity: validated.quantity,
+      });
+
       res.status(201).json(newItem);
     } catch (error: any) {
       console.error("Error adding subscription item:", error);

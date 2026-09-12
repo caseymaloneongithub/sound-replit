@@ -219,12 +219,25 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
 
         const unitPrice = resolveUnitPrice(item);
 
-        await orderClient.query(
-          `INSERT INTO retail_order_items_v2
-             (order_id, retail_product_id, selected_flavor_id, quantity, unit_price, notes)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [newOrderId, item.retailProductId, item.selectedFlavorId, item.quantity, unitPrice.toFixed(2), item.notes ?? null]
+        // Identical lines consolidate (same rule as storage.addRetailOrderItemV2,
+        // done here on the order's own transaction client).
+        const params = [newOrderId, item.retailProductId, item.selectedFlavorId, item.quantity, unitPrice.toFixed(2), item.notes ?? null];
+        const merged = await orderClient.query(
+          `UPDATE retail_order_items_v2 SET quantity = quantity + $4
+           WHERE order_id = $1 AND retail_product_id = $2
+             AND selected_flavor_id IS NOT DISTINCT FROM $3
+             AND unit_price = $5 AND COALESCE(notes,'') = COALESCE($6,'')
+           RETURNING id`,
+          params
         );
+        if (merged.rowCount === 0) {
+          await orderClient.query(
+            `INSERT INTO retail_order_items_v2
+               (order_id, retail_product_id, selected_flavor_id, quantity, unit_price, notes)
+             VALUES ($1,$2,$3,$4,$5,$6)`,
+            params
+          );
+        }
       }
 
       await orderClient.query(
