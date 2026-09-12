@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Loader2, Send } from "lucide-react";
 import { CampaignEditor } from "@/components/campaign-editor";
@@ -168,11 +168,12 @@ export default function AdminEmailCampaign() {
     const t = setTimeout(() => setPreviewKey(JSON.stringify({ subject: subject.trim(), bodyHtml })), 350);
     return () => clearTimeout(t);
   }, [subject, bodyHtml]);
-  const { data: preview, isFetching: previewLoading } = useQuery<{ html: string; text: string }>({
+  const { data: preview, isFetching: previewLoading, error: previewError, refetch: refetchPreview } = useQuery<{ html: string; text: string }>({
     queryKey: ["campaign-preview", previewKey],
     queryFn: async () => apiRequest("POST", "/api/admin/email-campaign/preview", JSON.parse(previewKey)),
     enabled: messageTab === "preview" && !!previewKey,
     staleTime: Infinity,
+    retry: false,
   });
 
   const sendMutation = useMutation({
@@ -394,14 +395,23 @@ export default function AdminEmailCampaign() {
                       <TabsTrigger value="preview" className="text-xs" data-testid="tab-message-preview">Preview email</TabsTrigger>
                     </TabsList>
                   </div>
-                  <TabsContent value="write" className="mt-0">
+                  {/* Both panels stay MOUNTED and are shown/hidden — Radix TabsContent
+                      would unmount the editor on Preview, throwing away its undo
+                      history (an accidental deletion before previewing became
+                      unrecoverable). */}
+                  <div hidden={messageTab !== "write"}>
                     <CampaignEditor value={bodyHtml} onChange={setBodyHtml} />
-                  </TabsContent>
-                  <TabsContent value="preview" className="mt-0">
+                  </div>
+                  <div hidden={messageTab !== "preview"}>
                     {/* The server's real template in a sandboxed frame — header, body,
                         footer, unsubscribe link — exactly as it will land. */}
                     <div className="rounded-md border bg-muted/40 overflow-hidden" data-testid="campaign-preview">
-                      {preview ? (
+                      {previewError ? (
+                        <div className="p-6 text-sm space-y-3" data-testid="campaign-preview-error">
+                          <p className="text-destructive">Couldn't build the preview: {(previewError as Error).message || "request failed"}</p>
+                          <Button type="button" variant="outline" size="sm" onClick={() => refetchPreview()} data-testid="button-retry-preview">Try again</Button>
+                        </div>
+                      ) : preview ? (
                         <iframe
                           title="Email preview"
                           sandbox=""
@@ -409,10 +419,12 @@ export default function AdminEmailCampaign() {
                           className="w-full h-[32rem] bg-white"
                         />
                       ) : (
-                        <p className="p-6 text-sm text-muted-foreground">{previewLoading ? "Building preview…" : "Write something to preview it."}</p>
+                        <p className="p-6 text-sm text-muted-foreground">
+                          {previewLoading ? "Building preview…" : bodyHtml ? "Preview will appear in a moment." : "Write something to preview it."}
+                        </p>
                       )}
                     </div>
-                  </TabsContent>
+                  </div>
                 </Tabs>
               </CardContent>
             </Card>

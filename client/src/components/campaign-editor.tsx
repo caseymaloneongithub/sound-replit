@@ -36,6 +36,11 @@ export function CampaignEditor({ value, onChange }: { value: string; onChange: (
     editorProps: {
       attributes: {
         class: "prose prose-sm max-w-none min-h-56 px-3 py-2 focus:outline-none",
+        // The visible "Body" label can't associate with a contenteditable div,
+        // so the textbox names itself for screen readers.
+        role: "textbox",
+        "aria-label": "Email body",
+        "aria-multiline": "true",
         "data-testid": "editor-campaign-body",
       },
     },

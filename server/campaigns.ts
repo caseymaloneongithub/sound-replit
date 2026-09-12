@@ -55,7 +55,18 @@ export type CampaignStatus = {
 export function sanitizeCampaignHtml(input: string): string {
   return sanitizeHtml(String(input ?? ''), {
     allowedTags: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'blockquote'],
-    allowedAttributes: { a: ['href'] },
+    // <ol start="3"> is how the editor represents a list that begins at 3 —
+    // dropping it would silently renumber on send. Kept only as a positive
+    // integer; anything else is stripped.
+    allowedAttributes: { a: ['href'], ol: ['start'] },
+    transformTags: {
+      ol: (tagName, attribs) => {
+        const start = String(attribs.start ?? '').trim();
+        const kept: Record<string, string> = {};
+        if (/^[1-9]\d{0,5}$/.test(start)) kept.start = start;
+        return { tagName, attribs: kept };
+      },
+    },
     allowedSchemes: ['http', 'https', 'mailto'],
     allowProtocolRelative: false,
   })
