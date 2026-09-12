@@ -67,7 +67,8 @@ export default function AdminRetailProducts() {
         price: price.toFixed(2),
         deposit: deposit.toFixed(2),
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
-        productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
+        // No UI edits this any more; keep a stored value, never write '' over null.
+        productImageUrl: data.productType === 'multi-flavor' && data.productImageUrl?.trim() ? data.productImageUrl.trim() : null,
         allowSplit: data.productType === 'multi-flavor' ? !!data.allowSplit : false,
         displayPerFlavor: data.productType === 'multi-flavor' ? !!data.displayPerFlavor : false,
         isActive: data.isActive,
@@ -130,7 +131,8 @@ export default function AdminRetailProducts() {
         price: price.toFixed(2),
         deposit: deposit.toFixed(2),
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
-        productImageUrl: data.productType === 'multi-flavor' ? data.productImageUrl : null,
+        // No UI edits this any more; keep a stored value, never write '' over null.
+        productImageUrl: data.productType === 'multi-flavor' && data.productImageUrl?.trim() ? data.productImageUrl.trim() : null,
         allowSplit: data.productType === 'multi-flavor' ? !!data.allowSplit : false,
         displayPerFlavor: data.productType === 'multi-flavor' ? !!data.displayPerFlavor : false,
         isActive: data.isActive,

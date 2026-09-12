@@ -141,7 +141,11 @@ export async function handleResendEvent(event: any): Promise<{ optedOut: string[
   const to: string[] = Array.isArray(event?.data?.to) ? event.data.to : [];
   const optedOut: string[] = [];
   const bounceType = String(event?.data?.bounce?.type ?? '').toLowerCase();
-  const hardBounce = type === 'email.bounced' && bounceType !== 'transient';
+  // Allow-list, not "anything but transient": Resend classifies bounces as
+  // Permanent / Transient / Undetermined, and only a PERMANENT one means the
+  // address is dead. A full mailbox or an undetermined failure must not
+  // silently unsubscribe a customer.
+  const hardBounce = type === 'email.bounced' && bounceType === 'permanent';
   if (hardBounce || type === 'email.complained') {
     const reason = type === 'email.complained' ? 'spam complaint (provider webhook)' : 'hard bounce (provider webhook)';
     for (const addr of to) {
@@ -241,7 +245,9 @@ async function expireStaleRetries(campaignId: string): Promise<string[]> {
  *  SKIP LOCKED means overlapping workers never hand out the same row twice, and
  *  the deadline sits INSIDE the claim predicate so a retry can't slip through
  *  between an expiry sweep and the claim. */
-async function claimNext(campaignId: string): Promise<{ id: string; email: string } | null> {
+export async function claimNext(campaignId: string): Promise<{ id: string; email: string; claimedAt: string } | null> {
+  // claimed_at comes back as TEXT so it can be handed back to Postgres verbatim
+  // for an equality guard (a JS Date round-trip loses precision/zone).
   const result = await db.execute(sql`
     UPDATE email_campaign_recipients
     SET status = 'sending', claimed_at = now(), first_claimed_at = COALESCE(first_claimed_at, now())
@@ -253,9 +259,23 @@ async function claimNext(campaignId: string): Promise<{ id: string; email: strin
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING id, email`);
+    RETURNING id, email, claimed_at::text AS claimed_at`);
   const row = (result as any).rows?.[0];
-  return row ? { id: String(row.id), email: String(row.email) } : null;
+  return row ? { id: String(row.id), email: String(row.email), claimedAt: String(row.claimed_at) } : null;
+}
+
+/** Records a provider failure — but only on THIS worker's live claim. If the
+ *  lease expired mid-call and a peer reclaimed, resent, and recorded 'sent'
+ *  (the provider deduped it), a late error here must not clobber that. */
+export async function markFailed(rowId: string, claimedAt: string, message: string): Promise<void> {
+  await db
+    .update(emailCampaignRecipients)
+    .set({ status: 'failed', error: message.slice(0, 200) })
+    .where(and(
+      eq(emailCampaignRecipients.id, rowId),
+      eq(emailCampaignRecipients.status, 'sending'),
+      sql`${emailCampaignRecipients.claimedAt} = ${claimedAt}::timestamp`,
+    ));
 }
 
 // A claim is a LEASE: a live worker finishes one send in seconds, so a claim
@@ -342,58 +362,84 @@ export async function runCampaign(campaignId: string): Promise<void> {
   const built = buildCampaignEmail(campaign.subject, campaign.bodyHtml);
   const live = isMailConfigured();
 
+  // A transient database error (Neon idle cutoff, a pool hiccup, a blip) must
+  // not end the loop: an abandoned loop leaves the campaign 'sending' forever,
+  // and the one-sending index then blocks every future campaign until a
+  // restart. Each pass is isolated; errors back off and retry, and only a long
+  // unbroken run of them gives up (the boot hook resumes it later).
+  let consecutiveErrors = 0;
+  const MAX_CONSECUTIVE_ERRORS = 30;
   for (;;) {
-    const next = await claimNext(campaignId);
-    if (next) {
-      // Delivery and its bookkeeping are separate steps with separate
-      // failure meanings: a provider error is a failed send; a database
-      // error AFTER the provider accepted is a recorded-delivery problem.
-      let delivered = false;
-      try {
-        await sendCampaignMail(next.email, campaign.subject, built, {
-          unsubscribeUrl: unsubscribeUrlFor(next.email),
-          // Stable per campaign+row: a retry after an interrupted send is
-          // deduplicated by the provider instead of delivered twice.
-          idempotencyKey: `campaign:${campaignId}:${next.id}`,
-        });
-        delivered = true;
-      } catch (error: any) {
-        console.error(`[CAMPAIGN] failed for ${next.email}: ${error?.message}`);
-        await db
-          .update(emailCampaignRecipients)
-          .set({ status: 'failed', error: String(error?.message ?? 'send failed').slice(0, 200) })
-          .where(eq(emailCampaignRecipients.id, next.id))
-          .catch((e: any) => console.error(`[CAMPAIGN] could not record failure for ${next.email}: ${e?.message}`));
+    try {
+      const next = await claimNext(campaignId);
+      if (next) {
+        // Delivery and its bookkeeping are separate steps with separate
+        // failure meanings: a provider error is a failed send; a database
+        // error AFTER the provider accepted is a recorded-delivery problem.
+        let delivered = false;
+        try {
+          await sendCampaignMail(next.email, campaign.subject, built, {
+            unsubscribeUrl: unsubscribeUrlFor(next.email),
+            // Stable per campaign+row: a retry after an interrupted send is
+            // deduplicated by the provider instead of delivered twice.
+            idempotencyKey: `campaign:${campaignId}:${next.id}`,
+          });
+          delivered = true;
+        } catch (error: any) {
+          console.error(`[CAMPAIGN] failed for ${next.email}: ${error?.message}`);
+          await markFailed(next.id, next.claimedAt, String(error?.message ?? 'send failed'))
+            .catch((e: any) => console.error(`[CAMPAIGN] could not record failure for ${next.email}: ${e?.message}`));
+        }
+        if (delivered) {
+          await markSent(next.id, next.email);
+          if (live) console.log(`[CAMPAIGN] sent to ${next.email}`);
+        }
+        consecutiveErrors = 0;
+        // Gentle pacing — provider rate limits, and a slow drip beats a bounce storm.
+        if (live) await new Promise((resolve) => setTimeout(resolve, 300));
+        continue;
       }
-      if (delivered) {
-        await markSent(next.id, next.email);
-        if (live) console.log(`[CAMPAIGN] sent to ${next.email}`);
+
+      // Nothing claimable. Retire retries that outlived their window (they're
+      // pending but claimNext refuses them), settle any claims whose lease ran
+      // out (a dead worker's), then look again — settling may have returned
+      // rows to 'pending'.
+      await expireStaleRetries(campaignId);
+      const settled = await settleExpiredClaims(campaignId);
+      if (settled.retried.length) continue;
+
+      const [{ inFlight }] = await db
+        .select({ inFlight: sql<number>`count(*)::int` })
+        .from(emailCampaignRecipients)
+        .where(and(eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ['pending', 'sending'])));
+      consecutiveErrors = 0;
+      if (inFlight === 0) break;
+      // Another worker holds live leases — wait for them rather than declaring
+      // the campaign done underneath it.
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+    } catch (error: any) {
+      consecutiveErrors++;
+      console.error(`[CAMPAIGN] ${campaignId}: loop error (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${error?.message}`);
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        console.error(`[CAMPAIGN] ${campaignId}: giving up for now — still 'sending'; the boot hook or next worker resumes it`);
+        return;
       }
-      // Gentle pacing — provider rate limits, and a slow drip beats a bounce storm.
-      if (live) await new Promise((resolve) => setTimeout(resolve, 300));
-      continue;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(5_000 * consecutiveErrors, 60_000)));
     }
-
-    // Nothing claimable. Retire retries that outlived their window (they're
-    // pending but claimNext refuses them), settle any claims whose lease ran
-    // out (a dead worker's), then look again — settling may have returned
-    // rows to 'pending'.
-    await expireStaleRetries(campaignId);
-    const settled = await settleExpiredClaims(campaignId);
-    if (settled.retried.length) continue;
-
-    const [{ inFlight }] = await db
-      .select({ inFlight: sql<number>`count(*)::int` })
-      .from(emailCampaignRecipients)
-      .where(and(eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ['pending', 'sending'])));
-    if (inFlight === 0) break;
-    // Another worker holds live leases — wait for them rather than declaring
-    // the campaign done underneath it.
-    await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
   }
 
-  await db.update(emailCampaigns).set({ status: 'done', completedAt: new Date() }).where(eq(emailCampaigns.id, campaignId));
-  console.log(`[CAMPAIGN] ${campaignId} done`);
+  // Finishing is itself retried: a blip right here would otherwise strand the
+  // campaign 'sending' with nothing left to do.
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await db.update(emailCampaigns).set({ status: 'done', completedAt: new Date() }).where(eq(emailCampaigns.id, campaignId));
+      console.log(`[CAMPAIGN] ${campaignId} done`);
+      return;
+    } catch (error: any) {
+      console.error(`[CAMPAIGN] ${campaignId}: could not mark done (attempt ${attempt}): ${error?.message}`);
+      await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt));
+    }
+  }
 }
 
 /** Boot hook: any campaign still 'sending' was interrupted by a restart — or is

@@ -21,6 +21,11 @@ type CartItemWithProduct = RetailCartItem & { retailProduct: ShopProduct };
 
 const flavorInStock = (f: Flavor) => !(f as Flavor & { soldOut?: boolean }).soldOut;
 
+// Flavors offered in a pick-2 split: active, in stock, not the Mixed pseudo-flavor,
+// and not whatever the other picker already holds. One rule for both pickers.
+const eligibleSplitFlavors = (p: ShopProduct, excludeId: string) =>
+  p.flavors.filter((f) => f.isActive && flavorInStock(f) && f.name !== "Mixed" && f.id !== excludeId);
+
 /**
  * Flavor page of the flavor-first shop (owner, 2026-09-12): the customer arrived
  * having chosen a FLAVOR; here they choose the package it comes in (step 1), then
@@ -189,7 +194,7 @@ export default function ShopFlavor() {
                 <div className="bg-card border rounded-md p-3 md:p-4 flex items-center justify-center">
                   {images.length > 0 ? (
                     <img
-                      src={images[imageIndex]}
+                      src={images[Math.min(imageIndex, images.length - 1)]}
                       alt={`${flavor.name} kombucha`}
                       className="max-h-48 md:max-h-[22rem] w-auto max-w-full object-contain"
                       data-testid={`image-flavor-${flavor.id}`}
@@ -238,7 +243,11 @@ export default function ShopFlavor() {
               </div>
             </div>
 
-            {packages.length === 0 ? (
+            {productsLoading ? (
+              // Flavors and products load in parallel — an empty package list
+              // while products are still in flight must not read as sold out.
+              <p className="mt-10 text-muted-foreground" data-testid="text-packages-loading">Loading packages…</p>
+            ) : packages.length === 0 ? (
               <div className="mt-10 rounded-md border bg-muted/40 p-6 text-center" data-testid="text-flavor-soldout">
                 <p className="font-medium">That's the last of it — {flavor.name} is sold through for now.</p>
                 <Button asChild variant="outline" className="mt-4"><Link href="/shop">See what's pouring</Link></Button>
@@ -313,7 +322,7 @@ export default function ShopFlavor() {
                           <Select value={pickTwoA} onValueChange={setPickTwoA}>
                             <SelectTrigger id="pick2-a" data-testid="select-pick2-a" className="mt-1"><SelectValue placeholder="First flavor" /></SelectTrigger>
                             <SelectContent>
-                              {product.flavors.filter((f) => f.isActive && flavorInStock(f) && f.name !== "Mixed" && f.id !== pickTwoB).map((f) => (
+                              {eligibleSplitFlavors(product, pickTwoB).map((f) => (
                                 <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
                               ))}
                             </SelectContent>
@@ -324,7 +333,7 @@ export default function ShopFlavor() {
                           <Select value={pickTwoB} onValueChange={setPickTwoB}>
                             <SelectTrigger id="pick2-b" data-testid="select-pick2-b" className="mt-1"><SelectValue placeholder="Second flavor" /></SelectTrigger>
                             <SelectContent>
-                              {product.flavors.filter((f) => f.isActive && flavorInStock(f) && f.name !== "Mixed" && f.id !== pickTwoA).map((f) => (
+                              {eligibleSplitFlavors(product, pickTwoA).map((f) => (
                                 <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
                               ))}
                             </SelectContent>

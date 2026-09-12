@@ -1812,8 +1812,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!location || location.customerId !== customer.id) locationId = null;
       }
       const items = Array.isArray(req.body?.items) ? req.body.items : [];
+      // The form has no line cap, so a partial sum here could block a valid
+      // order whose tail lines clear the minimum. Absurdly long lists fail
+      // OPEN (submit still enforces); normal ones are summed in full.
+      if (items.length > 200) return res.json({ meetsMinimum: true, minimumOrderAmount });
       let total = 0;
-      for (const item of items.slice(0, 20)) {
+      for (const item of items) {
         const qty = Number(item?.quantity);
         // Whole units only, in the form's own 1-99 range: fractional quantities
         // would let a binary search recover a store's negotiated rate to the
@@ -6416,16 +6420,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         arr.push(l);
         byCustomer.set(l.customerId, arr);
       }
+      // Every authorized contact on the account (wholesale_customers.emails)
+      // plus the primary — the people who actually log in and order, not just
+      // the original signup. Deduped, order preserved.
+      const accountEmails = (c: { email: string; emails?: string[] | null }) => {
+        const all = [...splitEmails(c.email), ...(Array.isArray(c.emails) ? c.emails.flatMap((e) => splitEmails(e)) : [])];
+        const seen = new Set<string>();
+        return all.filter((e) => { const k = e.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+      };
       const rows: Array<{ key: string; businessName: string; locationName: string | null; emails: string[] }> = [];
       for (const c of customers) {
         const locs = byCustomer.get(c.id) ?? [];
-        if (locs.length === 0) {
-          rows.push({ key: `c:${c.id}`, businessName: c.businessName, locationName: null, emails: splitEmails(c.email) });
-          continue;
-        }
+        const covered = new Set<string>();
         for (const l of locs) {
+          // A location row carries ONLY its own inbox — or the primary as a
+          // fallback — never the whole account list: smearing every contact
+          // across every store defeats "by location" (unticking one store
+          // would remove nothing).
           const own = splitEmails(l.contactEmail);
-          rows.push({ key: `l:${l.id}`, businessName: c.businessName, locationName: l.locationName, emails: own.length ? own : splitEmails(c.email) });
+          const emails = own.length ? own : splitEmails(c.email);
+          rows.push({ key: `l:${l.id}`, businessName: c.businessName, locationName: l.locationName, emails });
+          for (const e of emails) covered.add(e.toLowerCase());
+        }
+        // Authorized contacts no location row already reaches show up ONCE, as
+        // their own tickable row, instead of being silently dropped.
+        const extras = accountEmails(c).filter((e) => !covered.has(e.toLowerCase()));
+        if (locs.length === 0) {
+          if (extras.length) rows.push({ key: `c:${c.id}`, businessName: c.businessName, locationName: null, emails: extras });
+        } else if (extras.length) {
+          rows.push({ key: `a:${c.id}`, businessName: c.businessName, locationName: 'Account contacts', emails: extras });
         }
       }
       rows.sort((a, b) => a.businessName.localeCompare(b.businessName) || (a.locationName ?? '').localeCompare(b.locationName ?? ''));
