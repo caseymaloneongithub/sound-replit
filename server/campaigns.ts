@@ -356,8 +356,27 @@ async function markSent(rowId: string, email: string): Promise<void> {
  *  from more than one worker at once (rolling deploys) and again after a
  *  restart: sent/failed/skipped/uncertain rows are never touched, live leases
  *  held by another worker are waited for, expired ones are settled. */
+/** Bounded retry with backoff for the reads that happen BEFORE the run loop's
+ *  own isolation kicks in — a blip there would otherwise exit the function with
+ *  the campaign still 'sending' (and the one-sending index blocking everything
+ *  after it) until another restart. */
+export async function withRetry<T>(label: string, fn: () => Promise<T>, attempts = 6): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+      console.error(`[CAMPAIGN] ${label} failed (attempt ${attempt}/${attempts}): ${error?.message}`);
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, Math.min(2_000 * attempt, 15_000)));
+    }
+  }
+  throw lastError;
+}
+
 export async function runCampaign(campaignId: string): Promise<void> {
-  const [campaign] = await db.select().from(emailCampaigns).where(eq(emailCampaigns.id, campaignId));
+  const [campaign] = await withRetry(`campaign ${campaignId} lookup`, () =>
+    db.select().from(emailCampaigns).where(eq(emailCampaigns.id, campaignId)));
   if (!campaign || campaign.status !== 'sending') return;
   const built = buildCampaignEmail(campaign.subject, campaign.bodyHtml);
   const live = isMailConfigured();
@@ -447,10 +466,11 @@ export async function runCampaign(campaignId: string): Promise<void> {
  *  it takes whatever is pending, settles only EXPIRED leases, and waits on live
  *  ones instead of finishing the campaign out from under another worker. */
 export async function resumeUnfinishedCampaigns(): Promise<void> {
-  const unfinished = await db
-    .select({ id: emailCampaigns.id, subject: emailCampaigns.subject })
-    .from(emailCampaigns)
-    .where(eq(emailCampaigns.status, 'sending'));
+  const unfinished = await withRetry('unfinished-campaign scan', () =>
+    db
+      .select({ id: emailCampaigns.id, subject: emailCampaigns.subject })
+      .from(emailCampaigns)
+      .where(eq(emailCampaigns.status, 'sending')));
   for (const c of unfinished) {
     console.log(`[CAMPAIGN] resuming unfinished campaign ${c.id} "${c.subject}"`);
     void runCampaign(c.id).catch((e) => console.error('[CAMPAIGN] resume failed:', e));
