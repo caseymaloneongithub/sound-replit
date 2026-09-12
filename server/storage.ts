@@ -2289,9 +2289,13 @@ export class PostgresStorage implements IStorage {
     const qty = item.quantity ?? 1;
     return db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'retail_sub_items:' + item.subscriptionId}))`);
-      const [updated] = await tx
-        .update(retailSubscriptionItems)
-        .set({ quantity: sql`${retailSubscriptionItems.quantity} + ${qty}` })
+      // Under the lock, read-then-write is safe. If an EDIT path produced twin
+      // rows (e.g. one line's flavor changed to match another), fold them into
+      // the earliest row FIRST so the increment applies exactly once — an
+      // unbounded UPDATE would bump every twin.
+      const matches = await tx
+        .select({ id: retailSubscriptionItems.id, quantity: retailSubscriptionItems.quantity })
+        .from(retailSubscriptionItems)
         .where(and(
           eq(retailSubscriptionItems.subscriptionId, item.subscriptionId),
           eq(retailSubscriptionItems.retailProductId, item.retailProductId),
@@ -2299,13 +2303,23 @@ export class PostgresStorage implements IStorage {
           sql`${retailSubscriptionItems.unitPriceAtSignup} IS NOT DISTINCT FROM ${item.unitPriceAtSignup ?? null}::numeric`,
           sql`COALESCE(${retailSubscriptionItems.notes}, '') = ${note}`,
         ))
+        .orderBy(retailSubscriptionItems.id);
+      if (matches.length === 0) {
+        const [row] = await tx
+          .insert(retailSubscriptionItems)
+          .values({ ...item, quantity: qty, notes: note || null })
+          .returning();
+        return row;
+      }
+      const [keep, ...twins] = matches;
+      if (twins.length) await tx.delete(retailSubscriptionItems).where(inArray(retailSubscriptionItems.id, twins.map((t) => t.id)));
+      const total = matches.reduce((sum, m) => sum + m.quantity, 0) + qty;
+      const [updated] = await tx
+        .update(retailSubscriptionItems)
+        .set({ quantity: total })
+        .where(eq(retailSubscriptionItems.id, keep.id))
         .returning();
-      if (updated) return updated;
-      const [row] = await tx
-        .insert(retailSubscriptionItems)
-        .values({ ...item, quantity: qty, notes: note || null })
-        .returning();
-      return row;
+      return updated;
     });
   }
 
@@ -2314,9 +2328,9 @@ export class PostgresStorage implements IStorage {
     const note = (item.notes ?? '').trim();
     return db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'retail_order_items:' + item.orderId}))`);
-      const [updated] = await tx
-        .update(retailOrderItemsV2)
-        .set({ quantity: sql`${retailOrderItemsV2.quantity} + ${item.quantity}` })
+      const matches = await tx
+        .select({ id: retailOrderItemsV2.id, quantity: retailOrderItemsV2.quantity })
+        .from(retailOrderItemsV2)
         .where(and(
           eq(retailOrderItemsV2.orderId, item.orderId),
           eq(retailOrderItemsV2.retailProductId, item.retailProductId),
@@ -2324,10 +2338,16 @@ export class PostgresStorage implements IStorage {
           eq(retailOrderItemsV2.unitPrice, item.unitPrice),
           sql`COALESCE(${retailOrderItemsV2.notes}, '') = ${note}`,
         ))
-        .returning();
-      if (updated) return updated;
-      const [row] = await tx.insert(retailOrderItemsV2).values({ ...item, notes: note || null }).returning();
-      return row;
+        .orderBy(retailOrderItemsV2.id);
+      if (matches.length === 0) {
+        const [row] = await tx.insert(retailOrderItemsV2).values({ ...item, notes: note || null }).returning();
+        return row;
+      }
+      const [keep, ...twins] = matches;
+      if (twins.length) await tx.delete(retailOrderItemsV2).where(inArray(retailOrderItemsV2.id, twins.map((t) => t.id)));
+      const total = matches.reduce((sum, m) => sum + m.quantity, 0) + item.quantity;
+      const [updated] = await tx.update(retailOrderItemsV2).set({ quantity: total }).where(eq(retailOrderItemsV2.id, keep.id)).returning();
+      return updated;
     });
   }
 
@@ -3178,9 +3198,9 @@ export class PostgresStorage implements IStorage {
   async createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem> {
     return db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'wholesale_order_items:' + item.orderId}))`);
-      const [updated] = await tx
-        .update(wholesaleOrderItems)
-        .set({ quantity: sql`${wholesaleOrderItems.quantity} + ${item.quantity}` })
+      const matches = await tx
+        .select({ id: wholesaleOrderItems.id, quantity: wholesaleOrderItems.quantity })
+        .from(wholesaleOrderItems)
         .where(and(
           eq(wholesaleOrderItems.orderId, item.orderId),
           sql`${wholesaleOrderItems.unitTypeId} IS NOT DISTINCT FROM ${item.unitTypeId ?? null}`,
@@ -3188,10 +3208,16 @@ export class PostgresStorage implements IStorage {
           sql`${wholesaleOrderItems.flavorId} IS NOT DISTINCT FROM ${item.flavorId ?? null}`,
           sql`${wholesaleOrderItems.unitPrice} = ${item.unitPrice}::numeric`,
         ))
-        .returning();
-      if (updated) return updated;
-      const result = await tx.insert(wholesaleOrderItems).values(item).returning();
-      return result[0];
+        .orderBy(wholesaleOrderItems.id);
+      if (matches.length === 0) {
+        const result = await tx.insert(wholesaleOrderItems).values(item).returning();
+        return result[0];
+      }
+      const [keep, ...twins] = matches;
+      if (twins.length) await tx.delete(wholesaleOrderItems).where(inArray(wholesaleOrderItems.id, twins.map((t) => t.id)));
+      const total = matches.reduce((sum, m) => sum + m.quantity, 0) + item.quantity;
+      const [updated] = await tx.update(wholesaleOrderItems).set({ quantity: total }).where(eq(wholesaleOrderItems.id, keep.id)).returning();
+      return updated;
     });
   }
 
