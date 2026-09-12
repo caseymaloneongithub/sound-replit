@@ -2275,61 +2275,60 @@ export class PostgresStorage implements IStorage {
   // boundary so every caller (checkout, admin add-item, staff entry, renewals)
   // inherits it. The packing note is part of a line's identity because a split
   // case's composition lives there — two different splits must stay two lines.
+  //
+  // Each merge is ONE serialized operation: a transaction that takes a
+  // parent-scoped advisory lock (so two adds to the same parent queue), then an
+  // UPDATE whose increment happens in SQL (never read-then-write), then INSERT
+  // only if nothing matched. Two simultaneous "+1"s therefore land as +2, and
+  // two simultaneous first adds can't both insert.
+  //
+  // The AGREED PRICE is part of every identity: two lines of the same item at
+  // different prices are different lines, and merging them would re-price one.
   async addRetailSubscriptionItem(item: InsertRetailSubscriptionItem): Promise<RetailSubscriptionItem> {
     const note = (item.notes ?? '').trim();
-    const [existing] = await db
-      .select()
-      .from(retailSubscriptionItems)
-      .where(and(
-        eq(retailSubscriptionItems.subscriptionId, item.subscriptionId),
-        eq(retailSubscriptionItems.retailProductId, item.retailProductId),
-        sql`${retailSubscriptionItems.selectedFlavorId} IS NOT DISTINCT FROM ${item.selectedFlavorId ?? null}`,
-        sql`COALESCE(${retailSubscriptionItems.notes}, '') = ${note}`,
-      ))
-      .limit(1);
-    if (existing) {
-      const [updated] = await db
+    const qty = item.quantity ?? 1;
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'retail_sub_items:' + item.subscriptionId}))`);
+      const [updated] = await tx
         .update(retailSubscriptionItems)
-        .set({
-          quantity: existing.quantity + (item.quantity ?? 1),
-          // The earliest locked-in price stands; only fill it if the line had none.
-          unitPriceAtSignup: existing.unitPriceAtSignup ?? item.unitPriceAtSignup ?? null,
-        })
-        .where(eq(retailSubscriptionItems.id, existing.id))
+        .set({ quantity: sql`${retailSubscriptionItems.quantity} + ${qty}` })
+        .where(and(
+          eq(retailSubscriptionItems.subscriptionId, item.subscriptionId),
+          eq(retailSubscriptionItems.retailProductId, item.retailProductId),
+          sql`${retailSubscriptionItems.selectedFlavorId} IS NOT DISTINCT FROM ${item.selectedFlavorId ?? null}`,
+          sql`${retailSubscriptionItems.unitPriceAtSignup} IS NOT DISTINCT FROM ${item.unitPriceAtSignup ?? null}::numeric`,
+          sql`COALESCE(${retailSubscriptionItems.notes}, '') = ${note}`,
+        ))
         .returning();
-      return updated;
-    }
-    const result = await db
-      .insert(retailSubscriptionItems)
-      .values({ ...item, notes: note || null })
-      .returning();
-    return result[0];
+      if (updated) return updated;
+      const [row] = await tx
+        .insert(retailSubscriptionItems)
+        .values({ ...item, quantity: qty, notes: note || null })
+        .returning();
+      return row;
+    });
   }
 
   /** Same consolidation for order lines: (product, flavor, unit price, note). */
   async addRetailOrderItemV2(item: typeof retailOrderItemsV2.$inferInsert): Promise<typeof retailOrderItemsV2.$inferSelect> {
     const note = (item.notes ?? '').trim();
-    const [existing] = await db
-      .select()
-      .from(retailOrderItemsV2)
-      .where(and(
-        eq(retailOrderItemsV2.orderId, item.orderId),
-        eq(retailOrderItemsV2.retailProductId, item.retailProductId),
-        sql`${retailOrderItemsV2.selectedFlavorId} IS NOT DISTINCT FROM ${item.selectedFlavorId ?? null}`,
-        eq(retailOrderItemsV2.unitPrice, item.unitPrice),
-        sql`COALESCE(${retailOrderItemsV2.notes}, '') = ${note}`,
-      ))
-      .limit(1);
-    if (existing) {
-      const [updated] = await db
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'retail_order_items:' + item.orderId}))`);
+      const [updated] = await tx
         .update(retailOrderItemsV2)
-        .set({ quantity: existing.quantity + item.quantity })
-        .where(eq(retailOrderItemsV2.id, existing.id))
+        .set({ quantity: sql`${retailOrderItemsV2.quantity} + ${item.quantity}` })
+        .where(and(
+          eq(retailOrderItemsV2.orderId, item.orderId),
+          eq(retailOrderItemsV2.retailProductId, item.retailProductId),
+          sql`${retailOrderItemsV2.selectedFlavorId} IS NOT DISTINCT FROM ${item.selectedFlavorId ?? null}`,
+          eq(retailOrderItemsV2.unitPrice, item.unitPrice),
+          sql`COALESCE(${retailOrderItemsV2.notes}, '') = ${note}`,
+        ))
         .returning();
-      return updated;
-    }
-    const [row] = await db.insert(retailOrderItemsV2).values({ ...item, notes: note || null }).returning();
-    return row;
+      if (updated) return updated;
+      const [row] = await tx.insert(retailOrderItemsV2).values({ ...item, notes: note || null }).returning();
+      return row;
+    });
   }
 
   async getWholesaleCustomers(): Promise<WholesaleCustomer[]> {
@@ -3172,26 +3171,28 @@ export class PostgresStorage implements IStorage {
   // Identical lines consolidate (owner, 2026-09-12): same unit + flavor on one
   // order = one line, quantities summed — a form with "Sunbreak x2" and
   // "Sunbreak x1" on separate rows lands as Sunbreak x3.
+  // Identity = (unit type, legacy product, flavor, unit price): a legacy row
+  // keyed by product_id must not fold into a unit-typed one, and a $20 line and
+  // a $30 line of the same item are two lines. Serialized per order, increment
+  // in SQL (see the retail helpers above).
   async createWholesaleOrderItem(item: InsertWholesaleOrderItem): Promise<WholesaleOrderItem> {
-    const [existing] = await db
-      .select()
-      .from(wholesaleOrderItems)
-      .where(and(
-        eq(wholesaleOrderItems.orderId, item.orderId),
-        sql`${wholesaleOrderItems.unitTypeId} IS NOT DISTINCT FROM ${item.unitTypeId ?? null}`,
-        sql`${wholesaleOrderItems.flavorId} IS NOT DISTINCT FROM ${item.flavorId ?? null}`,
-      ))
-      .limit(1);
-    if (existing) {
-      const [updated] = await db
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'wholesale_order_items:' + item.orderId}))`);
+      const [updated] = await tx
         .update(wholesaleOrderItems)
-        .set({ quantity: existing.quantity + item.quantity })
-        .where(eq(wholesaleOrderItems.id, existing.id))
+        .set({ quantity: sql`${wholesaleOrderItems.quantity} + ${item.quantity}` })
+        .where(and(
+          eq(wholesaleOrderItems.orderId, item.orderId),
+          sql`${wholesaleOrderItems.unitTypeId} IS NOT DISTINCT FROM ${item.unitTypeId ?? null}`,
+          sql`${wholesaleOrderItems.productId} IS NOT DISTINCT FROM ${(item as any).productId ?? null}`,
+          sql`${wholesaleOrderItems.flavorId} IS NOT DISTINCT FROM ${item.flavorId ?? null}`,
+          sql`${wholesaleOrderItems.unitPrice} = ${item.unitPrice}::numeric`,
+        ))
         .returning();
-      return updated;
-    }
-    const result = await db.insert(wholesaleOrderItems).values(item).returning();
-    return result[0];
+      if (updated) return updated;
+      const result = await tx.insert(wholesaleOrderItems).values(item).returning();
+      return result[0];
+    });
   }
 
   async deleteWholesaleOrderItems(orderId: string): Promise<void> {

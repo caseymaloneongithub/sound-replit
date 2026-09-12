@@ -14,13 +14,16 @@ const pool = new Pool({ connectionString: url });
 
 // Each entry: table, identity columns (with null-safe expressions), and any
 // extra "keep the first non-null" columns to fold into the survivor.
+// The agreed price and any legacy product link are part of every identity —
+// lines at different prices, or distinct legacy products, must never fold
+// together (review, 2026-09-12; the first run's wholesale key lacked both).
 const TABLES = [
   { table: 'retail_subscription_items', parent: 'subscription_id',
-    identity: ['retail_product_id', "COALESCE(selected_flavor_id,'')", "COALESCE(notes,'')"], fold: ['unit_price_at_signup'] },
+    identity: ['retail_product_id', "COALESCE(selected_flavor_id,'')", "COALESCE(unit_price_at_signup::text,'')", "COALESCE(notes,'')"], fold: [] },
   { table: 'retail_order_items_v2', parent: 'order_id',
     identity: ['retail_product_id', "COALESCE(selected_flavor_id,'')", 'unit_price', "COALESCE(notes,'')"], fold: [] },
   { table: 'wholesale_order_items', parent: 'order_id',
-    identity: ['unit_type_id', "COALESCE(flavor_id,'')"], fold: [] },
+    identity: ["COALESCE(unit_type_id,'')", "COALESCE(product_id,'')", "COALESCE(flavor_id,'')", 'unit_price'], fold: [] },
   { table: 'retail_cart_items', parent: 'session_id',
     identity: ['retail_product_id', "COALESCE(selected_flavor_id,'')", "COALESCE(split_flavor_id,'')", 'is_subscription', "COALESCE(subscription_frequency,'')"], fold: [] },
 ];
