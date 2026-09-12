@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Loader2, Send } from "lucide-react";
 import { CampaignEditor } from "@/components/campaign-editor";
@@ -395,14 +395,14 @@ export default function AdminEmailCampaign() {
                       <TabsTrigger value="preview" className="text-xs" data-testid="tab-message-preview">Preview email</TabsTrigger>
                     </TabsList>
                   </div>
-                  {/* Both panels stay MOUNTED and are shown/hidden — Radix TabsContent
-                      would unmount the editor on Preview, throwing away its undo
-                      history (an accidental deletion before previewing became
-                      unrecoverable). */}
-                  <div hidden={messageTab !== "write"}>
+                  {/* Both panels stay MOUNTED (forceMount) and are shown/hidden — the
+                      default TabsContent unmounts the editor on Preview, throwing away
+                      its undo history. forceMount keeps the tabpanel ids and roles the
+                      tab buttons point at, so the accessible tab relationship survives. */}
+                  <TabsContent value="write" forceMount hidden={messageTab !== "write"} className="mt-0">
                     <CampaignEditor value={bodyHtml} onChange={setBodyHtml} />
-                  </div>
-                  <div hidden={messageTab !== "preview"}>
+                  </TabsContent>
+                  <TabsContent value="preview" forceMount hidden={messageTab !== "preview"} className="mt-0">
                     {/* The server's real template in a sandboxed frame — header, body,
                         footer, unsubscribe link — exactly as it will land. */}
                     <div className="rounded-md border bg-muted/40 overflow-hidden" data-testid="campaign-preview">
@@ -424,7 +424,7 @@ export default function AdminEmailCampaign() {
                         </p>
                       )}
                     </div>
-                  </div>
+                  </TabsContent>
                 </Tabs>
               </CardContent>
             </Card>
