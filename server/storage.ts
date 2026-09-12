@@ -2303,7 +2303,11 @@ export class PostgresStorage implements IStorage {
           sql`${retailSubscriptionItems.unitPriceAtSignup} IS NOT DISTINCT FROM ${item.unitPriceAtSignup ?? null}::numeric`,
           sql`COALESCE(${retailSubscriptionItems.notes}, '') = ${note}`,
         ))
-        .orderBy(retailSubscriptionItems.id);
+        .orderBy(retailSubscriptionItems.id)
+        // Row locks, not just the parent advisory lock: a direct quantity edit or
+        // delete on these rows (which takes no advisory lock) now waits for this
+        // merge to commit instead of slipping in between the read and the write.
+        .for('update');
       if (matches.length === 0) {
         const [row] = await tx
           .insert(retailSubscriptionItems)
@@ -2338,7 +2342,8 @@ export class PostgresStorage implements IStorage {
           eq(retailOrderItemsV2.unitPrice, item.unitPrice),
           sql`COALESCE(${retailOrderItemsV2.notes}, '') = ${note}`,
         ))
-        .orderBy(retailOrderItemsV2.id);
+        .orderBy(retailOrderItemsV2.id)
+        .for('update');
       if (matches.length === 0) {
         const [row] = await tx.insert(retailOrderItemsV2).values({ ...item, notes: note || null }).returning();
         return row;
@@ -3208,7 +3213,8 @@ export class PostgresStorage implements IStorage {
           sql`${wholesaleOrderItems.flavorId} IS NOT DISTINCT FROM ${item.flavorId ?? null}`,
           sql`${wholesaleOrderItems.unitPrice} = ${item.unitPrice}::numeric`,
         ))
-        .orderBy(wholesaleOrderItems.id);
+        .orderBy(wholesaleOrderItems.id)
+        .for('update');
       if (matches.length === 0) {
         const result = await tx.insert(wholesaleOrderItems).values(item).returning();
         return result[0];
