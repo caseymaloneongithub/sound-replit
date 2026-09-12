@@ -6456,6 +6456,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Live preview: the exact branded email the recipients will get (same
+  // sanitizer, same template), with the admin's own unsubscribe link standing
+  // in for the per-recipient one. Nothing is sent or stored.
+  app.post("/api/admin/email-campaign/preview", isAdmin, async (req, res) => {
+    try {
+      const { sanitizeCampaignHtml, unsubscribeUrlFor } = await import('./campaigns');
+      const { buildCampaignEmail, UNSUBSCRIBE_PLACEHOLDER } = await import('./email');
+      const subject = (typeof req.body?.subject === 'string' ? req.body.subject : '').trim().slice(0, 150) || '(no subject)';
+      const bodyHtml = sanitizeCampaignHtml(typeof req.body?.bodyHtml === 'string' ? req.body.bodyHtml : '');
+      const built = buildCampaignEmail(subject, bodyHtml);
+      const link = unsubscribeUrlFor(req.user?.email ?? 'preview@example.com');
+      res.json({ html: built.html.split(UNSUBSCRIBE_PLACEHOLDER).join(link), text: built.text.split(UNSUBSCRIBE_PLACEHOLDER).join(link) });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error building preview: " + error.message });
+    }
+  });
+
   // "Send a test to me": the signed-in admin's own inbox, never persisted.
   app.post("/api/admin/email-campaign/test", isAdmin, async (req, res) => {
     try {

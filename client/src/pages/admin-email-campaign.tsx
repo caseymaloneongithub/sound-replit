@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -8,9 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Bold, List, Loader2, Send } from "lucide-react";
+import { Loader2, Send } from "lucide-react";
+import { CampaignEditor } from "@/components/campaign-editor";
 
 const MAX_RECIPIENTS = 1000; // mirrors MAX_CAMPAIGN_RECIPIENTS on the server
 
@@ -51,8 +52,9 @@ export default function AdminEmailCampaign() {
   const [manualEmail, setManualEmail] = useState("");
   const [manualName, setManualName] = useState("");
   const [subject, setSubject] = useState("");
+  const [bodyHtml, setBodyHtml] = useState("");
+  const [messageTab, setMessageTab] = useState<"write" | "preview">("write");
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const editorRef = useRef<HTMLDivElement | null>(null);
 
   const { data: retailCustomers = [] } = useQuery<RetailCustomer[]>({ queryKey: ["/api/retail/customers"] });
   const { data: wholesaleRows = [] } = useQuery<WholesaleAudienceRow[]>({ queryKey: ["/api/admin/campaign-audience/wholesale"] });
@@ -158,50 +160,27 @@ export default function AdminEmailCampaign() {
     onError: (error: any) => toast({ title: "Couldn't update opt-outs", description: error.message, variant: "destructive" }),
   });
 
-  // Serialize the contentEditable into clean semantic HTML. Pasted content from
-  // Word/Google Docs encodes bold as styled <span>s — computed style decides,
-  // so bolding and bullets survive no matter which editor they came from.
-  const serialize = (node: Node): string => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      return (node.textContent ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-    if (node.nodeType !== Node.ELEMENT_NODE) return "";
-    const el = node as HTMLElement;
-    const tag = el.tagName.toLowerCase();
-    let inner = Array.from(el.childNodes).map(serialize).join("");
-    const style = el.style;
-    const weight = style.fontWeight;
-    if (tag === "b" || tag === "strong" || weight === "bold" || Number(weight) >= 600) inner = `<strong>${inner}</strong>`;
-    if (tag === "i" || tag === "em" || style.fontStyle === "italic") inner = `<em>${inner}</em>`;
-    if (tag === "u" || style.textDecoration?.includes("underline")) inner = `<u>${inner}</u>`;
-    switch (tag) {
-      case "br": return "<br>";
-      case "ul": return `<ul>${inner}</ul>`;
-      case "ol": return `<ol>${inner}</ol>`;
-      case "li": return `<li>${inner}</li>`;
-      case "h1": case "h2": case "h3": return `<${tag}>${inner}</${tag}>`;
-      case "blockquote": return `<blockquote>${inner}</blockquote>`;
-      case "a": {
-        const href = el.getAttribute("href") ?? "";
-        return /^https?:\/\//i.test(href) ? `<a href="${href.replace(/"/g, "&quot;")}">${inner}</a>` : inner;
-      }
-      case "p": case "div": return inner.trim() ? `<p>${inner}</p>` : "";
-      default: return inner; // spans and anything else: contents only
-    }
-  };
-  const bodyHtml = () => (editorRef.current ? Array.from(editorRef.current.childNodes).map(serialize).join("") : "");
-
-  const exec = (command: string) => {
-    editorRef.current?.focus();
-    document.execCommand(command);
-  };
+  // The editor (Tiptap) hands back clean semantic HTML on every change; the
+  // preview asks the server to wrap it in the real brand template so what the
+  // admin sees is exactly what the recipients get.
+  const [previewKey, setPreviewKey] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setPreviewKey(JSON.stringify({ subject: subject.trim(), bodyHtml })), 350);
+    return () => clearTimeout(t);
+  }, [subject, bodyHtml]);
+  const { data: preview, isFetching: previewLoading } = useQuery<{ html: string; text: string }>({
+    queryKey: ["campaign-preview", previewKey],
+    queryFn: async () => apiRequest("POST", "/api/admin/email-campaign/preview", JSON.parse(previewKey)),
+    enabled: messageTab === "preview" && !!previewKey,
+    staleTime: Infinity,
+  });
 
   const sendMutation = useMutation({
     mutationFn: async () =>
       apiRequest("POST", "/api/admin/email-campaign", {
         audience,
         subject: subject.trim(),
-        bodyHtml: bodyHtml(),
+        bodyHtml,
         recipients: sendList,
       }),
     onSuccess: (data: any) => {
@@ -220,7 +199,7 @@ export default function AdminEmailCampaign() {
   // A test copy to the signed-in admin's own inbox — the first move before any
   // real send, and the way to catch a broken paste or a wrong subject.
   const testMutation = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/admin/email-campaign/test", { subject: subject.trim(), bodyHtml: bodyHtml() }),
+    mutationFn: async () => apiRequest("POST", "/api/admin/email-campaign/test", { subject: subject.trim(), bodyHtml }),
     onSuccess: (data: any) => toast({ title: "Test sent", description: `Check ${data.to} for "[TEST] ${subject.trim()}".` }),
     onError: (error: any) => toast({ title: "Couldn't send the test", description: error.message || "Try again.", variant: "destructive" }),
   });
@@ -407,28 +386,34 @@ export default function AdminEmailCampaign() {
                     data-testid="input-campaign-subject"
                   />
                 </div>
-                <div>
+                <Tabs value={messageTab} onValueChange={(v) => setMessageTab(v as "write" | "preview")}>
                   <div className="flex items-center justify-between mb-1.5">
                     <Label>Body</Label>
-                    <div className="flex gap-1">
-                      <Button type="button" variant="outline" size="icon" className="h-7 w-7" onClick={() => exec("bold")} aria-label="Bold" data-testid="button-format-bold">
-                        <Bold className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button type="button" variant="outline" size="icon" className="h-7 w-7" onClick={() => exec("insertUnorderedList")} aria-label="Bulleted list" data-testid="button-format-bullets">
-                        <List className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
+                    <TabsList className="h-8">
+                      <TabsTrigger value="write" className="text-xs" data-testid="tab-message-write">Write</TabsTrigger>
+                      <TabsTrigger value="preview" className="text-xs" data-testid="tab-message-preview">Preview email</TabsTrigger>
+                    </TabsList>
                   </div>
-                  <div
-                    ref={editorRef}
-                    contentEditable
-                    role="textbox"
-                    aria-multiline="true"
-                    aria-label="Email body"
-                    className="min-h-48 rounded-md border bg-card px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:font-bold"
-                    data-testid="editor-campaign-body"
-                  />
-                </div>
+                  <TabsContent value="write" className="mt-0">
+                    <CampaignEditor value={bodyHtml} onChange={setBodyHtml} />
+                  </TabsContent>
+                  <TabsContent value="preview" className="mt-0">
+                    {/* The server's real template in a sandboxed frame — header, body,
+                        footer, unsubscribe link — exactly as it will land. */}
+                    <div className="rounded-md border bg-muted/40 overflow-hidden" data-testid="campaign-preview">
+                      {preview ? (
+                        <iframe
+                          title="Email preview"
+                          sandbox=""
+                          srcDoc={preview.html}
+                          className="w-full h-[32rem] bg-white"
+                        />
+                      ) : (
+                        <p className="p-6 text-sm text-muted-foreground">{previewLoading ? "Building preview…" : "Write something to preview it."}</p>
+                      )}
+                    </div>
+                  </TabsContent>
+                </Tabs>
               </CardContent>
             </Card>
 

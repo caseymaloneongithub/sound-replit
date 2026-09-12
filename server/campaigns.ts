@@ -58,7 +58,12 @@ export function sanitizeCampaignHtml(input: string): string {
     allowedAttributes: { a: ['href'] },
     allowedSchemes: ['http', 'https', 'mailto'],
     allowProtocolRelative: false,
-  }).trim();
+  })
+    // The editor (ProseMirror) wraps every list item's text in a <p>, which
+    // mail clients render with paragraph spacing inside each bullet. Unwrap a
+    // single-paragraph item; multi-paragraph items keep their structure.
+    .replace(/<li>\s*<p>([\s\S]*?)<\/p>\s*<\/li>/g, (m, inner) => (/<p>/.test(inner) ? m : `<li>${inner}</li>`))
+    .trim();
 }
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
