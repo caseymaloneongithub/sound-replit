@@ -186,6 +186,9 @@ export default function AdminEmailCampaign() {
       }),
     onSuccess: (data: any) => {
       setConfirmOpen(false);
+      // Hand-added addresses are for THIS campaign only (owner, 2026-09-13):
+      // once it's queued they're cleared rather than riding into the next one.
+      setManual([]);
       // Fresh status right away so polling starts on THIS campaign, not the
       // cached finished one.
       queryClient.invalidateQueries({ queryKey: ["/api/admin/email-campaign/status"] });
