@@ -6354,18 +6354,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/admin/email-campaign", isAdmin, async (req, res) => {
     try {
       const { startCampaign } = await import('./campaigns');
+      // scheduledFor: ISO string from the admin page's datetime picker (browser
+      // local time -> UTC), or absent for "send now".
+      const rawWhen = typeof req.body?.scheduledFor === 'string' ? req.body.scheduledFor : '';
+      const scheduledFor = rawWhen ? new Date(rawWhen) : null;
+      if (scheduledFor && Number.isNaN(scheduledFor.getTime())) {
+        return res.status(400).json({ message: "That send time isn't valid" });
+      }
       const result = await startCampaign({
         subject: typeof req.body?.subject === 'string' ? req.body.subject : '',
         audience: req.body?.audience === 'wholesale' ? 'wholesale' : 'retail',
         bodyHtml: typeof req.body?.bodyHtml === 'string' ? req.body.bodyHtml : '',
         recipients: Array.isArray(req.body?.recipients) ? req.body.recipients : [],
         createdBy: req.user?.id ?? null,
+        scheduledFor,
       });
-      console.log(`[CAMPAIGN] ${req.user?.email ?? 'admin'} started ${result.id}`);
+      console.log(`[CAMPAIGN] ${req.user?.email ?? 'admin'} ${scheduledFor ? 'scheduled' : 'started'} ${result.id}`);
       res.json(result);
     } catch (error: any) {
       const status = typeof error?.status === 'number' ? error.status : 500;
       res.status(status).json({ message: status === 500 ? "Error starting campaign: " + error.message : error.message });
+    }
+  });
+
+  app.get("/api/admin/email-campaign/scheduled", isAdmin, async (_req, res) => {
+    try {
+      const { listScheduledCampaigns } = await import('./campaigns');
+      res.json(await listScheduledCampaigns());
+    } catch (error: any) {
+      res.status(500).json({ message: "Error listing scheduled campaigns: " + error.message });
+    }
+  });
+
+  app.delete("/api/admin/email-campaign/:id", isAdmin, async (req, res) => {
+    try {
+      const { cancelScheduledCampaign } = await import('./campaigns');
+      const cancelled = await cancelScheduledCampaign(String(req.params.id));
+      if (!cancelled) return res.status(409).json({ message: "That campaign has already started (or was already cancelled)." });
+      console.log(`[CAMPAIGN] ${req.user?.email ?? 'admin'} cancelled scheduled campaign ${req.params.id}`);
+      res.json({ cancelled: true });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error cancelling campaign: " + error.message });
     }
   });
 

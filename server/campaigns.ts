@@ -29,12 +29,17 @@ export type CampaignInput = {
   bodyHtml: string;
   recipients: Array<{ email: string; name?: string }>;
   createdBy?: string | null;
+  /** When set (and in the future), the campaign is stored as 'scheduled' and
+   *  the scheduler starts it once the time passes. */
+  scheduledFor?: Date | null;
 };
 
 export type CampaignStatus = {
   id: string;
   subject: string;
   audience: string;
+  status: string;
+  scheduledFor: string | null;
   startedAt: string;
   completedAt: string | null;
   done: boolean;
@@ -180,7 +185,7 @@ const isUniqueViolation = (e: any) =>
 
 /** Validates, persists (one transaction), and kicks off the background send.
  *  Throws with .status for 400/409 on bad input or a campaign already running. */
-export async function startCampaign(input: CampaignInput): Promise<{ id: string; queued: number; skipped: number }> {
+export async function startCampaign(input: CampaignInput): Promise<{ id: string; queued: number; skipped: number; scheduledFor: string | null }> {
   const subject = input.subject.trim().slice(0, 150);
   const bodyHtml = sanitizeCampaignHtml(input.bodyHtml);
   if (!subject) throw Object.assign(new Error('Subject is required'), { status: 400 });
@@ -211,14 +216,29 @@ export async function startCampaign(input: CampaignInput): Promise<{ id: string;
   });
   const skipped = rows.filter((r) => r.status === 'skipped').length;
 
+  // A scheduled send must be in the future by a real margin; the scheduler
+  // ticks once a minute.
+  const scheduledFor = input.scheduledFor ?? null;
+  if (scheduledFor && !(scheduledFor.getTime() > Date.now() + 60_000)) {
+    throw Object.assign(new Error('Pick a send time at least a minute in the future.'), { status: 400 });
+  }
+
   // Campaign + recipients land together or not at all; the partial unique index
-  // on status='sending' turns a concurrent second campaign into 23505 -> 409.
+  // on status='sending' turns a concurrent second IMMEDIATE campaign into
+  // 23505 -> 409. Scheduled ones don't hold that slot until they fire.
   let campaignId: string;
   try {
     campaignId = await db.transaction(async (tx) => {
       const [campaign] = await tx
         .insert(emailCampaigns)
-        .values({ subject, audience: input.audience, bodyHtml, createdBy: input.createdBy ?? null })
+        .values({
+          subject,
+          audience: input.audience,
+          bodyHtml,
+          createdBy: input.createdBy ?? null,
+          status: scheduledFor ? 'scheduled' : 'sending',
+          scheduledFor,
+        })
         .returning({ id: emailCampaigns.id });
       await tx.insert(emailCampaignRecipients).values(rows.map((r) => ({ ...r, campaignId: campaign.id })));
       return campaign.id;
@@ -230,9 +250,86 @@ export async function startCampaign(input: CampaignInput): Promise<{ id: string;
     throw e;
   }
 
+  if (scheduledFor) {
+    console.log(`[CAMPAIGN] ${campaignId} "${subject}" scheduled for ${scheduledFor.toISOString()}: ${rows.length - skipped} to send, ${skipped} opted out`);
+    return { id: campaignId, queued: rows.length - skipped, skipped, scheduledFor: scheduledFor.toISOString() };
+  }
   console.log(`[CAMPAIGN] ${campaignId} "${subject}" queued: ${rows.length - skipped} to send, ${skipped} opted out`);
   void runCampaign(campaignId).catch((e) => console.error('[CAMPAIGN] run failed:', e));
-  return { id: campaignId, queued: rows.length - skipped, skipped };
+  return { id: campaignId, queued: rows.length - skipped, skipped, scheduledFor: null };
+}
+
+// ---- Scheduling ----
+
+/** Upcoming scheduled campaigns with their recipient counts. */
+export async function listScheduledCampaigns(): Promise<Array<{ id: string; subject: string; audience: string; scheduledFor: string | null; recipients: number }>> {
+  // Explicit aliases: the correlated count is written in plain SQL so the
+  // inner "campaign_id = c.id" can't be mis-resolved against the inner table.
+  const result = await db.execute(sql`
+    SELECT c.id, c.subject, c.audience, c.scheduled_for,
+           (SELECT count(*)::int FROM email_campaign_recipients r WHERE r.campaign_id = c.id AND r.status <> 'skipped') AS recipients
+    FROM email_campaigns c
+    WHERE c.status = 'scheduled'
+    ORDER BY c.scheduled_for`);
+  return ((result as any).rows ?? []).map((r: any) => ({
+    id: String(r.id),
+    subject: String(r.subject),
+    audience: String(r.audience),
+    scheduledFor: r.scheduled_for ? new Date(r.scheduled_for).toISOString() : null,
+    recipients: Number(r.recipients ?? 0),
+  }));
+}
+
+/** Cancels a campaign that has not started. Returns false if it already fired. */
+export async function cancelScheduledCampaign(id: string): Promise<boolean> {
+  const rows = await db
+    .update(emailCampaigns)
+    .set({ status: 'cancelled', completedAt: new Date() })
+    .where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.status, 'scheduled')))
+    .returning({ id: emailCampaigns.id });
+  return rows.length > 0;
+}
+
+/** Starts every scheduled campaign whose time has passed. The flip to 'sending'
+ *  is conditional on still being 'scheduled' (a cancel in the same second
+ *  wins), and it hits the one-sending unique index if something else is mid-
+ *  send — that campaign simply waits for the next tick. */
+export async function fireDueCampaigns(): Promise<string[]> {
+  const due = await db
+    .select({ id: emailCampaigns.id, subject: emailCampaigns.subject })
+    .from(emailCampaigns)
+    .where(and(eq(emailCampaigns.status, 'scheduled'), sql`${emailCampaigns.scheduledFor} <= now()`))
+    .orderBy(emailCampaigns.scheduledFor);
+  const started: string[] = [];
+  for (const c of due) {
+    try {
+      const flipped = await db
+        .update(emailCampaigns)
+        .set({ status: 'sending' })
+        .where(and(eq(emailCampaigns.id, c.id), eq(emailCampaigns.status, 'scheduled')))
+        .returning({ id: emailCampaigns.id });
+      if (flipped.length === 0) continue;
+    } catch (e: any) {
+      if (isUniqueViolation(e)) {
+        console.log(`[CAMPAIGN] ${c.id} "${c.subject}" is due but another campaign is sending — will retry next tick`);
+        break; // later ones would collide too
+      }
+      throw e;
+    }
+    console.log(`[CAMPAIGN] ${c.id} "${c.subject}" scheduled time reached — starting`);
+    void runCampaign(c.id).catch((e) => console.error('[CAMPAIGN] scheduled run failed:', e));
+    started.push(c.id);
+  }
+  return started;
+}
+
+/** Boot hook (gated with the other background jobs): check for due campaigns
+ *  shortly after start and once a minute thereafter. */
+export function startCampaignScheduler(): void {
+  const tick = () => fireDueCampaigns().catch((e) => console.error('[CAMPAIGN] scheduler tick failed:', e?.message));
+  setTimeout(tick, 10_000);
+  setInterval(tick, 60_000);
+  console.log('[CAMPAIGN] scheduler armed (1-minute ticks)');
 }
 
 // Resend honors an idempotency key for 24 hours; stay inside that with margin.
@@ -394,6 +491,12 @@ export async function runCampaign(campaignId: string): Promise<void> {
   const [campaign] = await withRetry(`campaign ${campaignId} lookup`, () =>
     db.select().from(emailCampaigns).where(eq(emailCampaigns.id, campaignId)));
   if (!campaign || campaign.status !== 'sending') return;
+  // Opt-outs are honored at SEND time, not just at creation: someone who
+  // unsubscribed while a campaign sat scheduled (or paused) is skipped.
+  await db.execute(sql`
+    UPDATE email_campaign_recipients SET status = 'skipped', error = 'opted out'
+    WHERE campaign_id = ${campaignId} AND status = 'pending'
+      AND lower(email) IN (SELECT email FROM marketing_opt_outs)`);
   const built = buildCampaignEmail(campaign.subject, campaign.bodyHtml);
   const live = isMailConfigured();
 
@@ -523,9 +626,11 @@ export async function getLatestCampaignStatus(): Promise<CampaignStatus | null> 
     id: campaign.id,
     subject: campaign.subject,
     audience: campaign.audience,
+    status: campaign.status,
+    scheduledFor: campaign.scheduledFor ? campaign.scheduledFor.toISOString() : null,
     startedAt: campaign.createdAt.toISOString(),
     completedAt: campaign.completedAt ? campaign.completedAt.toISOString() : null,
-    done: campaign.status === 'done',
+    done: campaign.status === 'done' || campaign.status === 'cancelled',
     logOnly: !isMailConfigured(),
     total: Object.values(byStatus).reduce((a, b) => a + b, 0),
     sent: byStatus.sent ?? 0,

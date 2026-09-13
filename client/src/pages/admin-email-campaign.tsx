@@ -19,11 +19,20 @@ type RetailCustomer = { id: string; firstName: string | null; lastName: string |
 type WholesaleAudienceRow = { key: string; businessName: string; locationName: string | null; emails: string[] };
 type OptOut = { email: string; createdAt: string };
 type CampaignStatus = {
-  id: string; subject: string; audience: string; startedAt: string; completedAt: string | null;
+  id: string; subject: string; audience: string; status: string; scheduledFor: string | null;
+  startedAt: string; completedAt: string | null;
   done: boolean; logOnly: boolean; total: number; sent: number; pending: number; skipped: number;
   uncertain: number; failedCount: number;
   failed: Array<{ email: string; error: string }>; // a sample — failedCount is the truth
 } | null;
+type ScheduledCampaign = { id: string; subject: string; audience: string; scheduledFor: string | null; recipients: number };
+
+// datetime-local wants "YYYY-MM-DDTHH:MM" in the browser's own zone.
+const toLocalInput = (d: Date) => {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const fmtWhen = (iso: string) => new Date(iso).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 // One selectable row: a retail account, or a wholesale LOCATION (owner,
 // 2026-09-11) — which may carry more than one address. Addresses are deduped
@@ -55,6 +64,13 @@ export default function AdminEmailCampaign() {
   const [bodyHtml, setBodyHtml] = useState("");
   const [messageTab, setMessageTab] = useState<"write" | "preview">("write");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Send now, or at a chosen local time (default: the top of the next hour).
+  const [sendMode, setSendMode] = useState<"now" | "later">("now");
+  const [scheduledAt, setScheduledAt] = useState(() => {
+    const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); return toLocalInput(d);
+  });
+  const scheduledDate = sendMode === "later" ? new Date(scheduledAt) : null;
+  const scheduleValid = !scheduledDate || (!Number.isNaN(scheduledDate.getTime()) && scheduledDate.getTime() > Date.now() + 60_000);
 
   const { data: retailCustomers = [] } = useQuery<RetailCustomer[]>({ queryKey: ["/api/retail/customers"] });
   const { data: wholesaleRows = [] } = useQuery<WholesaleAudienceRow[]>({ queryKey: ["/api/admin/campaign-audience/wholesale"] });
@@ -65,9 +81,21 @@ export default function AdminEmailCampaign() {
   // sending, poll; reopening the page mid-campaign picks that up automatically.
   const { data: status } = useQuery<CampaignStatus>({
     queryKey: ["/api/admin/email-campaign/status"],
-    refetchInterval: (query) => (query.state.data && !query.state.data.done ? 2000 : false),
+    // Poll only while something is actually going out (not for a scheduled one).
+    refetchInterval: (query) => (query.state.data?.status === "sending" ? 2000 : false),
   });
-  const sending = !!status && !status.done;
+  const sending = status?.status === "sending";
+
+  const { data: scheduled = [] } = useQuery<ScheduledCampaign[]>({ queryKey: ["/api/admin/email-campaign/scheduled"] });
+  const cancelMutation = useMutation({
+    mutationFn: async (id: string) => apiRequest("DELETE", `/api/admin/email-campaign/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/email-campaign/scheduled"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/email-campaign/status"] });
+      toast({ title: "Scheduled send cancelled" });
+    },
+    onError: (error: any) => toast({ title: "Couldn't cancel", description: error.message, variant: "destructive" }),
+  });
 
   const recipients: Recipient[] = useMemo(() => {
     const manualRows: Recipient[] = manual.map((m) => ({ key: `manual:${norm(m.email)}`, name: m.name || m.email, emails: [m.email] }));
@@ -183,6 +211,7 @@ export default function AdminEmailCampaign() {
         subject: subject.trim(),
         bodyHtml,
         recipients: sendList,
+        scheduledFor: scheduledDate ? scheduledDate.toISOString() : undefined,
       }),
     onSuccess: (data: any) => {
       setConfirmOpen(false);
@@ -192,7 +221,13 @@ export default function AdminEmailCampaign() {
       // Fresh status right away so polling starts on THIS campaign, not the
       // cached finished one.
       queryClient.invalidateQueries({ queryKey: ["/api/admin/email-campaign/status"] });
-      toast({ title: "Campaign started", description: `Sending to ${data.queued} address(es)${data.skipped ? ` — ${data.skipped} opted out and skipped` : ""}.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/email-campaign/scheduled"] });
+      const skippedNote = data.skipped ? ` — ${data.skipped} opted out and skipped` : "";
+      if (data.scheduledFor) {
+        toast({ title: "Campaign scheduled", description: `Goes to ${data.queued} address(es) on ${fmtWhen(data.scheduledFor)}${skippedNote}.` });
+      } else {
+        toast({ title: "Campaign started", description: `Sending to ${data.queued} address(es)${skippedNote}.` });
+      }
     },
     onError: (error: any) => {
       setConfirmOpen(false);
@@ -208,7 +243,7 @@ export default function AdminEmailCampaign() {
     onError: (error: any) => toast({ title: "Couldn't send the test", description: error.message || "Try again.", variant: "destructive" }),
   });
 
-  const readyToSend = subject.trim().length > 0 && sendList.length > 0 && !overLimit;
+  const readyToSend = subject.trim().length > 0 && sendList.length > 0 && !overLimit && scheduleValid;
   const rowWord = audience === "wholesale" ? "location" : "customer";
 
   return (
@@ -219,13 +254,35 @@ export default function AdminEmailCampaign() {
           <p className="text-muted-foreground">Send a branded update to your retail or wholesale customers.</p>
         </div>
 
-        {status && (
+        {scheduled.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Scheduled sends</CardTitle>
+              <CardDescription>These go out on their own; cancel any time before they start.</CardDescription>
+            </CardHeader>
+            <CardContent className="divide-y" data-testid="list-scheduled">
+              {scheduled.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-3 py-2 text-sm" data-testid={`scheduled-${s.id}`}>
+                  <div className="min-w-0">
+                    <span className="font-medium">"{s.subject}"</span>
+                    <span className="text-muted-foreground"> — {s.scheduledFor ? fmtWhen(s.scheduledFor) : "?"} · {s.recipients} address{s.recipients === 1 ? "" : "es"} · {s.audience}</span>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={() => cancelMutation.mutate(s.id)} disabled={cancelMutation.isPending} data-testid={`button-cancel-${s.id}`}>
+                    Cancel
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {status && status.status !== "scheduled" && (
           <Card>
             <CardContent className="pt-6 space-y-2" data-testid="campaign-progress">
               <div className="flex items-center gap-3 text-sm">
-                {!status.done && <Loader2 className="w-4 h-4 animate-spin" />}
+                {status.status === "sending" && <Loader2 className="w-4 h-4 animate-spin" />}
                 <div>
-                  <span className="font-medium">{status.done ? "Last campaign" : "Sending"}:</span>{" "}
+                  <span className="font-medium">{status.status === "sending" ? "Sending" : status.status === "cancelled" ? "Cancelled" : "Last campaign"}:</span>{" "}
                   "{status.subject}" — {status.sent}/{status.total - status.skipped} sent
                   {status.skipped > 0 && <span className="text-muted-foreground"> · {status.skipped} opted out</span>}
                   {status.failedCount > 0 && <span className="text-destructive"> · {status.failedCount} failed</span>}
@@ -433,27 +490,52 @@ export default function AdminEmailCampaign() {
             </Card>
 
             <Card>
-              <CardContent className="pt-6 flex items-center justify-between gap-3 flex-wrap">
-                <p className="text-xs text-muted-foreground max-w-xs">
-                  Each address gets its own email (no CC) with a one-click unsubscribe link. Up to {MAX_RECIPIENTS.toLocaleString()} per campaign.
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => testMutation.mutate()}
-                    disabled={subject.trim().length === 0 || testMutation.isPending}
-                    data-testid="button-send-test"
-                  >
-                    {testMutation.isPending ? "Sending…" : "Send a test to me"}
-                  </Button>
-                  <Button
-                    onClick={() => setConfirmOpen(true)}
-                    disabled={!readyToSend || sending || sendMutation.isPending}
-                    data-testid="button-open-send"
-                  >
-                    <Send className="w-4 h-4 mr-2" />
-                    Send to {sendList.length}…
-                  </Button>
+              <CardContent className="pt-6 space-y-4">
+                <div className="flex items-start gap-4 flex-wrap" role="radiogroup" aria-label="When to send">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="radio" name="send-mode" checked={sendMode === "now"} onChange={() => setSendMode("now")} data-testid="radio-send-now" />
+                    Send now
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="radio" name="send-mode" checked={sendMode === "later"} onChange={() => setSendMode("later")} data-testid="radio-send-later" />
+                    Schedule for
+                  </label>
+                  <Input
+                    type="datetime-local"
+                    className="w-56"
+                    value={scheduledAt}
+                    min={toLocalInput(new Date())}
+                    onChange={(e) => { setScheduledAt(e.target.value); setSendMode("later"); }}
+                    aria-label="Scheduled send time"
+                    data-testid="input-scheduled-at"
+                  />
+                  {sendMode === "later" && !scheduleValid && (
+                    <span className="text-xs text-destructive self-center" data-testid="text-schedule-invalid">Pick a time at least a minute from now.</span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <p className="text-xs text-muted-foreground max-w-xs">
+                    Each address gets its own email (no CC) with a one-click unsubscribe link. Up to {MAX_RECIPIENTS.toLocaleString()} per campaign.
+                    {sendMode === "later" && " Opt-outs are re-checked when it goes out."}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => testMutation.mutate()}
+                      disabled={subject.trim().length === 0 || testMutation.isPending}
+                      data-testid="button-send-test"
+                    >
+                      {testMutation.isPending ? "Sending…" : "Send a test to me"}
+                    </Button>
+                    <Button
+                      onClick={() => setConfirmOpen(true)}
+                      disabled={!readyToSend || (sendMode === "now" && sending) || sendMutation.isPending}
+                      data-testid="button-open-send"
+                    >
+                      <Send className="w-4 h-4 mr-2" />
+                      {sendMode === "later" ? `Schedule for ${sendList.length}…` : `Send to ${sendList.length}…`}
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -464,15 +546,16 @@ export default function AdminEmailCampaign() {
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Send this campaign?</DialogTitle>
+            <DialogTitle>{scheduledDate ? "Schedule this campaign?" : "Send this campaign?"}</DialogTitle>
             <DialogDescription>
-              "{subject.trim()}" goes to {sendList.length} unique address{sendList.length === 1 ? "" : "es"} ({selected.length} {audience} {rowWord}{selected.length === 1 ? "" : "s"}). This can't be recalled once it starts.
+              "{subject.trim()}" goes to {sendList.length} unique address{sendList.length === 1 ? "" : "es"} ({selected.length} {audience} {rowWord}{selected.length === 1 ? "" : "s"})
+              {scheduledDate ? ` on ${fmtWhen(scheduledDate.toISOString())}. You can cancel it any time before then.` : ". This can't be recalled once it starts."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmOpen(false)} data-testid="button-cancel-send">Cancel</Button>
             <Button onClick={() => sendMutation.mutate()} disabled={sendMutation.isPending} data-testid="button-confirm-send">
-              {sendMutation.isPending ? "Starting…" : `Send to ${sendList.length}`}
+              {sendMutation.isPending ? (scheduledDate ? "Scheduling…" : "Starting…") : scheduledDate ? `Schedule for ${sendList.length}` : `Send to ${sendList.length}`}
             </Button>
           </DialogFooter>
         </DialogContent>

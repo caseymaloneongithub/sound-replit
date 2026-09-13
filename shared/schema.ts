@@ -744,7 +744,10 @@ export const emailCampaigns = pgTable("email_campaigns", {
   subject: text("subject").notNull(),
   audience: text("audience").notNull(), // 'retail' | 'wholesale'
   bodyHtml: text("body_html").notNull(),
-  status: text("status").notNull().default("sending"), // 'sending' | 'done'
+  status: text("status").notNull().default("sending"), // 'scheduled' | 'sending' | 'done' | 'cancelled'
+  // Set for a scheduled send; the scheduler flips 'scheduled' -> 'sending' once
+  // it passes. With time zone on purpose: compared against now() in SQL.
+  scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
   createdBy: varchar("created_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
