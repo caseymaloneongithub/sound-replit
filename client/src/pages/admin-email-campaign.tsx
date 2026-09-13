@@ -90,12 +90,23 @@ export default function AdminEmailCampaign() {
   });
 
   // Polling is derived from the campaign itself: while one is sending, poll
-  // fast; reopening the page mid-campaign picks that up automatically.
+  // fast; reopening the page mid-campaign picks that up automatically. The slow
+  // watch keys off the status's OWN data too, not only the scheduled list: the
+  // list emptying would otherwise cancel the very poll that observes the
+  // scheduled -> sending transition.
   const { data: status } = useQuery<CampaignStatus>({
     queryKey: ["/api/admin/email-campaign/status"],
-    refetchInterval: (query) => (query.state.data?.status === "sending" ? 2000 : scheduled.length ? 20_000 : false),
+    refetchInterval: (query) => {
+      const s = query.state.data?.status;
+      return s === "sending" ? 2000 : s === "scheduled" || scheduled.length ? 20_000 : false;
+    },
   });
   const sending = status?.status === "sending";
+  // A change in the scheduled list (one fired, one cancelled) is the moment the
+  // status card is stale — refresh it right away rather than on the next tick.
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/email-campaign/status"] });
+  }, [scheduled.length]);
   const cancelMutation = useMutation({
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/admin/email-campaign/${id}`),
     onSuccess: () => {
