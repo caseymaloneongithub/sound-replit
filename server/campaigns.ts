@@ -492,11 +492,14 @@ export async function runCampaign(campaignId: string): Promise<void> {
     db.select().from(emailCampaigns).where(eq(emailCampaigns.id, campaignId)));
   if (!campaign || campaign.status !== 'sending') return;
   // Opt-outs are honored at SEND time, not just at creation: someone who
-  // unsubscribed while a campaign sat scheduled (or paused) is skipped.
-  await db.execute(sql`
-    UPDATE email_campaign_recipients SET status = 'skipped', error = 'opted out'
-    WHERE campaign_id = ${campaignId} AND status = 'pending'
-      AND lower(email) IN (SELECT email FROM marketing_opt_outs)`);
+  // unsubscribed while a campaign sat scheduled (or paused) is skipped. Runs
+  // before the loop's isolation, so it gets the same retry as the lookup — a
+  // blip here would otherwise strand the campaign 'sending'.
+  await withRetry(`campaign ${campaignId} opt-out sweep`, () =>
+    db.execute(sql`
+      UPDATE email_campaign_recipients SET status = 'skipped', error = 'opted out'
+      WHERE campaign_id = ${campaignId} AND status = 'pending'
+        AND lower(email) IN (SELECT email FROM marketing_opt_outs)`));
   const built = buildCampaignEmail(campaign.subject, campaign.bodyHtml);
   const live = isMailConfigured();
 
@@ -606,9 +609,15 @@ export async function sendTestCampaign(to: string, subject: string, bodyHtml: st
   await sendCampaignMail(to, `[TEST] ${subj}`, built, { unsubscribeUrl: unsubscribeUrlFor(to) });
 }
 
-/** The most recent campaign with live counts — what the admin page polls. */
+/** The campaign the admin page should be watching, with live counts: one that
+ *  is mid-send wins over anything newer (scheduling campaign B while A goes out
+ *  must not hide A's progress), otherwise the most recent. */
 export async function getLatestCampaignStatus(): Promise<CampaignStatus | null> {
-  const [campaign] = await db.select().from(emailCampaigns).orderBy(desc(emailCampaigns.createdAt)).limit(1);
+  const [campaign] = await db
+    .select()
+    .from(emailCampaigns)
+    .orderBy(sql`case when ${emailCampaigns.status} = 'sending' then 0 else 1 end`, desc(emailCampaigns.createdAt))
+    .limit(1);
   if (!campaign) return null;
   const counts = await db
     .select({ status: emailCampaignRecipients.status, n: sql<number>`count(*)::int` })

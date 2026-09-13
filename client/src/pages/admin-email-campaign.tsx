@@ -69,24 +69,33 @@ export default function AdminEmailCampaign() {
   const [scheduledAt, setScheduledAt] = useState(() => {
     const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); return toLocalInput(d);
   });
-  const scheduledDate = sendMode === "later" ? new Date(scheduledAt) : null;
-  const scheduleValid = !scheduledDate || (!Number.isNaN(scheduledDate.getTime()) && scheduledDate.getTime() > Date.now() + 60_000);
+  // A cleared or half-typed picker parses to an invalid Date; treat that as
+  // "no date" for rendering but keep the form invalid so it can't fall through
+  // to an immediate send.
+  const parsedSchedule = sendMode === "later" ? new Date(scheduledAt) : null;
+  const scheduledDate = parsedSchedule && !Number.isNaN(parsedSchedule.getTime()) ? parsedSchedule : null;
+  const scheduleValid = sendMode === "now" || (scheduledDate !== null && scheduledDate.getTime() > Date.now() + 60_000);
 
   const { data: retailCustomers = [] } = useQuery<RetailCustomer[]>({ queryKey: ["/api/retail/customers"] });
   const { data: wholesaleRows = [] } = useQuery<WholesaleAudienceRow[]>({ queryKey: ["/api/admin/campaign-audience/wholesale"] });
   const { data: optOuts = [] } = useQuery<OptOut[]>({ queryKey: ["/api/admin/marketing-opt-outs"] });
   const optedOut = useMemo(() => new Set(optOuts.map((o) => norm(o.email))), [optOuts]);
 
-  // Polling is derived from the campaign itself: while the latest one is still
-  // sending, poll; reopening the page mid-campaign picks that up automatically.
+  // Scheduled sends start on their own, so while any exist the page keeps a
+  // slow watch (the scheduler ticks once a minute) to notice one leaving the
+  // list and showing up as sending.
+  const { data: scheduled = [] } = useQuery<ScheduledCampaign[]>({
+    queryKey: ["/api/admin/email-campaign/scheduled"],
+    refetchInterval: (query) => (query.state.data?.length ? 20_000 : false),
+  });
+
+  // Polling is derived from the campaign itself: while one is sending, poll
+  // fast; reopening the page mid-campaign picks that up automatically.
   const { data: status } = useQuery<CampaignStatus>({
     queryKey: ["/api/admin/email-campaign/status"],
-    // Poll only while something is actually going out (not for a scheduled one).
-    refetchInterval: (query) => (query.state.data?.status === "sending" ? 2000 : false),
+    refetchInterval: (query) => (query.state.data?.status === "sending" ? 2000 : scheduled.length ? 20_000 : false),
   });
   const sending = status?.status === "sending";
-
-  const { data: scheduled = [] } = useQuery<ScheduledCampaign[]>({ queryKey: ["/api/admin/email-campaign/scheduled"] });
   const cancelMutation = useMutation({
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/admin/email-campaign/${id}`),
     onSuccess: () => {
