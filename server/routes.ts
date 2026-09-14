@@ -7982,7 +7982,11 @@ If you have any questions, please don't hesitate to reach out!`,
         ? `${customer.businessName} — ${loc.locationName}`
         : customer.businessName;
       const resolved = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail, order.contactEmailChosen);
-      const recipients = overrides.to ?? resolved.to;
+      // A SEND uses the To line only if staff edited it; an unedited dialog
+      // sends to the rule's answer as it stands NOW, not the default it was
+      // opened with (the inbox may have been corrected since). Previews carry
+      // no flag and honor whatever is typed.
+      const recipients = overrides.to && (isPreview || overrides.toEdited) ? overrides.to : resolved.to;
       if (!isPreview && recipients.length === 0) {
         return res.status(400).json({ message: resolved.problem ?? "No email address to send to" });
       }
@@ -8142,7 +8146,10 @@ If you have any questions, please don't hesitate to reach out!`,
       // 2026-08-31: each Evergreens store bills separately, and a location may
       // list several addresses). The send dialog can override outright.
       const resolvedInvoiceRecipients = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail, order.contactEmailChosen);
-      const invoiceRecipient = overrides.to ?? resolvedInvoiceRecipients.to;
+      // A SEND uses the To line only if staff edited it; an unedited dialog
+      // sends to the rule's answer as it stands NOW (the inbox may have been
+      // corrected since it opened). Previews honor whatever is typed.
+      const invoiceRecipient = overrides.to && (isPreview || overrides.toEdited) ? overrides.to : resolvedInvoiceRecipients.to;
       if (!isPreview && invoiceRecipient.length === 0) {
         return res.status(400).json({ message: resolvedInvoiceRecipients.problem ?? "No email address to send to" });
       }
