@@ -6518,10 +6518,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Photo for a campaign body (owner, 2026-09-14). Deliberately NOT the site's
   // upload path: that converts to WebP, which Outlook for Windows can't show.
-  // Email gets JPEG — EXIF-rotated, transparency flattened to white, capped at
-  // twice the 552px text column for sharp phones — and the response says how
-  // wide to DISPLAY it: Outlook ignores CSS max-width, so the <img> carries an
-  // explicit width attribute the sanitizer preserves.
+  // Email gets JPEG — EXIF-rotated, capped at twice the 552px text column for
+  // sharp phones — or PNG when the image genuinely uses transparency. The
+  // response says how wide to DISPLAY it: Outlook ignores CSS max-width, so
+  // the <img> carries an explicit width attribute the sanitizer preserves.
   app.post(
     "/api/admin/email-campaign/image",
     isAdmin,
@@ -6538,20 +6538,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const { CAMPAIGN_IMAGE_COLUMN } = await import('./campaigns');
         const sharp = (await import('sharp')).default;
         let out: { data: Buffer; info: { width: number; height: number } };
+        let ext = 'jpg';
+        let outType = 'image/jpeg';
         try {
-          out = await sharp(body)
-            .rotate()
-            .flatten({ background: '#ffffff' })
-            .resize({ width: CAMPAIGN_IMAGE_COLUMN * 2, withoutEnlargement: true })
-            .jpeg({ quality: 82, mozjpeg: true })
-            .toBuffer({ resolveWithObject: true });
+          // PNG survives only when it actually USES transparency (owner,
+          // 2026-09-14): a logo on a see-through background keeps it, while a
+          // photo that merely arrived as PNG (screenshot, phone export) becomes
+          // JPEG at a fraction of the size. `isOpaque` looks at the pixels, not
+          // just whether an alpha channel exists — many PNGs carry a fully
+          // opaque one.
+          const meta = await sharp(body).metadata();
+          const transparent = !!meta.hasAlpha && !(await sharp(body).stats()).isOpaque;
+          const base = sharp(body).rotate().resize({ width: CAMPAIGN_IMAGE_COLUMN * 2, withoutEnlargement: true });
+          if (transparent) {
+            ext = 'png';
+            outType = 'image/png';
+            out = await base.png({ compressionLevel: 9 }).toBuffer({ resolveWithObject: true });
+          } else {
+            out = await base.flatten({ background: '#ffffff' }).jpeg({ quality: 82, mozjpeg: true }).toBuffer({ resolveWithObject: true });
+          }
         } catch (convError: any) {
           console.warn(`[CAMPAIGN] photo conversion failed: ${convError?.message}`);
           return res.status(400).json({ message: "That file isn't a photo we can read — try a JPEG or PNG" });
         }
-        const key = buildObjectKey('photo.jpg', 'campaign-images');
-        const { publicUrl } = await putObject(key, out.data, 'image/jpeg');
-        res.json({ url: publicUrl, width: Math.min(CAMPAIGN_IMAGE_COLUMN, out.info.width), naturalWidth: out.info.width, height: out.info.height, size: out.data.length });
+        const key = buildObjectKey(`photo.${ext}`, 'campaign-images');
+        const { publicUrl } = await putObject(key, out.data, outType);
+        res.json({ url: publicUrl, width: Math.min(CAMPAIGN_IMAGE_COLUMN, out.info.width), naturalWidth: out.info.width, height: out.info.height, size: out.data.length, format: ext });
       } catch (error: any) {
         console.error("Error storing campaign photo:", error);
         res.status(500).json({ message: "Error storing photo: " + error.message });
