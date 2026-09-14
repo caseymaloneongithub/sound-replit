@@ -6516,6 +6516,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Photo for a campaign body (owner, 2026-09-14). Deliberately NOT the site's
+  // upload path: that converts to WebP, which Outlook for Windows can't show.
+  // Email gets JPEG — EXIF-rotated, transparency flattened to white, capped at
+  // twice the 552px text column for sharp phones — and the response says how
+  // wide to DISPLAY it: Outlook ignores CSS max-width, so the <img> carries an
+  // explicit width attribute the sanitizer preserves.
+  app.post(
+    "/api/admin/email-campaign/image",
+    isAdmin,
+    express.raw({ type: () => true, limit: '20mb' }),
+    async (req, res) => {
+      try {
+        if (!isS3Configured()) return res.status(503).json({ message: "Image storage is not configured" });
+        const body = req.body as Buffer;
+        if (!body || !Buffer.isBuffer(body) || body.length === 0) return res.status(400).json({ message: "Empty upload" });
+        const contentType = String(req.headers['content-type'] || '');
+        if (!/^image\/(png|jpe?g|webp|gif|heic|heif|avif|tiff?)$/i.test(contentType)) {
+          return res.status(415).json({ message: "Only photos (JPEG, PNG, WebP, GIF, HEIC) are accepted" });
+        }
+        const { CAMPAIGN_IMAGE_COLUMN } = await import('./campaigns');
+        const sharp = (await import('sharp')).default;
+        let out: { data: Buffer; info: { width: number; height: number } };
+        try {
+          out = await sharp(body)
+            .rotate()
+            .flatten({ background: '#ffffff' })
+            .resize({ width: CAMPAIGN_IMAGE_COLUMN * 2, withoutEnlargement: true })
+            .jpeg({ quality: 82, mozjpeg: true })
+            .toBuffer({ resolveWithObject: true });
+        } catch (convError: any) {
+          console.warn(`[CAMPAIGN] photo conversion failed: ${convError?.message}`);
+          return res.status(400).json({ message: "That file isn't a photo we can read — try a JPEG or PNG" });
+        }
+        const key = buildObjectKey('photo.jpg', 'campaign-images');
+        const { publicUrl } = await putObject(key, out.data, 'image/jpeg');
+        res.json({ url: publicUrl, width: Math.min(CAMPAIGN_IMAGE_COLUMN, out.info.width), naturalWidth: out.info.width, height: out.info.height, size: out.data.length });
+      } catch (error: any) {
+        console.error("Error storing campaign photo:", error);
+        res.status(500).json({ message: "Error storing photo: " + error.message });
+      }
+    }
+  );
+
   // ---- Unsubscribe (RFC 8058 one-click) ----
   // The token rides in the query string on both verbs, so the same URL serves
   // the footer link and the List-Unsubscribe header. GET shows a confirm page

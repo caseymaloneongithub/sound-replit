@@ -2883,6 +2883,8 @@ export function buildCampaignEmail(subject: string, bodyHtml: string): { html: s
   const text = bodyHtml
     // Plain-text readers keep the link destination: "label (https://…)".
     .replace(/<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href, label) => `${label} (${href})`)
+    // A photo becomes its alt text in brackets, or nothing.
+    .replace(/<img\b[^>]*>/gi, (m) => { const alt = /\balt\s*=\s*"([^"]*)"/i.exec(m)?.[1]?.trim(); return alt ? `[${alt}]\n` : ''; })
     .replace(/<li[^>]*>/gi, '\n- ')
     .replace(/<\/(p|div|h[1-3]|ul|ol|blockquote)>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')

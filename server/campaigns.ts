@@ -57,17 +57,25 @@ export type CampaignStatus = {
 // Parser-based allowlist: structural tags survive (bold, bullets, headings,
 // links), everything else is dropped, and attribute values are escaped by the
 // library rather than rebuilt by hand.
+/** Width of the text column inside the branded template (600px minus its
+ *  24px side padding). Photos display no wider than this. */
+export const CAMPAIGN_IMAGE_COLUMN = 552;
+
 export function sanitizeCampaignHtml(input: string): string {
   return sanitizeHtml(String(input ?? ''), {
-    allowedTags: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'blockquote', 'span'],
+    allowedTags: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'blockquote', 'span', 'img'],
     // <ol start="3"> is how the editor represents a list that begins at 3 —
     // dropping it would silently renumber on send. Kept only as a positive
     // integer; anything else is stripped.
-    allowedAttributes: { a: ['href'], ol: ['start'], span: ['style'] },
+    allowedAttributes: { a: ['href'], ol: ['start'], span: ['style'], img: ['src', 'alt', 'width', 'style'] },
     // The editor's explicit font sizes ride on <span style="font-size: Npx">.
     // Only that one property, only in px, only 10–36: any other style on a
-    // span is dropped, and a span left with nothing is harmless.
-    allowedStyles: { span: { 'font-size': [/^(1\d|2\d|3[0-6])px$/] } },
+    // span is dropped, and a span left with nothing is harmless. Photos get
+    // exactly the one email-safe style block the transform below writes.
+    allowedStyles: {
+      span: { 'font-size': [/^(1\d|2\d|3[0-6])px$/] },
+      img: { 'max-width': [/^100%$/], height: [/^auto$/], display: [/^block$/], margin: [/^12px 0$/] },
+    },
     transformTags: {
       ol: (tagName, attribs) => {
         const start = String(attribs.start ?? '').trim();
@@ -75,9 +83,25 @@ export function sanitizeCampaignHtml(input: string): string {
         if (/^[1-9]\d{0,5}$/.test(start)) kept.start = start;
         return { tagName, attribs: kept };
       },
+      // Photos: https source only (checked by allowedSchemesByTag), an
+      // explicit display width capped at the column (Outlook for Windows
+      // ignores max-width and would otherwise show a 1104px retina upload at
+      // full size), and the fixed style every other client scales with.
+      img: (tagName, attribs) => {
+        const kept: Record<string, string> = { src: String(attribs.src ?? ''), alt: String(attribs.alt ?? '') };
+        const width = String(attribs.width ?? '').trim();
+        if (/^[1-9]\d{0,3}$/.test(width)) kept.width = String(Math.min(CAMPAIGN_IMAGE_COLUMN, Number(width)));
+        kept.style = 'max-width:100%;height:auto;display:block;margin:12px 0';
+        return { tagName, attribs: kept };
+      },
     },
     allowedSchemes: ['http', 'https', 'mailto'],
+    // No data: URIs (an inlined photo would balloon the email) and no plain
+    // http (mixed-content blocked in most clients).
+    allowedSchemesByTag: { img: ['https'] },
     allowProtocolRelative: false,
+    // An <img> whose src was stripped renders as a broken-image box — drop it.
+    exclusiveFilter: (frame) => frame.tag === 'img' && !frame.attribs.src,
   })
     // The editor (ProseMirror) wraps every list item's text in a <p>, which
     // mail clients render with paragraph spacing inside each bullet. Unwrap a

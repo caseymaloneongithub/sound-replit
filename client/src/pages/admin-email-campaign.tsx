@@ -452,7 +452,7 @@ export default function AdminEmailCampaign() {
             <Card>
               <CardHeader>
                 <CardTitle>Message</CardTitle>
-                <CardDescription>Paste from a doc — bold and bullets are kept. The brand header and footer are added automatically.</CardDescription>
+                <CardDescription>Paste from a doc — bold and bullets are kept. Add photos with the photo button or drop them in. The brand header and footer are added automatically.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div>

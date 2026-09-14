@@ -1,13 +1,15 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent, Extension, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
 import TextStyle from "@tiptap/extension-text-style";
+import Image from "@tiptap/extension-image";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 import {
   Bold, Italic, Underline as UnderlineIcon, Heading2, List, ListOrdered,
-  Link as LinkIcon, Link2Off, Quote, Undo2, Redo2, RemoveFormatting,
+  Link as LinkIcon, Link2Off, Quote, Undo2, Redo2, RemoveFormatting, ImagePlus, Loader2,
 } from "lucide-react";
 
 // Explicit font sizes (owner, 2026-09-14). Rendered as <span style="font-size">
@@ -74,6 +76,42 @@ const FontSize = Extension.create({
   },
 });
 
+// Photos (owner, 2026-09-14). Block-level, never base64 (an inlined photo would
+// balloon the email). The `width` attribute is the DISPLAY width the upload
+// endpoint chose — Outlook for Windows ignores max-width, so the <img> must say
+// how wide it is; every other client scales it down with the sanitizer's style.
+const CampaignImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      width: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("width"),
+        renderHTML: (attributes) => (attributes.width ? { width: String(attributes.width) } : {}),
+      },
+    };
+  },
+}).configure({ inline: false, allowBase64: false });
+
+type UploadedPhoto = { url: string; width: number };
+
+async function uploadPhoto(file: File): Promise<UploadedPhoto> {
+  const res = await fetch("/api/admin/email-campaign/image", {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({} as { message?: string }));
+    throw new Error(body.message || `Upload failed (${res.status})`);
+  }
+  return res.json();
+}
+
+const imageFiles = (list: FileList | null | undefined): File[] =>
+  Array.from(list ?? []).filter((f) => f.type.startsWith("image/"));
+
 /**
  * Rich-text editor for campaign bodies (owner, 2026-09-12: "a better WYSIWYG
  * experience"). Tiptap/ProseMirror underneath: a real toolbar, the usual
@@ -81,9 +119,17 @@ const FontSize = Extension.create({
  * Google Docs or Word paste into clean semantic HTML — bold spans become
  * <strong>, lists stay lists. Output is getHTML(): exactly the tag set the
  * server's sanitizer allows, so what's shown here is what gets wrapped in the
- * brand template.
+ * brand template. Photos arrive by toolbar button, drag-and-drop, or pasting
+ * an image file; each is uploaded (as email-safe JPEG) and inserted by URL.
  */
 export function CampaignEditor({ value, onChange }: { value: string; onChange: (html: string) => void }) {
+  const { toast } = useToast();
+  const [uploading, setUploading] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // editorProps are captured once at creation, so the drop/paste handlers reach
+  // the current insert function through a ref.
+  const insertRef = useRef<(file: File, pos?: number) => void>(() => {});
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -97,6 +143,7 @@ export function CampaignEditor({ value, onChange }: { value: string; onChange: (
       Underline,
       TextStyle,
       FontSize,
+      CampaignImage,
       Link.configure({ openOnClick: false, autolink: true, defaultProtocol: "https" }),
     ],
     content: value,
@@ -110,9 +157,42 @@ export function CampaignEditor({ value, onChange }: { value: string; onChange: (
         "aria-multiline": "true",
         "data-testid": "editor-campaign-body",
       },
+      // Dropped or pasted image FILES are uploaded and inserted where they
+      // land; anything else (text, HTML, a moved node) takes the default path.
+      handleDrop: (view, event, _slice, moved) => {
+        if (moved) return false;
+        const files = imageFiles(event.dataTransfer?.files);
+        if (files.length === 0) return false;
+        event.preventDefault();
+        const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+        files.forEach((f) => insertRef.current(f, pos));
+        return true;
+      },
+      handlePaste: (_view, event) => {
+        const files = imageFiles(event.clipboardData?.files);
+        if (files.length === 0) return false;
+        event.preventDefault();
+        files.forEach((f) => insertRef.current(f));
+        return true;
+      },
     },
     onUpdate: ({ editor }) => onChange(editor.isEmpty ? "" : editor.getHTML()),
   });
+
+  insertRef.current = async (file: File, pos?: number) => {
+    if (!editor) return;
+    setUploading((n) => n + 1);
+    try {
+      const photo = await uploadPhoto(file);
+      const node = { type: "image", attrs: { src: photo.url, alt: "", width: photo.width } };
+      const chain = editor.chain().focus();
+      (pos != null ? chain.insertContentAt(pos, node) : chain.insertContent(node)).run();
+    } catch (e: any) {
+      toast({ title: "Couldn't add the photo", description: e?.message || "Try again.", variant: "destructive" });
+    } finally {
+      setUploading((n) => n - 1);
+    }
+  };
 
   // Keep an externally-reset value (e.g. after a send) in sync without
   // clobbering the caret while the user is typing.
@@ -134,13 +214,27 @@ export function CampaignEditor({ value, onChange }: { value: string; onChange: (
 
   return (
     <div className="rounded-md border bg-card focus-within:ring-2 focus-within:ring-ring">
-      <Toolbar editor={editor} onLink={setLink} />
+      {/* A selected photo needs a visible state so Backspace/Delete on it isn't a guess. */}
+      <style>{`.ProseMirror img.ProseMirror-selectednode { outline: 3px solid hsl(var(--ring)); outline-offset: 2px; }`}</style>
+      <Toolbar editor={editor} onLink={setLink} onPhoto={() => fileInputRef.current?.click()} uploading={uploading > 0} />
       <EditorContent editor={editor} />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          imageFiles(e.target.files).forEach((f) => insertRef.current(f));
+          e.target.value = "";
+        }}
+        data-testid="input-campaign-photo"
+      />
     </div>
   );
 }
 
-function Toolbar({ editor, onLink }: { editor: Editor; onLink: () => void }) {
+function Toolbar({ editor, onLink, onPhoto, uploading }: { editor: Editor; onLink: () => void; onPhoto: () => void; uploading: boolean }) {
   const btn = (label: string, active: boolean, onClick: () => void, Icon: typeof Bold, disabled = false, testId?: string) => (
     <Button
       type="button"
@@ -188,6 +282,7 @@ function Toolbar({ editor, onLink }: { editor: Editor; onLink: () => void }) {
       <span className="mx-1 h-5 w-px bg-border" aria-hidden />
       {btn("Link", editor.isActive("link"), onLink, LinkIcon, false, "button-format-link")}
       {btn("Remove link", false, () => c().unsetLink().run(), Link2Off, !editor.isActive("link"))}
+      {btn(uploading ? "Adding photo…" : "Add photo", false, onPhoto, uploading ? Loader2 : ImagePlus, uploading, "button-format-photo")}
       {btn("Clear formatting", false, () => c().clearNodes().unsetAllMarks().run(), RemoveFormatting)}
       <span className="mx-1 h-5 w-px bg-border" aria-hidden />
       {btn("Undo (Ctrl+Z)", false, () => c().undo().run(), Undo2, !editor.can().undo())}
