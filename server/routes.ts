@@ -7961,10 +7961,14 @@ If you have any questions, please don't hesitate to reach out!`,
       const isPreview = req.body?.preview === true;
       const overrides = z.object({
         to: z.array(z.string().email()).min(1).optional(),
+        // Did staff actually change the To line from the default the dialog
+        // showed? Only an edited To becomes the order's own address.
+        toEdited: z.boolean().optional(),
         subject: z.string().trim().min(1).max(200).optional(),
         body: z.string().trim().max(2000).optional(),
       }).parse({
         to: Array.isArray(req.body?.to) ? req.body.to : undefined,
+        toEdited: req.body?.toEdited === true,
         subject: req.body?.subject || undefined,
         body: req.body?.body || undefined,
       });
@@ -8025,9 +8029,11 @@ If you have any questions, please don't hesitate to reach out!`,
       await sendWholesaleOrderConfirmation(confirmationParams);
       // Addresses staff CHANGED become the order's own, so its invoice and
       // receipt follow the same choice (a pickup order otherwise has none).
-      // Sending to the rule's own default is not a choice: routing stays tied
-      // to the configured email, so a later correction there still applies.
-      if (overrides.to && !sameRecipients(overrides.to, resolved.to)) {
+      // Sending to the rule's own default is not a choice, and neither is an
+      // unedited dialog that happens to hold a stale default (the location's
+      // inbox was corrected while it sat open): routing stays tied to the
+      // configured email unless staff actually typed something else.
+      if (overrides.to && overrides.toEdited && !sameRecipients(overrides.to, resolved.to)) {
         await storage.updateWholesaleOrder(order.id, { contactEmail: overrides.to.join(", "), contactEmailChosen: true });
       }
       res.json({ success: true, message: `Confirmation sent to ${recipients.join(", ")}` });
@@ -8047,11 +8053,15 @@ If you have any questions, please don't hesitate to reach out!`,
       // subject, and a personal note rendered above the invoice details.
       const sendSchema = z.object({
         to: z.array(z.string().email()).min(1).optional(),
+        // Did staff actually change the To line from the default the dialog
+        // showed? Only an edited To becomes the order's own address.
+        toEdited: z.boolean().optional(),
         subject: z.string().trim().min(1).max(200).optional(),
         message: z.string().trim().max(2000).optional(),
       });
       const overrides = sendSchema.parse({
         to: Array.isArray(req.body?.to) ? req.body.to : undefined,
+        toEdited: req.body?.toEdited === true,
         subject: req.body?.subject || undefined,
         message: req.body?.message || undefined,
       });
@@ -8176,8 +8186,9 @@ If you have any questions, please don't hesitate to reach out!`,
 
       // Only a delivered invoice is a sent invoice. Addresses staff CHANGED
       // become the order's own, so the receipt follows the same choice; the
-      // rule's own default is not a choice and is not stored.
-      const changedTo = overrides.to && !sameRecipients(overrides.to, resolvedInvoiceRecipients.to) ? overrides.to : null;
+      // rule's own default is not a choice and is not stored — nor is an
+      // unedited dialog holding a default that went stale while it sat open.
+      const changedTo = overrides.to && overrides.toEdited && !sameRecipients(overrides.to, resolvedInvoiceRecipients.to) ? overrides.to : null;
       await storage.updateWholesaleOrder(req.params.id, {
         dueDate: dueDateValue,
         invoiceSentAt: new Date(),

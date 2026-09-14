@@ -94,6 +94,8 @@ export default function WholesalePlaceOrder() {
   // To / Subject / body text before anything is sent (owner, 2026-09-02).
   const [previewOrderId, setPreviewOrderId] = useState<string | null>(null);
   const [previewTo, setPreviewTo] = useState("");
+  // The To line as the server filled it in; the send says whether staff changed it.
+  const [previewDefaultTo, setPreviewDefaultTo] = useState("");
   // Why the To line came back empty (no inbox on file for the store) — the rule
   // never substitutes another address, so staff type one or fix the location.
   const [previewNote, setPreviewNote] = useState("");
@@ -120,6 +122,7 @@ export default function WholesalePlaceOrder() {
       setPreviewHtml(data.html);
       if (!fields) {
         setPreviewTo((data.to ?? []).join(", "));
+        setPreviewDefaultTo((data.to ?? []).join(", "));
         setPreviewNote(data.note ?? "");
         setPreviewSubject(data.subject ?? "");
         setPreviewBody("");
@@ -142,6 +145,7 @@ export default function WholesalePlaceOrder() {
       const to = previewTo.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
       return apiRequest("POST", `/api/wholesale/orders/${previewOrderId}/confirmation`, {
         to,
+        toEdited: previewTo.trim() !== previewDefaultTo.trim(),
         subject: previewSubject.trim() || undefined,
         body: previewBody.trim() || undefined,
       });

@@ -113,6 +113,8 @@ export default function WholesaleInvoice() {
   // Why the To line is empty when it is (no inbox on file for the store) — the
   // server's rule never substitutes another address.
   const [sendNote, setSendNote] = useState("");
+  // The To line as the server filled it in; the send says whether staff changed it.
+  const [sendDefaultTo, setSendDefaultTo] = useState("");
   const [sendSubject, setSendSubject] = useState("");
   const [sendMessage, setSendMessage] = useState("");
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
@@ -139,6 +141,7 @@ export default function WholesaleInvoice() {
       // typed while the preview loaded is never overwritten.
       if (to.length === 0) {
         setSendTo((current) => (current.trim() === "" ? (data.to ?? []).join(", ") : current));
+        setSendDefaultTo((data.to ?? []).join(", "));
         setSendNote(data.note ?? "");
       }
     } catch (e: any) {
@@ -153,6 +156,7 @@ export default function WholesaleInvoice() {
       const to = sendTo.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
       return await apiRequest("POST", `/api/wholesale/orders/${orderId}/send-invoice`, {
         to,
+        toEdited: sendTo.trim() !== sendDefaultTo.trim(),
         subject: sendSubject.trim() || undefined,
         message: sendMessage.trim() || undefined,
       });
