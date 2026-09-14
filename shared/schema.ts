@@ -560,6 +560,12 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   // Email the orderer gave at submission — the confirmation goes here. Often differs
   // from the billing/primary contact (owner: floor staff order, office pays).
   contactEmail: text("contact_email"),
+  // True only when that address was a DELIBERATE choice for this order (typed
+  // on the guest form, or staff sent to something other than the rule's
+  // default). Historical rows hold auto-filled login emails and must not act
+  // as overrides (reviewer, 2026-09-14); routing follows the configured
+  // location/account email unless this is set.
+  contactEmailChosen: boolean("contact_email_chosen").notNull().default(false),
   // Customer's purchase-order number — optional, but some accounts require it on the
   // invoice before they'll pay it.
   poNumber: text("po_number"),

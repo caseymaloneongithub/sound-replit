@@ -17,7 +17,7 @@ import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleIn
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
-import { wholesaleOrderRecipients, splitEmails } from "./wholesale-recipients";
+import { wholesaleOrderRecipients, splitEmails, sameRecipients } from "./wholesale-recipients";
 import { registerClaimRoutes, getPendingClaim, holdPendingOrder, createLinkRequest } from "./claim-flow";
 import {
   frequencyToDays,
@@ -572,7 +572,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const details = await storage.getWholesaleOrderWithDetails(orderId);
     if (!details) return { sent: false, to: [], reason: "order not found" };
     const { order, customer, items } = details;
-    const resolved = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail);
+    const resolved = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail, order.contactEmailChosen);
     const recipients = resolved.to;
     if (!recipients.length) {
       console.log(`[RECEIPT] ${order.invoiceNumber}: not sent — ${resolved.label}`);
@@ -1681,6 +1681,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fulfillmentMethod,
         dueDate,
         contactEmail: contactEmail || undefined,
+        // A guest-typed address is a deliberate choice; nothing else sets this.
+        contactEmailChosen: !!contactEmail,
         poNumber,
       };
 
@@ -1719,7 +1721,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // multi-location customer, else the account email. Nothing is appended
       // automatically — not the portal login who placed it (reviewer,
       // 2026-09-14; supersedes the 2026-08-23 "whoever placed it" routing).
-      const { to: confirmationEmail, label: recipientLabel } = await wholesaleOrderRecipients(customer.id, createdOrder.locationId, createdOrder.contactEmail);
+      const { to: confirmationEmail, label: recipientLabel } = await wholesaleOrderRecipients(customer.id, createdOrder.locationId, createdOrder.contactEmail, createdOrder.contactEmailChosen);
       console.log(`[ORDER] ${createdOrder.invoiceNumber} confirmation -> ${recipientLabel}: ${confirmationEmail.join(', ') || '(nobody — no address on file)'}`);
       const emailBusinessName = emailLocation?.locationName && emailLocation.locationName !== 'Main Location'
         ? `${customer.businessName} — ${emailLocation.locationName}`
@@ -7765,7 +7767,7 @@ If you have any questions, please don't hesitate to reach out!`,
         }
         // Recipients follow the one rule (wholesale-recipients.ts; owner,
         // 2026-09-02: a Fremont order emailed 2nd & Pike).
-        const { to: confirmationRecipients, label: recipientLabel } = await wholesaleOrderRecipients(customer.id, createdOrder.locationId, createdOrder.contactEmail);
+        const { to: confirmationRecipients, label: recipientLabel } = await wholesaleOrderRecipients(customer.id, createdOrder.locationId, createdOrder.contactEmail, createdOrder.contactEmailChosen);
         if (sendConfirmation && confirmationRecipients.length === 0) {
           console.log(`[ORDER] ${invoiceNumber}: confirmation not sent — ${recipientLabel}`);
         }
@@ -7975,7 +7977,7 @@ If you have any questions, please don't hesitate to reach out!`,
       const emailBusinessName = loc?.locationName && loc.locationName !== 'Main Location'
         ? `${customer.businessName} — ${loc.locationName}`
         : customer.businessName;
-      const resolved = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail);
+      const resolved = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail, order.contactEmailChosen);
       const recipients = overrides.to ?? resolved.to;
       if (!isPreview && recipients.length === 0) {
         return res.status(400).json({ message: resolved.problem ?? "No email address to send to" });
@@ -8021,9 +8023,13 @@ If you have any questions, please don't hesitate to reach out!`,
       }
 
       await sendWholesaleOrderConfirmation(confirmationParams);
-      // Addresses staff typed become the order's own, so its invoice and
+      // Addresses staff CHANGED become the order's own, so its invoice and
       // receipt follow the same choice (a pickup order otherwise has none).
-      if (overrides.to) await storage.updateWholesaleOrder(order.id, { contactEmail: overrides.to.join(", ") });
+      // Sending to the rule's own default is not a choice: routing stays tied
+      // to the configured email, so a later correction there still applies.
+      if (overrides.to && !sameRecipients(overrides.to, resolved.to)) {
+        await storage.updateWholesaleOrder(order.id, { contactEmail: overrides.to.join(", "), contactEmailChosen: true });
+      }
       res.json({ success: true, message: `Confirmation sent to ${recipients.join(", ")}` });
     } catch (error: any) {
       console.error("Error with order confirmation:", error);
@@ -8125,7 +8131,7 @@ If you have any questions, please don't hesitate to reach out!`,
       // Recipients follow the one rule (wholesale-recipients.ts; owner,
       // 2026-08-31: each Evergreens store bills separately, and a location may
       // list several addresses). The send dialog can override outright.
-      const resolvedInvoiceRecipients = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail);
+      const resolvedInvoiceRecipients = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail, order.contactEmailChosen);
       const invoiceRecipient = overrides.to ?? resolvedInvoiceRecipients.to;
       if (!isPreview && invoiceRecipient.length === 0) {
         return res.status(400).json({ message: resolvedInvoiceRecipients.problem ?? "No email address to send to" });
@@ -8168,12 +8174,14 @@ If you have any questions, please don't hesitate to reach out!`,
 
       await sendWholesaleInvoiceEmail(emailParams);
 
-      // Only a delivered invoice is a sent invoice. Addresses staff typed become
-      // the order's own, so the receipt follows the same choice.
+      // Only a delivered invoice is a sent invoice. Addresses staff CHANGED
+      // become the order's own, so the receipt follows the same choice; the
+      // rule's own default is not a choice and is not stored.
+      const changedTo = overrides.to && !sameRecipients(overrides.to, resolvedInvoiceRecipients.to) ? overrides.to : null;
       await storage.updateWholesaleOrder(req.params.id, {
         dueDate: dueDateValue,
         invoiceSentAt: new Date(),
-        ...(overrides.to ? { contactEmail: overrides.to.join(", ") } : {}),
+        ...(changedTo ? { contactEmail: changedTo.join(", "), contactEmailChosen: true } : {}),
       });
 
       res.json({

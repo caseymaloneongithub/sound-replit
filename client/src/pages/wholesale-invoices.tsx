@@ -58,9 +58,11 @@ export default function WholesaleInvoices() {
       });
       if (seq !== previewSeq.current) return;
       setPreviewHtml(data.html);
-      // With no To typed, the server decides who this invoice goes to.
+      // With no To typed, the server decides who this invoice goes to — applied
+      // only if the To line is STILL blank when the answer lands, so something
+      // typed while the preview loaded is never overwritten.
       if (to.length === 0) {
-        setSendTo((data.to ?? []).join(", "));
+        setSendTo((current) => (current.trim() === "" ? (data.to ?? []).join(", ") : current));
         setSendNote(data.note ?? "");
       }
     } catch (e: any) {

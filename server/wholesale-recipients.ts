@@ -31,6 +31,12 @@ export function splitEmails(raw: string | null | undefined): string[] {
   return out;
 }
 
+/** Same addresses, ignoring order and case. */
+export function sameRecipients(a: string[], b: string[]): boolean {
+  const norm = (xs: string[]) => Array.from(new Set(xs.map((e) => e.trim().toLowerCase()))).sort().join(",");
+  return norm(a) === norm(b);
+}
+
 export type OrderRecipients = {
   to: string[];
   /** Where the addresses came from, for logs and the send dialog. */
@@ -50,17 +56,19 @@ export type OrderRecipients = {
  * not, so deactivating a store never silently reroutes its open orders to the
  * account email (reviewer, 2026-09-14).
  *
- * `orderContactEmail` is an address chosen FOR THIS ORDER — typed by a guest on
- * the no-login form, or entered by staff in a send dialog — and wins outright:
- * an explicit choice, not a fallback. It is stored on the order so every later
- * email about it (invoice, receipt) follows the same choice.
+ * `orderContactEmail` is an address stored on the order; it wins outright ONLY
+ * when `orderContactEmailChosen` says it was a deliberate choice for this
+ * order — typed by a guest on the no-login form, or staff sending to something
+ * other than the rule's default. Older rows carry auto-filled login emails and
+ * unchosen defaults, which must keep following the configured routing.
  */
 export async function wholesaleOrderRecipients(
   customerId: string,
   locationId: string | null | undefined,
   orderContactEmail?: string | null,
+  orderContactEmailChosen?: boolean | null,
 ): Promise<OrderRecipients> {
-  const chosen = splitEmails(orderContactEmail);
+  const chosen = orderContactEmailChosen ? splitEmails(orderContactEmail) : [];
   if (chosen.length > 0) return { to: chosen, source: "order", label: "address given for this order" };
 
   const customer = await storage.getWholesaleCustomer(customerId);
