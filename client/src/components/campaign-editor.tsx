@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useEditor, EditorContent, Extension, type Editor } from "@tiptap/react";
+import { useEditor, EditorContent, Extension, nodeInputRule, type Editor } from "@tiptap/react";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
@@ -104,6 +104,20 @@ const CampaignImage = Image.extend({
     // otherwise show in Write and vanish on send.
     return [{ tag: "img[src]", getAttrs: (el) => (/^https:\/\//i.test((el as HTMLElement).getAttribute("src") ?? "") ? null : false) }];
   },
+  addInputRules() {
+    // The inherited Markdown shortcut ![alt](url) gets the same https rule:
+    // the pattern itself only matches an https source, so anything else is
+    // left as typed instead of becoming an image that vanishes on send.
+    // (A RegExp, not a finder function: Tiptap rebuilds a function finder's
+    // match from its text alone, so capture groups never reach getAttributes.)
+    return [
+      nodeInputRule({
+        find: /(?:^|\s)(!\[(.+|:?)]\((https:\/\/\S+)(?:(?:\s+)["'](\S+)["'])?\))$/i,
+        type: this.type,
+        getAttributes: (match) => ({ src: match[3], alt: match[2], title: match[4] }),
+      }),
+    ];
+  },
 }).configure({ inline: false, allowBase64: false });
 
 type UploadedPhoto = { url: string; width: number };
@@ -135,16 +149,31 @@ function findImages(editor: Editor, test: (node: PMNode) => boolean): Array<{ po
   return hits;
 }
 
-/** Resolve one upload's placeholder: swap in the real attrs, or (null) remove
- *  it. Found by its uploadId at resolve time, so edits made while the upload
- *  ran — text typed above it, other photos, a selection — are untouched, and
- *  a placeholder the user already deleted is simply not there to resolve. */
-function resolvePlaceholder(editor: Editor, uploadId: string, attrs: Record<string, unknown> | null) {
-  const [hit] = findImages(editor, (n) => n.attrs.uploadId === uploadId);
-  if (!hit) return;
+/** The outcome of every upload this editor has run, by uploadId: the real
+ *  attrs, or null for a failure. Placeholders are resolved from this table —
+ *  not just once when the upload lands, but whenever one is (re)seen, which
+ *  is how Undo/Redo stays safe: undoing the resolve, or redoing an insertion
+ *  after its upload finished, restores a placeholder whose blob URL is long
+ *  revoked, and the next reconcile pass swaps the real photo straight back. */
+type Outcomes = Map<string, Record<string, unknown> | null>;
+
+/** Apply known outcomes to every placeholder in the doc, in one transaction
+ *  kept OUT of the undo history — so Undo steps over the resolve and lands on
+ *  the insertion (removing the photo), never on a dead blob URL. Found by
+ *  uploadId at resolve time, so edits made while an upload ran — text typed
+ *  above it, other photos, a selection — are untouched, and a placeholder the
+ *  user already deleted is simply not there to resolve. */
+function reconcilePlaceholders(editor: Editor, outcomes: Outcomes) {
+  const hits = findImages(editor, (n) => n.attrs.uploadId != null && outcomes.has(n.attrs.uploadId));
+  if (hits.length === 0) return;
   const tr = editor.state.tr;
-  if (attrs) tr.setNodeMarkup(hit.pos, undefined, { ...hit.node.attrs, ...attrs });
-  else tr.delete(hit.pos, hit.pos + hit.node.nodeSize);
+  // Back to front so deletions don't shift the positions still to visit.
+  for (const { pos, node } of hits.reverse()) {
+    const attrs = outcomes.get(node.attrs.uploadId);
+    if (attrs) tr.setNodeMarkup(pos, undefined, { ...node.attrs, ...attrs });
+    else tr.delete(pos, pos + node.nodeSize);
+  }
+  tr.setMeta("addToHistory", false);
   editor.view.dispatch(tr);
 }
 
@@ -172,8 +201,11 @@ export function CampaignEditor({
   const [uploading, setUploading] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // editorProps are captured once at creation, so the drop/paste handlers reach
-  // the current insert function through a ref.
-  const insertRef = useRef<(file: File, pos?: number) => void>(() => {});
+  // the current insert function through a ref. It inserts synchronously and
+  // returns the position just after the placeholder, so a batch (several
+  // files dropped together) chains in the order given.
+  const insertRef = useRef<(file: File, pos?: number) => number | undefined>(() => undefined);
+  const outcomes = useRef<Outcomes>(new Map());
 
   useEffect(() => { onUploadingChange?.(uploading > 0); }, [uploading, onUploadingChange]);
 
@@ -211,8 +243,8 @@ export function CampaignEditor({
         const files = imageFiles(event.dataTransfer?.files);
         if (files.length === 0) return false;
         event.preventDefault();
-        const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
-        files.forEach((f) => insertRef.current(f, pos));
+        let pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+        for (const f of files) pos = insertRef.current(f, pos) ?? pos;
         return true;
       },
       handlePaste: (_view, event) => {
@@ -230,8 +262,8 @@ export function CampaignEditor({
   // shown in place, tagged with an uploadId — and is resolved by that id when
   // the upload finishes. Several photos picked at once each keep their spot,
   // and nothing selected in the meantime is replaced.
-  insertRef.current = async (file: File, pos?: number) => {
-    if (!editor) return;
+  insertRef.current = (file: File, pos?: number) => {
+    if (!editor) return undefined;
     const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const previewUrl = URL.createObjectURL(file);
     const placeholder = { type: "image", attrs: { src: previewUrl, alt: "", uploadId } };
@@ -241,18 +273,33 @@ export function CampaignEditor({
     // next one belongs, which keeps a multi-pick in the order chosen.
     const at = pos ?? editor.state.selection.to;
     editor.chain().focus().insertContentAt(at, placeholder).run();
+    const after = editor.state.selection.to;
     setUploading((n) => n + 1);
-    try {
-      const photo = await uploadPhoto(file);
-      resolvePlaceholder(editor, uploadId, { src: photo.url, width: photo.width, uploadId: null });
-    } catch (e: any) {
-      resolvePlaceholder(editor, uploadId, null);
-      toast({ title: "Couldn't add the photo", description: e?.message || "Try again.", variant: "destructive" });
-    } finally {
-      URL.revokeObjectURL(previewUrl);
-      setUploading((n) => n - 1);
-    }
+    void (async () => {
+      try {
+        const photo = await uploadPhoto(file);
+        outcomes.current.set(uploadId, { src: photo.url, width: photo.width, uploadId: null });
+      } catch (e: any) {
+        outcomes.current.set(uploadId, null);
+        toast({ title: "Couldn't add the photo", description: e?.message || "Try again.", variant: "destructive" });
+      } finally {
+        reconcilePlaceholders(editor, outcomes.current);
+        URL.revokeObjectURL(previewUrl);
+        setUploading((n) => n - 1);
+      }
+    })();
+    return after;
   };
+
+  // Undo/Redo can bring a resolved placeholder back (see Outcomes): every doc
+  // change re-checks for placeholders with a known outcome. Deferred a tick so
+  // it never dispatches from inside the transaction that triggered it.
+  useEffect(() => {
+    if (!editor) return;
+    const onUpdate = () => queueMicrotask(() => { if (!editor.isDestroyed) reconcilePlaceholders(editor, outcomes.current); });
+    editor.on("update", onUpdate);
+    return () => { editor.off("update", onUpdate); };
+  }, [editor]);
 
   // A pasted image arrives without a width. Measure it once and set
   // min(column, natural) so the email carries the explicit width classic
