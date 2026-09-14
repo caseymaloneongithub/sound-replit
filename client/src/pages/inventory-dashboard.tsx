@@ -275,9 +275,9 @@ export default function InventoryDashboard() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-lg">
-                Bottling — last 12 months
+                Bottling &amp; canning — last 12 months
               </CardTitle>
-              <CardDescription>Cases bottled per month</CardDescription>
+              <CardDescription>Cases bottled or canned per month</CardDescription>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
@@ -335,14 +335,14 @@ export default function InventoryDashboard() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <CardTitle className="text-lg">Flavor mix</CardTitle>
-                  <CardDescription>Cases bottled by flavor — {periodLabel.toLowerCase()}</CardDescription>
+                  <CardDescription>Cases bottled or canned by flavor — {periodLabel.toLowerCase()}</CardDescription>
                 </div>
                 <MixPeriodSelect value={mixPeriod} onChange={setMixPeriod} />
               </div>
             </CardHeader>
             <CardContent>
               {dash.flavorMix.length === 0 ? (
-                <p className="text-muted-foreground text-sm py-12 text-center">No cases bottled in this period.</p>
+                <p className="text-muted-foreground text-sm py-12 text-center">No cases bottled or canned in this period.</p>
               ) : (
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
