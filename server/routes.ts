@@ -1704,12 +1704,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const emailLocation = createdOrder.locationId ? await storage.getWholesaleLocation(createdOrder.locationId) : null;
 
       // Recipients follow the one rule (wholesale-recipients.ts): the store's
-      // inbox for a multi-location customer, the account email otherwise. The
-      // person who placed it — the portal login, or the address a guest typed
-      // in — gets a copy too (owner decision 2026-08-23: buyers want to see
-      // their own order), de-duplicated against the store's list.
-      const placer = opts.placedByUserId ? await storage.getUser(opts.placedByUserId) : undefined;
-      const { to: confirmationEmail, label: recipientLabel } = await wholesaleOrderRecipients(customer.id, createdOrder.locationId, [contactEmail, placer?.email]);
+      // inbox for a multi-location customer, the account email otherwise.
+      // Nothing is appended automatically — not the portal login who placed it
+      // (reviewer, 2026-09-14; supersedes the 2026-08-23 "whoever placed it"
+      // routing). An address typed on the guest form is an explicit choice
+      // and REPLACES the rule's list for this confirmation.
+      const resolvedRecipients = await wholesaleOrderRecipients(customer.id, createdOrder.locationId);
+      const confirmationEmail = contactEmail ? [contactEmail] : resolvedRecipients.to;
+      const recipientLabel = contactEmail ? 'address given on the form' : resolvedRecipients.label;
       console.log(`[ORDER] ${createdOrder.invoiceNumber} confirmation -> ${recipientLabel}: ${confirmationEmail.join(', ') || '(nobody — no address on file)'}`);
       const emailBusinessName = emailLocation?.locationName && emailLocation.locationName !== 'Main Location'
         ? `${customer.businessName} — ${emailLocation.locationName}`
@@ -8047,11 +8049,8 @@ If you have any questions, please don't hesitate to reach out!`,
       // Set due date (default 30 days from now if not provided)
       const dueDateValue = dueDate ? new Date(dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       
-      // Update order with due date and sent timestamp
-      if (!isPreview) await storage.updateWholesaleOrder(req.params.id, {
-        dueDate: dueDateValue,
-        invoiceSentAt: new Date(),
-      });
+      // The due date and "sent" stamp are written AFTER the email goes out (see
+      // below) — an invoice refused for having no recipient must not read as sent.
 
       // Generate payment URL for online payment customers
       let paymentUrl: string | null = null;
@@ -8151,6 +8150,12 @@ If you have any questions, please don't hesitate to reach out!`,
       }
 
       await sendWholesaleInvoiceEmail(emailParams);
+
+      // Only a delivered invoice is a sent invoice.
+      await storage.updateWholesaleOrder(req.params.id, {
+        dueDate: dueDateValue,
+        invoiceSentAt: new Date(),
+      });
 
       res.json({
         success: true,

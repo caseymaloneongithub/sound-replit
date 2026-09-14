@@ -1,6 +1,6 @@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Loader2 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { WholesaleCustomer, WholesaleUnitType, Flavor, WholesaleCustomerPricing, WholesaleLocation } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -102,7 +102,11 @@ export default function WholesalePlaceOrder() {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
 
+  // A preview response that isn't the latest request's is dropped, so a slow
+  // one can't land in a dialog that has since been reopened for another order.
+  const previewSeq = useRef(0);
   const fetchPreview = async (orderId: string, fields?: { to?: string; subject?: string; body?: string }) => {
+    const seq = ++previewSeq.current;
     setPreviewBusy(true);
     try {
       const to = fields?.to?.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
@@ -112,6 +116,7 @@ export default function WholesalePlaceOrder() {
         subject: fields?.subject?.trim() || undefined,
         body: fields?.body?.trim() || undefined,
       });
+      if (seq !== previewSeq.current) return;
       setPreviewHtml(data.html);
       if (!fields) {
         setPreviewTo((data.to ?? []).join(", "));
@@ -120,9 +125,9 @@ export default function WholesalePlaceOrder() {
         setPreviewBody("");
       }
     } catch (e: any) {
-      toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
+      if (seq === previewSeq.current) toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
     } finally {
-      setPreviewBusy(false);
+      if (seq === previewSeq.current) setPreviewBusy(false);
     }
   };
 

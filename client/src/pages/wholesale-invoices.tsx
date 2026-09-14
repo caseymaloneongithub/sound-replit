@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { WholesaleOrder, WholesaleCustomer, User } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,7 +39,13 @@ export default function WholesaleInvoices() {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
 
+  // Each preview request gets a sequence number; a response that isn't the
+  // latest is dropped. Otherwise invoice A's slow preview, arriving after the
+  // dialog was reopened for invoice B, would put A's recipients on B
+  // (reviewer, 2026-09-14).
+  const previewSeq = useRef(0);
   const fetchPreview = async (orderId: string, fields: { to: string; subject: string; message: string; dueDateValue?: Date }) => {
+    const seq = ++previewSeq.current;
     setPreviewBusy(true);
     try {
       const to = fields.to.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
@@ -50,6 +56,7 @@ export default function WholesaleInvoices() {
         subject: fields.subject.trim() || undefined,
         message: fields.message.trim() || undefined,
       });
+      if (seq !== previewSeq.current) return;
       setPreviewHtml(data.html);
       // With no To typed, the server decides who this invoice goes to.
       if (to.length === 0) {
@@ -57,9 +64,9 @@ export default function WholesaleInvoices() {
         setSendNote(data.note ?? "");
       }
     } catch (e: any) {
-      toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
+      if (seq === previewSeq.current) toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
     } finally {
-      setPreviewBusy(false);
+      if (seq === previewSeq.current) setPreviewBusy(false);
     }
   };
   const [setDueDateDialogOpen, setSetDueDateDialogOpen] = useState(false);

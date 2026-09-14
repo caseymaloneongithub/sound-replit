@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
@@ -118,7 +118,11 @@ export default function WholesaleInvoice() {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
 
+  // A preview response that isn't the latest request's is dropped, so a slow
+  // one can't land in a dialog that has since been reopened.
+  const previewSeq = useRef(0);
   const fetchPreview = async (fields: { to: string; subject: string; message: string }) => {
+    const seq = ++previewSeq.current;
     setPreviewBusy(true);
     try {
       const to = fields.to.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
@@ -128,6 +132,7 @@ export default function WholesaleInvoice() {
         subject: fields.subject.trim() || undefined,
         message: fields.message.trim() || undefined,
       });
+      if (seq !== previewSeq.current) return;
       setPreviewHtml(data.html);
       // With no To typed, the server decides who this invoice goes to.
       if (to.length === 0) {
@@ -135,9 +140,9 @@ export default function WholesaleInvoice() {
         setSendNote(data.note ?? "");
       }
     } catch (e: any) {
-      toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
+      if (seq === previewSeq.current) toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
     } finally {
-      setPreviewBusy(false);
+      if (seq === previewSeq.current) setPreviewBusy(false);
     }
   };
 

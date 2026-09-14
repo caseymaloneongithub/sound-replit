@@ -41,36 +41,47 @@ export type OrderRecipients = {
 };
 
 /**
- * Resolve the recipients for an order of `customerId` delivered to
- * `locationId` (null for pickup). `also` adds addresses that should get a copy
- * regardless — the person who placed a portal order, an address a guest typed
- * in — de-duplicated against the rule's own list.
+ * Resolve the recipients for an order of `customerId` tied to `locationId`
+ * (null for a pickup order). Nothing is ever appended or substituted: the
+ * rule's answer is the whole answer, and when it has none the caller shows
+ * `problem` to staff.
+ *
+ * "Multi-location" counts every location the customer has ever had, active or
+ * not, so deactivating a store never silently reroutes its open orders to the
+ * account email (reviewer, 2026-09-14).
  */
 export async function wholesaleOrderRecipients(
   customerId: string,
   locationId: string | null | undefined,
-  also: Array<string | null | undefined> = [],
 ): Promise<OrderRecipients> {
   const customer = await storage.getWholesaleCustomer(customerId);
   if (!customer) throw new Error("Wholesale customer not found");
-  const locations = (await storage.getWholesaleLocations(customerId)).filter((l) => l.isActive !== false);
+  const locations = await storage.getWholesaleLocations(customerId);
+  const multi = locations.length > 1;
   const location = locationId ? locations.find((l) => l.id === locationId) ?? (await storage.getWholesaleLocation(locationId)) : null;
 
   let to: string[] = [];
   let source: OrderRecipients["source"] = "account";
   let label = "account email";
   let problem: string | undefined;
-  if (locations.length > 1 && location) {
-    // Multi-location customer, order tied to a store: that store's inbox or
-    // nothing. A pickup order (no location) is customer-level, below.
-    to = splitEmails((location as any).contactEmail);
-    if (to.length > 0) {
-      source = "location";
-      label = `${location.locationName} inbox`;
-    } else {
+  if (multi) {
+    // Every email about a multi-location customer's order goes to the store
+    // the order is for. A pickup order names no store, so it has no recipient
+    // until staff say which store is ordering.
+    if (!location) {
       source = "none";
-      label = `no inbox on ${location.locationName}`;
-      problem = `No email on file for ${location.locationName} — add one to the location, or enter an address here.`;
+      label = "pickup order, no store named";
+      problem = `${customer.businessName} has several locations and this pickup order doesn't name one — enter the ordering store's address here.`;
+    } else {
+      to = splitEmails((location as any).contactEmail);
+      if (to.length > 0) {
+        source = "location";
+        label = `${location.locationName} inbox`;
+      } else {
+        source = "none";
+        label = `no inbox on ${location.locationName}`;
+        problem = `No email on file for ${location.locationName} — add one to the location, or enter an address here.`;
+      }
     }
   } else {
     to = splitEmails(customer.email);
@@ -78,15 +89,6 @@ export async function wholesaleOrderRecipients(
       source = "none";
       label = "no account email";
       problem = `No email on file for ${customer.businessName} — add one to the account, or enter an address here.`;
-    }
-  }
-
-  const seen = new Set(to.map((e) => e.toLowerCase()));
-  for (const extra of also) {
-    for (const e of splitEmails(extra)) {
-      if (seen.has(e.toLowerCase())) continue;
-      seen.add(e.toLowerCase());
-      to.push(e);
     }
   }
   return { to, source, label, problem };

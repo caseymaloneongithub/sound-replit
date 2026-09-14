@@ -706,7 +706,9 @@ export default function WholesaleCustomers() {
                         <FormItem>
                           <FormLabel>Primary Email</FormLabel>
                           <FormControl>
-                            <Input type="email" {...field} data-testid="input-email" />
+                            {/* `multiple` lets the browser accept "a@x.com, b@y.com" — the
+                                account email may list several addresses, like a location's. */}
+                            <Input type="email" multiple placeholder="Separate several with commas" {...field} data-testid="input-email" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>

@@ -319,7 +319,7 @@ export default function WholesaleGuestOrder() {
                 onChange={(e) => setContactEmail(e.target.value)}
                 data-testid="input-guest-email"
               />
-              <p className="text-xs text-muted-foreground mt-1.5">The order confirmation goes here — or to your store's contact on file if left blank.</p>
+              <p className="text-xs text-muted-foreground mt-1.5">Leave blank and the confirmation goes to your store's inbox on file. An address here goes there instead.</p>
             </div>
             <div>
               <Label htmlFor="guest-po">PO # (optional)</Label>

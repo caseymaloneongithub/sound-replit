@@ -63,10 +63,13 @@ export default function WholesaleCustomerLocations() {
     mutationFn: async () => {
       const payload = {
         ...form,
-        contactName: form.contactName || undefined,
-        contactPhone: form.contactPhone || undefined,
-        contactEmail: form.contactEmail || undefined,
-        deliveryInstructions: form.deliveryInstructions || undefined,
+        // Blank fields are sent as null so clearing one actually clears it —
+        // `undefined` would be dropped from the request and the old value kept
+        // (a cleared inbox kept receiving mail; reviewer, 2026-09-14).
+        contactName: form.contactName.trim() || null,
+        contactPhone: form.contactPhone.trim() || null,
+        contactEmail: form.contactEmail.trim() || null,
+        deliveryInstructions: form.deliveryInstructions.trim() || null,
       };
       return editing
         ? apiRequest("PATCH", `/api/wholesale-customer/locations/${editing.id}`, payload)
