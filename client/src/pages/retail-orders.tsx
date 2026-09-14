@@ -46,6 +46,8 @@ interface RetailOrderWithItems extends RetailOrder {
   amountPaid: string;
   /** The total less any deposit already handed back (server-computed). */
   amountOwed: string;
+  /** Lines on BOTH item tables — legacy lines aren't listed but still count. */
+  lineCount: number;
 }
 
 const isOpenStatus = (s: string) => s === 'pending' || s === 'ready_for_pickup';
@@ -560,7 +562,7 @@ export default function RetailOrders() {
                                             orderId={order.id}
                                             orderStatus={order.status}
                                             orderPaid={!!order.stripePaymentIntentId}
-                                            canDelete={order.items.length > 1}
+                                            canDelete={(order.lineCount ?? order.items.length) > 1}
                                             item={item}
                                             // Pre-consolidation lines (old per-flavor products,
                                             // absent from the active list) edit through the

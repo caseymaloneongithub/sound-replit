@@ -11,11 +11,18 @@
  * can't interleave with another edit's (reviewer, 2026-09-14: overlapping
  * edits left $300 of lines under a $200 total, and two deletes slipped past
  * the last-line guard).
+ *
+ * Refunds are persisted operations (runRetailRefund): recorded with their
+ * Stripe idempotency key BEFORE the Stripe call, settled after it, and a
+ * pending one is always reconciled before a new refund is allowed — so a
+ * refund that reached Stripe but whose bookkeeping failed can never be issued
+ * a second time, however the order is edited in between.
  */
+import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "./db";
-import { retailOrders, retailOrderItems, retailOrderItemsV2, retailProducts } from "@shared/schema";
+import { retailOrders, retailOrderItems, retailOrderItemsV2, retailOrderRefunds, retailProducts } from "@shared/schema";
 
 /** Washington sales tax applied at checkout (10.35%). Mirrors the rate in the
  *  checkout and billing paths; an edited order is re-taxed at the same rate. */
@@ -110,16 +117,23 @@ export async function withOpenOrderLocked<T>(
 
 /** Recompute an order's stored totals from its lines (both item tables). Tax
  *  follows the order's own history (an order that was taxed stays taxed; a
- *  staff pay-at-pickup order with no tax stays tax-free). The deposit is
- *  re-derived from the products — except on subscription orders, which never
- *  carry deposits, and once a deposit has been refunded, where the stored
- *  figure stands. The paid amount is pinned BEFORE totals move so the balance
- *  stays honest. `order` is the row as read under the caller's lock. */
+ *  staff pay-at-pickup order with no tax stays tax-free). Deposits come from
+ *  each line's deposit AS CHARGED (deposit_each; the catalogue figure stands in
+ *  for rows that predate the column), so a flavor swap or quantity edit never
+ *  re-prices a keg deposit — except on subscription orders, which never carry
+ *  deposits, and once a deposit has been refunded, where the stored figure
+ *  stands. The paid amount is pinned BEFORE totals move so the balance stays
+ *  honest. `order` is the row as read under the caller's lock. */
 export async function recomputeRetailOrderTotals(tx: DbTx, order: OrderRow): Promise<OrderTotals> {
   const amountPaid = effectiveAmountPaid(order);
 
   const v2 = await tx
-    .select({ quantity: retailOrderItemsV2.quantity, unitPrice: retailOrderItemsV2.unitPrice, deposit: retailProducts.deposit })
+    .select({
+      quantity: retailOrderItemsV2.quantity,
+      unitPrice: retailOrderItemsV2.unitPrice,
+      depositEach: retailOrderItemsV2.depositEach,
+      catalogueDeposit: retailProducts.deposit,
+    })
     .from(retailOrderItemsV2)
     .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
     .where(eq(retailOrderItemsV2.orderId, order.id));
@@ -135,7 +149,7 @@ export async function recomputeRetailOrderTotals(tx: DbTx, order: OrderRow): Pro
   const tax = taxed ? subtotal * RETAIL_TAX_RATE : 0;
   const deposit = order.isSubscriptionOrder || order.depositRefundedAt
     ? Number(order.depositAmount ?? 0)
-    : noCharge ? 0 : v2.reduce((s, l) => s + Number(l.deposit ?? 0) * l.quantity, 0);
+    : noCharge ? 0 : v2.reduce((s, l) => s + Number(l.depositEach ?? l.catalogueDeposit ?? 0) * l.quantity, 0);
   const total = subtotal + tax + deposit;
 
   await tx
@@ -162,16 +176,38 @@ export async function recomputeRetailOrderTotals(tx: DbTx, order: OrderRow): Pro
   };
 }
 
+export type RefundKind = "overpayment" | "deposit";
+/** The slice of Stripe a refund needs — a test can hand in a stand-in. */
+export type RefundGateway = { refunds: { create: Stripe["refunds"]["create"] } };
+
+export type RefundResult = {
+  refundId: string;
+  amount: number;
+  kind: RefundKind;
+  /** True when this call completed an EARLIER refund whose bookkeeping had
+   *  failed, rather than issuing the one that was asked for. */
+  reconciled: boolean;
+};
+
 /**
- * Refund what the customer overpaid after edits shrank an order. Serialized on
- * the order row, so two clicks (or two tabs) can't each refund the same
- * overpayment: the second waits, re-reads, finds nothing overpaid. The Stripe
- * call carries an idempotency key built from the amounts, so a retry after
- * Stripe succeeded but the database write failed gets the SAME refund back
- * instead of a second one. Money first, then the book.
+ * Issue (or finish) a refund on a retail order, in three steps:
+ *
+ *  1. Under the order lock: if a refund is still pending — it reached (or may
+ *     have reached) Stripe but was never settled here — take THAT one, whatever
+ *     kind was asked for. Otherwise validate the request against the row as it
+ *     is right now (the overpayment, or the deposit amount) and record a new
+ *     operation with a fresh idempotency key. The partial unique index allows
+ *     one pending operation per order.
+ *  2. Call Stripe with the operation's key: the same key always yields the
+ *     same refund, so a retry can't pay twice. A definite rejection (bad
+ *     request — no such charge, amount too large) marks the operation failed
+ *     so it doesn't block the order; anything ambiguous leaves it pending.
+ *  3. Under the order lock again: settle the operation exactly once and move
+ *     the paid amount down by its amount (a deposit refund also stamps
+ *     depositRefundedAt).
  */
-export async function refundOverpayment(stripe: Stripe, orderId: string): Promise<{ refundId: string; amount: number }> {
-  return db.transaction(async (tx) => {
+export async function runRetailRefund(stripe: RefundGateway, orderId: string, kind: RefundKind, byUserId: string | null): Promise<RefundResult> {
+  const op = await db.transaction(async (tx) => {
     const [order] = await tx
       .select()
       .from(retailOrders)
@@ -182,24 +218,64 @@ export async function refundOverpayment(stripe: Stripe, orderId: string): Promis
     if (!order.stripePaymentIntentId) {
       throw new OrderEditError(400, "This order wasn't paid by card through the site — refund it where it was paid");
     }
-    const paid = effectiveAmountPaid(order);
-    const owed = amountOwed(order);
-    const overpaid = money(paid - owed);
-    if (overpaid <= 0) throw new OrderEditError(400, "Nothing to refund — the customer hasn't overpaid");
 
-    const refund = await stripe.refunds.create(
-      { payment_intent: order.stripePaymentIntentId, amount: Math.round(overpaid * 100) },
-      { idempotencyKey: `retail-overpayment:${order.id}:${paid.toFixed(2)}:${owed.toFixed(2)}` },
-    );
-    await tx
-      .update(retailOrders)
-      .set({
-        amountPaid: owed.toFixed(2),
-        notes: `${order.notes ? order.notes + " — " : ""}Refunded $${overpaid.toFixed(2)} difference after edit (${new Date().toLocaleDateString("en-US")})`,
-        updatedAt: new Date(),
-      })
-      .where(eq(retailOrders.id, order.id));
-    console.log(`[RETAIL EDIT] Refunded $${overpaid.toFixed(2)} on ${order.orderNumber}: ${refund.id}`);
-    return { refundId: refund.id, amount: overpaid };
+    const [pending] = await tx
+      .select()
+      .from(retailOrderRefunds)
+      .where(and(eq(retailOrderRefunds.orderId, orderId), eq(retailOrderRefunds.status, "pending")));
+    if (pending) return { row: pending, paymentIntentId: order.stripePaymentIntentId, reconciled: true };
+
+    let amount: number;
+    if (kind === "overpayment") {
+      amount = overpaidAmount(order);
+      if (amount <= 0) throw new OrderEditError(400, "Nothing to refund — the customer hasn't overpaid");
+    } else {
+      if (order.depositRefundedAt) throw new OrderEditError(400, "Deposit has already been refunded");
+      amount = money(Number(order.depositAmount ?? 0));
+      if (amount <= 0) throw new OrderEditError(400, "No deposit to refund for this order");
+    }
+    const [row] = await tx
+      .insert(retailOrderRefunds)
+      .values({ orderId, kind, amount: amount.toFixed(2), idempotencyKey: `retail-refund:${orderId}:${randomUUID()}`, createdByUserId: byUserId })
+      .returning();
+    return { row, paymentIntentId: order.stripePaymentIntentId, reconciled: false };
   });
+
+  const amount = Number(op.row.amount);
+  let refund: { id: string };
+  try {
+    refund = await stripe.refunds.create(
+      { payment_intent: op.paymentIntentId, amount: Math.round(amount * 100) },
+      { idempotencyKey: op.row.idempotencyKey },
+    );
+  } catch (error: any) {
+    if (error?.type === "StripeInvalidRequestError") {
+      await db.update(retailOrderRefunds).set({ status: "failed", completedAt: new Date() }).where(eq(retailOrderRefunds.id, op.row.id));
+    }
+    throw error;
+  }
+
+  await db.transaction(async (tx) => {
+    const [order] = await tx.select().from(retailOrders).where(eq(retailOrders.id, orderId)).for("update");
+    const [settled] = await tx
+      .update(retailOrderRefunds)
+      .set({ status: "done", stripeRefundId: refund.id, completedAt: new Date() })
+      .where(and(eq(retailOrderRefunds.id, op.row.id), eq(retailOrderRefunds.status, "pending")))
+      .returning();
+    if (!settled || !order) return; // a concurrent call settled it first
+    const patch: Partial<typeof retailOrders.$inferInsert> = {
+      amountPaid: Math.max(0, money(effectiveAmountPaid(order) - amount)).toFixed(2),
+      updatedAt: new Date(),
+    };
+    if (op.row.kind === "deposit") {
+      patch.depositRefundedAt = new Date();
+      patch.depositRefundedByUserId = byUserId;
+    } else {
+      patch.notes = `${order.notes ? order.notes + " — " : ""}Refunded $${amount.toFixed(2)} difference after edit (${new Date().toLocaleDateString("en-US")})`;
+    }
+    await tx.update(retailOrders).set(patch).where(eq(retailOrders.id, orderId));
+    console.log(`[RETAIL REFUND] ${op.row.kind} $${amount.toFixed(2)} on ${order.orderNumber}: ${refund.id}${op.reconciled ? " (reconciled)" : ""}`);
+  });
+
+  return { refundId: refund.id, amount, kind: op.row.kind as RefundKind, reconciled: op.reconciled };
 }

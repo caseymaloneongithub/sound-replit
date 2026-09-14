@@ -261,9 +261,31 @@ export const retailOrderItemsV2 = pgTable("retail_order_items_v2", {
   selectedFlavorId: varchar("selected_flavor_id").references(() => flavors.id), // For multi-flavor products, tracks which flavor customer selected
   quantity: integer("quantity").notNull(),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
+  // Per-unit deposit AS CHARGED when the line was created (kegs). Recalculating
+  // an edited order uses this, not today's catalogue figure, so a flavor swap
+  // can't change what the customer owes (reviewer, 2026-09-14). Null on rows
+  // from before the column: the catalogue figure stands in.
+  depositEach: decimal("deposit_each", { precision: 10, scale: 2 }),
   // Packing note, e.g. what goes in a mixed case ("6 HUM, 6 Mist"). Copied from the
   // subscription item on renewal orders; shown on the orders board.
   notes: text("notes"),
+});
+
+// Every Stripe refund issued against a retail order, recorded BEFORE the Stripe
+// call with the idempotency key it will use. A refund that reached Stripe but
+// whose bookkeeping failed stays 'pending' and is reconciled (same key = same
+// refund) before any new refund is allowed on that order (reviewer, 2026-09-14).
+export const retailOrderRefunds = pgTable("retail_order_refunds", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => retailOrders.id),
+  kind: text("kind").notNull(), // 'overpayment' | 'deposit'
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  idempotencyKey: text("idempotency_key").notNull().unique(),
+  stripeRefundId: text("stripe_refund_id"),
+  status: text("status").notNull().default('pending'), // 'pending' | 'done'
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
 });
 
 // NEW SCHEMA - Retail Subscriptions V2 (references retailProducts)

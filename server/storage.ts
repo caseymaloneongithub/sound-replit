@@ -2337,6 +2337,14 @@ export class PostgresStorage implements IStorage {
     const note = (item.notes ?? '').trim();
     const run = async (tx: NonNullable<typeof executor>) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'retail_order_items:' + item.orderId}))`);
+      // The per-unit deposit is captured AS CHARGED: a free line (no-charge
+      // order) carries none, otherwise today's catalogue figure — recorded on
+      // the row so later edits never re-price it.
+      let depositEach = item.depositEach;
+      if (depositEach === undefined) {
+        const [rp] = await tx.select({ deposit: retailProducts.deposit }).from(retailProducts).where(eq(retailProducts.id, item.retailProductId));
+        depositEach = Number(item.unitPrice) === 0 ? '0.00' : String(rp?.deposit ?? '0.00');
+      }
       const matches = await tx
         .select({ id: retailOrderItemsV2.id, quantity: retailOrderItemsV2.quantity })
         .from(retailOrderItemsV2)
@@ -2345,12 +2353,13 @@ export class PostgresStorage implements IStorage {
           eq(retailOrderItemsV2.retailProductId, item.retailProductId),
           sql`${retailOrderItemsV2.selectedFlavorId} IS NOT DISTINCT FROM ${item.selectedFlavorId ?? null}`,
           eq(retailOrderItemsV2.unitPrice, item.unitPrice),
+          sql`${retailOrderItemsV2.depositEach} IS NOT DISTINCT FROM ${depositEach ?? null}::numeric`,
           sql`COALESCE(${retailOrderItemsV2.notes}, '') = ${note}`,
         ))
         .orderBy(retailOrderItemsV2.id)
         .for('update');
       if (matches.length === 0) {
-        const [row] = await tx.insert(retailOrderItemsV2).values({ ...item, notes: note || null }).returning();
+        const [row] = await tx.insert(retailOrderItemsV2).values({ ...item, depositEach, notes: note || null }).returning();
         return row;
       }
       const [keep, ...twins] = matches;

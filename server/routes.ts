@@ -8889,6 +8889,15 @@ If you have any questions, please don't hesitate to reach out!`,
       
       // Attach items to orders, plus the paid amount as the edit rules see it
       // (null in the row until an order's first edit — see effectiveAmountPaid).
+      // Legacy lines (the old item table) aren't listed, but they count toward
+      // "is this the last line?" — the page's Remove button goes by lineCount.
+      const legacyCounts = orderIds.length > 0 ? await db
+        .select({ orderId: retailOrderItems.orderId, n: sql<number>`count(*)::int` })
+        .from(retailOrderItems)
+        .where(inArray(retailOrderItems.orderId, orderIds))
+        .groupBy(retailOrderItems.orderId) : [];
+      const legacyByOrder = new Map(legacyCounts.map((r) => [r.orderId, r.n]));
+
       const { effectiveAmountPaid, amountOwed } = await import('./retail-order-edits');
       const ordersWithItems = orders.map(order => ({
         ...order,
@@ -8896,6 +8905,7 @@ If you have any questions, please don't hesitate to reach out!`,
         // Total less any deposit already handed back — what the balance is against.
         amountOwed: amountOwed(order).toFixed(2),
         items: itemsByOrderId[order.id] || [],
+        lineCount: (itemsByOrderId[order.id]?.length ?? 0) + (legacyByOrder.get(order.id) ?? 0),
       }));
 
       res.json({ orders: ordersWithItems, total });
@@ -9073,10 +9083,16 @@ If you have any questions, please don't hesitate to reach out!`,
   app.post("/api/retail/orders/:id/refund-difference", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       if (!stripe) return res.status(500).json({ message: "Stripe is not configured" });
-      // Locked on the order row and idempotent at Stripe — see refundOverpayment.
-      const { refundOverpayment } = await import('./retail-order-edits');
-      const result = await refundOverpayment(stripe, req.params.id);
-      res.json({ success: true, ...result });
+      // A persisted, idempotent operation — see runRetailRefund.
+      const { runRetailRefund } = await import('./retail-order-edits');
+      const result = await runRetailRefund(stripe, req.params.id, 'overpayment', req.user?.id ?? null);
+      res.json({
+        success: true,
+        ...result,
+        message: result.reconciled
+          ? `Completed an earlier $${result.amount.toFixed(2)} ${result.kind} refund that hadn't been recorded — check the balance and refund again if more is owed.`
+          : `Refunded $${result.amount.toFixed(2)}`,
+      });
     } catch (error: any) {
       const status = typeof error?.status === 'number' ? error.status : 500;
       if (status === 500) console.error("refund-difference failed:", error);
@@ -9334,62 +9350,26 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(400).json({ message: "No payment found for this order" });
       }
 
-      const depositAmount = parseFloat(order.depositAmount?.toString() || '0');
-      if (depositAmount <= 0) {
-        return res.status(400).json({ message: "No deposit to refund for this order" });
-      }
-
-      if (order.depositRefundedAt) {
-        return res.status(400).json({ message: "Deposit has already been refunded" });
-      }
-
-      // Process deposit refund via Stripe — serialized on the order row (two
-      // clicks can't both pass the already-refunded check) and idempotent at
-      // Stripe (a retry after a failed write gets the same refund back).
+      // The deposit amount is read and validated UNDER the order lock, and the
+      // refund is a persisted, idempotent operation — see runRetailRefund.
       try {
-        const { effectiveAmountPaid, OrderEditError } = await import('./retail-order-edits');
-        const refund = await db.transaction(async (tx) => {
-          const [locked] = await tx.select().from(retailOrders)
-            .where(and(eq(retailOrders.id, req.params.id), isNull(retailOrders.deletedAt)))
-            .for('update');
-          if (!locked) throw new OrderEditError(404, "Order not found");
-          if (locked.depositRefundedAt) throw new OrderEditError(400, "Deposit has already been refunded");
-          const created = await stripe.refunds.create(
-            { payment_intent: order.stripePaymentIntentId!, amount: Math.round(depositAmount * 100) },
-            { idempotencyKey: `retail-deposit-refund:${locked.id}` },
-          );
-          // The recorded paid amount comes down by the same figure, and the
-          // returned deposit comes off what's owed too (see amountOwed), so an
-          // edited order's balance stays right.
-          await tx
-            .update(retailOrders)
-            .set({
-              depositRefundedAt: new Date(),
-              depositRefundedByUserId: req.user!.id,
-              amountPaid: Math.max(0, effectiveAmountPaid(locked) - depositAmount).toFixed(2),
-              updatedAt: new Date(),
-            })
-            .where(eq(retailOrders.id, locked.id));
-          return created;
-        });
-
-        console.log('[REFUND DEPOSIT] Deposit refund created:', refund.id, 'for order:', order.orderNumber, 'amount:', depositAmount);
-
+        const { runRetailRefund } = await import('./retail-order-edits');
+        const result = await runRetailRefund(stripe, req.params.id, 'deposit', req.user?.id ?? null);
         res.json({
           success: true,
-          refundId: refund.id,
-          amount: depositAmount,
-          message: `Deposit of $${depositAmount.toFixed(2)} refunded successfully`
+          refundId: result.refundId,
+          amount: result.amount,
+          message: result.reconciled
+            ? `Completed an earlier $${result.amount.toFixed(2)} ${result.kind} refund that hadn't been recorded — check the order and try again if the deposit is still outstanding.`
+            : `Deposit of $${result.amount.toFixed(2)} refunded successfully`,
         });
       } catch (refundError: any) {
         if (typeof refundError?.status === 'number') return res.status(refundError.status).json({ message: refundError.message });
         console.error('[REFUND DEPOSIT] Stripe refund failed for order:', order.orderNumber, refundError);
-        
-        return res.status(500).json({ 
+        return res.status(500).json({
           message: "Stripe refund failed. Please manually issue refund in Stripe Dashboard.",
           orderNumber: order.orderNumber,
           orderId: order.id,
-          depositAmount: depositAmount,
           paymentIntentId: order.stripePaymentIntentId,
           stripeError: refundError.message,
         });
