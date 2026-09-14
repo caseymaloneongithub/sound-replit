@@ -31,6 +31,9 @@ export default function WholesaleInvoices() {
   const [markPaidDialogOpen, setMarkPaidDialogOpen] = useState(false);
   const [sendInvoiceDialogOpen, setSendInvoiceDialogOpen] = useState(false);
   const [sendTo, setSendTo] = useState("");
+  // Why the To line is empty when it is (no inbox on file for the store) — the
+  // server's rule never substitutes another address.
+  const [sendNote, setSendNote] = useState("");
   const [sendSubject, setSendSubject] = useState("");
   const [sendMessage, setSendMessage] = useState("");
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
@@ -48,6 +51,11 @@ export default function WholesaleInvoices() {
         message: fields.message.trim() || undefined,
       });
       setPreviewHtml(data.html);
+      // With no To typed, the server decides who this invoice goes to.
+      if (to.length === 0) {
+        setSendTo((data.to ?? []).join(", "));
+        setSendNote(data.note ?? "");
+      }
     } catch (e: any) {
       toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
     } finally {
@@ -189,17 +197,17 @@ export default function WholesaleInvoices() {
     const order = orders.find(o => o.id === orderId);
     const due = order?.dueDate ? new Date(order.dueDate) : addDays(new Date(), 30);
     setDueDate(due);
-    // Same routing the server uses: location inbox(es) first, account otherwise.
-    const cust = customers.find(c => c.id === order?.customerId);
-    const to = String((order as any)?.locationEmail || cust?.email || "");
+    // Recipients come from the server's one rule (wholesale-recipients.ts) via
+    // the preview — never computed here.
     const subject = `Invoice ${order?.invoiceNumber ?? ""} - Puget Sound Kombucha Co.`;
-    setSendTo(to);
+    setSendTo("");
+    setSendNote("");
     setSendSubject(subject);
     setSendMessage("");
     setPreviewHtml(null);
     setSendInvoiceDialogOpen(true);
     // Preview loads immediately — nobody should have to ask for it.
-    fetchPreview(orderId, { to, subject, message: "", dueDateValue: due });
+    fetchPreview(orderId, { to: "", subject, message: "", dueDateValue: due });
   };
 
   const handleSetDueDate = (orderId: string) => {
@@ -726,6 +734,9 @@ export default function WholesaleInvoices() {
             <div className="space-y-1.5">
               <Label htmlFor="send-to">To</Label>
               <Input id="send-to" value={sendTo} onChange={(e) => setSendTo(e.target.value)} placeholder="Separate several with commas" data-testid="input-send-to" />
+              {sendNote && !sendTo.trim() && (
+                <p className="text-xs text-destructive" data-testid="text-send-note">{sendNote}</p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="send-subject">Subject</Label>

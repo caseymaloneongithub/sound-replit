@@ -94,6 +94,9 @@ export default function WholesalePlaceOrder() {
   // To / Subject / body text before anything is sent (owner, 2026-09-02).
   const [previewOrderId, setPreviewOrderId] = useState<string | null>(null);
   const [previewTo, setPreviewTo] = useState("");
+  // Why the To line came back empty (no inbox on file for the store) — the rule
+  // never substitutes another address, so staff type one or fix the location.
+  const [previewNote, setPreviewNote] = useState("");
   const [previewSubject, setPreviewSubject] = useState("");
   const [previewBody, setPreviewBody] = useState("");
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
@@ -112,6 +115,7 @@ export default function WholesalePlaceOrder() {
       setPreviewHtml(data.html);
       if (!fields) {
         setPreviewTo((data.to ?? []).join(", "));
+        setPreviewNote(data.note ?? "");
         setPreviewSubject(data.subject ?? "");
         setPreviewBody("");
       }
@@ -654,6 +658,9 @@ export default function WholesalePlaceOrder() {
               <Label htmlFor="preview-to">To</Label>
               <Input id="preview-to" value={previewTo} onChange={(e) => setPreviewTo(e.target.value)}
                 placeholder="Separate several with commas" data-testid="input-preview-to" />
+              {previewNote && !previewTo.trim() && (
+                <p className="text-xs text-destructive" data-testid="text-preview-note">{previewNote}</p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="preview-subject">Subject</Label>

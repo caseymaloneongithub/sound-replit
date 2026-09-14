@@ -17,6 +17,7 @@ import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleIn
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
+import { wholesaleOrderRecipients } from "./wholesale-recipients";
 import { registerClaimRoutes, getPendingClaim, holdPendingOrder, createLinkRequest } from "./claim-flow";
 import {
   frequencyToDays,
@@ -561,16 +562,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * Idempotent: a no-op if the order is already paid, so a replayed webhook can't send a
    * second receipt.
    */
-  /** Payment receipt to the location's invoice inbox(es), account email otherwise —
-   *  the same routing invoices use. Called on online settlement AND staff mark-paid. */
+  /** Payment receipt to the same inbox(es) the invoice went to (see
+   *  wholesale-recipients.ts). Called on online settlement AND staff mark-paid. */
   async function sendWholesaleReceiptForOrder(orderId: string, paidAt: Date) {
     const details = await storage.getWholesaleOrderWithDetails(orderId);
     if (!details) return;
     const { order, customer, items } = details;
-    const recipients = String((order.location as any)?.contactEmail || customer.email)
-      .split(/[,;]/)
-      .map((e) => e.trim())
-      .filter(Boolean);
+    const { to: recipients } = await wholesaleOrderRecipients(customer.id, order.locationId);
     if (!recipients.length) return;
     const locName = order.location?.locationName;
     await sendWholesalePaymentReceipt({
@@ -1705,18 +1703,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // ("Evergreens — Thomas & Boren"), so everyone knows which site ordered.
       const emailLocation = createdOrder.locationId ? await storage.getWholesaleLocation(createdOrder.locationId) : null;
 
-      // Confirmation goes to whoever placed the order (owner decision 2026-08-23) —
-      // stores with several buyers kept confusing the primary contact with someone
-      // else's order. With no placer (guest flow) and no email given, fall back
-      // location contact -> store primary, same chain the invoices use.
+      // Recipients follow the one rule (wholesale-recipients.ts): the store's
+      // inbox for a multi-location customer, the account email otherwise. The
+      // person who placed it — the portal login, or the address a guest typed
+      // in — gets a copy too (owner decision 2026-08-23: buyers want to see
+      // their own order), de-duplicated against the store's list.
       const placer = opts.placedByUserId ? await storage.getUser(opts.placedByUserId) : undefined;
-      const confirmationEmail = contactEmail || placer?.email || (emailLocation as any)?.contactEmail || customer.email;
+      const { to: confirmationEmail, label: recipientLabel } = await wholesaleOrderRecipients(customer.id, createdOrder.locationId, [contactEmail, placer?.email]);
+      console.log(`[ORDER] ${createdOrder.invoiceNumber} confirmation -> ${recipientLabel}: ${confirmationEmail.join(', ') || '(nobody — no address on file)'}`);
       const emailBusinessName = emailLocation?.locationName && emailLocation.locationName !== 'Main Location'
         ? `${customer.businessName} — ${emailLocation.locationName}`
         : customer.businessName;
 
-      // Send emails in the background (don't block the response)
-      sendWholesaleOrderConfirmation({
+      // Send emails in the background (don't block the response). No recipient
+      // = no email, never a fallback address; staff can send one from the order.
+      if (confirmationEmail.length > 0) sendWholesaleOrderConfirmation({
         customerEmail: confirmationEmail,
         businessName: emailBusinessName,
         contactName: (emailLocation as any)?.contactName || customer.contactName,
@@ -7746,14 +7747,16 @@ If you have any questions, please don't hesitate to reach out!`,
         if (!sendConfirmation) {
           console.log(`[ORDER] Confirmation email skipped by staff for ${invoiceNumber}`);
         }
-        // Staff-entered confirmations go to the STORE's inbox(es) when the location
-        // has one (owner, 2026-09-02: a Fremont order emailed 2nd & Pike) — account
-        // email otherwise. Same routing as invoices.
-        const confirmationRecipients = String((emailLocation as any)?.contactEmail || customer.email)
-          .split(/[,;]/).map((e: string) => e.trim()).filter(Boolean);
+        // Recipients follow the one rule (wholesale-recipients.ts; owner,
+        // 2026-09-02: a Fremont order emailed 2nd & Pike).
+        const { to: confirmationRecipients, label: recipientLabel } = await wholesaleOrderRecipients(customer.id, createdOrder.locationId);
+        if (sendConfirmation && confirmationRecipients.length === 0) {
+          console.log(`[ORDER] ${invoiceNumber}: confirmation not sent — ${recipientLabel}`);
+        }
 
-        // Send emails in the background (don't block the response)
-        if (sendConfirmation) sendWholesaleOrderConfirmation({
+        // Send emails in the background (don't block the response). No recipient
+        // = no email, never a fallback address.
+        if (sendConfirmation && confirmationRecipients.length > 0) sendWholesaleOrderConfirmation({
           customerEmail: confirmationRecipients,
           businessName: emailBusinessName,
           contactName: (emailLocation as any)?.contactName || customer.contactName,
@@ -7956,8 +7959,11 @@ If you have any questions, please don't hesitate to reach out!`,
       const emailBusinessName = loc?.locationName && loc.locationName !== 'Main Location'
         ? `${customer.businessName} — ${loc.locationName}`
         : customer.businessName;
-      const recipients = overrides.to ?? String(loc?.contactEmail || customer.email)
-        .split(/[,;]/).map((e: string) => e.trim()).filter(Boolean);
+      const resolved = await wholesaleOrderRecipients(customer.id, order.locationId);
+      const recipients = overrides.to ?? resolved.to;
+      if (!isPreview && recipients.length === 0) {
+        return res.status(400).json({ message: resolved.problem ?? "No email address to send to" });
+      }
 
       const confirmationParams = {
         poNumber: (order as any).poNumber ?? null,
@@ -7991,6 +7997,8 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.json({
           preview: true,
           to: recipients,
+          // Why the To line is empty, when it is — shown in the dialog.
+          note: overrides.to ? undefined : resolved.problem,
           subject: built.subject,
           html: built.html.replace(/src="cid:[^"]*"/g, 'src=""'),
         });
@@ -8098,14 +8106,14 @@ If you have any questions, please don't hesitate to reach out!`,
         }
       }
 
-      // Invoices go to the delivery location's own inbox(es) when set — each
-      // Evergreens store bills separately, and a location may list several addresses
-      // separated by commas (owner, 2026-08-31). Account email otherwise. The send
-      // dialog can override outright.
-      const invoiceRecipient = overrides.to ?? String((order.location as any)?.contactEmail || customer.email)
-        .split(/[,;]/)
-        .map((e: string) => e.trim())
-        .filter(Boolean);
+      // Recipients follow the one rule (wholesale-recipients.ts; owner,
+      // 2026-08-31: each Evergreens store bills separately, and a location may
+      // list several addresses). The send dialog can override outright.
+      const resolvedInvoiceRecipients = await wholesaleOrderRecipients(customer.id, order.locationId);
+      const invoiceRecipient = overrides.to ?? resolvedInvoiceRecipients.to;
+      if (!isPreview && invoiceRecipient.length === 0) {
+        return res.status(400).json({ message: resolvedInvoiceRecipients.problem ?? "No email address to send to" });
+      }
 
       const emailParams = {
         poNumber: (order as any).poNumber ?? null,
@@ -8136,6 +8144,7 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.json({
           preview: true,
           to: invoiceRecipient,
+          note: overrides.to ? undefined : resolvedInvoiceRecipients.problem,
           subject: built.subject,
           html: built.html.replace(/src="cid:[^"]*"/g, 'src=""'),
         });

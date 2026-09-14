@@ -110,6 +110,9 @@ export default function WholesaleInvoice() {
   // before anything goes out (owner, 2026-09-02).
   const [sendOpen, setSendOpen] = useState(false);
   const [sendTo, setSendTo] = useState("");
+  // Why the To line is empty when it is (no inbox on file for the store) — the
+  // server's rule never substitutes another address.
+  const [sendNote, setSendNote] = useState("");
   const [sendSubject, setSendSubject] = useState("");
   const [sendMessage, setSendMessage] = useState("");
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
@@ -126,6 +129,11 @@ export default function WholesaleInvoice() {
         message: fields.message.trim() || undefined,
       });
       setPreviewHtml(data.html);
+      // With no To typed, the server decides who this invoice goes to.
+      if (to.length === 0) {
+        setSendTo((data.to ?? []).join(", "));
+        setSendNote(data.note ?? "");
+      }
     } catch (e: any) {
       toast({ title: "Couldn't build preview", description: e.message, variant: "destructive" });
     } finally {
@@ -159,17 +167,17 @@ export default function WholesaleInvoice() {
   });
 
   const handleSendInvoice = () => {
-    // Same routing the server uses: the location's invoice inbox(es), account otherwise.
+    // Recipients come from the server's one rule (wholesale-recipients.ts) via
+    // the preview — never computed here.
     const order = invoiceData?.order;
-    const customer = invoiceData?.customer;
-    const to = String(order?.location?.contactEmail || customer?.email || "");
     const subject = `Invoice ${order?.invoiceNumber ?? ""} - Puget Sound Kombucha Co.`;
-    setSendTo(to);
+    setSendTo("");
+    setSendNote("");
     setSendSubject(subject);
     setSendMessage("");
     setPreviewHtml(null);
     setSendOpen(true);
-    fetchPreview({ to, subject, message: "" });
+    fetchPreview({ to: "", subject, message: "" });
   };
 
   const handlePrint = () => {
@@ -696,7 +704,10 @@ export default function WholesaleInvoice() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="send-to">To</Label>
-                <Input id="send-to" value={sendTo} onChange={(e) => setSendTo(e.target.value)} data-testid="input-send-to" />
+                <Input id="send-to" value={sendTo} onChange={(e) => setSendTo(e.target.value)} placeholder="Separate several with commas" data-testid="input-send-to" />
+                {sendNote && !sendTo.trim() && (
+                  <p className="text-xs text-destructive" data-testid="text-send-note">{sendNote}</p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="send-subject">Subject</Label>
