@@ -13,6 +13,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { WholesaleCustomerLayout } from "@/components/wholesale/wholesale-customer-layout";
 import { loadWholesaleCart, saveWholesaleCart, clearWholesaleCart } from "@/lib/wholesale-cart";
 import type { WholesaleCustomer } from "@shared/schema";
@@ -37,6 +38,7 @@ export default function WholesaleCustomerPlaceOrder() {
   const [selectedFlavorId, setSelectedFlavorId] = useState<string>("");
   const [quantity, setQuantity] = useState<string>("1");
   const [cartHydrated, setCartHydrated] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { user } = useAuth();
@@ -143,8 +145,11 @@ export default function WholesaleCustomerPlaceOrder() {
   }, [selectedUnitTypeId]);
 
   const createOrderMutation = useMutation({
-    mutationFn: async () => {
-      if (cart.length === 0) {
+    // Takes the items explicitly: "add it and place" merges the on-screen
+    // selection in and submits in the same click, before React has re-rendered
+    // with the new cart state.
+    mutationFn: async (items: CartItem[]) => {
+      if (items.length === 0) {
         throw new Error("Cart is empty");
       }
 
@@ -157,7 +162,7 @@ export default function WholesaleCustomerPlaceOrder() {
           fulfillmentMethod === "delivery" && selectedLocationId && selectedLocationId !== "none"
             ? selectedLocationId
             : undefined,
-        items: cart,
+        items,
       });
     },
     onSuccess: (result: any) => {
@@ -188,6 +193,34 @@ export default function WholesaleCustomerPlaceOrder() {
       });
     },
   });
+
+  // A product and flavor picked but never added is the classic silent loss:
+  // "Place Order" would send everything except the thing on screen. The
+  // confirm dialog names it and offers to add it in the same click (owner,
+  // 2026-09-14).
+  const pendingQty = parseInt(quantity) || 0;
+  const pending: CartItem | null =
+    selectedUnitTypeId && selectedFlavorId && pendingQty > 0
+      ? { unitTypeId: selectedUnitTypeId, flavorId: selectedFlavorId, quantity: pendingQty }
+      : null;
+  const withPending = (items: CartItem[]): CartItem[] => {
+    if (!pending) return items;
+    const hit = items.some((i) => i.unitTypeId === pending.unitTypeId && i.flavorId === pending.flavorId);
+    return hit
+      ? items.map((i) => (i.unitTypeId === pending.unitTypeId && i.flavorId === pending.flavorId ? { ...i, quantity: i.quantity + pending.quantity } : i))
+      : [...items, pending];
+  };
+  const describe = (i: CartItem) => `${i.quantity} × ${getUnitTypeName(i.unitTypeId)} · ${getFlavorName(i.flavorId)}`;
+  const placeOrder = (items: CartItem[]) => {
+    const sendable = items.filter((i) => i.quantity >= 1);
+    setConfirmOpen(false);
+    if (items !== cart) {
+      setCart(sendable);
+      setSelectedFlavorId("");
+      setQuantity("1");
+    }
+    createOrderMutation.mutate(sendable);
+  };
 
   const getPrice = (unitTypeId: string): number => {
     // Check for customer-specific pricing
@@ -732,7 +765,7 @@ export default function WholesaleCustomerPlaceOrder() {
                     )}
                     <Button
                       className="w-full mt-4"
-                      onClick={() => createOrderMutation.mutate()}
+                      onClick={() => setConfirmOpen(true)}
                       disabled={
                         createOrderMutation.isPending ||
                         cart.length === 0 ||
@@ -751,6 +784,42 @@ export default function WholesaleCustomerPlaceOrder() {
           </div>
         </div>
       </div>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent data-testid="dialog-confirm-order">
+          <DialogHeader>
+            <DialogTitle>Place this order?</DialogTitle>
+            <DialogDescription>
+              {fulfillmentMethod === "pickup"
+                ? `Pickup at the brewery — ${PICKUP_POLICY.address}`
+                : (() => { const loc = locations.find((l) => l.id === selectedLocationId); return loc ? `Delivery to ${loc.locationName}, ${loc.address}` : "Delivery"; })()}
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-1 text-sm" data-testid="list-confirm-lines">
+            {cart.filter((i) => i.quantity >= 1).map((i) => (
+              <li key={`${i.unitTypeId}:${i.flavorId}`} className="flex gap-2"><span className="text-muted-foreground">•</span>{describe(i)}</li>
+            ))}
+          </ul>
+          {pending && (
+            <Alert data-testid="alert-pending-selection">
+              <AlertDescription>
+                <span className="font-medium">{describe(pending)}</span> is selected above but not in your cart.
+              </AlertDescription>
+            </Alert>
+          )}
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} data-testid="button-confirm-cancel">Go back</Button>
+            {pending ? (
+              <>
+                <Button variant="outline" onClick={() => placeOrder(cart)} data-testid="button-confirm-place-without">Place without it</Button>
+                <Button onClick={() => placeOrder(withPending(cart))} data-testid="button-confirm-place-with">Add it and place order</Button>
+              </>
+            ) : (
+              <Button onClick={() => placeOrder(cart)} data-testid="button-confirm-place">Place order</Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </WholesaleCustomerLayout>
   );
 }

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -53,6 +54,7 @@ export default function WholesaleGuestOrder() {
   const [notes, setNotes] = useState("");
   const [website, setWebsite] = useState(""); // honeypot — humans never see it
   const [placed, setPlaced] = useState<{ invoiceNumber: string } | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const { data: storeInfo } = useQuery<{ businessName: string; locations: Loc[] }>({
     queryKey: ["/api/wholesale/claim/locations", customerId],
@@ -123,6 +125,17 @@ export default function WholesaleGuestOrder() {
   ].filter(Boolean) as string[];
 
   const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+
+  // What will actually be sent, in words — shown on the button and read back
+  // in the confirm dialog so a busy manager never has to infer the order from
+  // the state of the dropdowns (owner, 2026-09-14).
+  const orderLines = lines.filter(lineComplete);
+  const blankRows = lines.length - orderLines.length;
+  const describe = (l: Line) => {
+    const u = byId.get(l.unitTypeId);
+    const f = u?.flavors.find((x) => x.id === l.flavorId);
+    return `${l.quantity} × ${u?.name ?? "?"} · ${f?.name ?? "?"}`;
+  };
 
   const submit = useMutation({
     mutationFn: async () =>
@@ -196,6 +209,12 @@ export default function WholesaleGuestOrder() {
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-3">
+            <div>
+              <p className="font-medium">Items in this order</p>
+              <p className="text-xs text-muted-foreground" data-testid="text-rows-explainer">
+                Every row with a product and flavor is part of the order — there's nothing to "add". A row left blank is skipped.
+              </p>
+            </div>
             {lines.map((line, i) => {
               const u = line.unitTypeId ? byId.get(line.unitTypeId) : undefined;
               return (
@@ -240,7 +259,7 @@ export default function WholesaleGuestOrder() {
               );
             })}
             <Button variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, { unitTypeId: "", flavorId: "", quantity: 1 }])} data-testid="button-add-line">
-              + Add item
+              + Another item
             </Button>
           </div>
 
@@ -320,15 +339,45 @@ export default function WholesaleGuestOrder() {
             </div>
             <Button
               size="lg"
-              onClick={() => submit.mutate()}
+              onClick={() => setConfirmOpen(true)}
               disabled={submit.isPending || !linesOk || !emailOk || !locationOk || belowMin}
               data-testid="button-submit-guest-order"
             >
-              {submit.isPending ? "Placing…" : "Place order"}
+              {submit.isPending ? "Placing…" : orderLines.length > 0 ? `Place order (${orderLines.length} item${orderLines.length === 1 ? "" : "s"})` : "Place order"}
             </Button>
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent data-testid="dialog-confirm-order">
+          <DialogHeader>
+            <DialogTitle>Place this order?</DialogTitle>
+            <DialogDescription>
+              {fulfillment === "pickup"
+                ? "Pickup at the brewery (Ballard)"
+                : chosenLoc
+                  ? `Delivery to ${chosenLoc.locationName} — ${[chosenLoc.street, chosenLoc.city].filter(Boolean).join(", ")}`
+                  : "Delivery"}
+              {" · "}{storeInfo?.businessName}
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-1 text-sm" data-testid="list-confirm-lines">
+            {orderLines.map((l, i) => <li key={i} className="flex gap-2"><span className="text-muted-foreground">•</span>{describe(l)}</li>)}
+          </ul>
+          {blankRows > 0 && (
+            <p className="text-xs text-muted-foreground" data-testid="text-blank-rows">
+              {blankRows} blank row{blankRows === 1 ? "" : "s"} won't be sent.
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} data-testid="button-confirm-cancel">Go back</Button>
+            <Button onClick={() => { setConfirmOpen(false); submit.mutate(); }} data-testid="button-confirm-place">
+              Place order
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Shell>
   );
 }
