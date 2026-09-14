@@ -137,6 +137,14 @@ export default function WholesalePlaceOrder() {
   const openConfirmationPreview = (orderId: string) => {
     setPreviewOrderId(orderId);
     setPreviewHtml(null);
+    // Start clean: if this preview fails, nothing from a previous order's
+    // dialog may linger — neither its To line nor the remembered default
+    // that decides whether a typed To counts as edited.
+    setPreviewTo("");
+    setPreviewDefaultTo("");
+    setPreviewNote("");
+    setPreviewSubject("");
+    setPreviewBody("");
     fetchPreview(orderId);
   };
 

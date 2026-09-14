@@ -183,6 +183,9 @@ export default function WholesaleInvoice() {
     const order = invoiceData?.order;
     const subject = `Invoice ${order?.invoiceNumber ?? ""} - Puget Sound Kombucha Co.`;
     setSendTo("");
+    // Reset the remembered default too: if this preview fails, a leftover
+    // default would make a typed To look "unedited".
+    setSendDefaultTo("");
     setSendNote("");
     setSendSubject(subject);
     setSendMessage("");
