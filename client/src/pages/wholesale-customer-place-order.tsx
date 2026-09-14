@@ -444,6 +444,7 @@ export default function WholesaleCustomerPlaceOrder() {
                             <Input
                               type="number"
                               value={quantity}
+                              onFocus={(e) => e.target.select()}
                               onChange={(e) => setQuantity(e.target.value)}
                               onBlur={() => {
                                 const num = parseInt(quantity);
@@ -516,6 +517,7 @@ export default function WholesaleCustomerPlaceOrder() {
                               type="text"
                               inputMode="numeric"
                               value={item.quantity === 0 ? "" : item.quantity}
+                              onFocus={(e) => e.target.select()}
                               onChange={(e) => setCartQuantity(item.unitTypeId, item.flavorId, e.target.value)}
                               onBlur={() => { if (item.quantity < 1) updateQuantity(item.unitTypeId, item.flavorId, 1); }}
                               className="w-16 text-center"

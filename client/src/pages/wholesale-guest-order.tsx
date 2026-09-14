@@ -32,6 +32,8 @@ function availabilityNote(u: { availableFrom?: string | null }): string {
   return ` — available ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 }
 type Line = { unitTypeId: string; flavorId: string; quantity: number };
+// quantity 0 = the box is empty mid-edit; such a line is not sent anywhere.
+const lineComplete = (l: Line) => !!l.unitTypeId && !!l.flavorId && l.quantity >= 1;
 
 export default function WholesaleGuestOrder() {
   const { toast } = useToast();
@@ -84,7 +86,7 @@ export default function WholesaleGuestOrder() {
     // EXACTLY the lines the submission will send (product AND flavor chosen) —
     // counting half-finished rows here let the button enable on a total the
     // submit would then fail (reviewer, 2026-09-11).
-    const items = lines.filter((l) => l.unitTypeId && l.flavorId).map((l) => ({ unitTypeId: l.unitTypeId, quantity: l.quantity }));
+    const items = lines.filter(lineComplete).map((l) => ({ unitTypeId: l.unitTypeId, quantity: l.quantity }));
     const key = items.length > 0
       ? JSON.stringify({ customerId, locationId: fulfillment === "delivery" ? locationId || null : null, items })
       : "";
@@ -109,7 +111,7 @@ export default function WholesaleGuestOrder() {
   // Email is optional: blank means the confirmation goes to the store's contact on
   // file (server-side — the address itself is never shown on this no-login form).
   const emailOk = contactEmail.trim() === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail.trim());
-  const linesOk = lines.some((l) => l.unitTypeId && l.flavorId);
+  const linesOk = lines.some(lineComplete);
   const locationOk = fulfillment === "pickup" || !!locationId;
   // A silently-disabled button reads as "something is out of stock" — spell out
   // what's still needed instead.
@@ -126,7 +128,7 @@ export default function WholesaleGuestOrder() {
     mutationFn: async () =>
       apiRequest("POST", "/api/wholesale/guest-order", {
         customerId,
-        items: lines.filter((l) => l.unitTypeId && l.flavorId).map((l) => ({ unitTypeId: l.unitTypeId, flavorId: l.flavorId, quantity: l.quantity })),
+        items: lines.filter(lineComplete).map((l) => ({ unitTypeId: l.unitTypeId, flavorId: l.flavorId, quantity: l.quantity })),
         fulfillmentMethod: fulfillment,
         locationId: fulfillment === "delivery" ? locationId : undefined,
         contactEmail: contactEmail.trim(),
@@ -220,11 +222,17 @@ export default function WholesaleGuestOrder() {
                   </div>
                   <div className="w-20">
                     <Label>Qty</Label>
+                    {/* The box may go EMPTY while typing (0 in state): snapping a
+                        cleared box straight back to 1 made "12" untypeable, and
+                        customers worked around it with several lines of 1. Blank on
+                        blur restores 1; focus selects the digit so typing replaces it. */}
                     <Input
                       className="mt-1.5"
                       inputMode="numeric"
-                      value={String(line.quantity)}
-                      onChange={(e) => setLine(i, { quantity: Math.max(1, Math.min(99, Number(e.target.value.replace(/\D/g, "")) || 1)) })}
+                      value={line.quantity === 0 ? "" : String(line.quantity)}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setLine(i, { quantity: Math.min(99, Number(e.target.value.replace(/\D/g, "")) || 0) })}
+                      onBlur={() => { if (line.quantity < 1) setLine(i, { quantity: 1 }); }}
                       data-testid={`input-qty-${i}`}
                     />
                   </div>
