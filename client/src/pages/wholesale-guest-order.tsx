@@ -360,7 +360,9 @@ export default function WholesaleGuestOrder() {
       </Card>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent data-testid="dialog-confirm-order">
+        {/* Capped to the viewport and scrolls as one, so a long order can't
+            push the buttons off a phone screen while the page is scroll-locked. */}
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" data-testid="dialog-confirm-order">
           <DialogHeader>
             <DialogTitle>Place this order?</DialogTitle>
             <DialogDescription>
@@ -372,9 +374,7 @@ export default function WholesaleGuestOrder() {
               {" · "}{storeInfo?.businessName}
             </DialogDescription>
           </DialogHeader>
-          {/* Bounded and scrollable: a long order must never push the buttons
-              off a phone screen while the page behind is scroll-locked. */}
-          <ul className="space-y-1 text-sm max-h-[40vh] overflow-y-auto" data-testid="list-confirm-lines">
+          <ul className="space-y-1 text-sm" data-testid="list-confirm-lines">
             {orderLines.map((l, i) => <li key={i} className="flex gap-2"><span className="text-muted-foreground">•</span>{describe(l)}</li>)}
           </ul>
           {blankRows > 0 && (

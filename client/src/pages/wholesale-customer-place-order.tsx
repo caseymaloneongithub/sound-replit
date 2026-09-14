@@ -791,7 +791,10 @@ export default function WholesaleCustomerPlaceOrder() {
       </div>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent data-testid="dialog-confirm-order">
+        {/* The whole dialog is capped to the viewport and scrolls as one, so
+            header + list + warning + three stacked buttons can never push the
+            actions off a phone screen while the page behind is scroll-locked. */}
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" data-testid="dialog-confirm-order">
           <DialogHeader>
             <DialogTitle>Place this order?</DialogTitle>
             <DialogDescription>
@@ -800,9 +803,7 @@ export default function WholesaleCustomerPlaceOrder() {
                 : (() => { const loc = locations.find((l) => l.id === selectedLocationId); return loc ? `Delivery to ${loc.locationName}, ${loc.address}` : "Delivery"; })()}
             </DialogDescription>
           </DialogHeader>
-          {/* Bounded and scrollable: a long order must never push the buttons
-              off a phone screen while the page behind is scroll-locked. */}
-          <ul className="space-y-1 text-sm max-h-[40vh] overflow-y-auto" data-testid="list-confirm-lines">
+          <ul className="space-y-1 text-sm" data-testid="list-confirm-lines">
             {cart.filter((i) => i.quantity >= 1).map((i, idx) => (
               <li key={`${i.unitTypeId}:${i.flavorId}:${idx}`} className="flex gap-2"><span className="text-muted-foreground">•</span>{describe(i)}</li>
             ))}
