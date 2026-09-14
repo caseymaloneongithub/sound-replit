@@ -2327,10 +2327,15 @@ export class PostgresStorage implements IStorage {
     });
   }
 
-  /** Same consolidation for order lines: (product, flavor, unit price, note). */
-  async addRetailOrderItemV2(item: typeof retailOrderItemsV2.$inferInsert): Promise<typeof retailOrderItemsV2.$inferSelect> {
+  /** Same consolidation for order lines: (product, flavor, unit price, note).
+   *  Pass `executor` to run inside a caller's transaction (an order edit holds
+   *  the order row locked and recalculates totals in the same transaction). */
+  async addRetailOrderItemV2(
+    item: typeof retailOrderItemsV2.$inferInsert,
+    executor?: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  ): Promise<typeof retailOrderItemsV2.$inferSelect> {
     const note = (item.notes ?? '').trim();
-    return db.transaction(async (tx) => {
+    const run = async (tx: NonNullable<typeof executor>) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'retail_order_items:' + item.orderId}))`);
       const matches = await tx
         .select({ id: retailOrderItemsV2.id, quantity: retailOrderItemsV2.quantity })
@@ -2353,7 +2358,8 @@ export class PostgresStorage implements IStorage {
       const total = matches.reduce((sum, m) => sum + m.quantity, 0) + item.quantity;
       const [updated] = await tx.update(retailOrderItemsV2).set({ quantity: total }).where(eq(retailOrderItemsV2.id, keep.id)).returning();
       return updated;
-    });
+    };
+    return executor ? run(executor) : db.transaction(run);
   }
 
   async getWholesaleCustomers(): Promise<WholesaleCustomer[]> {

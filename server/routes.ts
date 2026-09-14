@@ -8884,10 +8884,12 @@ If you have any questions, please don't hesitate to reach out!`,
       
       // Attach items to orders, plus the paid amount as the edit rules see it
       // (null in the row until an order's first edit — see effectiveAmountPaid).
-      const { effectiveAmountPaid } = await import('./retail-order-edits');
+      const { effectiveAmountPaid, amountOwed } = await import('./retail-order-edits');
       const ordersWithItems = orders.map(order => ({
         ...order,
         amountPaid: effectiveAmountPaid(order).toFixed(2),
+        // Total less any deposit already handed back — what the balance is against.
+        amountOwed: amountOwed(order).toFixed(2),
         items: itemsByOrderId[order.id] || [],
       }));
 
@@ -8964,14 +8966,19 @@ If you have any questions, please don't hesitate to reach out!`,
 
       if (Object.keys(updates).length === 0) return res.json({ success: true, unchanged: true });
 
-      await db.update(retailOrderItemsV2).set(updates).where(eq(retailOrderItemsV2.id, item.id));
-
-      const { recomputeRetailOrderTotals } = await import('./retail-order-edits');
-      const totals = updates.quantity !== undefined ? await recomputeRetailOrderTotals(order.id) : null;
+      // The write and the recalculation happen under the order lock; the line is
+      // re-checked there in case it was removed since the reads above.
+      const { withOpenOrderLocked, OrderEditError } = await import('./retail-order-edits');
+      const { totals } = await withOpenOrderLocked(order.id, async (tx) => {
+        const [current] = await tx.select({ id: retailOrderItemsV2.id }).from(retailOrderItemsV2)
+          .where(and(eq(retailOrderItemsV2.id, item.id), eq(retailOrderItemsV2.orderId, order.id)));
+        if (!current) throw new OrderEditError(404, "Order item not found");
+        await tx.update(retailOrderItemsV2).set(updates).where(eq(retailOrderItemsV2.id, item.id));
+      });
       res.json({ success: true, totals });
     } catch (e: any) {
       if (e instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
-      res.status(400).json({ message: e.message });
+      res.status(typeof e?.status === 'number' ? e.status : 400).json({ message: e.message });
     }
   });
 
@@ -9008,24 +9015,24 @@ If you have any questions, please don't hesitate to reach out!`,
         ? await splitItemFields(validated.selectedFlavorId ?? null, validated.splitFlavorId || null)
         : { selectedFlavorId: null, notes: null };
 
-      // A staff no-charge order (every line at $0) stays free when a line is added.
-      const existing = await db.select({ unitPrice: retailOrderItemsV2.unitPrice }).from(retailOrderItemsV2).where(eq(retailOrderItemsV2.orderId, order.id));
-      const noCharge = existing.length > 0 && existing.every((l) => Number(l.unitPrice) === 0);
-
-      await storage.addRetailOrderItemV2({
-        orderId: order.id,
-        retailProductId: product.id,
-        selectedFlavorId: itemFields.selectedFlavorId,
-        notes: itemFields.notes,
-        quantity: validated.quantity,
-        unitPrice: noCharge ? '0.00' : String(product.price),
+      const { withOpenOrderLocked } = await import('./retail-order-edits');
+      const { totals } = await withOpenOrderLocked(order.id, async (tx) => {
+        // A staff no-charge order (every line at $0) stays free when a line is added.
+        const existing = await tx.select({ unitPrice: retailOrderItemsV2.unitPrice }).from(retailOrderItemsV2).where(eq(retailOrderItemsV2.orderId, order.id));
+        const noCharge = existing.length > 0 && existing.every((l) => Number(l.unitPrice) === 0);
+        await storage.addRetailOrderItemV2({
+          orderId: order.id,
+          retailProductId: product.id,
+          selectedFlavorId: itemFields.selectedFlavorId,
+          notes: itemFields.notes,
+          quantity: validated.quantity,
+          unitPrice: noCharge ? '0.00' : String(product.price),
+        }, tx);
       });
-      const { recomputeRetailOrderTotals } = await import('./retail-order-edits');
-      const totals = await recomputeRetailOrderTotals(order.id);
       res.status(201).json({ success: true, totals });
     } catch (e: any) {
       if (e instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
-      res.status(400).json({ message: e.message });
+      res.status(typeof e?.status === 'number' ? e.status : 400).json({ message: e.message });
     }
   });
 
@@ -9038,17 +9045,20 @@ If you have any questions, please don't hesitate to reach out!`,
       if (!['pending', 'ready_for_pickup'].includes(order.status)) {
         return res.status(400).json({ message: "Only open orders can be edited" });
       }
-      const [item] = await db.select().from(retailOrderItemsV2).where(eq(retailOrderItemsV2.id, req.params.itemId));
-      if (!item || item.orderId !== order.id) return res.status(404).json({ message: "Order item not found" });
-      const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(retailOrderItemsV2).where(eq(retailOrderItemsV2.orderId, order.id));
-      if (n <= 1) return res.status(400).json({ message: "An order needs at least one item — cancel the order instead" });
-
-      await db.delete(retailOrderItemsV2).where(eq(retailOrderItemsV2.id, item.id));
-      const { recomputeRetailOrderTotals } = await import('./retail-order-edits');
-      const totals = await recomputeRetailOrderTotals(order.id);
+      // Existence, the last-line guard and the delete all run under the order
+      // lock, so two simultaneous deletes can't both pass the guard.
+      const { withOpenOrderLocked, OrderEditError, countOrderLines } = await import('./retail-order-edits');
+      const { totals } = await withOpenOrderLocked(order.id, async (tx) => {
+        const [item] = await tx.select().from(retailOrderItemsV2).where(eq(retailOrderItemsV2.id, req.params.itemId));
+        if (!item || item.orderId !== order.id) throw new OrderEditError(404, "Order item not found");
+        if ((await countOrderLines(tx, order.id)) <= 1) {
+          throw new OrderEditError(400, "An order needs at least one item — cancel the order instead");
+        }
+        await tx.delete(retailOrderItemsV2).where(eq(retailOrderItemsV2.id, item.id));
+      });
       res.json({ success: true, totals });
     } catch (e: any) {
-      res.status(400).json({ message: e.message });
+      res.status(typeof e?.status === 'number' ? e.status : 400).json({ message: e.message });
     }
   });
 
@@ -9058,33 +9068,14 @@ If you have any questions, please don't hesitate to reach out!`,
   app.post("/api/retail/orders/:id/refund-difference", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       if (!stripe) return res.status(500).json({ message: "Stripe is not configured" });
-      const order = await storage.getRetailOrder(req.params.id);
-      if (!order || (order as any).deletedAt) return res.status(404).json({ message: "Order not found" });
-      if (order.status === 'cancelled') return res.status(400).json({ message: "Order is cancelled" });
-      if (!order.stripePaymentIntentId) {
-        return res.status(400).json({ message: "This order wasn't paid by card through the site — refund it where it was paid" });
-      }
-      const { effectiveAmountPaid } = await import('./retail-order-edits');
-      const paid = effectiveAmountPaid(order);
-      const overpaid = Number((paid - Number(order.totalAmount)).toFixed(2));
-      if (overpaid <= 0) return res.status(400).json({ message: "Nothing to refund — the customer hasn't overpaid" });
-
-      // Money first, then the book: a failed refund must not lower the recorded
-      // paid amount (the button stays available to retry).
-      const refund = await stripe.refunds.create({
-        payment_intent: order.stripePaymentIntentId,
-        amount: Math.round(overpaid * 100),
-      });
-      await db.update(retailOrders).set({
-        amountPaid: Number(order.totalAmount).toFixed(2),
-        notes: `${order.notes ? order.notes + ' — ' : ''}Refunded $${overpaid.toFixed(2)} difference after edit (${new Date().toLocaleDateString('en-US')})`,
-        updatedAt: new Date(),
-      }).where(eq(retailOrders.id, order.id));
-      console.log(`[RETAIL EDIT] Refunded $${overpaid.toFixed(2)} on ${order.orderNumber}: ${refund.id}`);
-      res.json({ success: true, refundId: refund.id, amount: overpaid });
+      // Locked on the order row and idempotent at Stripe — see refundOverpayment.
+      const { refundOverpayment } = await import('./retail-order-edits');
+      const result = await refundOverpayment(stripe, req.params.id);
+      res.json({ success: true, ...result });
     } catch (error: any) {
-      console.error("refund-difference failed:", error);
-      res.status(500).json({ message: error.message || "Refund failed" });
+      const status = typeof error?.status === 'number' ? error.status : 500;
+      if (status === 500) console.error("refund-difference failed:", error);
+      res.status(status).json({ message: error.message || "Refund failed" });
     }
   });
 
@@ -9347,36 +9338,46 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(400).json({ message: "Deposit has already been refunded" });
       }
 
-      // Process deposit refund via Stripe
+      // Process deposit refund via Stripe — serialized on the order row (two
+      // clicks can't both pass the already-refunded check) and idempotent at
+      // Stripe (a retry after a failed write gets the same refund back).
       try {
-        const depositAmountCents = Math.round(depositAmount * 100);
-        const refund = await stripe.refunds.create({
-          payment_intent: order.stripePaymentIntentId,
-          amount: depositAmountCents, // Partial refund for deposit only
+        const { effectiveAmountPaid, OrderEditError } = await import('./retail-order-edits');
+        const refund = await db.transaction(async (tx) => {
+          const [locked] = await tx.select().from(retailOrders)
+            .where(and(eq(retailOrders.id, req.params.id), isNull(retailOrders.deletedAt)))
+            .for('update');
+          if (!locked) throw new OrderEditError(404, "Order not found");
+          if (locked.depositRefundedAt) throw new OrderEditError(400, "Deposit has already been refunded");
+          const created = await stripe.refunds.create(
+            { payment_intent: order.stripePaymentIntentId!, amount: Math.round(depositAmount * 100) },
+            { idempotencyKey: `retail-deposit-refund:${locked.id}` },
+          );
+          // The recorded paid amount comes down by the same figure, and the
+          // returned deposit comes off what's owed too (see amountOwed), so an
+          // edited order's balance stays right.
+          await tx
+            .update(retailOrders)
+            .set({
+              depositRefundedAt: new Date(),
+              depositRefundedByUserId: req.user!.id,
+              amountPaid: Math.max(0, effectiveAmountPaid(locked) - depositAmount).toFixed(2),
+              updatedAt: new Date(),
+            })
+            .where(eq(retailOrders.id, locked.id));
+          return created;
         });
 
         console.log('[REFUND DEPOSIT] Deposit refund created:', refund.id, 'for order:', order.orderNumber, 'amount:', depositAmount);
 
-        // Update order to mark deposit as refunded; the recorded paid amount
-        // comes down by the same figure so an edited order's balance stays right.
-        const { effectiveAmountPaid } = await import('./retail-order-edits');
-        await db
-          .update(retailOrders)
-          .set({
-            depositRefundedAt: new Date(),
-            depositRefundedByUserId: req.user!.id,
-            amountPaid: Math.max(0, effectiveAmountPaid(order) - depositAmount).toFixed(2),
-            updatedAt: new Date(),
-          })
-          .where(and(eq(retailOrders.id, req.params.id), isNull(retailOrders.deletedAt)));
-
-        res.json({ 
-          success: true, 
+        res.json({
+          success: true,
           refundId: refund.id,
           amount: depositAmount,
-          message: `Deposit of $${depositAmount.toFixed(2)} refunded successfully` 
+          message: `Deposit of $${depositAmount.toFixed(2)} refunded successfully`
         });
       } catch (refundError: any) {
+        if (typeof refundError?.status === 'number') return res.status(refundError.status).json({ message: refundError.message });
         console.error('[REFUND DEPOSIT] Stripe refund failed for order:', order.orderNumber, refundError);
         
         return res.status(500).json({ 

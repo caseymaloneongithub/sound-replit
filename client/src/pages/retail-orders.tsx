@@ -44,6 +44,8 @@ interface RetailOrderWithItems extends RetailOrder {
   items: OrderItem[];
   /** What the customer has paid so far, net of refunds (server-computed). */
   amountPaid: string;
+  /** The total less any deposit already handed back (server-computed). */
+  amountOwed: string;
 }
 
 const isOpenStatus = (s: string) => s === 'pending' || s === 'ready_for_pickup';
@@ -1060,8 +1062,9 @@ function AddItemRow({ orderId, products }: { orderId: string; products: EditorPr
 function PaymentBalance({ order }: { order: RetailOrderWithItems }) {
   const { toast } = useToast();
   const paid = Number(order.amountPaid ?? 0);
-  const total = Number(order.totalAmount);
-  const diff = Number((total - paid).toFixed(2));
+  // Against what's owed (a returned deposit comes off both sides), not the raw total.
+  const owed = Number(order.amountOwed ?? order.totalAmount);
+  const diff = Number((owed - paid).toFixed(2));
   const isPaid = !!order.stripePaymentIntentId || !!order.stripeInvoiceId;
 
   const refundMutation = useMutation({
@@ -1092,7 +1095,9 @@ function PaymentBalance({ order }: { order: RetailOrderWithItems }) {
         <span>Overpaid</span>
         <span>${(-diff).toFixed(2)}</span>
       </div>
-      {isOpenStatus(order.status) && order.stripePaymentIntentId && (
+      {/* Stays available after fulfillment: an overpayment is owed back whether or
+          not the order has been picked up. */}
+      {order.stripePaymentIntentId && (
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button size="sm" variant="outline" className="w-full" disabled={refundMutation.isPending} data-testid={`button-refund-difference-${order.id}`}>
@@ -1104,7 +1109,7 @@ function PaymentBalance({ order }: { order: RetailOrderWithItems }) {
             <AlertDialogHeader>
               <AlertDialogTitle>Refund ${(-diff).toFixed(2)}?</AlertDialogTitle>
               <AlertDialogDescription>
-                A partial refund of ${(-diff).toFixed(2)} goes back to the card that paid order #{order.orderNumber}. The order's paid amount becomes ${total.toFixed(2)}.
+                A partial refund of ${(-diff).toFixed(2)} goes back to the card that paid order #{order.orderNumber}. The order's paid amount becomes ${owed.toFixed(2)}.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
