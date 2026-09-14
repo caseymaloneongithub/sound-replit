@@ -222,10 +222,14 @@ async function findRefundForOp(stripe: RefundGateway, paymentIntentId: string, o
   const tagged = refunds.find((r) => r.metadata?.[OP_METADATA_KEY] === op.id);
   if (tagged) return { id: tagged.id };
 
+  // Refunds claimed by OTHER operations on this order. The operation being
+  // recovered is excluded on purpose: a concurrent recovery may already have
+  // settled it with the very refund we are looking for, and treating that as
+  // "taken" would make this caller issue a second one (reviewer, 2026-09-14).
   const claimed = new Set(
-    (await db.select({ id: retailOrderRefunds.stripeRefundId }).from(retailOrderRefunds).where(eq(retailOrderRefunds.orderId, op.orderId)))
-      .map((r) => r.id)
-      .filter((id): id is string => !!id),
+    (await db.select({ id: retailOrderRefunds.id, refundId: retailOrderRefunds.stripeRefundId }).from(retailOrderRefunds).where(eq(retailOrderRefunds.orderId, op.orderId)))
+      .filter((r) => r.id !== op.id && !!r.refundId)
+      .map((r) => r.refundId as string),
   );
   const cents = Math.round(Number(op.amount) * 100);
   const notBefore = Math.floor(op.createdAt.getTime() / 1000) - 60;
@@ -243,17 +247,29 @@ async function findRefundForOp(stripe: RefundGateway, paymentIntentId: string, o
  * the original request reached it — so Stripe's record decides, and only if
  * that shows no refund is one issued under a fresh key.
  */
+/** A refund another caller already recorded against this very operation —
+ *  two staff retrying the same stalled refund must end up sharing one. */
+async function refundAlreadyRecorded(op: OpRow): Promise<{ id: string } | null> {
+  const [row] = await db.select({ status: retailOrderRefunds.status, refundId: retailOrderRefunds.stripeRefundId }).from(retailOrderRefunds).where(eq(retailOrderRefunds.id, op.id));
+  return row?.status === "done" && row.refundId ? { id: row.refundId } : null;
+}
+
+/** The Node SDK reports an idempotency-key parameter mismatch as
+ *  type "StripeIdempotencyError" (the wire name lives in rawType). */
+const isIdempotencyMismatch = (error: any) =>
+  error?.type === "StripeIdempotencyError" || error?.rawType === "idempotency_error" || error?.type === "idempotency_error";
+
 async function issueOrFindRefund(stripe: RefundGateway, paymentIntentId: string, op: OpRow, reconciling: boolean): Promise<{ id: string }> {
   if (reconciling) {
-    const existing = await findRefundForOp(stripe, paymentIntentId, op);
+    const existing = (await refundAlreadyRecorded(op)) ?? (await findRefundForOp(stripe, paymentIntentId, op));
     if (existing) return existing;
   }
   const params = { payment_intent: paymentIntentId, amount: Math.round(Number(op.amount) * 100), metadata: { [OP_METADATA_KEY]: op.id } };
   try {
     return await stripe.refunds.create(params, { idempotencyKey: op.idempotencyKey });
   } catch (error: any) {
-    if (error?.type !== "idempotency_error") throw error;
-    const existing = await findRefundForOp(stripe, paymentIntentId, op);
+    if (!isIdempotencyMismatch(error)) throw error;
+    const existing = (await refundAlreadyRecorded(op)) ?? (await findRefundForOp(stripe, paymentIntentId, op));
     if (existing) return existing;
     return await stripe.refunds.create(params, { idempotencyKey: `${op.idempotencyKey}:retagged` });
   }
