@@ -9391,10 +9391,11 @@ If you have any questions, please don't hesitate to reach out!`,
       try {
         const { runRetailRefund } = await import('./retail-order-edits');
         const result = await runRetailRefund(stripe, req.params.id, 'deposit', req.user?.id ?? null);
+        // Whole result (kind, reconciled included): the page names the
+        // operation that actually completed.
         res.json({
           success: true,
-          refundId: result.refundId,
-          amount: result.amount,
+          ...result,
           message: result.reconciled
             ? `Completed an earlier $${result.amount.toFixed(2)} ${result.kind} refund that hadn't been recorded — check the order and try again if the deposit is still outstanding.`
             : `Deposit of $${result.amount.toFixed(2)} refunded successfully`,

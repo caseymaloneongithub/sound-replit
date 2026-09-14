@@ -191,21 +191,72 @@ export type RefundGateway = { refunds: { create: Stripe["refunds"]["create"]; li
 /** Stripe metadata key that ties a refund back to the operation that made it. */
 const OP_METADATA_KEY = "retail_refund_op";
 
-/** Before retrying a pending operation, ask Stripe whether it already went
- *  through: idempotency keys are only kept ~24 hours, so a key alone can't
- *  guarantee "same refund" for an operation that stalled longer than that.
- *  The refund carries the operation id in its metadata; the list is
- *  authoritative. */
-async function findExistingRefund(stripe: RefundGateway, paymentIntentId: string, opId: string): Promise<{ id: string } | null> {
+type StripeRefundSummary = { id: string; amount: number; created: number; metadata?: Record<string, string> | null };
+
+/** Every refund Stripe has against the charge. The list is the authoritative
+ *  record — idempotency keys are only kept ~24 hours, so a key alone can't
+ *  answer "did this already go through?" for an operation that stalled. */
+async function listRefunds(stripe: RefundGateway, paymentIntentId: string): Promise<StripeRefundSummary[]> {
+  const out: StripeRefundSummary[] = [];
   let startingAfter: string | undefined;
   for (let page = 0; page < 10; page++) {
     const batch = await stripe.refunds.list({ payment_intent: paymentIntentId, limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) });
-    const hit = batch.data.find((r) => r.metadata?.[OP_METADATA_KEY] === opId);
-    if (hit) return { id: hit.id };
+    out.push(...batch.data.map((r) => ({ id: r.id, amount: r.amount, created: r.created, metadata: r.metadata })));
     if (!batch.has_more || batch.data.length === 0) break;
     startingAfter = batch.data[batch.data.length - 1].id;
   }
-  return null;
+  return out;
+}
+
+type OpRow = typeof retailOrderRefunds.$inferSelect;
+
+/**
+ * The refund a pending operation already produced, if any. Tagged operations
+ * are matched by the operation id in the refund's metadata. Older operations
+ * (recorded before refunds carried that tag) get a separate path: the earliest
+ * refund of the same amount, created no earlier than the operation, that no
+ * other operation on this order has claimed.
+ */
+async function findRefundForOp(stripe: RefundGateway, paymentIntentId: string, op: OpRow): Promise<{ id: string } | null> {
+  const refunds = await listRefunds(stripe, paymentIntentId);
+  const tagged = refunds.find((r) => r.metadata?.[OP_METADATA_KEY] === op.id);
+  if (tagged) return { id: tagged.id };
+
+  const claimed = new Set(
+    (await db.select({ id: retailOrderRefunds.stripeRefundId }).from(retailOrderRefunds).where(eq(retailOrderRefunds.orderId, op.orderId)))
+      .map((r) => r.id)
+      .filter((id): id is string => !!id),
+  );
+  const cents = Math.round(Number(op.amount) * 100);
+  const notBefore = Math.floor(op.createdAt.getTime() / 1000) - 60;
+  const untagged = refunds
+    .filter((r) => !r.metadata?.[OP_METADATA_KEY] && r.amount === cents && r.created >= notBefore && !claimed.has(r.id))
+    .sort((a, b) => a.created - b.created)[0];
+  return untagged ? { id: untagged.id } : null;
+}
+
+/**
+ * Get the refund for an operation: the one Stripe already has, or a new one.
+ * A retry under the operation's key carries the same parameters (tag
+ * included), so a modern operation retries cleanly. An older operation's key
+ * was used WITHOUT the tag: Stripe answers a parameter mismatch, which proves
+ * the original request reached it — so Stripe's record decides, and only if
+ * that shows no refund is one issued under a fresh key.
+ */
+async function issueOrFindRefund(stripe: RefundGateway, paymentIntentId: string, op: OpRow, reconciling: boolean): Promise<{ id: string }> {
+  if (reconciling) {
+    const existing = await findRefundForOp(stripe, paymentIntentId, op);
+    if (existing) return existing;
+  }
+  const params = { payment_intent: paymentIntentId, amount: Math.round(Number(op.amount) * 100), metadata: { [OP_METADATA_KEY]: op.id } };
+  try {
+    return await stripe.refunds.create(params, { idempotencyKey: op.idempotencyKey });
+  } catch (error: any) {
+    if (error?.type !== "idempotency_error") throw error;
+    const existing = await findRefundForOp(stripe, paymentIntentId, op);
+    if (existing) return existing;
+    return await stripe.refunds.create(params, { idempotencyKey: `${op.idempotencyKey}:retagged` });
+  }
 }
 
 export type RefundResult = {
@@ -272,15 +323,7 @@ export async function runRetailRefund(stripe: RefundGateway, orderId: string, ki
   const amount = Number(op.row.amount);
   let refund: { id: string } | null = null;
   try {
-    // A pending operation may already have a refund at Stripe — check the
-    // record before asking for another (see findExistingRefund).
-    if (op.reconciled) refund = await findExistingRefund(stripe, op.paymentIntentId, op.row.id);
-    if (!refund) {
-      refund = await stripe.refunds.create(
-        { payment_intent: op.paymentIntentId, amount: Math.round(amount * 100), metadata: { [OP_METADATA_KEY]: op.row.id } },
-        { idempotencyKey: op.row.idempotencyKey },
-      );
-    }
+    refund = await issueOrFindRefund(stripe, op.paymentIntentId, op.row, op.reconciled);
   } catch (error: any) {
     if (error?.type === "StripeInvalidRequestError") {
       await db.update(retailOrderRefunds).set({ status: "failed", completedAt: new Date() }).where(eq(retailOrderRefunds.id, op.row.id));
