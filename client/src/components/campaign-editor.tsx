@@ -16,6 +16,33 @@ import {
 // The email body's own size is 16px; "Default" removes the override.
 export const FONT_SIZES = ["12px", "14px", "16px", "18px", "20px", "24px", "28px", "32px"] as const;
 
+// Pasted content can carry any size in any unit (48px, 18pt, 1.5em). Snap it to
+// the nearest offered size on the way in, so what Write shows is what the
+// sanitizer lets through on send; anything unparseable loses its size.
+function normalizeFontSize(raw: string): string | null {
+  const m = /^\s*([\d.]+)\s*(px|pt|em|rem|%)\s*$/i.exec(raw);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const unit = m[2].toLowerCase();
+  const px = unit === "px" ? n : unit === "pt" ? n * 4 / 3 : unit === "%" ? n / 100 * 16 : n * 16;
+  return FONT_SIZES.reduce((best, s) => (Math.abs(parseInt(s) - px) < Math.abs(parseInt(best) - px) ? s : best));
+}
+
+// Every distinct size across the selection ("" = no override). More than one
+// means the dropdown shows Mixed instead of silently reporting the first run.
+function selectionFontSizes(editor: Editor): Set<string> {
+  const { from, to, empty } = editor.state.selection;
+  if (empty) return new Set([(editor.getAttributes("textStyle").fontSize as string | null) ?? ""]);
+  const sizes = new Set<string>();
+  editor.state.doc.nodesBetween(from, to, (node) => {
+    if (!node.isText) return;
+    const mark = node.marks.find((mk) => mk.type.name === "textStyle");
+    sizes.add((mark?.attrs.fontSize as string | null) ?? "");
+  });
+  return sizes;
+}
+
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     fontSize: {
@@ -33,7 +60,7 @@ const FontSize = Extension.create({
       attributes: {
         fontSize: {
           default: null,
-          parseHTML: (element) => element.style.fontSize || null,
+          parseHTML: (element) => (element.style.fontSize ? normalizeFontSize(element.style.fontSize) : null),
           renderHTML: (attributes) => (attributes.fontSize ? { style: `font-size: ${attributes.fontSize}` } : {}),
         },
       },
@@ -131,23 +158,25 @@ function Toolbar({ editor, onLink }: { editor: Editor; onLink: () => void }) {
     </Button>
   );
   const c = () => editor.chain().focus();
-  const currentSize = (editor.getAttributes("textStyle").fontSize as string | undefined) ?? "";
+  const sizes = selectionFontSizes(editor);
+  const currentSize = sizes.size > 1 ? "mixed" : Array.from(sizes)[0] ?? "";
   return (
     <div className="flex flex-wrap items-center gap-0.5 border-b px-1.5 py-1" role="toolbar" aria-label="Formatting">
       {btn("Bold (Ctrl+B)", editor.isActive("bold"), () => c().toggleBold().run(), Bold, false, "button-format-bold")}
       {btn("Italic (Ctrl+I)", editor.isActive("italic"), () => c().toggleItalic().run(), Italic)}
       {btn("Underline (Ctrl+U)", editor.isActive("underline"), () => c().toggleUnderline().run(), UnderlineIcon)}
       <span className="mx-1 h-5 w-px bg-border" aria-hidden />
-      {/* A mixed selection shows as Default; picking a size applies it to the
-          whole selection (or, with no selection, to what's typed next). */}
+      {/* A selection spanning several sizes shows Mixed; picking a size applies
+          it to the whole selection (or, with no selection, to what's typed next). */}
       <select
         className="h-8 rounded-md border bg-background px-1.5 text-sm"
-        value={FONT_SIZES.includes(currentSize as (typeof FONT_SIZES)[number]) ? currentSize : ""}
+        value={currentSize === "mixed" || FONT_SIZES.includes(currentSize as (typeof FONT_SIZES)[number]) ? currentSize : ""}
         onChange={(e) => (e.target.value ? c().setFontSize(e.target.value).run() : c().unsetFontSize().run())}
         aria-label="Font size"
         title="Font size"
         data-testid="select-font-size"
       >
+        <option value="mixed" disabled>Mixed</option>
         <option value="">Default</option>
         {FONT_SIZES.map((s) => <option key={s} value={s}>{s.replace("px", "")}</option>)}
       </select>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,9 @@ export default function WholesaleGuestOrder() {
   const [website, setWebsite] = useState(""); // honeypot — humans never see it
   const [placed, setPlaced] = useState<{ invoiceNumber: string } | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // The dialog's buttons stay clickable through its closing animation, so a
+  // double-click must not become a double order.
+  const submittingRef = useRef(false);
 
   const { data: storeInfo } = useQuery<{ businessName: string; locations: Loc[] }>({
     queryKey: ["/api/wholesale/claim/locations", customerId],
@@ -151,7 +154,14 @@ export default function WholesaleGuestOrder() {
       }),
     onSuccess: (res: any) => setPlaced({ invoiceNumber: res.invoiceNumber }),
     onError: (e: any) => toast({ title: "Couldn't place the order", description: e.message || "Try again.", variant: "destructive" }),
+    onSettled: () => { submittingRef.current = false; },
   });
+  const placeOrder = () => {
+    if (submittingRef.current || submit.isPending) return;
+    submittingRef.current = true;
+    setConfirmOpen(false);
+    submit.mutate();
+  };
 
   if (!customerId) {
     return (
@@ -362,7 +372,9 @@ export default function WholesaleGuestOrder() {
               {" · "}{storeInfo?.businessName}
             </DialogDescription>
           </DialogHeader>
-          <ul className="space-y-1 text-sm" data-testid="list-confirm-lines">
+          {/* Bounded and scrollable: a long order must never push the buttons
+              off a phone screen while the page behind is scroll-locked. */}
+          <ul className="space-y-1 text-sm max-h-[40vh] overflow-y-auto" data-testid="list-confirm-lines">
             {orderLines.map((l, i) => <li key={i} className="flex gap-2"><span className="text-muted-foreground">•</span>{describe(l)}</li>)}
           </ul>
           {blankRows > 0 && (
@@ -372,7 +384,7 @@ export default function WholesaleGuestOrder() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmOpen(false)} data-testid="button-confirm-cancel">Go back</Button>
-            <Button onClick={() => { setConfirmOpen(false); submit.mutate(); }} data-testid="button-confirm-place">
+            <Button onClick={placeOrder} disabled={submit.isPending} data-testid="button-confirm-place">
               Place order
             </Button>
           </DialogFooter>

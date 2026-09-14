@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { WholesaleUnitType, Flavor, WholesaleCustomerPricing, WholesaleLocation } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,24 @@ interface CartItem {
   unitTypeId: string;
   flavorId: string;
   quantity: number;
+}
+
+// Fold `add` into the cart: every row for the same product+flavor collapses to
+// ONE row carrying the combined quantity, and the addition lands once. A cart
+// can legitimately hold several rows for one product+flavor (a reorder keeps
+// the original's separate lines), so "bump the matching row" must not bump
+// each of them (reviewer, 2026-09-14).
+function mergeLine(items: CartItem[], add: CartItem): CartItem[] {
+  const same = (i: CartItem) => i.unitTypeId === add.unitTypeId && i.flavorId === add.flavorId;
+  if (!items.some(same)) return [...items, add];
+  const total = items.filter(same).reduce((n, i) => n + i.quantity, 0) + add.quantity;
+  let placed = false;
+  return items.flatMap((i) => {
+    if (!same(i)) return [i];
+    if (placed) return [];
+    placed = true;
+    return [{ ...i, quantity: total }];
+  });
 }
 
 export default function WholesaleCustomerPlaceOrder() {
@@ -203,15 +221,14 @@ export default function WholesaleCustomerPlaceOrder() {
     selectedUnitTypeId && selectedFlavorId && pendingQty > 0
       ? { unitTypeId: selectedUnitTypeId, flavorId: selectedFlavorId, quantity: pendingQty }
       : null;
-  const withPending = (items: CartItem[]): CartItem[] => {
-    if (!pending) return items;
-    const hit = items.some((i) => i.unitTypeId === pending.unitTypeId && i.flavorId === pending.flavorId);
-    return hit
-      ? items.map((i) => (i.unitTypeId === pending.unitTypeId && i.flavorId === pending.flavorId ? { ...i, quantity: i.quantity + pending.quantity } : i))
-      : [...items, pending];
-  };
+  const withPending = (items: CartItem[]): CartItem[] => (pending ? mergeLine(items, pending) : items);
   const describe = (i: CartItem) => `${i.quantity} × ${getUnitTypeName(i.unitTypeId)} · ${getFlavorName(i.flavorId)}`;
+  // The dialog's buttons stay clickable through its closing animation, so a
+  // double-click must not become a double order.
+  const submittingRef = useRef(false);
   const placeOrder = (items: CartItem[]) => {
+    if (submittingRef.current || createOrderMutation.isPending) return;
+    submittingRef.current = true;
     const sendable = items.filter((i) => i.quantity >= 1);
     setConfirmOpen(false);
     if (items !== cart) {
@@ -219,7 +236,7 @@ export default function WholesaleCustomerPlaceOrder() {
       setSelectedFlavorId("");
       setQuantity("1");
     }
-    createOrderMutation.mutate(sendable);
+    createOrderMutation.mutate(sendable, { onSettled: () => { submittingRef.current = false; } });
   };
 
   const getPrice = (unitTypeId: string): number => {
@@ -245,19 +262,7 @@ export default function WholesaleCustomerPlaceOrder() {
       return;
     }
 
-    const existingItem = cart.find(
-      item => item.unitTypeId === selectedUnitTypeId && item.flavorId === selectedFlavorId
-    );
-
-    if (existingItem) {
-      setCart(cart.map(item => 
-        item.unitTypeId === selectedUnitTypeId && item.flavorId === selectedFlavorId
-          ? { ...item, quantity: item.quantity + qty }
-          : item
-      ));
-    } else {
-      setCart([...cart, { unitTypeId: selectedUnitTypeId, flavorId: selectedFlavorId, quantity: qty }]);
-    }
+    setCart(mergeLine(cart, { unitTypeId: selectedUnitTypeId, flavorId: selectedFlavorId, quantity: qty }));
 
     // Reset selection
     setSelectedFlavorId("");
@@ -795,9 +800,11 @@ export default function WholesaleCustomerPlaceOrder() {
                 : (() => { const loc = locations.find((l) => l.id === selectedLocationId); return loc ? `Delivery to ${loc.locationName}, ${loc.address}` : "Delivery"; })()}
             </DialogDescription>
           </DialogHeader>
-          <ul className="space-y-1 text-sm" data-testid="list-confirm-lines">
-            {cart.filter((i) => i.quantity >= 1).map((i) => (
-              <li key={`${i.unitTypeId}:${i.flavorId}`} className="flex gap-2"><span className="text-muted-foreground">•</span>{describe(i)}</li>
+          {/* Bounded and scrollable: a long order must never push the buttons
+              off a phone screen while the page behind is scroll-locked. */}
+          <ul className="space-y-1 text-sm max-h-[40vh] overflow-y-auto" data-testid="list-confirm-lines">
+            {cart.filter((i) => i.quantity >= 1).map((i, idx) => (
+              <li key={`${i.unitTypeId}:${i.flavorId}:${idx}`} className="flex gap-2"><span className="text-muted-foreground">•</span>{describe(i)}</li>
             ))}
           </ul>
           {pending && (
@@ -811,11 +818,11 @@ export default function WholesaleCustomerPlaceOrder() {
             <Button variant="outline" onClick={() => setConfirmOpen(false)} data-testid="button-confirm-cancel">Go back</Button>
             {pending ? (
               <>
-                <Button variant="outline" onClick={() => placeOrder(cart)} data-testid="button-confirm-place-without">Place without it</Button>
-                <Button onClick={() => placeOrder(withPending(cart))} data-testid="button-confirm-place-with">Add it and place order</Button>
+                <Button variant="outline" disabled={createOrderMutation.isPending} onClick={() => placeOrder(cart)} data-testid="button-confirm-place-without">Place without it</Button>
+                <Button disabled={createOrderMutation.isPending} onClick={() => placeOrder(withPending(cart))} data-testid="button-confirm-place-with">Add it and place order</Button>
               </>
             ) : (
-              <Button onClick={() => placeOrder(cart)} data-testid="button-confirm-place">Place order</Button>
+              <Button disabled={createOrderMutation.isPending} onClick={() => placeOrder(cart)} data-testid="button-confirm-place">Place order</Button>
             )}
           </DialogFooter>
         </DialogContent>
