@@ -31,6 +31,8 @@ interface OrderItem {
 type EditorProduct = {
   id: string;
   productName: string;
+  /** Legacy per-flavor products carry no productName; the flavor names them. */
+  flavor?: { name: string } | null;
   price: string;
   deposit?: string | null;
   isActive: boolean;
@@ -977,25 +979,43 @@ function AddItemRow({ orderId, products }: { orderId: string; products: EditorPr
   const [productId, setProductId] = useState('');
   const [flavorId, setFlavorId] = useState('');
   const [quantity, setQuantity] = useState(1);
+  // Mixed on a split-capable product: "a little of everything" (plain Mixed)
+  // or "pick 2 flavors" (a split) — the same choice the shop and the line
+  // editor offer (owner, 2026-09-14: it was missing here).
+  const [pickTwoOn, setPickTwoOn] = useState(false);
+  const [pickA, setPickA] = useState('');
+  const [pickB, setPickB] = useState('');
 
   const active = products.filter(p => p.isActive);
   const product = active.find(p => p.id === productId);
   const isMulti = product?.productType === 'multi-flavor';
   const flavors = (product?.flavors ?? []).filter(f => f.isActive);
-  const ready = !!product && (!isMulti || !!flavorId);
+  const flavorName = flavors.find(f => f.id === flavorId)?.name;
+  const mixedChoice = !!product?.allowSplit && flavorName === 'Mixed';
+  const pickTwoActive = mixedChoice && pickTwoOn;
+  const pickTwoReady = !!pickA && !!pickB && pickA !== pickB;
+  const ready = !!product && (!isMulti || !!flavorId) && (!pickTwoActive || pickTwoReady);
+
+  const reset = () => {
+    setProductId('');
+    setFlavorId('');
+    setQuantity(1);
+    setPickTwoOn(false);
+    setPickA('');
+    setPickB('');
+  };
 
   const addMutation = useMutation({
     mutationFn: async () => apiRequest('POST', `/api/retail/orders/${orderId}/items`, {
       retailProductId: productId,
-      selectedFlavorId: isMulti ? flavorId : null,
+      selectedFlavorId: isMulti ? (pickTwoActive ? pickA : flavorId) : null,
+      splitFlavorId: pickTwoActive ? pickB : null,
       quantity,
     }),
     onSuccess: () => {
       invalidateOrders();
       setOpen(false);
-      setProductId('');
-      setFlavorId('');
-      setQuantity(1);
+      reset();
       toast({ title: 'Item added' });
     },
     onError: (e: any) => toast({ title: "Couldn't add item", description: e.message, variant: 'destructive' }),
@@ -1013,13 +1033,13 @@ function AddItemRow({ orderId, products }: { orderId: string; products: EditorPr
     <div className="mt-2 text-sm bg-background rounded-md px-3 py-2 space-y-2" data-testid={`add-item-${orderId}`}>
       <div className="flex items-center gap-2">
         <span className="text-xs text-muted-foreground w-16">Product</span>
-        <Select value={productId} onValueChange={(v) => { setProductId(v); setFlavorId(''); }}>
+        <Select value={productId} onValueChange={(v) => { setProductId(v); setFlavorId(''); setPickTwoOn(false); setPickA(''); setPickB(''); }}>
           <SelectTrigger className="h-8 flex-1" data-testid={`select-add-item-product-${orderId}`}>
             <SelectValue placeholder="Choose a product" />
           </SelectTrigger>
           <SelectContent>
             {active.map(p => (
-              <SelectItem key={p.id} value={p.id}>{p.productName} ({p.unitDescription}) — ${Number(p.price).toFixed(2)}{Number(p.deposit ?? 0) > 0 ? ` + $${Number(p.deposit).toFixed(2)} deposit` : ''}</SelectItem>
+              <SelectItem key={p.id} value={p.id}>{p.productName || p.flavor?.name || 'Product'} ({p.unitDescription}) — ${Number(p.price).toFixed(2)}{Number(p.deposit ?? 0) > 0 ? ` + $${Number(p.deposit).toFixed(2)} deposit` : ''}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -1027,7 +1047,7 @@ function AddItemRow({ orderId, products }: { orderId: string; products: EditorPr
       {isMulti && (
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground w-16">Flavor</span>
-          <Select value={flavorId} onValueChange={setFlavorId}>
+          <Select value={flavorId} onValueChange={(v) => { setFlavorId(v); setPickTwoOn(false); setPickA(''); setPickB(''); }}>
             <SelectTrigger className="h-8 flex-1" data-testid={`select-add-item-flavor-${orderId}`}>
               <SelectValue placeholder="Choose a flavor" />
             </SelectTrigger>
@@ -1037,6 +1057,42 @@ function AddItemRow({ orderId, products }: { orderId: string; products: EditorPr
               ))}
             </SelectContent>
           </Select>
+        </div>
+      )}
+      {mixedChoice && (
+        <div className="pl-16 ml-2 space-y-2" data-testid={`add-item-mixed-choice-${orderId}`}>
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" size="sm" variant={pickTwoOn ? 'outline' : 'secondary'} onClick={() => setPickTwoOn(false)} data-testid={`button-add-item-everything-${orderId}`}>
+              A little of everything
+            </Button>
+            <Button type="button" size="sm" variant={pickTwoOn ? 'secondary' : 'outline'} onClick={() => setPickTwoOn(true)} data-testid={`button-add-item-pick2-${orderId}`}>
+              Pick 2 flavors
+            </Button>
+          </div>
+          {pickTwoOn && (
+            <div className="grid grid-cols-2 gap-2">
+              <Select value={pickA} onValueChange={setPickA}>
+                <SelectTrigger className="h-8" data-testid={`select-add-item-pick2-a-${orderId}`}>
+                  <SelectValue placeholder="First flavor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {flavors.filter(f => f.name !== 'Mixed' && f.id !== pickB).map(f => (
+                    <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={pickB} onValueChange={setPickB}>
+                <SelectTrigger className="h-8" data-testid={`select-add-item-pick2-b-${orderId}`}>
+                  <SelectValue placeholder="Second flavor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {flavors.filter(f => f.name !== 'Mixed' && f.id !== pickA).map(f => (
+                    <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
       )}
       <div className="flex items-center gap-2">
@@ -1053,7 +1109,7 @@ function AddItemRow({ orderId, products }: { orderId: string; products: EditorPr
         </Select>
       </div>
       <div className="flex justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={() => setOpen(false)} data-testid={`button-cancel-add-item-${orderId}`}>Cancel</Button>
+        <Button variant="ghost" size="sm" onClick={() => { setOpen(false); reset(); }} data-testid={`button-cancel-add-item-${orderId}`}>Cancel</Button>
         <Button size="sm" disabled={!ready || addMutation.isPending} onClick={() => addMutation.mutate()} data-testid={`button-save-add-item-${orderId}`}>
           {addMutation.isPending ? 'Adding…' : 'Add to order'}
         </Button>
