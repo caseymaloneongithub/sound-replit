@@ -2531,11 +2531,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (p.container !== 'bottle-case') return p;
         // Multi-flavor: mark each flavor. Single-flavor (legacy per-flavor
         // products): mark the product itself, so any straggler card also falls off.
+        // Mixed is assembled from the OTHER flavors, not drawn from a "Mixed"
+        // stock row (which sits at zero): it is sold out only when fewer than
+        // two component flavors remain (owner, 2026-09-14: mixed/split bottle
+        // cases while stock lasts).
+        const inStock = (f: any) => !bottleStockByFlavor.has(f.id) || (bottleStockByFlavor.get(f.id) ?? 0) > 0;
+        const componentsInStock = Array.isArray(p.flavors) ? p.flavors.filter((f: any) => f.name !== 'Mixed' && inStock(f)).length : 0;
         const flavorsMarked = Array.isArray(p.flavors)
           ? p.flavors.map((f: any) =>
-              bottleStockByFlavor.has(f.id)
-                ? { ...f, soldOut: (bottleStockByFlavor.get(f.id) ?? 0) <= 0 }
-                : f
+              f.name === 'Mixed'
+                ? { ...f, soldOut: componentsInStock < 2 }
+                : bottleStockByFlavor.has(f.id)
+                  ? { ...f, soldOut: (bottleStockByFlavor.get(f.id) ?? 0) <= 0 }
+                  : f
             )
           : p.flavors;
         const ownFlavorSoldOut =
