@@ -1,13 +1,51 @@
 import { useEffect } from "react";
-import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import { useEditor, EditorContent, Extension, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
+import TextStyle from "@tiptap/extension-text-style";
 import { Button } from "@/components/ui/button";
 import {
   Bold, Italic, Underline as UnderlineIcon, Heading2, List, ListOrdered,
   Link as LinkIcon, Link2Off, Quote, Undo2, Redo2, RemoveFormatting,
 } from "lucide-react";
+
+// Explicit font sizes (owner, 2026-09-14). Rendered as <span style="font-size">
+// — the one form every mail client honors — and mirrored by the server
+// sanitizer's allowlist, so a size outside this range is stripped on send.
+// The email body's own size is 16px; "Default" removes the override.
+export const FONT_SIZES = ["12px", "14px", "16px", "18px", "20px", "24px", "28px", "32px"] as const;
+
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    fontSize: {
+      setFontSize: (size: string) => ReturnType;
+      unsetFontSize: () => ReturnType;
+    };
+  }
+}
+
+const FontSize = Extension.create({
+  name: "fontSize",
+  addGlobalAttributes() {
+    return [{
+      types: ["textStyle"],
+      attributes: {
+        fontSize: {
+          default: null,
+          parseHTML: (element) => element.style.fontSize || null,
+          renderHTML: (attributes) => (attributes.fontSize ? { style: `font-size: ${attributes.fontSize}` } : {}),
+        },
+      },
+    }];
+  },
+  addCommands() {
+    return {
+      setFontSize: (size) => ({ chain }) => chain().setMark("textStyle", { fontSize: size }).run(),
+      unsetFontSize: () => ({ chain }) => chain().setMark("textStyle", { fontSize: null }).removeEmptyTextStyle().run(),
+    };
+  },
+});
 
 /**
  * Rich-text editor for campaign bodies (owner, 2026-09-12: "a better WYSIWYG
@@ -30,6 +68,8 @@ export function CampaignEditor({ value, onChange }: { value: string; onChange: (
         strike: false,
       }),
       Underline,
+      TextStyle,
+      FontSize,
       Link.configure({ openOnClick: false, autolink: true, defaultProtocol: "https" }),
     ],
     content: value,
@@ -91,11 +131,26 @@ function Toolbar({ editor, onLink }: { editor: Editor; onLink: () => void }) {
     </Button>
   );
   const c = () => editor.chain().focus();
+  const currentSize = (editor.getAttributes("textStyle").fontSize as string | undefined) ?? "";
   return (
     <div className="flex flex-wrap items-center gap-0.5 border-b px-1.5 py-1" role="toolbar" aria-label="Formatting">
       {btn("Bold (Ctrl+B)", editor.isActive("bold"), () => c().toggleBold().run(), Bold, false, "button-format-bold")}
       {btn("Italic (Ctrl+I)", editor.isActive("italic"), () => c().toggleItalic().run(), Italic)}
       {btn("Underline (Ctrl+U)", editor.isActive("underline"), () => c().toggleUnderline().run(), UnderlineIcon)}
+      <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+      {/* A mixed selection shows as Default; picking a size applies it to the
+          whole selection (or, with no selection, to what's typed next). */}
+      <select
+        className="h-8 rounded-md border bg-background px-1.5 text-sm"
+        value={FONT_SIZES.includes(currentSize as (typeof FONT_SIZES)[number]) ? currentSize : ""}
+        onChange={(e) => (e.target.value ? c().setFontSize(e.target.value).run() : c().unsetFontSize().run())}
+        aria-label="Font size"
+        title="Font size"
+        data-testid="select-font-size"
+      >
+        <option value="">Default</option>
+        {FONT_SIZES.map((s) => <option key={s} value={s}>{s.replace("px", "")}</option>)}
+      </select>
       <span className="mx-1 h-5 w-px bg-border" aria-hidden />
       {btn("Heading", editor.isActive("heading", { level: 2 }), () => c().toggleHeading({ level: 2 }).run(), Heading2)}
       {btn("Bulleted list", editor.isActive("bulletList"), () => c().toggleBulletList().run(), List, false, "button-format-bullets")}

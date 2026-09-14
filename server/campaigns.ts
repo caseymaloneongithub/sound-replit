@@ -59,11 +59,15 @@ export type CampaignStatus = {
 // library rather than rebuilt by hand.
 export function sanitizeCampaignHtml(input: string): string {
   return sanitizeHtml(String(input ?? ''), {
-    allowedTags: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'blockquote'],
+    allowedTags: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'blockquote', 'span'],
     // <ol start="3"> is how the editor represents a list that begins at 3 —
     // dropping it would silently renumber on send. Kept only as a positive
     // integer; anything else is stripped.
-    allowedAttributes: { a: ['href'], ol: ['start'] },
+    allowedAttributes: { a: ['href'], ol: ['start'], span: ['style'] },
+    // The editor's explicit font sizes ride on <span style="font-size: Npx">.
+    // Only that one property, only in px, only 10–36: any other style on a
+    // span is dropped, and a span left with nothing is harmless.
+    allowedStyles: { span: { 'font-size': [/^(1\d|2\d|3[0-6])px$/] } },
     transformTags: {
       ol: (tagName, attribs) => {
         const start = String(attribs.start ?? '').trim();
