@@ -661,21 +661,24 @@ export default function WholesalePlaceOrder() {
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="preview-to">To</Label>
+              {/* Locked until the defaults arrive, so a correction typed early can't be
+                  overwritten by the first preview's response. */}
               <Input id="preview-to" value={previewTo} onChange={(e) => setPreviewTo(e.target.value)}
-                placeholder="Separate several with commas" data-testid="input-preview-to" />
+                placeholder="Separate several with commas" disabled={previewBusy && previewHtml === null} data-testid="input-preview-to" />
               {previewNote && !previewTo.trim() && (
                 <p className="text-xs text-destructive" data-testid="text-preview-note">{previewNote}</p>
               )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="preview-subject">Subject</Label>
-              <Input id="preview-subject" value={previewSubject} onChange={(e) => setPreviewSubject(e.target.value)} data-testid="input-preview-subject" />
+              <Input id="preview-subject" value={previewSubject} onChange={(e) => setPreviewSubject(e.target.value)} disabled={previewBusy && previewHtml === null} data-testid="input-preview-subject" />
             </div>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="preview-body">Email text</Label>
             <Textarea id="preview-body" rows={3} value={previewBody} onChange={(e) => setPreviewBody(e.target.value)}
               placeholder="Thank you for your order! We've received your order and will contact you to confirm delivery details."
+              disabled={previewBusy && previewHtml === null}
               data-testid="input-preview-body" />
             <p className="text-xs text-muted-foreground">
               Replaces the opening paragraph. The order details below it are generated automatically —

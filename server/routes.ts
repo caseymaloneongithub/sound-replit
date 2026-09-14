@@ -17,7 +17,7 @@ import { sendEmailVerificationCode, sendContactFormNotification, sendWholesaleIn
 import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
-import { wholesaleOrderRecipients } from "./wholesale-recipients";
+import { wholesaleOrderRecipients, splitEmails } from "./wholesale-recipients";
 import { registerClaimRoutes, getPendingClaim, holdPendingOrder, createLinkRequest } from "./claim-flow";
 import {
   frequencyToDays,
@@ -474,9 +474,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
    *  remember their bank/card between invoices. Self-heals stale ids. */
   async function ensureWholesaleStripeCustomer(customer: any, forceNew = false): Promise<string> {
     if (customer.stripeCustomerId && !forceNew) return customer.stripeCustomerId;
+    // Stripe's customer email is ONE address; the account email may list several.
     const created = await stripe!.customers.create({
       name: customer.businessName,
-      email: customer.email,
+      email: splitEmails(customer.email)[0],
       metadata: { wholesaleCustomerId: customer.id, type: 'wholesale' },
     });
     await storage.updateWholesaleCustomer(customer.id, { stripeCustomerId: created.id } as any);
@@ -563,13 +564,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * second receipt.
    */
   /** Payment receipt to the same inbox(es) the invoice went to (see
-   *  wholesale-recipients.ts). Called on online settlement AND staff mark-paid. */
-  async function sendWholesaleReceiptForOrder(orderId: string, paidAt: Date) {
+   *  wholesale-recipients.ts). Called on online settlement AND staff mark-paid.
+   *  Reports what it did: a pickup order for a multi-location customer that
+   *  was never addressed has nobody to send to, and the caller must say so
+   *  rather than claim a receipt went out. */
+  async function sendWholesaleReceiptForOrder(orderId: string, paidAt: Date): Promise<{ sent: boolean; to: string[]; reason?: string }> {
     const details = await storage.getWholesaleOrderWithDetails(orderId);
-    if (!details) return;
+    if (!details) return { sent: false, to: [], reason: "order not found" };
     const { order, customer, items } = details;
-    const { to: recipients } = await wholesaleOrderRecipients(customer.id, order.locationId);
-    if (!recipients.length) return;
+    const resolved = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail);
+    const recipients = resolved.to;
+    if (!recipients.length) {
+      console.log(`[RECEIPT] ${order.invoiceNumber}: not sent — ${resolved.label}`);
+      return { sent: false, to: [], reason: resolved.problem ?? resolved.label };
+    }
     const locName = order.location?.locationName;
     await sendWholesalePaymentReceipt({
       poNumber: (order as any).poNumber ?? null,
@@ -585,6 +593,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         unitPrice: item.unitPrice,
       })),
     });
+    return { sent: true, to: recipients };
   }
 
   async function settleWholesaleInvoice(orderId: string, paymentIntentId?: string) {
@@ -1559,10 +1568,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const poNumber = typeof body.poNumber === 'string' && body.poNumber.trim()
         ? body.poNumber.trim().slice(0, 50)
         : undefined;
-      // Email the orderer gave at submission — the confirmation goes here. May differ
-      // from the billing/primary contact (floor staff order; the office pays).
+      // An address typed on the GUEST form is an explicit choice for this order
+      // and is stored on it. Signed-in portal orders get no such override — the
+      // portal form used to prefill this with the login email, which quietly
+      // bypassed the recipient rule (reviewer, 2026-09-14).
       const contactEmail =
-        typeof body.contactEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.contactEmail.trim())
+        !opts.placedByUserId && typeof body.contactEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.contactEmail.trim())
           ? body.contactEmail.trim()
           : null;
 
@@ -1703,15 +1714,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // ("Evergreens — Thomas & Boren"), so everyone knows which site ordered.
       const emailLocation = createdOrder.locationId ? await storage.getWholesaleLocation(createdOrder.locationId) : null;
 
-      // Recipients follow the one rule (wholesale-recipients.ts): the store's
-      // inbox for a multi-location customer, the account email otherwise.
-      // Nothing is appended automatically — not the portal login who placed it
-      // (reviewer, 2026-09-14; supersedes the 2026-08-23 "whoever placed it"
-      // routing). An address typed on the guest form is an explicit choice
-      // and REPLACES the rule's list for this confirmation.
-      const resolvedRecipients = await wholesaleOrderRecipients(customer.id, createdOrder.locationId);
-      const confirmationEmail = contactEmail ? [contactEmail] : resolvedRecipients.to;
-      const recipientLabel = contactEmail ? 'address given on the form' : resolvedRecipients.label;
+      // Recipients follow the one rule (wholesale-recipients.ts): an address
+      // given for this order (guest form), else the store's inbox for a
+      // multi-location customer, else the account email. Nothing is appended
+      // automatically — not the portal login who placed it (reviewer,
+      // 2026-09-14; supersedes the 2026-08-23 "whoever placed it" routing).
+      const { to: confirmationEmail, label: recipientLabel } = await wholesaleOrderRecipients(customer.id, createdOrder.locationId, createdOrder.contactEmail);
       console.log(`[ORDER] ${createdOrder.invoiceNumber} confirmation -> ${recipientLabel}: ${confirmationEmail.join(', ') || '(nobody — no address on file)'}`);
       const emailBusinessName = emailLocation?.locationName && emailLocation.locationName !== 'Main Location'
         ? `${customer.businessName} — ${emailLocation.locationName}`
@@ -7751,7 +7759,7 @@ If you have any questions, please don't hesitate to reach out!`,
         }
         // Recipients follow the one rule (wholesale-recipients.ts; owner,
         // 2026-09-02: a Fremont order emailed 2nd & Pike).
-        const { to: confirmationRecipients, label: recipientLabel } = await wholesaleOrderRecipients(customer.id, createdOrder.locationId);
+        const { to: confirmationRecipients, label: recipientLabel } = await wholesaleOrderRecipients(customer.id, createdOrder.locationId, createdOrder.contactEmail);
         if (sendConfirmation && confirmationRecipients.length === 0) {
           console.log(`[ORDER] ${invoiceNumber}: confirmation not sent — ${recipientLabel}`);
         }
@@ -7961,7 +7969,7 @@ If you have any questions, please don't hesitate to reach out!`,
       const emailBusinessName = loc?.locationName && loc.locationName !== 'Main Location'
         ? `${customer.businessName} — ${loc.locationName}`
         : customer.businessName;
-      const resolved = await wholesaleOrderRecipients(customer.id, order.locationId);
+      const resolved = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail);
       const recipients = overrides.to ?? resolved.to;
       if (!isPreview && recipients.length === 0) {
         return res.status(400).json({ message: resolved.problem ?? "No email address to send to" });
@@ -8007,6 +8015,9 @@ If you have any questions, please don't hesitate to reach out!`,
       }
 
       await sendWholesaleOrderConfirmation(confirmationParams);
+      // Addresses staff typed become the order's own, so its invoice and
+      // receipt follow the same choice (a pickup order otherwise has none).
+      if (overrides.to) await storage.updateWholesaleOrder(order.id, { contactEmail: overrides.to.join(", ") });
       res.json({ success: true, message: `Confirmation sent to ${recipients.join(", ")}` });
     } catch (error: any) {
       console.error("Error with order confirmation:", error);
@@ -8108,7 +8119,7 @@ If you have any questions, please don't hesitate to reach out!`,
       // Recipients follow the one rule (wholesale-recipients.ts; owner,
       // 2026-08-31: each Evergreens store bills separately, and a location may
       // list several addresses). The send dialog can override outright.
-      const resolvedInvoiceRecipients = await wholesaleOrderRecipients(customer.id, order.locationId);
+      const resolvedInvoiceRecipients = await wholesaleOrderRecipients(customer.id, order.locationId, order.contactEmail);
       const invoiceRecipient = overrides.to ?? resolvedInvoiceRecipients.to;
       if (!isPreview && invoiceRecipient.length === 0) {
         return res.status(400).json({ message: resolvedInvoiceRecipients.problem ?? "No email address to send to" });
@@ -8151,10 +8162,12 @@ If you have any questions, please don't hesitate to reach out!`,
 
       await sendWholesaleInvoiceEmail(emailParams);
 
-      // Only a delivered invoice is a sent invoice.
+      // Only a delivered invoice is a sent invoice. Addresses staff typed become
+      // the order's own, so the receipt follows the same choice.
       await storage.updateWholesaleOrder(req.params.id, {
         dueDate: dueDateValue,
         invoiceSentAt: new Date(),
+        ...(overrides.to ? { contactEmail: overrides.to.join(", ") } : {}),
       });
 
       res.json({
@@ -8188,13 +8201,22 @@ If you have any questions, please don't hesitate to reach out!`,
       });
 
       // Check arrived and staff recorded it — the customer's AP inbox gets the same
-      // receipt an online payment would have produced (owner, 2026-08-31).
-      sendWholesaleReceiptForOrder(req.params.id, paidAt).catch((e) =>
-        console.error('[MARK-PAID] Failed to send payment receipt:', e.message));
+      // receipt an online payment would have produced (owner, 2026-08-31). The
+      // message says what actually happened.
+      let receiptNote: string;
+      try {
+        const receipt = await sendWholesaleReceiptForOrder(req.params.id, paidAt);
+        receiptNote = receipt.sent
+          ? `receipt emailed to ${receipt.to.join(", ")}`
+          : `no receipt sent (${receipt.reason ?? "no address on file"})`;
+      } catch (e: any) {
+        console.error('[MARK-PAID] Failed to send payment receipt:', e.message);
+        receiptNote = `the receipt email failed (${e.message})`;
+      }
 
       res.json({
         success: true,
-        message: "Invoice marked as paid — receipt emailed to the customer",
+        message: `Invoice marked as paid — ${receiptNote}`,
       });
     } catch (error: any) {
       console.error("Error marking invoice as paid:", error);

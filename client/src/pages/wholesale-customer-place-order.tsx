@@ -47,7 +47,6 @@ export default function WholesaleCustomerPlaceOrder() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState("");
   const [poNumber, setPoNumber] = useState("");
-  const [contactEmail, setContactEmail] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState<string>("");
   // Delivery or collect from the brewery. Pickup carries no address, so it's also the way
   // a customer with no location on file can still place an order.
@@ -61,11 +60,6 @@ export default function WholesaleCustomerPlaceOrder() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
 
-  // Prefill the order email with the login email once — the person ordering may swap in
-  // a different address (the confirmation goes there; billing stays on the primary).
-  useEffect(() => {
-    if (user?.email) setContactEmail((prev) => prev || user.email!);
-  }, [user?.email]);
 
   const { data: customer } = useQuery<WholesaleCustomer>({
     queryKey: ["/api/wholesale-customer"],
@@ -174,7 +168,6 @@ export default function WholesaleCustomerPlaceOrder() {
       return await apiRequest("POST", "/api/wholesale/customer/orders", {
         notes: notes || undefined,
         poNumber: poNumber.trim() || undefined,
-        contactEmail: contactEmail.trim() || undefined,
         fulfillmentMethod,
         locationId:
           fulfillmentMethod === "delivery" && selectedLocationId && selectedLocationId !== "none"
@@ -698,19 +691,10 @@ export default function WholesaleCustomerPlaceOrder() {
                     <CardDescription>Add any special instructions (optional)</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div>
-                      <div className="text-sm font-medium mb-1.5">Email for this order</div>
-                      <Input
-                        type="email"
-                        value={contactEmail}
-                        onChange={(e) => setContactEmail(e.target.value)}
-                        placeholder="you@yourstore.com"
-                        data-testid="input-order-contact-email"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1.5">
-                        The order confirmation goes here — use a different address than your sign-in if someone else should get it.
-                      </p>
-                    </div>
+                    {/* No per-order email here: confirmations and invoices go to the
+                        store's inbox on file (or the account email for a single-location
+                        customer). The field used to prefill the login address, which
+                        quietly rerouted them (reviewer, 2026-09-14). */}
                     <div className="mb-3">
                       <Label htmlFor="order-po">PO # (optional)</Label>
                       <Input

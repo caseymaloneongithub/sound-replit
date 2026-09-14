@@ -740,7 +740,9 @@ export default function WholesaleInvoices() {
           <div className="space-y-3 pb-2">
             <div className="space-y-1.5">
               <Label htmlFor="send-to">To</Label>
-              <Input id="send-to" value={sendTo} onChange={(e) => setSendTo(e.target.value)} placeholder="Separate several with commas" data-testid="input-send-to" />
+              {/* Locked until the defaults arrive, so a correction typed early can't be
+                  overwritten by the first preview's response. */}
+              <Input id="send-to" value={sendTo} onChange={(e) => setSendTo(e.target.value)} placeholder="Separate several with commas" disabled={previewBusy && previewHtml === null} data-testid="input-send-to" />
               {sendNote && !sendTo.trim() && (
                 <p className="text-xs text-destructive" data-testid="text-send-note">{sendNote}</p>
               )}

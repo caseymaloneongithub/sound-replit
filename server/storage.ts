@@ -267,6 +267,8 @@ export interface IStorage {
     paymentFailedAt?: Date | null;
     stripePaymentIntentId?: string | null;
     invoiceSentAt?: Date | null;
+    // Address chosen for this order (guest form, or typed in a send dialog).
+    contactEmail?: string | null;
   }): Promise<WholesaleOrder | undefined>;
   
   getAllWholesalePricing(): Promise<WholesalePricing[]>;
@@ -3264,6 +3266,8 @@ export class PostgresStorage implements IStorage {
     paymentFailedAt?: Date | null;
     stripePaymentIntentId?: string | null;
     invoiceSentAt?: Date | null;
+    // Address chosen for this order (guest form, or typed in a send dialog).
+    contactEmail?: string | null;
   }): Promise<WholesaleOrder | undefined> {
     const result = await db
       .update(wholesaleOrders)

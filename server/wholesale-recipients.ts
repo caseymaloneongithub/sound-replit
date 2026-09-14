@@ -34,7 +34,7 @@ export function splitEmails(raw: string | null | undefined): string[] {
 export type OrderRecipients = {
   to: string[];
   /** Where the addresses came from, for logs and the send dialog. */
-  source: "location" | "account" | "none";
+  source: "order" | "location" | "account" | "none";
   label: string;
   /** Set when the rule yields no address: what staff should do about it. */
   problem?: string;
@@ -49,11 +49,20 @@ export type OrderRecipients = {
  * "Multi-location" counts every location the customer has ever had, active or
  * not, so deactivating a store never silently reroutes its open orders to the
  * account email (reviewer, 2026-09-14).
+ *
+ * `orderContactEmail` is an address chosen FOR THIS ORDER — typed by a guest on
+ * the no-login form, or entered by staff in a send dialog — and wins outright:
+ * an explicit choice, not a fallback. It is stored on the order so every later
+ * email about it (invoice, receipt) follows the same choice.
  */
 export async function wholesaleOrderRecipients(
   customerId: string,
   locationId: string | null | undefined,
+  orderContactEmail?: string | null,
 ): Promise<OrderRecipients> {
+  const chosen = splitEmails(orderContactEmail);
+  if (chosen.length > 0) return { to: chosen, source: "order", label: "address given for this order" };
+
   const customer = await storage.getWholesaleCustomer(customerId);
   if (!customer) throw new Error("Wholesale customer not found");
   const locations = await storage.getWholesaleLocations(customerId);
