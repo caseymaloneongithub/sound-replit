@@ -236,9 +236,13 @@ export default function RetailOrders() {
           return typeof key === 'string' && key.startsWith('/api/retail/orders');
         },
       });
+      // The server may have completed an EARLIER refund (of either kind) that
+      // hadn't been recorded, rather than the one asked for — say which.
       toast({
-        title: "Deposit refunded",
-        description: `Deposit of $${data.amount?.toFixed(2) || '0.00'} has been refunded successfully`,
+        title: data?.reconciled
+          ? `Earlier ${data.kind === 'deposit' ? 'deposit' : 'overpayment'} refund completed`
+          : "Deposit refunded",
+        description: data?.message || `Deposit of $${Number(data?.amount ?? 0).toFixed(2)} has been refunded successfully`,
       });
     },
     onError: async (error: any) => {
@@ -1073,7 +1077,12 @@ function PaymentBalance({ order }: { order: RetailOrderWithItems }) {
     mutationFn: async () => apiRequest('POST', `/api/retail/orders/${order.id}/refund-difference`),
     onSuccess: (res: any) => {
       invalidateOrders();
-      toast({ title: `Refunded $${Number(res?.amount ?? -diff).toFixed(2)}`, description: 'Back to the card the order was paid with.' });
+      toast({
+        title: res?.reconciled
+          ? `Earlier ${res.kind === 'deposit' ? 'deposit' : 'overpayment'} refund completed`
+          : `Refunded $${Number(res?.amount ?? -diff).toFixed(2)}`,
+        description: res?.message || 'Back to the card the order was paid with.',
+      });
     },
     onError: (e: any) => toast({ title: "Refund failed", description: e.message, variant: 'destructive' }),
   });

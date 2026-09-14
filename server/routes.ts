@@ -5076,9 +5076,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   // here, leaving one-time variety packs flavorless on the board), and
                   // resolve split cases to Mixed + a packing note.
                   const itemFields = await splitItemFields(item.selectedFlavorId ?? null, (item as any).splitFlavorId ?? null);
+                  // Deposit AS CHARGED at checkout (one-time purchases only — the
+                  // session charges none on subscriptions), so a later edit never
+                  // re-prices it from the catalogue.
+                  const depositEach = !item.isSubscription && item.retailProduct.deposit
+                    ? Number(item.retailProduct.deposit).toFixed(2)
+                    : '0.00';
                   await client.query(
-                    'INSERT INTO retail_order_items_v2 (order_id, retail_product_id, selected_flavor_id, quantity, unit_price, notes) VALUES ($1, $2, $3, $4, $5, $6)',
-                    [orderId, item.retailProductId, itemFields.selectedFlavorId, item.quantity, unitPrice.toFixed(2), itemFields.notes]
+                    'INSERT INTO retail_order_items_v2 (order_id, retail_product_id, selected_flavor_id, quantity, unit_price, deposit_each, notes) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                    [orderId, item.retailProductId, itemFields.selectedFlavorId, item.quantity, unitPrice.toFixed(2), depositEach, itemFields.notes]
                   );
                 }
                 

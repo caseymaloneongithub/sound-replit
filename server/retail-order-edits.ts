@@ -109,6 +109,14 @@ export async function withOpenOrderLocked<T>(
       .for("update");
     if (!order) throw new OrderEditError(404, "Order not found");
     if (!["pending", "ready_for_pickup"].includes(order.status)) throw new OrderEditError(400, "Only open orders can be edited");
+    // A refund recorded but not yet settled was sized from the order as it
+    // was; an edit now (say, a deposit going from $30 to $60) would make the
+    // settlement credit the wrong figure. Edits wait until it lands.
+    const [inFlight] = await tx
+      .select({ id: retailOrderRefunds.id })
+      .from(retailOrderRefunds)
+      .where(and(eq(retailOrderRefunds.orderId, orderId), eq(retailOrderRefunds.status, "pending")));
+    if (inFlight) throw new OrderEditError(409, "A refund is in progress on this order — try again in a moment");
     const result = await fn(tx, order);
     const totals = await recomputeRetailOrderTotals(tx, order);
     return { result, totals };
@@ -178,7 +186,27 @@ export async function recomputeRetailOrderTotals(tx: DbTx, order: OrderRow): Pro
 
 export type RefundKind = "overpayment" | "deposit";
 /** The slice of Stripe a refund needs — a test can hand in a stand-in. */
-export type RefundGateway = { refunds: { create: Stripe["refunds"]["create"] } };
+export type RefundGateway = { refunds: { create: Stripe["refunds"]["create"]; list: Stripe["refunds"]["list"] } };
+
+/** Stripe metadata key that ties a refund back to the operation that made it. */
+const OP_METADATA_KEY = "retail_refund_op";
+
+/** Before retrying a pending operation, ask Stripe whether it already went
+ *  through: idempotency keys are only kept ~24 hours, so a key alone can't
+ *  guarantee "same refund" for an operation that stalled longer than that.
+ *  The refund carries the operation id in its metadata; the list is
+ *  authoritative. */
+async function findExistingRefund(stripe: RefundGateway, paymentIntentId: string, opId: string): Promise<{ id: string } | null> {
+  let startingAfter: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const batch = await stripe.refunds.list({ payment_intent: paymentIntentId, limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) });
+    const hit = batch.data.find((r) => r.metadata?.[OP_METADATA_KEY] === opId);
+    if (hit) return { id: hit.id };
+    if (!batch.has_more || batch.data.length === 0) break;
+    startingAfter = batch.data[batch.data.length - 1].id;
+  }
+  return null;
+}
 
 export type RefundResult = {
   refundId: string;
@@ -242,12 +270,17 @@ export async function runRetailRefund(stripe: RefundGateway, orderId: string, ki
   });
 
   const amount = Number(op.row.amount);
-  let refund: { id: string };
+  let refund: { id: string } | null = null;
   try {
-    refund = await stripe.refunds.create(
-      { payment_intent: op.paymentIntentId, amount: Math.round(amount * 100) },
-      { idempotencyKey: op.row.idempotencyKey },
-    );
+    // A pending operation may already have a refund at Stripe — check the
+    // record before asking for another (see findExistingRefund).
+    if (op.reconciled) refund = await findExistingRefund(stripe, op.paymentIntentId, op.row.id);
+    if (!refund) {
+      refund = await stripe.refunds.create(
+        { payment_intent: op.paymentIntentId, amount: Math.round(amount * 100), metadata: { [OP_METADATA_KEY]: op.row.id } },
+        { idempotencyKey: op.row.idempotencyKey },
+      );
+    }
   } catch (error: any) {
     if (error?.type === "StripeInvalidRequestError") {
       await db.update(retailOrderRefunds).set({ status: "failed", completedAt: new Date() }).where(eq(retailOrderRefunds.id, op.row.id));
@@ -257,9 +290,10 @@ export async function runRetailRefund(stripe: RefundGateway, orderId: string, ki
 
   await db.transaction(async (tx) => {
     const [order] = await tx.select().from(retailOrders).where(eq(retailOrders.id, orderId)).for("update");
+    const refundId = refund!.id;
     const [settled] = await tx
       .update(retailOrderRefunds)
-      .set({ status: "done", stripeRefundId: refund.id, completedAt: new Date() })
+      .set({ status: "done", stripeRefundId: refundId, completedAt: new Date() })
       .where(and(eq(retailOrderRefunds.id, op.row.id), eq(retailOrderRefunds.status, "pending")))
       .returning();
     if (!settled || !order) return; // a concurrent call settled it first
@@ -274,8 +308,8 @@ export async function runRetailRefund(stripe: RefundGateway, orderId: string, ki
       patch.notes = `${order.notes ? order.notes + " — " : ""}Refunded $${amount.toFixed(2)} difference after edit (${new Date().toLocaleDateString("en-US")})`;
     }
     await tx.update(retailOrders).set(patch).where(eq(retailOrders.id, orderId));
-    console.log(`[RETAIL REFUND] ${op.row.kind} $${amount.toFixed(2)} on ${order.orderNumber}: ${refund.id}${op.reconciled ? " (reconciled)" : ""}`);
+    console.log(`[RETAIL REFUND] ${op.row.kind} $${amount.toFixed(2)} on ${order.orderNumber}: ${refundId}${op.reconciled ? " (reconciled)" : ""}`);
   });
 
-  return { refundId: refund.id, amount, kind: op.row.kind as RefundKind, reconciled: op.reconciled };
+  return { refundId: refund!.id, amount, kind: op.row.kind as RefundKind, reconciled: op.reconciled };
 }
