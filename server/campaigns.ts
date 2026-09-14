@@ -83,14 +83,19 @@ export function sanitizeCampaignHtml(input: string): string {
         if (/^[1-9]\d{0,5}$/.test(start)) kept.start = start;
         return { tagName, attribs: kept };
       },
-      // Photos: https source only (checked by allowedSchemesByTag), an
-      // explicit display width capped at the column (Outlook for Windows
-      // ignores max-width and would otherwise show a 1104px retina upload at
-      // full size), and the fixed style every other client scales with.
+      // Photos: an ABSOLUTE https source (allowedSchemesByTag only judges URLs
+      // that have a scheme — a relative "/uploads/x.jpg" has no origin once
+      // the email leaves the app), an explicit display width capped at the
+      // column and defaulting to it (Outlook for Windows ignores max-width and
+      // would otherwise show a 1104px retina upload, or a pasted 4000px
+      // original, at full size), and the fixed style every other client
+      // scales with. A photo whose src fails is removed by exclusiveFilter.
       img: (tagName, attribs) => {
-        const kept: Record<string, string> = { src: String(attribs.src ?? ''), alt: String(attribs.alt ?? '') };
-        const width = String(attribs.width ?? '').trim();
-        if (/^[1-9]\d{0,3}$/.test(width)) kept.width = String(Math.min(CAMPAIGN_IMAGE_COLUMN, Number(width)));
+        const src = String(attribs.src ?? '').trim();
+        const kept: Record<string, string> = { alt: String(attribs.alt ?? '') };
+        if (/^https:\/\/[^\s"'<>]+$/i.test(src)) kept.src = src;
+        const width = Number(String(attribs.width ?? '').trim());
+        kept.width = String(Number.isInteger(width) && width >= 1 ? Math.min(CAMPAIGN_IMAGE_COLUMN, width) : CAMPAIGN_IMAGE_COLUMN);
         kept.style = 'max-width:100%;height:auto;display:block;margin:12px 0';
         return { tagName, attribs: kept };
       },
@@ -108,6 +113,12 @@ export function sanitizeCampaignHtml(input: string): string {
     // single-paragraph item; multi-paragraph items keep their structure.
     .replace(/<li>\s*<p>([\s\S]*?)<\/p>\s*<\/li>/g, (m, inner) => (/<p>/.test(inner) ? m : `<li>${inner}</li>`))
     .trim();
+}
+
+/** Sanitized body has something to say: any text, or at least one photo that
+ *  survived sanitizing (a photo-only announcement is a legitimate email). */
+export function hasCampaignContent(cleanHtml: string): boolean {
+  return !!cleanHtml.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim() || /<img\b[^>]*\bsrc="https:\/\//i.test(cleanHtml);
 }
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
@@ -217,7 +228,7 @@ export async function startCampaign(input: CampaignInput): Promise<{ id: string;
   const subject = input.subject.trim().slice(0, 150);
   const bodyHtml = sanitizeCampaignHtml(input.bodyHtml);
   if (!subject) throw Object.assign(new Error('Subject is required'), { status: 400 });
-  if (!bodyHtml.replace(/<[^>]+>/g, '').trim()) throw Object.assign(new Error('The email body is empty'), { status: 400 });
+  if (!hasCampaignContent(bodyHtml)) throw Object.assign(new Error('The email body is empty'), { status: 400 });
   if (input.recipients.length > MAX_CAMPAIGN_RECIPIENTS) {
     throw Object.assign(
       new Error(`Campaigns are capped at ${MAX_CAMPAIGN_RECIPIENTS} recipients — this one has ${input.recipients.length}. Split it into batches.`),
@@ -632,7 +643,7 @@ export async function resumeUnfinishedCampaigns(): Promise<void> {
 export async function sendTestCampaign(to: string, subject: string, bodyHtml: string): Promise<void> {
   const clean = sanitizeCampaignHtml(bodyHtml);
   const subj = subject.trim().slice(0, 150) || '(no subject)';
-  if (!clean.replace(/<[^>]+>/g, '').trim()) throw Object.assign(new Error('The email body is empty'), { status: 400 });
+  if (!hasCampaignContent(clean)) throw Object.assign(new Error('The email body is empty'), { status: 400 });
   const built = buildCampaignEmail(subj, clean);
   await sendCampaignMail(to, `[TEST] ${subj}`, built, { unsubscribeUrl: unsubscribeUrlFor(to) });
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent, Extension, type Editor } from "@tiptap/react";
+import type { Node as PMNode } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
@@ -17,6 +18,10 @@ import {
 // sanitizer's allowlist, so a size outside this range is stripped on send.
 // The email body's own size is 16px; "Default" removes the override.
 export const FONT_SIZES = ["12px", "14px", "16px", "18px", "20px", "24px", "28px", "32px"] as const;
+
+// Width of the text column inside the branded template — mirrors
+// CAMPAIGN_IMAGE_COLUMN on the server.
+const EMAIL_COLUMN = 552;
 
 // Pasted content can carry any size in any unit (48px, 18pt, 1.5em). Snap it to
 // the nearest offered size on the way in, so what Write shows is what the
@@ -77,9 +82,10 @@ const FontSize = Extension.create({
 });
 
 // Photos (owner, 2026-09-14). Block-level, never base64 (an inlined photo would
-// balloon the email). The `width` attribute is the DISPLAY width the upload
-// endpoint chose — Outlook for Windows ignores max-width, so the <img> must say
-// how wide it is; every other client scales it down with the sanitizer's style.
+// balloon the email). The `width` attribute is the DISPLAY width — Outlook for
+// Windows ignores max-width, so the <img> must say how wide it is; every other
+// client scales it down with the sanitizer's style. `uploadId` marks a
+// placeholder whose file is still uploading; it is never written to HTML.
 const CampaignImage = Image.extend({
   addAttributes() {
     return {
@@ -89,7 +95,14 @@ const CampaignImage = Image.extend({
         parseHTML: (element) => element.getAttribute("width"),
         renderHTML: (attributes) => (attributes.width ? { width: String(attributes.width) } : {}),
       },
+      uploadId: { default: null, rendered: false },
     };
+  },
+  parseHTML() {
+    // Only absolute https sources survive the server's sanitizer, so only
+    // those are accepted from pasted HTML — a relative or http image would
+    // otherwise show in Write and vanish on send.
+    return [{ tag: "img[src]", getAttrs: (el) => (/^https:\/\//i.test((el as HTMLElement).getAttribute("src") ?? "") ? null : false) }];
   },
 }).configure({ inline: false, allowBase64: false });
 
@@ -112,6 +125,29 @@ async function uploadPhoto(file: File): Promise<UploadedPhoto> {
 const imageFiles = (list: FileList | null | undefined): File[] =>
   Array.from(list ?? []).filter((f) => f.type.startsWith("image/"));
 
+/** Every image node matching `test`, with its current position. */
+function findImages(editor: Editor, test: (node: PMNode) => boolean): Array<{ pos: number; node: PMNode }> {
+  const hits: Array<{ pos: number; node: PMNode }> = [];
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name === "image" && test(node)) hits.push({ pos, node });
+    return true;
+  });
+  return hits;
+}
+
+/** Resolve one upload's placeholder: swap in the real attrs, or (null) remove
+ *  it. Found by its uploadId at resolve time, so edits made while the upload
+ *  ran — text typed above it, other photos, a selection — are untouched, and
+ *  a placeholder the user already deleted is simply not there to resolve. */
+function resolvePlaceholder(editor: Editor, uploadId: string, attrs: Record<string, unknown> | null) {
+  const [hit] = findImages(editor, (n) => n.attrs.uploadId === uploadId);
+  if (!hit) return;
+  const tr = editor.state.tr;
+  if (attrs) tr.setNodeMarkup(hit.pos, undefined, { ...hit.node.attrs, ...attrs });
+  else tr.delete(hit.pos, hit.pos + hit.node.nodeSize);
+  editor.view.dispatch(tr);
+}
+
 /**
  * Rich-text editor for campaign bodies (owner, 2026-09-12: "a better WYSIWYG
  * experience"). Tiptap/ProseMirror underneath: a real toolbar, the usual
@@ -120,15 +156,26 @@ const imageFiles = (list: FileList | null | undefined): File[] =>
  * <strong>, lists stay lists. Output is getHTML(): exactly the tag set the
  * server's sanitizer allows, so what's shown here is what gets wrapped in the
  * brand template. Photos arrive by toolbar button, drag-and-drop, or pasting
- * an image file; each is uploaded (as email-safe JPEG) and inserted by URL.
+ * an image file; each is uploaded (as email-safe JPEG/PNG) and inserted by URL.
  */
-export function CampaignEditor({ value, onChange }: { value: string; onChange: (html: string) => void }) {
+export function CampaignEditor({
+  value,
+  onChange,
+  onUploadingChange,
+}: {
+  value: string;
+  onChange: (html: string) => void;
+  /** True while any photo is still uploading — the page blocks sending then. */
+  onUploadingChange?: (uploading: boolean) => void;
+}) {
   const { toast } = useToast();
   const [uploading, setUploading] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // editorProps are captured once at creation, so the drop/paste handlers reach
   // the current insert function through a ref.
   const insertRef = useRef<(file: File, pos?: number) => void>(() => {});
+
+  useEffect(() => { onUploadingChange?.(uploading > 0); }, [uploading, onUploadingChange]);
 
   const editor = useEditor({
     extensions: [
@@ -179,20 +226,65 @@ export function CampaignEditor({ value, onChange }: { value: string; onChange: (
     onUpdate: ({ editor }) => onChange(editor.isEmpty ? "" : editor.getHTML()),
   });
 
+  // Each upload gets its own placeholder the moment it starts — the local file
+  // shown in place, tagged with an uploadId — and is resolved by that id when
+  // the upload finishes. Several photos picked at once each keep their spot,
+  // and nothing selected in the meantime is replaced.
   insertRef.current = async (file: File, pos?: number) => {
     if (!editor) return;
+    const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const previewUrl = URL.createObjectURL(file);
+    const placeholder = { type: "image", attrs: { src: previewUrl, alt: "", uploadId } };
+    // Insert at an explicit POSITION, never "at the selection": an inserted
+    // image is left selected, so the next file of a multi-pick would replace
+    // the first placeholder. The selected image's end is exactly where the
+    // next one belongs, which keeps a multi-pick in the order chosen.
+    const at = pos ?? editor.state.selection.to;
+    editor.chain().focus().insertContentAt(at, placeholder).run();
     setUploading((n) => n + 1);
     try {
       const photo = await uploadPhoto(file);
-      const node = { type: "image", attrs: { src: photo.url, alt: "", width: photo.width } };
-      const chain = editor.chain().focus();
-      (pos != null ? chain.insertContentAt(pos, node) : chain.insertContent(node)).run();
+      resolvePlaceholder(editor, uploadId, { src: photo.url, width: photo.width, uploadId: null });
     } catch (e: any) {
+      resolvePlaceholder(editor, uploadId, null);
       toast({ title: "Couldn't add the photo", description: e?.message || "Try again.", variant: "destructive" });
     } finally {
+      URL.revokeObjectURL(previewUrl);
       setUploading((n) => n - 1);
     }
   };
+
+  // A pasted image arrives without a width. Measure it once and set
+  // min(column, natural) so the email carries the explicit width classic
+  // Outlook needs — the server's fallback is the full column, which would
+  // upscale a small graphic.
+  const measuring = useRef(new Set<string>());
+  useEffect(() => {
+    if (!editor) return;
+    const fill = () => {
+      for (const { node } of findImages(editor, (n) => !n.attrs.width && !n.attrs.uploadId && /^https:\/\//i.test(n.attrs.src))) {
+        const src = node.attrs.src as string;
+        if (measuring.current.has(src)) continue;
+        measuring.current.add(src);
+        const probe = new window.Image();
+        probe.onload = () => {
+          measuring.current.delete(src);
+          if (probe.naturalWidth <= 0) return;
+          const width = Math.min(EMAIL_COLUMN, probe.naturalWidth);
+          const tr = editor.state.tr;
+          for (const hit of findImages(editor, (n) => n.attrs.src === src && !n.attrs.width)) {
+            tr.setNodeMarkup(hit.pos, undefined, { ...hit.node.attrs, width });
+          }
+          if (tr.docChanged) editor.view.dispatch(tr);
+        };
+        probe.onerror = () => measuring.current.delete(src);
+        probe.src = src;
+      }
+    };
+    editor.on("update", fill);
+    fill();
+    return () => { editor.off("update", fill); };
+  }, [editor]);
 
   // Keep an externally-reset value (e.g. after a send) in sync without
   // clobbering the caret while the user is typing.
@@ -214,8 +306,12 @@ export function CampaignEditor({ value, onChange }: { value: string; onChange: (
 
   return (
     <div className="rounded-md border bg-card focus-within:ring-2 focus-within:ring-ring">
-      {/* A selected photo needs a visible state so Backspace/Delete on it isn't a guess. */}
-      <style>{`.ProseMirror img.ProseMirror-selectednode { outline: 3px solid hsl(var(--ring)); outline-offset: 2px; }`}</style>
+      {/* A selected photo needs a visible state so Backspace/Delete on it isn't a
+          guess; a placeholder still uploading is dimmed. */}
+      <style>{`
+        .ProseMirror img.ProseMirror-selectednode { outline: 3px solid hsl(var(--ring)); outline-offset: 2px; }
+        .ProseMirror img[src^="blob:"] { opacity: 0.5; }
+      `}</style>
       <Toolbar editor={editor} onLink={setLink} onPhoto={() => fileInputRef.current?.click()} uploading={uploading > 0} />
       <EditorContent editor={editor} />
       <input

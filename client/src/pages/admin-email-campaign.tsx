@@ -62,6 +62,7 @@ export default function AdminEmailCampaign() {
   const [manualName, setManualName] = useState("");
   const [subject, setSubject] = useState("");
   const [bodyHtml, setBodyHtml] = useState("");
+  const [photosUploading, setPhotosUploading] = useState(false);
   const [messageTab, setMessageTab] = useState<"write" | "preview">("write");
   const [confirmOpen, setConfirmOpen] = useState(false);
   // Send now, or at a chosen local time (default: the top of the next hour).
@@ -263,7 +264,9 @@ export default function AdminEmailCampaign() {
     onError: (error: any) => toast({ title: "Couldn't send the test", description: error.message || "Try again.", variant: "destructive" }),
   });
 
-  const readyToSend = subject.trim().length > 0 && sendList.length > 0 && !overLimit && scheduleValid;
+  // A photo still uploading is a placeholder in the editor: sending now would
+  // go out without it.
+  const readyToSend = subject.trim().length > 0 && sendList.length > 0 && !overLimit && scheduleValid && !photosUploading;
   const rowWord = audience === "wholesale" ? "location" : "customer";
 
   return (
@@ -480,7 +483,7 @@ export default function AdminEmailCampaign() {
                       its undo history. forceMount keeps the tabpanel ids and roles the
                       tab buttons point at, so the accessible tab relationship survives. */}
                   <TabsContent value="write" forceMount hidden={messageTab !== "write"} className="mt-0">
-                    <CampaignEditor value={bodyHtml} onChange={setBodyHtml} />
+                    <CampaignEditor value={bodyHtml} onChange={setBodyHtml} onUploadingChange={setPhotosUploading} />
                   </TabsContent>
                   <TabsContent value="preview" forceMount hidden={messageTab !== "preview"} className="mt-0">
                     {/* The server's real template in a sandboxed frame — header, body,
@@ -537,12 +540,13 @@ export default function AdminEmailCampaign() {
                   <p className="text-xs text-muted-foreground max-w-xs">
                     Each address gets its own email (no CC) with a one-click unsubscribe link. Up to {MAX_RECIPIENTS.toLocaleString()} per campaign.
                     {sendMode === "later" && " Opt-outs are re-checked when it goes out."}
+                    {photosUploading && <span className="block mt-1 text-cedar font-medium" data-testid="text-photos-uploading">Photos are still uploading — sending unlocks when they finish.</span>}
                   </p>
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
                       onClick={() => testMutation.mutate()}
-                      disabled={subject.trim().length === 0 || testMutation.isPending}
+                      disabled={subject.trim().length === 0 || testMutation.isPending || photosUploading}
                       data-testid="button-send-test"
                     >
                       {testMutation.isPending ? "Sending…" : "Send a test to me"}
@@ -574,7 +578,7 @@ export default function AdminEmailCampaign() {
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmOpen(false)} data-testid="button-cancel-send">Cancel</Button>
-            <Button onClick={() => sendMutation.mutate()} disabled={sendMutation.isPending} data-testid="button-confirm-send">
+            <Button onClick={() => sendMutation.mutate()} disabled={sendMutation.isPending || photosUploading} data-testid="button-confirm-send">
               {sendMutation.isPending ? (scheduledDate ? "Scheduling…" : "Starting…") : scheduledDate ? `Schedule for ${sendList.length}` : `Send to ${sendList.length}`}
             </Button>
           </DialogFooter>
