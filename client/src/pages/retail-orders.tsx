@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
-import { Loader2, XCircle, ArrowUpDown, DollarSign, ChevronDown, ChevronRight, Pencil, Mail } from "lucide-react";
+import { Loader2, XCircle, ArrowUpDown, DollarSign, ChevronDown, ChevronRight, Pencil, Mail, Trash2, Plus } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
@@ -30,6 +30,10 @@ interface OrderItem {
 
 type EditorProduct = {
   id: string;
+  productName: string;
+  price: string;
+  deposit?: string | null;
+  isActive: boolean;
   productType: string;
   unitDescription: string;
   allowSplit?: boolean;
@@ -38,7 +42,12 @@ type EditorProduct = {
 
 interface RetailOrderWithItems extends RetailOrder {
   items: OrderItem[];
+  /** What the customer has paid so far, net of refunds (server-computed). */
+  amountPaid: string;
 }
+
+const isOpenStatus = (s: string) => s === 'pending' || s === 'ready_for_pickup';
+const invalidateOrders = () => queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0]).startsWith('/api/retail/orders') });
 
 const PAGE_SIZE = 25;
 
@@ -549,6 +558,7 @@ export default function RetailOrders() {
                                             orderId={order.id}
                                             orderStatus={order.status}
                                             orderPaid={!!order.stripePaymentIntentId}
+                                            canDelete={order.items.length > 1}
                                             item={item}
                                             // Pre-consolidation lines (old per-flavor products,
                                             // absent from the active list) edit through the
@@ -564,6 +574,9 @@ export default function RetailOrders() {
                                       </div>
                                     ) : (
                                       <p className="text-sm text-muted-foreground">No items</p>
+                                    )}
+                                    {isOpenStatus(order.status) && (
+                                      <AddItemRow orderId={order.id} products={editorProducts} />
                                     )}
                                   </div>
                                   <div>
@@ -592,6 +605,7 @@ export default function RetailOrders() {
                                         <span>Total:</span>
                                         <span>${Number(order.totalAmount).toFixed(2)}</span>
                                       </div>
+                                      <PaymentBalance order={order} />
                                       {order.fulfilledAt && (
                                         <div className="text-xs text-muted-foreground pt-2 border-t mt-2">
                                           Fulfilled: {new Date(order.fulfilledAt).toLocaleString()}
@@ -733,15 +747,16 @@ export default function RetailOrders() {
 }
 
 /**
- * One order item with price-neutral editing on OPEN orders (owner, 2026-09-04):
- * flavor and single↔split swaps on multi-flavor products (same case price either
- * way); quantities only when the order carries no Stripe charge. Paid quantity
- * changes stay cancel-with-refund + re-enter.
+ * One order item, editable on OPEN orders: flavor and single↔split swaps on
+ * multi-flavor products (owner, 2026-09-04), and since 2026-09-14 quantity and
+ * removal on paid orders too — the order tracks what was paid and the summary
+ * shows the balance or overpayment (see PaymentBalance).
  */
-function OrderItemRow({ orderId, orderStatus, orderPaid, item, product }: {
+function OrderItemRow({ orderId, orderStatus, orderPaid, canDelete, item, product }: {
   orderId: string;
   orderStatus: string;
   orderPaid: boolean;
+  canDelete: boolean;
   item: OrderItem;
   product?: EditorProduct;
 }) {
@@ -757,7 +772,7 @@ function OrderItemRow({ orderId, orderStatus, orderPaid, item, product }: {
   const isMulti = product?.productType === 'multi-flavor';
   const isSplitProduct = !!product?.allowSplit;
   const activeFlavors = (product?.flavors ?? []).filter(f => f.isActive);
-  const canEdit = isOpen && (isMulti || !orderPaid);
+  const canEdit = isOpen;
 
   const splitMatch = /^Split: 6 (.+) \/ 6 (.+)$/.exec(item.notes ?? '');
 
@@ -793,17 +808,26 @@ function OrderItemRow({ orderId, orderStatus, orderPaid, item, product }: {
         body.selectedFlavorId = pickTwoActive ? pickA : flavorId;
         body.splitFlavorId = pickTwoActive ? pickB : null;
       }
-      if (!orderPaid && quantity !== item.quantity) body.quantity = quantity;
+      if (quantity !== item.quantity) body.quantity = quantity;
       return apiRequest('PATCH', `/api/retail/orders/${orderId}/items/${item.id}`, body);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0]).startsWith('/api/retail/orders') });
+      invalidateOrders();
       setEditing(false);
       toast({ title: 'Order updated' });
     },
     onError: (e: any) => {
       toast({ title: "Couldn't update item", description: e.message, variant: 'destructive' });
     },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async () => apiRequest('DELETE', `/api/retail/orders/${orderId}/items/${item.id}`),
+    onSuccess: () => {
+      invalidateOrders();
+      toast({ title: 'Item removed', description: orderPaid ? 'Check the balance in the order summary.' : undefined });
+    },
+    onError: (e: any) => toast({ title: "Couldn't remove item", description: e.message, variant: 'destructive' }),
   });
 
   return (
@@ -822,9 +846,31 @@ function OrderItemRow({ orderId, orderStatus, orderPaid, item, product }: {
           <span className="text-muted-foreground">x{item.quantity}</span>
           <span className="font-medium">${(Number(item.unitPrice) * item.quantity).toFixed(2)}</span>
           {canEdit && !editing && (
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={beginEdit} data-testid={`button-edit-item-${item.id}`}>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={beginEdit} aria-label="Edit item" data-testid={`button-edit-item-${item.id}`}>
               <Pencil className="w-3.5 h-3.5" />
             </Button>
+          )}
+          {canEdit && canDelete && !editing && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" disabled={removeMutation.isPending} aria-label="Remove item" data-testid={`button-remove-item-${item.id}`}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Remove {item.productName}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {item.quantity} × {item.productName}{item.unitDescription ? ` (${item.unitDescription})` : ''} comes off the order and the totals are recalculated.
+                    {orderPaid ? " Nothing is refunded automatically — the order summary will show what the customer overpaid, with a button to refund it." : ""}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Keep it</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => removeMutation.mutate()} data-testid={`button-confirm-remove-item-${item.id}`}>Remove</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
         </div>
       </div>
@@ -886,21 +932,18 @@ function OrderItemRow({ orderId, orderStatus, orderPaid, item, product }: {
 
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground w-16">Qty</span>
-            {orderPaid ? (
-              <span className="text-xs text-muted-foreground">
-                {item.quantity} — paid orders keep their quantity (cancel with refund to change)
-              </span>
-            ) : (
-              <Select value={String(quantity)} onValueChange={(v) => setQuantity(parseInt(v))}>
-                <SelectTrigger className="h-8 w-24" data-testid={`select-edit-item-qty-${item.id}`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(q => (
-                    <SelectItem key={q} value={String(q)}>{q}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <Select value={String(quantity)} onValueChange={(v) => setQuantity(parseInt(v))}>
+              <SelectTrigger className="h-8 w-24" data-testid={`select-edit-item-qty-${item.id}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(q => (
+                  <SelectItem key={q} value={String(q)}>{q}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {orderPaid && quantity !== item.quantity && (
+              <span className="text-xs text-muted-foreground">Paid order — the summary will show the difference.</span>
             )}
           </div>
 
@@ -913,6 +956,163 @@ function OrderItemRow({ orderId, orderStatus, orderPaid, item, product }: {
             </Button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/** "Add item" under an open order's lines: product, flavor (multi-flavor
+ *  products), quantity. Priced at the product's current price by the server. */
+function AddItemRow({ orderId, products }: { orderId: string; products: EditorProduct[] }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [productId, setProductId] = useState('');
+  const [flavorId, setFlavorId] = useState('');
+  const [quantity, setQuantity] = useState(1);
+
+  const active = products.filter(p => p.isActive);
+  const product = active.find(p => p.id === productId);
+  const isMulti = product?.productType === 'multi-flavor';
+  const flavors = (product?.flavors ?? []).filter(f => f.isActive);
+  const ready = !!product && (!isMulti || !!flavorId);
+
+  const addMutation = useMutation({
+    mutationFn: async () => apiRequest('POST', `/api/retail/orders/${orderId}/items`, {
+      retailProductId: productId,
+      selectedFlavorId: isMulti ? flavorId : null,
+      quantity,
+    }),
+    onSuccess: () => {
+      invalidateOrders();
+      setOpen(false);
+      setProductId('');
+      setFlavorId('');
+      setQuantity(1);
+      toast({ title: 'Item added' });
+    },
+    onError: (e: any) => toast({ title: "Couldn't add item", description: e.message, variant: 'destructive' }),
+  });
+
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" className="mt-2" onClick={() => setOpen(true)} data-testid={`button-add-item-${orderId}`}>
+        <Plus className="w-3.5 h-3.5 mr-1" /> Add item
+      </Button>
+    );
+  }
+
+  return (
+    <div className="mt-2 text-sm bg-background rounded-md px-3 py-2 space-y-2" data-testid={`add-item-${orderId}`}>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground w-16">Product</span>
+        <Select value={productId} onValueChange={(v) => { setProductId(v); setFlavorId(''); }}>
+          <SelectTrigger className="h-8 flex-1" data-testid={`select-add-item-product-${orderId}`}>
+            <SelectValue placeholder="Choose a product" />
+          </SelectTrigger>
+          <SelectContent>
+            {active.map(p => (
+              <SelectItem key={p.id} value={p.id}>{p.productName} ({p.unitDescription}) — ${Number(p.price).toFixed(2)}{Number(p.deposit ?? 0) > 0 ? ` + $${Number(p.deposit).toFixed(2)} deposit` : ''}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {isMulti && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground w-16">Flavor</span>
+          <Select value={flavorId} onValueChange={setFlavorId}>
+            <SelectTrigger className="h-8 flex-1" data-testid={`select-add-item-flavor-${orderId}`}>
+              <SelectValue placeholder="Choose a flavor" />
+            </SelectTrigger>
+            <SelectContent>
+              {flavors.map(f => (
+                <SelectItem key={f.id} value={f.id}>{flavorOptionLabel(f.name)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground w-16">Qty</span>
+        <Select value={String(quantity)} onValueChange={(v) => setQuantity(parseInt(v))}>
+          <SelectTrigger className="h-8 w-24" data-testid={`select-add-item-qty-${orderId}`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(q => (
+              <SelectItem key={q} value={String(q)}>{q}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={() => setOpen(false)} data-testid={`button-cancel-add-item-${orderId}`}>Cancel</Button>
+        <Button size="sm" disabled={!ready || addMutation.isPending} onClick={() => addMutation.mutate()} data-testid={`button-save-add-item-${orderId}`}>
+          {addMutation.isPending ? 'Adding…' : 'Add to order'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Paid-so-far against the current total. After an edit on a paid order this
+ *  is where the money question is answered: a balance the customer settles at
+ *  pickup, or an overpayment staff refund with one explicit click. */
+function PaymentBalance({ order }: { order: RetailOrderWithItems }) {
+  const { toast } = useToast();
+  const paid = Number(order.amountPaid ?? 0);
+  const total = Number(order.totalAmount);
+  const diff = Number((total - paid).toFixed(2));
+  const isPaid = !!order.stripePaymentIntentId || !!order.stripeInvoiceId;
+
+  const refundMutation = useMutation({
+    mutationFn: async () => apiRequest('POST', `/api/retail/orders/${order.id}/refund-difference`),
+    onSuccess: (res: any) => {
+      invalidateOrders();
+      toast({ title: `Refunded $${Number(res?.amount ?? -diff).toFixed(2)}`, description: 'Back to the card the order was paid with.' });
+    },
+    onError: (e: any) => toast({ title: "Refund failed", description: e.message, variant: 'destructive' }),
+  });
+
+  if (!isPaid || order.status === 'cancelled') return null;
+  if (diff === 0) {
+    return <div className="flex justify-between text-xs text-muted-foreground pt-1"><span>Paid</span><span>${paid.toFixed(2)}</span></div>;
+  }
+  if (diff > 0) {
+    return (
+      <div className="pt-1 space-y-0.5" data-testid={`balance-due-${order.id}`}>
+        <div className="flex justify-between text-xs text-muted-foreground"><span>Paid</span><span>${paid.toFixed(2)}</span></div>
+        <div className="flex justify-between font-medium text-cedar"><span>Balance due at pickup</span><span>${diff.toFixed(2)}</span></div>
+      </div>
+    );
+  }
+  return (
+    <div className="pt-1 space-y-1" data-testid={`overpaid-${order.id}`}>
+      <div className="flex justify-between text-xs text-muted-foreground"><span>Paid</span><span>${paid.toFixed(2)}</span></div>
+      <div className="flex justify-between items-center font-medium text-cedar">
+        <span>Overpaid</span>
+        <span>${(-diff).toFixed(2)}</span>
+      </div>
+      {isOpenStatus(order.status) && order.stripePaymentIntentId && (
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button size="sm" variant="outline" className="w-full" disabled={refundMutation.isPending} data-testid={`button-refund-difference-${order.id}`}>
+              <DollarSign className="w-3.5 h-3.5 mr-1" />
+              {refundMutation.isPending ? 'Refunding…' : `Refund $${(-diff).toFixed(2)} to card`}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Refund ${(-diff).toFixed(2)}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                A partial refund of ${(-diff).toFixed(2)} goes back to the card that paid order #{order.orderNumber}. The order's paid amount becomes ${total.toFixed(2)}.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Not now</AlertDialogCancel>
+              <AlertDialogAction onClick={() => refundMutation.mutate()} data-testid={`button-confirm-refund-difference-${order.id}`}>Refund</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       )}
     </div>
   );

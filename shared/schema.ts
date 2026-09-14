@@ -490,6 +490,11 @@ export const retailOrders = pgTable("retail_orders", {
   taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).notNull().default('0'),
   depositAmount: decimal("deposit_amount", { precision: 10, scale: 2 }).notNull().default('0'), // Refundable deposit (not subject to tax)
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  // What the customer has actually paid, net of refunds (owner, 2026-09-14:
+  // editable orders). Null = never materialized: read it through
+  // effectiveAmountPaid(), which infers "paid in full at the current total"
+  // from the Stripe ids; the first edit pins the value before totals move.
+  amountPaid: decimal("amount_paid", { precision: 10, scale: 2 }),
   stripePaymentIntentId: text("stripe_payment_intent_id").unique(),
   stripeCheckoutSessionId: text("stripe_checkout_session_id"),
   stripeInvoiceId: text("stripe_invoice_id").unique(),

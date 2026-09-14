@@ -8873,9 +8873,12 @@ If you have any questions, please don't hesitate to reach out!`,
         });
       }
       
-      // Attach items to orders
+      // Attach items to orders, plus the paid amount as the edit rules see it
+      // (null in the row until an order's first edit — see effectiveAmountPaid).
+      const { effectiveAmountPaid } = await import('./retail-order-edits');
       const ordersWithItems = orders.map(order => ({
         ...order,
+        amountPaid: effectiveAmountPaid(order).toFixed(2),
         items: itemsByOrderId[order.id] || [],
       }));
 
@@ -8944,10 +8947,9 @@ If you have any questions, please don't hesitate to reach out!`,
         updates.notes = itemFields.notes;
       }
 
+      // Quantity changes are allowed on paid orders too (owner, 2026-09-14): the
+      // order remembers what was paid and the summary shows the difference.
       if (validated.quantity !== undefined && validated.quantity !== item.quantity) {
-        if (order.stripePaymentIntentId) {
-          return res.status(400).json({ message: "This order is already paid — cancel with refund and re-enter it to change quantities" });
-        }
         updates.quantity = validated.quantity;
       }
 
@@ -8955,25 +8957,125 @@ If you have any questions, please don't hesitate to reach out!`,
 
       await db.update(retailOrderItemsV2).set(updates).where(eq(retailOrderItemsV2.id, item.id));
 
-      // A quantity change moves money (unpaid orders only): keep stored totals honest.
-      if (updates.quantity !== undefined) {
-        const allItems = await db.select().from(retailOrderItemsV2).where(eq(retailOrderItemsV2.orderId, order.id));
-        const subtotal = allItems.reduce((s, i) => s + Number(i.unitPrice) * i.quantity, 0);
-        const hadTax = Number(order.taxAmount ?? 0) > 0;
-        const tax = hadTax ? subtotal * 0.1035 : 0;
-        const deposit = Number((order as any).depositAmount ?? 0);
-        await db.update(retailOrders).set({
-          subtotal: subtotal.toFixed(2),
-          taxAmount: tax.toFixed(2),
-          totalAmount: (subtotal + tax + deposit).toFixed(2),
-          updatedAt: new Date(),
-        }).where(eq(retailOrders.id, order.id));
-      }
-
-      res.json({ success: true });
+      const { recomputeRetailOrderTotals } = await import('./retail-order-edits');
+      const totals = updates.quantity !== undefined ? await recomputeRetailOrderTotals(order.id) : null;
+      res.json({ success: true, totals });
     } catch (e: any) {
       if (e instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
       res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Add a line to an OPEN retail order (owner, 2026-09-14). Priced at the
+  // product's current price — or free on a no-charge order — and merged into an
+  // identical existing line by the storage layer. Totals are recomputed; money
+  // is not moved (see retail-order-edits.ts).
+  app.post("/api/retail/orders/:orderId/items", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const schema = z.object({
+        retailProductId: z.string().min(1),
+        selectedFlavorId: z.string().optional().nullable(),
+        splitFlavorId: z.string().optional().nullable(),
+        quantity: z.number().int().min(1).max(20),
+      });
+      const validated = schema.parse(req.body);
+
+      const order = await storage.getRetailOrder(req.params.orderId);
+      if (!order || (order as any).deletedAt) return res.status(404).json({ message: "Order not found" });
+      if (!['pending', 'ready_for_pickup'].includes(order.status)) {
+        return res.status(400).json({ message: "Only open orders can be edited" });
+      }
+
+      const product = await storage.getRetailProduct(validated.retailProductId);
+      if (!product || !product.isActive) return res.status(400).json({ message: "Pick an active product" });
+      if (product.productType === 'multi-flavor' && !validated.selectedFlavorId) {
+        return res.status(400).json({ message: "Pick a flavor" });
+      }
+      if (validated.splitFlavorId) {
+        if (!(product as any).allowSplit) return res.status(400).json({ message: "This product doesn't offer split cases" });
+        if (validated.splitFlavorId === validated.selectedFlavorId) return res.status(400).json({ message: "Pick two different flavors for a split" });
+      }
+      const itemFields = product.productType === 'multi-flavor'
+        ? await splitItemFields(validated.selectedFlavorId ?? null, validated.splitFlavorId || null)
+        : { selectedFlavorId: null, notes: null };
+
+      // A staff no-charge order (every line at $0) stays free when a line is added.
+      const existing = await db.select({ unitPrice: retailOrderItemsV2.unitPrice }).from(retailOrderItemsV2).where(eq(retailOrderItemsV2.orderId, order.id));
+      const noCharge = existing.length > 0 && existing.every((l) => Number(l.unitPrice) === 0);
+
+      await storage.addRetailOrderItemV2({
+        orderId: order.id,
+        retailProductId: product.id,
+        selectedFlavorId: itemFields.selectedFlavorId,
+        notes: itemFields.notes,
+        quantity: validated.quantity,
+        unitPrice: noCharge ? '0.00' : String(product.price),
+      });
+      const { recomputeRetailOrderTotals } = await import('./retail-order-edits');
+      const totals = await recomputeRetailOrderTotals(order.id);
+      res.status(201).json({ success: true, totals });
+    } catch (e: any) {
+      if (e instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Remove a line from an OPEN retail order. The last line can't go — an order
+  // with nothing on it is a cancellation, which has its own (refunding) path.
+  app.delete("/api/retail/orders/:orderId/items/:itemId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const order = await storage.getRetailOrder(req.params.orderId);
+      if (!order || (order as any).deletedAt) return res.status(404).json({ message: "Order not found" });
+      if (!['pending', 'ready_for_pickup'].includes(order.status)) {
+        return res.status(400).json({ message: "Only open orders can be edited" });
+      }
+      const [item] = await db.select().from(retailOrderItemsV2).where(eq(retailOrderItemsV2.id, req.params.itemId));
+      if (!item || item.orderId !== order.id) return res.status(404).json({ message: "Order item not found" });
+      const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(retailOrderItemsV2).where(eq(retailOrderItemsV2.orderId, order.id));
+      if (n <= 1) return res.status(400).json({ message: "An order needs at least one item — cancel the order instead" });
+
+      await db.delete(retailOrderItemsV2).where(eq(retailOrderItemsV2.id, item.id));
+      const { recomputeRetailOrderTotals } = await import('./retail-order-edits');
+      const totals = await recomputeRetailOrderTotals(order.id);
+      res.json({ success: true, totals });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Refund what the customer overpaid after edits shrank an order — an explicit
+  // staff click, never automatic. Partial refund against the original charge;
+  // the paid amount comes down to the new total.
+  app.post("/api/retail/orders/:id/refund-difference", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      if (!stripe) return res.status(500).json({ message: "Stripe is not configured" });
+      const order = await storage.getRetailOrder(req.params.id);
+      if (!order || (order as any).deletedAt) return res.status(404).json({ message: "Order not found" });
+      if (order.status === 'cancelled') return res.status(400).json({ message: "Order is cancelled" });
+      if (!order.stripePaymentIntentId) {
+        return res.status(400).json({ message: "This order wasn't paid by card through the site — refund it where it was paid" });
+      }
+      const { effectiveAmountPaid } = await import('./retail-order-edits');
+      const paid = effectiveAmountPaid(order);
+      const overpaid = Number((paid - Number(order.totalAmount)).toFixed(2));
+      if (overpaid <= 0) return res.status(400).json({ message: "Nothing to refund — the customer hasn't overpaid" });
+
+      // Money first, then the book: a failed refund must not lower the recorded
+      // paid amount (the button stays available to retry).
+      const refund = await stripe.refunds.create({
+        payment_intent: order.stripePaymentIntentId,
+        amount: Math.round(overpaid * 100),
+      });
+      await db.update(retailOrders).set({
+        amountPaid: Number(order.totalAmount).toFixed(2),
+        notes: `${order.notes ? order.notes + ' — ' : ''}Refunded $${overpaid.toFixed(2)} difference after edit (${new Date().toLocaleDateString('en-US')})`,
+        updatedAt: new Date(),
+      }).where(eq(retailOrders.id, order.id));
+      console.log(`[RETAIL EDIT] Refunded $${overpaid.toFixed(2)} on ${order.orderNumber}: ${refund.id}`);
+      res.json({ success: true, refundId: refund.id, amount: overpaid });
+    } catch (error: any) {
+      console.error("refund-difference failed:", error);
+      res.status(500).json({ message: error.message || "Refund failed" });
     }
   });
 
@@ -9246,12 +9348,15 @@ If you have any questions, please don't hesitate to reach out!`,
 
         console.log('[REFUND DEPOSIT] Deposit refund created:', refund.id, 'for order:', order.orderNumber, 'amount:', depositAmount);
 
-        // Update order to mark deposit as refunded
+        // Update order to mark deposit as refunded; the recorded paid amount
+        // comes down by the same figure so an edited order's balance stays right.
+        const { effectiveAmountPaid } = await import('./retail-order-edits');
         await db
           .update(retailOrders)
           .set({
             depositRefundedAt: new Date(),
             depositRefundedByUserId: req.user!.id,
+            amountPaid: Math.max(0, effectiveAmountPaid(order) - depositAmount).toFixed(2),
             updatedAt: new Date(),
           })
           .where(and(eq(retailOrders.id, req.params.id), isNull(retailOrders.deletedAt)));
