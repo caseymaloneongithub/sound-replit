@@ -4,6 +4,7 @@ import type { Flavor } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Footer } from "@/components/layout/footer";
 import { FLAVOR_ACCENTS } from "@/lib/flavor-display";
+import { packagesForFlavor, availabilityChips, type ShopProduct } from "@/lib/flavor-shop";
 
 // "Mixed" is the variety-pack pseudo-flavor the shop uses for assorted cases. It is a real
 // row in `flavors` so products can reference it, but it isn't a flavor anyone drinks, so
@@ -19,10 +20,24 @@ export default function OurKombucha() {
   const { data: flavors, isLoading } = useQuery<Flavor[]>({
     queryKey: ["/api/flavors"],
   });
+  // Same product list and the same package logic as the shop, so "Available in"
+  // here can never disagree with the flavor's shop page (owner, 2026-09-15).
+  const { data: products } = useQuery<ShopProduct[]>({
+    queryKey: ["/api/retail-products"],
+  });
 
   const roundup = (flavors ?? [])
     .filter((f) => f.isActive && !VARIETY_PSEUDO_FLAVORS.has(f.name))
     .sort((a, b) => a.displayOrder - b.displayOrder);
+
+  /** "Cans, Bottles" — the packages this flavor can be bought in right now. */
+  const availableIn = (flavor: Flavor): string | null => {
+    if (!products) return null;
+    const chips = availabilityChips(packagesForFlavor(flavor, products));
+    if (chips.length === 0) return null;
+    const open = chips.filter((c) => c.available).map((c) => c.label);
+    return open.length > 0 ? open.join(", ") : "Sold out for now";
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -74,6 +89,15 @@ export default function OurKombucha() {
                 {flavor.ingredients?.length > 0 && (
                   <p className="mt-3 text-sm text-muted-foreground">
                     <span className="font-medium text-foreground/80">Ingredients:</span> {flavor.ingredients.join(", ")}
+                  </p>
+                )}
+                {availableIn(flavor) && (
+                  <p
+                    className="mt-4 text-xs font-semibold uppercase tracking-[0.3em]"
+                    style={{ color: FLAVOR_ACCENTS[flavor.name] }}
+                    data-testid={`flavor-available-in-${flavor.id}`}
+                  >
+                    Available in: {availableIn(flavor)}
                   </p>
                 )}
                 <Button
