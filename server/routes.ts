@@ -322,7 +322,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const data = applicationSchema.parse(req.body);
-      const verdict = spamScore([data.businessName, data.deliveryInstructions ?? ''].join('\n'), { name: data.contactName, email: data.email, company: data.businessName });
+      // Only the free-text field is scored — a business NAME is not a pitch
+      // ("Seo's Cafe" is a café; reviewer, 2026-09-15).
+      const verdict = spamScore(data.deliveryInstructions ?? '', { name: data.contactName, email: data.email, company: data.businessName });
       if (verdict.score >= SPAM_THRESHOLD) return pretendReceived(`score ${verdict.score}: ${verdict.reasons.join(', ')}`);
 
       // The leads table has no columns for the application specifics, so they're kept as
@@ -8687,12 +8689,14 @@ If you have any questions, please don't hesitate to reach out!`,
             ? productFlavors.filter((f) => f.id !== mixedId && f.isActive !== false).map((f) => f.id)
             : [selectedFlavorId, splitFlavorId]
         ).filter(Boolean) as string[];
-        if (flavorIdsToCheck.length > 0) {
-          const stockRows = await db
+        // A plain Mixed case is judged even with NO components to check: zero
+        // active flavors means zero in stock, which is "fewer than two".
+        if (flavorIdsToCheck.length > 0 || plainMixed) {
+          const stockRows = flavorIdsToCheck.length > 0 ? await db
             .select({ flavorId: products.flavorId, stock: products.stockQuantity, name: flavors.name })
             .from(products)
             .leftJoin(flavors, eq(flavors.id, products.flavorId))
-            .where(and(eq(products.container, 'bottle-case'), inArray(products.flavorId, flavorIdsToCheck)));
+            .where(and(eq(products.container, 'bottle-case'), inArray(products.flavorId, flavorIdsToCheck))) : [];
           if (plainMixed) {
             const inStock = flavorIdsToCheck.filter((id) => { const row = stockRows.find((r) => r.flavorId === id); return !row || row.stock > 0; }).length;
             if (inStock < 2) return res.status(409).json({ message: "Mixed cases are sold out in bottles." });

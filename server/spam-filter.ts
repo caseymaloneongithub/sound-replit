@@ -17,7 +17,8 @@ const PHRASES: Array<[RegExp, number, string]> = [
   [/respond\s+(with|back\s+with)\s+["']?stop["']?\s+to\s+opt\s*out/i, 3, "opt-out footer"],
   [/\b(opt\s*-?\s*out|unsubscribe)\b/i, 1, "opt-out language"],
   [/\bwikipedia\s+page\b/i, 2, "Wikipedia page pitch"],
-  [/\b(seo|search\s+engine\s+optimi[sz]ation|backlinks?|guest\s+posts?|domain\s+authority)\b/i, 2, "SEO pitch"],
+  // "SEO" alone is a name ("Seo's Cafe"); the pitch is SEO plus what's being sold.
+  [/\bseo\s+(services?|packages?|agency|experts?|company|audit|ranking|strategy|solutions?)\b|\bsearch\s+engine\s+optimi[sz]ation\b|\bbacklinks?\b|\bguest\s+posts?\b|\bdomain\s+authority\b/i, 2, "SEO pitch"],
   [/\b(1st|first)\s+page\s+of\s+google\b/i, 2, "Google ranking pitch"],
   [/\b(web\s*site|web)\s+(design|development)\s+(services?|company|agency)\b/i, 2, "web design pitch"],
   [/\b(boost|increase|grow)\s+your\s+(sales|revenue|traffic|leads|ranking)/i, 1, "growth pitch"],
