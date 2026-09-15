@@ -23,6 +23,7 @@ import type Stripe from "stripe";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "./db";
 import { retailOrders, retailOrderItems, retailOrderItemsV2, retailOrderRefunds, retailProducts } from "@shared/schema";
+import { recordEvent } from "./ops-events";
 
 /** Washington sales tax applied at checkout (10.35%). Mirrors the rate in the
  *  checkout and billing paths; an edited order is re-taxed at the same rate. */
@@ -341,9 +342,17 @@ export async function runRetailRefund(stripe: RefundGateway, orderId: string, ki
   try {
     refund = await issueOrFindRefund(stripe, op.paymentIntentId, op.row, op.reconciled);
   } catch (error: any) {
-    if (error?.type === "StripeInvalidRequestError") {
+    const definite = error?.type === "StripeInvalidRequestError";
+    if (definite) {
       await db.update(retailOrderRefunds).set({ status: "failed", completedAt: new Date() }).where(eq(retailOrderRefunds.id, op.row.id));
     }
+    void recordEvent({
+      severity: "alert",
+      kind: "refund.failed",
+      message: `${op.row.kind} refund of $${amount.toFixed(2)} on a retail order ${definite ? "was rejected by Stripe" : "did not complete — left pending for reconciliation"}: ${error?.message ?? "unknown error"}`,
+      detail: { operationId: op.row.id, definite },
+      ref: { type: "retail_order", id: orderId },
+    });
     throw error;
   }
 
@@ -368,6 +377,13 @@ export async function runRetailRefund(stripe: RefundGateway, orderId: string, ki
     }
     await tx.update(retailOrders).set(patch).where(eq(retailOrders.id, orderId));
     console.log(`[RETAIL REFUND] ${op.row.kind} $${amount.toFixed(2)} on ${order.orderNumber}: ${refundId}${op.reconciled ? " (reconciled)" : ""}`);
+    void recordEvent({
+      severity: op.reconciled ? "warn" : "info",
+      kind: op.reconciled ? "refund.reconciled" : "refund.settled",
+      message: `${op.row.kind} refund of $${amount.toFixed(2)} on ${order.orderNumber}${op.reconciled ? " — completed an earlier operation whose bookkeeping had failed" : ""}`,
+      detail: { operationId: op.row.id, stripeRefundId: refundId },
+      ref: { type: "retail_order", id: orderId },
+    });
   });
 
   return { refundId: refund!.id, amount, kind: op.row.kind as RefundKind, reconciled: op.reconciled };

@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { startBillingCron } from "./billing-cron";
 import { scheduleDataRetentionJobs } from "./data-retention-cron";
 import { resumeUnfinishedCampaigns, startCampaignScheduler } from "./campaigns";
+import { startOpsDigestCron } from "./ops-events";
 
 const app = express();
 
@@ -64,6 +65,8 @@ app.use((req, res, next) => {
     // and scheduled campaigns start when their time comes.
     void resumeUnfinishedCampaigns().catch((e) => console.error('[CAMPAIGN] resume check failed:', e));
     startCampaignScheduler();
+    // Super admins' morning digest of operational events (alerts go out at once).
+    startOpsDigestCron();
   }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

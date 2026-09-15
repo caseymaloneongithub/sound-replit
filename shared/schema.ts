@@ -271,6 +271,27 @@ export const retailOrderItemsV2 = pgTable("retail_order_items_v2", {
   notes: text("notes"),
 });
 
+// Operational events (owner, 2026-09-15): the things that used to be one line in
+// the Railway log — a dropped spam message, a receipt with nowhere to go, a
+// campaign that gave up, a refund left pending, a webhook failure, a billing
+// run — recorded here so super admins can see them on a page, get the alerts
+// by email at once, and the rest in a daily digest. Never read by customers.
+export const opsEvents = pgTable("ops_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // 'info' (worth knowing), 'warn' (look when you can), 'alert' (emailed at once)
+  severity: text("severity").notNull(),
+  // Dotted kind, e.g. 'contact.spam_dropped', 'campaign.stalled', 'refund.failed'
+  kind: text("kind").notNull(),
+  message: text("message").notNull(),
+  detail: jsonb("detail"),
+  // What it concerns, when it concerns one thing: 'order' | 'campaign' | 'lead' …
+  refType: text("ref_type"),
+  refId: text("ref_id"),
+  acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+  acknowledgedByUserId: varchar("acknowledged_by_user_id").references(() => users.id),
+});
+
 // Every Stripe refund issued against a retail order, recorded BEFORE the Stripe
 // call with the idempotency key it will use. A refund that reached Stripe but
 // whose bookkeeping failed stays 'pending' and is reconciled (same key = same

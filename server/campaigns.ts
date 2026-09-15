@@ -1,6 +1,7 @@
 import sanitizeHtml from 'sanitize-html';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { db } from './db';
+import { recordEvent } from './ops-events';
 import { emailCampaigns, emailCampaignRecipients, marketingOptOuts } from '../shared/schema';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { buildCampaignEmail, isMailConfigured, isMailIdempotent, sendCampaignMail } from './email';
@@ -602,6 +603,7 @@ export async function runCampaign(campaignId: string): Promise<void> {
       console.error(`[CAMPAIGN] ${campaignId}: loop error (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${error?.message}`);
       if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
         console.error(`[CAMPAIGN] ${campaignId}: giving up for now — still 'sending'; the boot hook or next worker resumes it`);
+        void recordEvent({ severity: 'alert', kind: 'campaign.stalled', message: `Campaign "${campaign.subject}" gave up after ${MAX_CONSECUTIVE_ERRORS} consecutive errors — still 'sending' until the next restart`, ref: { type: 'campaign', id: campaignId } });
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, Math.min(5_000 * consecutiveErrors, 60_000)));
@@ -614,6 +616,22 @@ export async function runCampaign(campaignId: string): Promise<void> {
     try {
       await db.update(emailCampaigns).set({ status: 'done', completedAt: new Date() }).where(eq(emailCampaigns.id, campaignId));
       console.log(`[CAMPAIGN] ${campaignId} done`);
+      const [tally] = await db
+        .select({
+          sent: sql<number>`count(*) filter (where status = 'sent')::int`,
+          failed: sql<number>`count(*) filter (where status = 'failed')::int`,
+          skipped: sql<number>`count(*) filter (where status = 'skipped')::int`,
+          uncertain: sql<number>`count(*) filter (where status = 'uncertain')::int`,
+        })
+        .from(emailCampaignRecipients)
+        .where(eq(emailCampaignRecipients.campaignId, campaignId));
+      void recordEvent({
+        severity: tally.failed > 0 || tally.uncertain > 0 ? 'warn' : 'info',
+        kind: 'campaign.finished',
+        message: `Campaign "${campaign.subject}" finished: ${tally.sent} sent, ${tally.failed} failed, ${tally.skipped} skipped${tally.uncertain ? `, ${tally.uncertain} uncertain` : ''}`,
+        detail: tally,
+        ref: { type: 'campaign', id: campaignId },
+      });
       return;
     } catch (error: any) {
       console.error(`[CAMPAIGN] ${campaignId}: could not mark done (attempt ${attempt}): ${error?.message}`);

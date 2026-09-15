@@ -131,6 +131,45 @@ export function AdminProtectedRoute({
   return <Route path={path} component={Component} />
 }
 
+/** Super admins only — operational pages nobody else should even see exist. */
+export function SuperAdminProtectedRoute({
+  path,
+  component: Component,
+}: {
+  path: string;
+  component: () => React.JSX.Element;
+}) {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <Route path={path}>
+        <div className="flex items-center justify-center min-h-screen">
+          <Loader2 className="h-8 w-8 animate-spin text-border" />
+        </div>
+      </Route>
+    );
+  }
+
+  if (!user) {
+    return (
+      <Route path={path}>
+        <Redirect to="/staff/login" />
+      </Route>
+    );
+  }
+
+  if (user.role !== 'super_admin') {
+    return (
+      <Route path={path}>
+        <Redirect to={user.role === 'staff' || user.role === 'admin' ? '/staff-portal/orders-board' : '/'} />
+      </Route>
+    );
+  }
+
+  return <Route path={path} component={Component} />
+}
+
 export function WholesaleCustomerProtectedRoute({
   path,
   component: Component,

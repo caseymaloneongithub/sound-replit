@@ -18,6 +18,7 @@ import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
 import { wholesaleOrderRecipients, splitEmails, sameRecipients } from "./wholesale-recipients";
+import { recordEvent, listEvents, acknowledgeEvent, buildDigest } from "./ops-events";
 import { registerClaimRoutes, getPendingClaim, holdPendingOrder, createLinkRequest } from "./claim-flow";
 import {
   frequencyToDays,
@@ -301,6 +302,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { spamScore, submittedTooFast, SPAM_THRESHOLD } = await import('./spam-filter');
       const pretendReceived = (why: string) => {
         console.warn(`[WHOLESALE APPLY] dropped likely spam (${why}) from ${String(req.body?.email ?? '?')} @ ${ip}: ${String(req.body?.businessName ?? '').slice(0, 60)}`);
+        void recordEvent({ severity: 'info', kind: 'apply.spam_dropped', message: `Wholesale application dropped as spam (${why}) from ${String(req.body?.email ?? '?')} — ${String(req.body?.businessName ?? '').slice(0, 60)}`, detail: { businessName: req.body?.businessName, contactName: req.body?.contactName, email: req.body?.email, reason: why } });
         return res.json({ success: true, message: "Application received" });
       };
       if (isHoneypotTripped(req.body)) return pretendReceived("honeypot");
@@ -587,6 +589,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const recipients = resolved.to;
     if (!recipients.length) {
       console.log(`[RECEIPT] ${order.invoiceNumber}: not sent — ${resolved.label}`);
+      void recordEvent({ severity: 'warn', kind: 'wholesale.receipt_skipped', message: `Receipt for ${order.invoiceNumber} (${customer.businessName}) not sent — ${resolved.label}`, detail: { problem: resolved.problem }, ref: { type: 'wholesale_order', id: order.id } });
       return { sent: false, to: [], reason: resolved.problem ?? resolved.label };
     }
     const locName = order.location?.locationName;
@@ -671,7 +674,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // wording of the message itself (see spam-filter.ts).
       const { spamScore, submittedTooFast, SPAM_THRESHOLD } = await import('./spam-filter');
       const pretendSent = (why: string) => {
-        console.warn(`[CONTACT] dropped likely spam (${why}) from ${String(req.body?.email ?? '?')} @ ${ip}: ${String(req.body?.message ?? '').slice(0, 100).replace(/\s+/g, ' ')}`);
+        const snippet = String(req.body?.message ?? '').slice(0, 100).replace(/\s+/g, ' ');
+        console.warn(`[CONTACT] dropped likely spam (${why}) from ${String(req.body?.email ?? '?')} @ ${ip}: ${snippet}`);
+        void recordEvent({ severity: 'info', kind: 'contact.spam_dropped', message: `Contact message dropped as spam (${why}) from ${String(req.body?.email ?? '?')}`, detail: { name: req.body?.name, email: req.body?.email, company: req.body?.company, snippet, reason: why } });
         return res.json({ success: true, message: "Your message has been sent successfully" });
       };
       if (isHoneypotTripped(req.body)) return pretendSent("honeypot");
@@ -5396,6 +5401,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ received: true });
     } catch (error: any) {
       console.error("Webhook error:", error);
+      void recordEvent({ severity: 'alert', kind: 'stripe.webhook_error', message: `Stripe webhook handler failed: ${error.message}`, detail: { eventType: (req as any).stripeEventType ?? null } });
       res.status(400).send(`Webhook Error: ${error.message}`);
     }
   });
@@ -6563,6 +6569,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       const status = typeof error?.status === 'number' ? error.status : 500;
       res.status(status).json({ message: status === 500 ? "Error sending test: " + error.message : error.message });
+    }
+  });
+
+  // ---- Operational events (super admins only; owner, 2026-09-15) ----
+  app.get("/api/admin/ops-events", isAuthenticated, isSuperAdmin, async (req, res) => {
+    try {
+      const days = Math.min(90, Math.max(1, Number(req.query.days ?? 7) || 7));
+      const severity = ['info', 'warn', 'alert'].includes(String(req.query.severity)) ? (String(req.query.severity) as 'info' | 'warn' | 'alert') : undefined;
+      const events = await listEvents({ since: new Date(Date.now() - days * 24 * 60 * 60 * 1000), severity, openOnly: req.query.open === 'true', limit: 300 });
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error listing events: " + error.message });
+    }
+  });
+  app.post("/api/admin/ops-events/:id/acknowledge", isAuthenticated, isSuperAdmin, async (req: any, res) => {
+    try {
+      const ok = await acknowledgeEvent(req.params.id, (req.originalUser || req.user).id);
+      if (!ok) return res.status(404).json({ message: "Event not found or already acknowledged" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error acknowledging event: " + error.message });
+    }
+  });
+  // The digest as it would be sent this morning — for checking the wording.
+  app.get("/api/admin/ops-events/digest-preview", isAuthenticated, isSuperAdmin, async (_req, res) => {
+    try {
+      res.json(await buildDigest());
+    } catch (error: any) {
+      res.status(500).json({ message: "Error building digest: " + error.message });
     }
   });
 
@@ -8274,6 +8309,7 @@ If you have any questions, please don't hesitate to reach out!`,
           : `no receipt sent (${receipt.reason ?? "no address on file"})`;
       } catch (e: any) {
         console.error('[MARK-PAID] Failed to send payment receipt:', e.message);
+        void recordEvent({ severity: 'alert', kind: 'wholesale.receipt_failed', message: `Receipt email failed after marking an invoice paid: ${e.message}`, ref: { type: 'wholesale_order', id: req.params.id } });
         receiptNote = `the receipt email failed (${e.message})`;
       }
 

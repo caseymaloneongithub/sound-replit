@@ -879,6 +879,32 @@ Puget Sound Kombucha Co.
   }
 }
 
+/** Internal operations mail to super admins (alerts and the daily digest). Plain
+ *  branded wrapper around a heading and a few HTML lines; no customer content. */
+export async function sendOpsEmail(params: { to: string[]; subject: string; heading: string; lines: string[]; text: string }): Promise<void> {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL] Would send ops email "${params.subject}" to ${params.to.join(', ')}`);
+    return;
+  }
+  const html = `
+<div style="max-width: 600px; margin: 0 auto; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 15px; line-height: 1.6; color: ${BRAND_COLORS.darkGrey};">
+  ${getEmailHeader(params.heading)}
+  <div style="padding: 24px; background-color: ${BRAND_COLORS.white};">
+    ${params.lines.map((l) => `<div style="margin: 0 0 10px;">${l}</div>`).join('')}
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; margin-top: 24px;">Sent to super admins only.</p>
+  </div>
+</div>`.trim();
+  await transporter.sendMail({
+    from: process.env.GMAIL_USER,
+    to: params.to,
+    subject: params.subject,
+    text: params.text,
+    html,
+    attachments: getLogoAttachment(),
+  });
+}
+
 interface ContactFormNotificationParams {
   staffEmails: string[];
   contactName: string;

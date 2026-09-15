@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import { recordEvent } from './ops-events';
 import Stripe from 'stripe';
 import { db } from './db';
 import { pool } from './storage';
@@ -749,10 +750,21 @@ export async function runDailyBilling() {
     } else {
       console.log(summary);
     }
+    // A run that charged nobody is not an event worth a line every morning;
+    // a run with failures is an alert.
+    if (dueRetailSubscriptions.length > 0) {
+      void recordEvent({
+        severity: failed > 0 ? 'alert' : 'info',
+        kind: 'billing.run',
+        message: `Subscription billing: ${succeeded} charged, ${failed} failed, ${skipped} skipped of ${dueRetailSubscriptions.length} due${reclaimed.length ? `, ${reclaimed.length} stale lock(s) reclaimed` : ''}`,
+        detail: { due: dueRetailSubscriptions.length, charged: succeeded, failed, skipped, reclaimed: reclaimed.length },
+      });
+    }
 
     console.log('[BILLING] Daily billing process completed');
-  } catch (error) {
+  } catch (error: any) {
     console.error('[BILLING] 🚨 Fatal error in daily billing process — NO subscriptions were billed this run:', error);
+    void recordEvent({ severity: 'alert', kind: 'billing.fatal', message: `Daily billing did not run: ${error?.message ?? error}` });
   }
 }
 

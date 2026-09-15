@@ -7,7 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/use-auth";
 import { Navbar } from "@/components/layout/navbar";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
-import { ProtectedRoute, StaffProtectedRoute, AdminProtectedRoute, WholesaleCustomerProtectedRoute } from "@/lib/protected-route";
+import { ProtectedRoute, StaffProtectedRoute, AdminProtectedRoute, SuperAdminProtectedRoute, WholesaleCustomerProtectedRoute } from "@/lib/protected-route";
 import { ErrorBoundary } from "@/components/error-boundary";
 import AuthPage from "@/pages/auth-page";
 import StaffLogin from "@/pages/staff-login";
@@ -60,6 +60,7 @@ import AccountingCategories from "@/pages/accounting-categories";
 import AccountingBanks from "@/pages/accounting-banks";
 import AccountingIncomeStatement from "@/pages/accounting-income-statement";
 import AdminEmailCampaign from "@/pages/admin-email-campaign";
+import AdminOpsEvents from "@/pages/admin-ops-events";
 import DeliveryRoutes from "@/pages/delivery-routes";
 import AdminChecklist from "@/pages/admin-checklist";
 import OrdersBoard from "@/pages/orders-board";
@@ -149,6 +150,7 @@ function Router() {
       <AdminProtectedRoute path="/admin/accounting/banks" component={AccountingBanks} />
       <AdminProtectedRoute path="/admin/accounting/income-statement" component={AccountingIncomeStatement} />
       <AdminProtectedRoute path="/admin/email-campaign" component={AdminEmailCampaign} />
+      <SuperAdminProtectedRoute path="/admin/ops-events" component={AdminOpsEvents} />
       {/* The old /inventory hub duplicated the sidebar; the dashboard is the real front door. */}
       <Route path="/inventory" component={() => <Redirect to="/inventory/dashboard" />} />
       <StaffProtectedRoute path="/inventory/dashboard" component={InventoryDashboard} />

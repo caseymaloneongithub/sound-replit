@@ -30,6 +30,7 @@ import {
   CalendarDays,
   FileSpreadsheet,
   Send,
+  Activity,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useNewContactCount } from "@/components/staff/contact-requests-panel";
@@ -41,6 +42,8 @@ interface NavItem {
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   adminOnly?: boolean;
+  /** Narrower still: super admins only (operational pages). */
+  superAdminOnly?: boolean;
   /** Show the "Admin" pill — only for admin items inside sections staff can also see. */
   adminBadge?: boolean;
   /** Extra paths that keep this item highlighted (e.g. the second tab of a merged page). */
@@ -52,6 +55,8 @@ interface NavItem {
 interface NavSection {
   title: string;
   adminOnly?: boolean;
+  /** Narrower still: super admins only (operational pages). */
+  superAdminOnly?: boolean;
   items: NavItem[];
 }
 
@@ -188,6 +193,7 @@ export function StaffSidebar({ onLinkClick, headerAction }: StaffSidebarProps) {
       items: [
         { title: "User Management", href: "/user-management", icon: UserCog, adminOnly: true },
         { title: "Email Campaign", href: "/admin/email-campaign", icon: Send, adminOnly: true },
+        { title: "Site Events", href: "/admin/ops-events", icon: Activity, adminOnly: true, superAdminOnly: true },
       ],
     },
   ];
@@ -205,7 +211,9 @@ export function StaffSidebar({ onLinkClick, headerAction }: StaffSidebarProps) {
       <nav className="px-3 space-y-6 pb-8">
         {navSections.map((section) => {
           if (section.adminOnly && !isElevated) return null;
-          const visibleItems = section.items.filter((item) => !item.adminOnly || isElevated);
+          const visibleItems = section.items.filter(
+            (item) => (!item.adminOnly || isElevated) && (!item.superAdminOnly || user?.role === "super_admin"),
+          );
           if (visibleItems.length === 0) return null;
 
           return (
