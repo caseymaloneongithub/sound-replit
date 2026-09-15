@@ -294,10 +294,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!checkSubmissionRateLimit(`wholesale-apply:${ip}`, 5, 60 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many applications from this connection. Please try again later." });
       }
-      // Silently accept-and-drop, so a bot can't tell it was filtered.
-      if (isHoneypotTripped(req.body)) {
+      // Silently accept-and-drop, so a bot can't tell it was filtered. Same three
+      // screens as the contact form (see spam-filter.ts): the honeypot, a
+      // submission faster than a person could fill the form (or with no open
+      // time — a direct POST), and bulk-pitch wording in the free-text fields.
+      const { spamScore, submittedTooFast, SPAM_THRESHOLD } = await import('./spam-filter');
+      const pretendReceived = (why: string) => {
+        console.warn(`[WHOLESALE APPLY] dropped likely spam (${why}) from ${String(req.body?.email ?? '?')} @ ${ip}: ${String(req.body?.businessName ?? '').slice(0, 60)}`);
         return res.json({ success: true, message: "Application received" });
-      }
+      };
+      if (isHoneypotTripped(req.body)) return pretendReceived("honeypot");
+      if (submittedTooFast(req.body?.formElapsedMs)) return pretendReceived("too fast / no form");
 
       const applicationSchema = z.object({
         businessName: z.string().min(2, "Business name is required"),
@@ -315,6 +322,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const data = applicationSchema.parse(req.body);
+      const verdict = spamScore([data.businessName, data.deliveryInstructions ?? ''].join('\n'), { name: data.contactName, email: data.email, company: data.businessName });
+      if (verdict.score >= SPAM_THRESHOLD) return pretendReceived(`score ${verdict.score}: ${verdict.reasons.join(', ')}`);
 
       // The leads table has no columns for the application specifics, so they're kept as
       // readable notes rather than being dropped on the floor.
@@ -664,7 +673,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ success: true, message: "Your message has been sent successfully" });
       };
       if (isHoneypotTripped(req.body)) return pretendSent("honeypot");
-      if (submittedTooFast(req.body?.formOpenedAt)) return pretendSent("too fast / no form");
+      if (submittedTooFast(req.body?.formElapsedMs)) return pretendSent("too fast / no form");
 
       const contactFormSchema = z.object({
         name: z.string().min(2, "Name must be at least 2 characters"),
@@ -2546,7 +2555,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // two component flavors remain (owner, 2026-09-14: mixed/split bottle
         // cases while stock lasts).
         const inStock = (f: any) => !bottleStockByFlavor.has(f.id) || (bottleStockByFlavor.get(f.id) ?? 0) > 0;
-        const componentsInStock = Array.isArray(p.flavors) ? p.flavors.filter((f: any) => f.name !== 'Mixed' && inStock(f)).length : 0;
+        // Only ACTIVE flavors can go into a mixed case; a retired one with a few
+        // bottles left doesn't count (reviewer, 2026-09-15).
+        const componentsInStock = Array.isArray(p.flavors) ? p.flavors.filter((f: any) => f.name !== 'Mixed' && f.isActive !== false && inStock(f)).length : 0;
         const flavorsMarked = Array.isArray(p.flavors)
           ? p.flavors.map((f: any) =>
               f.name === 'Mixed'
@@ -8657,26 +8668,39 @@ If you have any questions, please don't hesitate to reach out!`,
       }
 
       // Bottle sell-through enforcement (cans launch): the shop hides sold-out
-      // bottle flavors, but the cart endpoint is reachable directly. Same scope as
-      // the catalogue: bottle-case only, and only flavors with a finished-goods
-      // row. Mixed has no row, so it passes.
+      // bottle flavors, but the cart endpoint is reachable directly. Same scope
+      // and the SAME rule as the catalogue (/api/retail-products): bottle-case
+      // only, only flavors with a finished-goods row — and a plain Mixed case is
+      // judged by its components (at least two active flavors in stock), never
+      // by the zero-stock "Mixed" row, so the cart can't refuse what the shop
+      // offers (reviewer, 2026-09-15).
       if ((product as any).container === 'bottle-case') {
+        const productFlavors: Array<{ id: string; name: string; isActive?: boolean }> = (product as any).flavors ?? [];
+        const mixedId = productFlavors.find((f) => f.name === 'Mixed')?.id;
+        const plainMixed = !!mixedId && selectedFlavorId === mixedId && !splitFlavorId;
         // Single-flavor products ALWAYS check their own fixed flavor (a
         // client-supplied selectedFlavorId must not stand in for it);
         // multi-flavor products check the chosen and split flavors.
         const flavorIdsToCheck = (product.productType === 'single-flavor'
           ? [(product as any).flavorId]
-          : [selectedFlavorId, splitFlavorId]
-        ).filter(Boolean);
+          : plainMixed
+            ? productFlavors.filter((f) => f.id !== mixedId && f.isActive !== false).map((f) => f.id)
+            : [selectedFlavorId, splitFlavorId]
+        ).filter(Boolean) as string[];
         if (flavorIdsToCheck.length > 0) {
           const stockRows = await db
             .select({ flavorId: products.flavorId, stock: products.stockQuantity, name: flavors.name })
             .from(products)
             .leftJoin(flavors, eq(flavors.id, products.flavorId))
             .where(and(eq(products.container, 'bottle-case'), inArray(products.flavorId, flavorIdsToCheck)));
-          const soldOut = stockRows.find(r => r.stock <= 0);
-          if (soldOut) {
-            return res.status(409).json({ message: `${soldOut.name ?? 'That flavor'} is sold out in bottles.` });
+          if (plainMixed) {
+            const inStock = flavorIdsToCheck.filter((id) => { const row = stockRows.find((r) => r.flavorId === id); return !row || row.stock > 0; }).length;
+            if (inStock < 2) return res.status(409).json({ message: "Mixed cases are sold out in bottles." });
+          } else {
+            const soldOut = stockRows.find(r => r.stock <= 0);
+            if (soldOut) {
+              return res.status(409).json({ message: `${soldOut.name ?? 'That flavor'} is sold out in bottles.` });
+            }
           }
         }
       }

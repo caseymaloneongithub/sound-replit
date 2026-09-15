@@ -52,7 +52,8 @@ export default function Contact() {
 
   const onSubmit = async (data: ContactFormData) => {
     try {
-      await apiRequest("POST", "/api/contact", { ...data, website, formOpenedAt: openedAtRef.current });
+      // Elapsed on this browser's own clock, so a skewed clock can't fail the check.
+      await apiRequest("POST", "/api/contact", { ...data, website, formElapsedMs: Date.now() - openedAtRef.current });
 
       setSubmittedData(data);
       setIsSubmitted(true);

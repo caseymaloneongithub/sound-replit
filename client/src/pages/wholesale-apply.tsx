@@ -38,8 +38,12 @@ export default function WholesaleApply() {
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => setForm({ ...form, [key]: e.target.value });
 
+  // When the form was opened, on this browser's clock: the server refuses a
+  // submission faster than a person could fill it (spam screen).
+  const [openedAt] = useState(() => Date.now());
+
   const apply = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/wholesale/apply", form),
+    mutationFn: async () => apiRequest("POST", "/api/wholesale/apply", { ...form, formElapsedMs: Date.now() - openedAt }),
     onSuccess: () => setSubmitted(true),
     onError: (error: any) => {
       toast({

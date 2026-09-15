@@ -21,7 +21,9 @@ const PHRASES: Array<[RegExp, number, string]> = [
   [/\b(1st|first)\s+page\s+of\s+google\b/i, 2, "Google ranking pitch"],
   [/\b(web\s*site|web)\s+(design|development)\s+(services?|company|agency)\b/i, 2, "web design pitch"],
   [/\b(boost|increase|grow)\s+your\s+(sales|revenue|traffic|leads|ranking)/i, 1, "growth pitch"],
-  [/\b(crypto(currency)?|bitcoin|forex|casino|loan\s+offer|payday)\b/i, 2, "finance spam"],
+  // Solicitation wording only — a plain "casino" or "loan" is an address or a
+  // sentence ("deliver to our cafe on Casino Road"), not a pitch.
+  [/\b(online\s+casino|casino\s+(bonus|games?)|crypto(currency)?\s+(trading|investment|signals?)|bitcoin\s+(investment|trading|mining)|forex\s+(trading|signals?)|payday\s+loans?|loan\s+(offer|approval)|guaranteed\s+(returns?|profits?))\b/i, 2, "finance pitch"],
   [/\bif\s+you\s+are\s+interested\s+(in\s+getting\s+more\s+information\s+)?(just\s+)?(respond|reply)\s+(back\s+)?to\s+this\s+email/i, 2, "reply-to-this-email pitch"],
   [/\b(get|getting)\s+(yourself|your\s+business)\s+noticed\b/i, 1, "marketing pitch"],
 ];
@@ -39,7 +41,9 @@ export function spamScore(message: string, extra: { name?: string; email?: strin
       reasons.push(label);
     }
   }
-  const links = (text.match(/https?:\/\/|www\./gi) ?? []).length;
+  // Whole URLs, each counted once: "https://www.example.com" is one link, and
+  // a genuine enquiry naming its own website must not trip this.
+  const links = (text.match(/\bhttps?:\/\/\S+|\bwww\.\S+/gi) ?? []).length;
   if (links >= 2) {
     score += 2;
     reasons.push(`${links} links`);
@@ -53,9 +57,11 @@ export function spamScore(message: string, extra: { name?: string; email?: strin
 }
 
 /** True when the form was submitted faster than a person could fill it, or
- *  without ever being opened (a direct POST to the API). */
-export function submittedTooFast(formOpenedAt: unknown, now = Date.now()): boolean {
-  const opened = typeof formOpenedAt === "number" ? formOpenedAt : Number(formOpenedAt);
-  if (!Number.isFinite(opened) || opened <= 0) return true;
-  return now - opened < MIN_FILL_MS;
+ *  without ever being opened (a direct POST to the API). The page measures the
+ *  elapsed time on ITS clock and sends the duration, so a browser whose clock
+ *  is minutes off from the server's is judged on how long it actually took. */
+export function submittedTooFast(formElapsedMs: unknown): boolean {
+  const elapsed = typeof formElapsedMs === "number" ? formElapsedMs : Number(formElapsedMs);
+  if (!Number.isFinite(elapsed) || elapsed < 0) return true;
+  return elapsed < MIN_FILL_MS;
 }
