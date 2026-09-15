@@ -654,9 +654,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!checkSubmissionRateLimit(`contact:${ip}`, 5, 60 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many messages from this connection. Please try again later." });
       }
-      if (isHoneypotTripped(req.body)) {
+      // Bots get a cheerful "sent" and nothing else happens (owner, 2026-09-15:
+      // bulk pitches were reaching every staff inbox). Three screens: the
+      // honeypot field, a submission faster than a person could type, and the
+      // wording of the message itself (see spam-filter.ts).
+      const { spamScore, submittedTooFast, SPAM_THRESHOLD } = await import('./spam-filter');
+      const pretendSent = (why: string) => {
+        console.warn(`[CONTACT] dropped likely spam (${why}) from ${String(req.body?.email ?? '?')} @ ${ip}: ${String(req.body?.message ?? '').slice(0, 100).replace(/\s+/g, ' ')}`);
         return res.json({ success: true, message: "Your message has been sent successfully" });
-      }
+      };
+      if (isHoneypotTripped(req.body)) return pretendSent("honeypot");
+      if (submittedTooFast(req.body?.formOpenedAt)) return pretendSent("too fast / no form");
 
       const contactFormSchema = z.object({
         name: z.string().min(2, "Name must be at least 2 characters"),
@@ -667,6 +675,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const validatedData = contactFormSchema.parse(req.body);
+      const verdict = spamScore(validatedData.message, validatedData);
+      if (verdict.score >= SPAM_THRESHOLD) return pretendSent(`score ${verdict.score}: ${verdict.reasons.join(', ')}`);
 
       // Get all staff member emails (staff, admin, super_admin)
       const staffUsers = await db

@@ -28,6 +28,10 @@ export default function Contact() {
   const [submittedData, setSubmittedData] = useState<ContactFormData | null>(null);
   const successPanelRef = useRef<HTMLDivElement>(null);
   const firstInputRef = useRef<HTMLInputElement>(null);
+  // Bot screens the server checks: a honeypot field people never see, and
+  // when the form was opened (a submission seconds after opening isn't a person).
+  const [website, setWebsite] = useState("");
+  const openedAtRef = useRef(Date.now());
   
   const form = useForm<ContactFormData>({
     resolver: zodResolver(contactFormSchema),
@@ -48,8 +52,8 @@ export default function Contact() {
 
   const onSubmit = async (data: ContactFormData) => {
     try {
-      await apiRequest("POST", "/api/contact", data);
-      
+      await apiRequest("POST", "/api/contact", { ...data, website, formOpenedAt: openedAtRef.current });
+
       setSubmittedData(data);
       setIsSubmitted(true);
       
@@ -70,6 +74,7 @@ export default function Contact() {
   const handleSendAnother = () => {
     setIsSubmitted(false);
     setSubmittedData(null);
+    openedAtRef.current = Date.now();
     form.reset();
     
     setTimeout(() => {
@@ -324,8 +329,14 @@ export default function Contact() {
                       )}
                     />
 
-                    <Button 
-                      type="submit" 
+                    {/* Honeypot: invisible to people, irresistible to bots. */}
+                    <div className="hidden" aria-hidden="true">
+                      <label htmlFor="contact-website">Website</label>
+                      <input id="contact-website" name="website" type="text" tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} />
+                    </div>
+
+                    <Button
+                      type="submit"
                       className="w-full rounded-full gap-2"
                       disabled={form.formState.isSubmitting}
                       data-testid="button-submit"
