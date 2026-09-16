@@ -631,37 +631,41 @@ async function runCampaignSteps(campaignId: string): Promise<void> {
   }
 
   // Finishing is itself retried: a blip right here would otherwise strand the
-  // campaign 'sending' with nothing left to do.
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      await db.update(emailCampaigns).set({ status: 'done', completedAt: new Date() }).where(eq(emailCampaigns.id, campaignId));
-      console.log(`[CAMPAIGN] ${campaignId} done`);
-      const [tally] = await db
-        .select({
-          sent: sql<number>`count(*) filter (where status = 'sent')::int`,
-          failed: sql<number>`count(*) filter (where status = 'failed')::int`,
-          skipped: sql<number>`count(*) filter (where status = 'skipped')::int`,
-          uncertain: sql<number>`count(*) filter (where status = 'uncertain')::int`,
-        })
-        .from(emailCampaignRecipients)
-        .where(eq(emailCampaignRecipients.campaignId, campaignId));
-      void recordEvent({
-        severity: tally.failed > 0 || tally.uncertain > 0 ? 'warn' : 'info',
-        kind: 'campaign.finished',
-        message: `Campaign "${campaign.subject}" finished: ${tally.sent} sent, ${tally.failed} failed, ${tally.skipped} skipped${tally.uncertain ? `, ${tally.uncertain} uncertain` : ''}`,
-        detail: tally,
-        ref: { type: 'campaign', id: campaignId },
-      });
-      return;
-    } catch (error: any) {
-      console.error(`[CAMPAIGN] ${campaignId}: could not mark done (attempt ${attempt}): ${error?.message}`);
-      if (attempt === 5) {
-        // Every recipient is settled but the campaign still says 'sending' —
-        // the wrapper in runCampaign turns this into the stalled alert.
-        throw new Error(`could not mark the campaign done after ${attempt} attempts: ${error?.message ?? 'unknown error'}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt));
-    }
+  // campaign 'sending' with nothing left to do. Only THIS write decides whether
+  // the campaign is stuck — if it fails for good, the throw reaches runCampaign's
+  // wrapper and becomes the stalled alert.
+  await withRetry(`campaign ${campaignId} mark done`, () =>
+    db.update(emailCampaigns).set({ status: 'done', completedAt: new Date() }).where(eq(emailCampaigns.id, campaignId)), 5);
+  console.log(`[CAMPAIGN] ${campaignId} done`);
+
+  // The tally is reporting, not completion: the campaign IS done whatever
+  // happens here, so a failure is a warning about the missing summary, never a
+  // "still sending" alert.
+  try {
+    const [tally] = await db
+      .select({
+        sent: sql<number>`count(*) filter (where status = 'sent')::int`,
+        failed: sql<number>`count(*) filter (where status = 'failed')::int`,
+        skipped: sql<number>`count(*) filter (where status = 'skipped')::int`,
+        uncertain: sql<number>`count(*) filter (where status = 'uncertain')::int`,
+      })
+      .from(emailCampaignRecipients)
+      .where(eq(emailCampaignRecipients.campaignId, campaignId));
+    void recordEvent({
+      severity: tally.failed > 0 || tally.uncertain > 0 ? 'warn' : 'info',
+      kind: 'campaign.finished',
+      message: `Campaign "${campaign.subject}" finished: ${tally.sent} sent, ${tally.failed} failed, ${tally.skipped} skipped${tally.uncertain ? `, ${tally.uncertain} uncertain` : ''}`,
+      detail: tally,
+      ref: { type: 'campaign', id: campaignId },
+    });
+  } catch (error: any) {
+    console.error(`[CAMPAIGN] ${campaignId}: done, but could not read the recipient tally: ${error?.message}`);
+    void recordEvent({
+      severity: 'warn',
+      kind: 'campaign.finished',
+      message: `Campaign "${campaign.subject}" finished, but its sent/failed counts couldn't be read — see the Email Campaign page: ${error?.message ?? 'unknown error'}`,
+      ref: { type: 'campaign', id: campaignId },
+    });
   }
 }
 
