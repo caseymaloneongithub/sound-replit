@@ -41,12 +41,19 @@ export async function geocodeAddress(
     return null;
   }
 
-  const fullAddress = `${address}, ${city}, ${state} ${zipCode}`;
+  // Blank parts are left out rather than sent as ", ,": every customer is in the
+  // Pacific Northwest, so a street with no city is biased toward Seattle instead of
+  // matching the same street name anywhere in the country (the address autofill
+  // uses the same proximity).
+  const fullAddress = [address, city, [state, zipCode].filter((s) => s?.trim()).join(" ")]
+    .map((s) => s?.trim())
+    .filter(Boolean)
+    .join(", ");
   const encodedAddress = encodeURIComponent(fullAddress);
-  
+
   try {
     const response = await fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&country=US&limit=1`
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&country=US&limit=1&proximity=-122.3321,47.6062`
     );
 
     if (!response.ok) {

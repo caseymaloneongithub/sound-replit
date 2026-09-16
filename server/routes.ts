@@ -32,6 +32,7 @@ import { createStripeCustomer } from "./stripeCustomer";
 // truth for frequency conversion is @shared/subscription-frequency (imported above).
 import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange, nextPickupDateFromScheduled } from "@shared/pickup-policy";
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
+import { geocodeForEdit, refreshLocationPin } from "./location-geocode";
 import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -6906,8 +6907,13 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(403).json({ message: "Location does not belong to this customer" });
       }
 
-      const updates = insertWholesaleLocationSchema.partial().omit({ customerId: true }).parse(req.body);
-      const updated = await storage.updateWholesaleLocation(req.params.id, updates);
+      // lat/long are the server's geocoding cache; an edited address moves the pin.
+      const updates = insertWholesaleLocationSchema
+        .partial()
+        .omit({ customerId: true, latitude: true, longitude: true })
+        .parse(req.body);
+      const pin = await geocodeForEdit(location, updates);
+      const updated = await storage.updateWholesaleLocation(req.params.id, { ...updates, ...pin });
       if (!updated) {
         return res.status(404).json({ message: "Location not found" });
       }
@@ -7301,8 +7307,16 @@ If you have any questions, please don't hesitate to reach out!`,
 
   app.patch("/api/wholesale/locations/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const updates = insertWholesaleLocationSchema.partial().parse(req.body);
-      const updated = await storage.updateWholesaleLocation(req.params.id, updates);
+      const location = await storage.getWholesaleLocation(req.params.id);
+      if (!location) {
+        return res.status(404).json({ message: "Location not found" });
+      }
+      const updates = insertWholesaleLocationSchema
+        .partial()
+        .omit({ latitude: true, longitude: true })
+        .parse(req.body);
+      const pin = await geocodeForEdit(location, updates);
+      const updated = await storage.updateWholesaleLocation(req.params.id, { ...updates, ...pin });
       if (!updated) {
         return res.status(404).json({ message: "Location not found" });
       }
@@ -7383,12 +7397,14 @@ If you have any questions, please don't hesitate to reach out!`,
 
       // customerId MUST be omitted: `.partial()` made it an optional writable field, so a
       // customer could have reassigned their location onto another company's account.
-      // lat/long are server-managed geocoding output that feeds delivery routing.
+      // lat/long are server-managed geocoding output that feeds delivery routing;
+      // an edited address moves the pin.
       const updates = insertWholesaleLocationSchema
         .omit({ customerId: true, latitude: true, longitude: true })
         .partial()
         .parse(req.body);
-      const updated = await storage.updateWholesaleLocation(req.params.id, updates);
+      const pin = await geocodeForEdit(location, updates);
+      const updated = await storage.updateWholesaleLocation(req.params.id, { ...updates, ...pin });
       res.json(updated);
     } catch (error: any) {
       res.status(400).json({ message: "Error updating location: " + error.message });
@@ -11238,92 +11254,34 @@ If you have any questions, please don't hesitate to reach out!`,
   // Geocode a wholesale location
   app.post("/api/delivery/geocode-location/:locationId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const { locationId } = req.params;
-      
-      // Get all wholesale locations to find this one
-      const wholesaleCustomers = await storage.getWholesaleCustomers();
-      let foundLocation = null;
-      
-      for (const customer of wholesaleCustomers) {
-        const locations = await storage.getWholesaleLocations(customer.id);
-        const location = locations.find((l: any) => l.id === locationId);
-        if (location) {
-          foundLocation = location;
-          break;
-        }
-      }
-      
-      if (!foundLocation) {
+      const location = await storage.getWholesaleLocation(req.params.locationId);
+      if (!location) {
         return res.status(404).json({ message: "Location not found" });
       }
 
-      const geocodeResult = await geocodeAddress(
-        foundLocation.address,
-        foundLocation.city,
-        foundLocation.state,
-        foundLocation.zipCode
-      );
-
-      if (!geocodeResult) {
+      const pin = await refreshLocationPin(location);
+      if (!pin) {
         return res.status(400).json({ message: "Failed to geocode address" });
       }
 
-      await storage.updateWholesaleLocationGeocoding(
-        locationId,
-        geocodeResult.latitude,
-        geocodeResult.longitude
-      );
-
-      // Backfill address parts a person left blank with what Mapbox resolved — so the
-      // screen shows the full address and a wrong geocode is visible, not silent.
-      // Never overwrites anything already entered.
-      const backfill: Record<string, string> = {};
-      if (!foundLocation.city?.trim() && geocodeResult.city) backfill.city = geocodeResult.city;
-      if (!foundLocation.state?.trim() && geocodeResult.state) backfill.state = geocodeResult.state;
-      if (!foundLocation.zipCode?.trim() && geocodeResult.zipCode) backfill.zipCode = geocodeResult.zipCode;
-      if (Object.keys(backfill).length) await storage.updateWholesaleLocation(locationId, backfill);
-
-      res.json({
-        success: true,
-        latitude: geocodeResult.latitude,
-        longitude: geocodeResult.longitude,
-        placeName: geocodeResult.placeName,
-        ...backfill,
-      });
+      res.json({ success: true, ...pin });
     } catch (error: any) {
       console.error("Error geocoding location:", error);
       res.status(500).json({ message: "Error geocoding location: " + error.message });
     }
   });
 
-  // Geocode all un-geocoded wholesale locations
+  // Geocode every wholesale location without a trustworthy pin: none yet, or one
+  // computed from a street with no city/ZIP (see getWholesaleLocationsNeedingGeocode).
   app.post("/api/delivery/geocode-all", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const unGeocodedLocations = await storage.getUnGeocodedWholesaleLocations();
-      
+      const unGeocodedLocations = await storage.getWholesaleLocationsNeedingGeocode();
+
       let successCount = 0;
       let failCount = 0;
-      
-      for (const location of unGeocodedLocations) {
-        const geocodeResult = await geocodeAddress(
-          location.address,
-          location.city,
-          location.state,
-          location.zipCode
-        );
 
-        if (geocodeResult) {
-          await storage.updateWholesaleLocationGeocoding(
-            location.id,
-            geocodeResult.latitude,
-            geocodeResult.longitude
-          );
-          // Same backfill as single-location geocode: fill blanks, never overwrite.
-          const backfill: Record<string, string> = {};
-          if (!location.city?.trim() && geocodeResult.city) backfill.city = geocodeResult.city;
-          if (!location.state?.trim() && geocodeResult.state) backfill.state = geocodeResult.state;
-          if (!location.zipCode?.trim() && geocodeResult.zipCode) backfill.zipCode = geocodeResult.zipCode;
-          if (Object.keys(backfill).length) await storage.updateWholesaleLocation(location.id, backfill);
+      for (const location of unGeocodedLocations) {
+        if (await refreshLocationPin(location)) {
           successCount++;
         } else {
           failCount++;

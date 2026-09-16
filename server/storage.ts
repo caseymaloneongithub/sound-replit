@@ -228,7 +228,7 @@ export interface IStorage {
   getWholesaleLocations(customerId: string): Promise<WholesaleLocation[]>;
   getWholesaleLocation(id: string): Promise<WholesaleLocation | undefined>;
   createWholesaleLocation(location: InsertWholesaleLocation): Promise<WholesaleLocation>;
-  updateWholesaleLocation(id: string, updates: Partial<InsertWholesaleLocation>): Promise<WholesaleLocation | undefined>;
+  updateWholesaleLocation(id: string, updates: Partial<InsertWholesaleLocation> & { geocodedAt?: Date | null }): Promise<WholesaleLocation | undefined>;
   deleteWholesaleLocation(id: string): Promise<void>;
   
   getWholesaleOrders(options?: { limit?: number; offset?: number }): Promise<{ orders: Array<WholesaleOrder & { locationName: string | null; locationEmail: string | null; locationContactName: string | null; locationContactPhone: string | null }>; total: number }>;
@@ -407,8 +407,7 @@ export interface IStorage {
   getDeliveryRouteStops(routeId: string): Promise<DeliveryRouteStop[]>;
   createDeliveryRouteStop(stop: InsertDeliveryRouteStop): Promise<DeliveryRouteStop>;
   
-  updateWholesaleLocationGeocoding(locationId: string, latitude: number, longitude: number): Promise<void>;
-  getUnGeocodedWholesaleLocations(): Promise<WholesaleLocation[]>;
+  getWholesaleLocationsNeedingGeocode(): Promise<WholesaleLocation[]>;
   
   seedData(): Promise<void>;
 }
@@ -2671,7 +2670,7 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async updateWholesaleLocation(id: string, updates: Partial<InsertWholesaleLocation>): Promise<WholesaleLocation | undefined> {
+  async updateWholesaleLocation(id: string, updates: Partial<InsertWholesaleLocation> & { geocodedAt?: Date | null }): Promise<WholesaleLocation | undefined> {
     const result = await db
       .update(wholesaleLocations)
       .set(updates)
@@ -4915,22 +4914,15 @@ export class PostgresStorage implements IStorage {
   }
 
   // DELIVERY ROUTE OPTIMIZATION - Geocoding
-  async updateWholesaleLocationGeocoding(locationId: string, latitude: number, longitude: number): Promise<void> {
-    await db
-      .update(wholesaleLocations)
-      .set({ 
-        latitude: String(latitude), 
-        longitude: String(longitude), 
-        geocodedAt: new Date() 
-      })
-      .where(eq(wholesaleLocations.id, locationId));
-  }
-
-  async getUnGeocodedWholesaleLocations(): Promise<WholesaleLocation[]> {
+  // No pin yet, or a pin computed from an incomplete address (street with no city or
+  // ZIP — a guess that landed nine legacy stores across the country). Geocoding fills
+  // the blanks in, so a row leaves this set once it has been placed properly.
+  async getWholesaleLocationsNeedingGeocode(): Promise<WholesaleLocation[]> {
     const result = await db
       .select()
       .from(wholesaleLocations)
-      .where(sql`${wholesaleLocations.latitude} IS NULL OR ${wholesaleLocations.longitude} IS NULL`);
+      .where(sql`${wholesaleLocations.latitude} IS NULL OR ${wholesaleLocations.longitude} IS NULL
+        OR coalesce(${wholesaleLocations.city}, '') = '' OR coalesce(${wholesaleLocations.zipCode}, '') = ''`);
     return result;
   }
 
