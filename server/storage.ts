@@ -271,6 +271,9 @@ export interface IStorage {
     // and whether it was a deliberate choice (only then does it override routing).
     contactEmail?: string | null;
     contactEmailChosen?: boolean;
+    // Delivery <-> pickup after the fact; pickup carries a null location.
+    fulfillmentMethod?: 'delivery' | 'pickup';
+    locationId?: string | null;
   }): Promise<WholesaleOrder | undefined>;
   
   getAllWholesalePricing(): Promise<WholesalePricing[]>;
@@ -3271,6 +3274,9 @@ export class PostgresStorage implements IStorage {
     // and whether it was a deliberate choice (only then does it override routing).
     contactEmail?: string | null;
     contactEmailChosen?: boolean;
+    // Delivery <-> pickup after the fact; pickup carries a null location.
+    fulfillmentMethod?: 'delivery' | 'pickup';
+    locationId?: string | null;
   }): Promise<WholesaleOrder | undefined> {
     const result = await db
       .update(wholesaleOrders)

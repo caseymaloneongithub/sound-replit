@@ -8393,14 +8393,41 @@ If you have any questions, please don't hesitate to reach out!`,
 
   app.patch("/api/wholesale/orders/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const { status, deliveryDate, notes, items, poNumber } = req.body;
-      
+      const { status, deliveryDate, notes, items, poNumber, fulfillmentMethod, locationId } = req.body;
+
       const order = await storage.getWholesaleOrder(req.params.id);
       if (!order) {
         return res.status(404).json({ message: "Order not found" });
       }
 
       let updated = order;
+
+      // Delivery <-> pickup, or a different store, after the fact (owner,
+      // 2026-09-16). Same rule as placing an order: pickup carries no location,
+      // delivery must name one of this customer's. Runs BEFORE the items block so
+      // a re-priced line uses the new store's price override. Allowed on a paid
+      // invoice — where the cases go doesn't change what was charged.
+      let effectiveLocationId: string | null = order.locationId ?? null;
+      if (fulfillmentMethod !== undefined || locationId !== undefined) {
+        const method = fulfillmentMethod === undefined
+          ? (order.fulfillmentMethod === 'pickup' ? 'pickup' : 'delivery')
+          : fulfillmentMethod === 'pickup' ? 'pickup' : fulfillmentMethod === 'delivery' ? 'delivery' : null;
+        if (!method) return res.status(400).json({ message: "Fulfillment must be 'delivery' or 'pickup'" });
+        if (method === 'pickup') {
+          effectiveLocationId = null;
+        } else {
+          const wanted = locationId !== undefined ? (locationId || null) : order.locationId ?? null;
+          if (!wanted) return res.status(400).json({ message: "Choose a delivery location, or set the order to pickup." });
+          const loc = await storage.getWholesaleLocation(wanted);
+          if (!loc || loc.customerId !== order.customerId) {
+            return res.status(400).json({ message: "That location doesn't belong to this customer." });
+          }
+          effectiveLocationId = loc.id;
+        }
+        if (method !== order.fulfillmentMethod || effectiveLocationId !== (order.locationId ?? null)) {
+          updated = await storage.updateWholesaleOrder(req.params.id, { fulfillmentMethod: method, locationId: effectiveLocationId }) || updated;
+        }
+      }
 
       let stockWarnings: string[] = [];
       if (status) {
@@ -8489,8 +8516,9 @@ If you have any questions, please don't hesitate to reach out!`,
           if (!unitType) {
             return res.status(400).json({ message: `Invalid unit type: ${item.unitTypeId}` });
           }
-          // Location override -> customer override -> list price.
-          const unitPrice = await storage.resolveWholesaleUnitPrice(order.customerId, order.locationId ?? null, item.unitTypeId);
+          // Location override -> customer override -> list price (the location
+          // as of THIS request, if it was just changed above).
+          const unitPrice = await storage.resolveWholesaleUnitPrice(order.customerId, effectiveLocationId, item.unitTypeId);
 
           validatedItems.push({
             unitTypeId: item.unitTypeId,

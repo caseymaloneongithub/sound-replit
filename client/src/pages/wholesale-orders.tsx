@@ -1,6 +1,6 @@
 import { useState, Fragment, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { WholesaleOrder, WholesaleCustomer, WholesaleOrderItem, WholesaleUnitType, Flavor } from "@shared/schema";
+import { WholesaleOrder, WholesaleCustomer, WholesaleOrderItem, WholesaleUnitType, WholesaleLocation, Flavor } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -62,6 +62,9 @@ export default function WholesaleOrders() {
   const [editItems, setEditItems] = useState<EditItem[]>([]);
   const [editNotes, setEditNotes] = useState('');
   const [editPoNumber, setEditPoNumber] = useState('');
+  // Delivery <-> pickup, or a different store, after the fact (owner, 2026-09-16).
+  const [editFulfillment, setEditFulfillment] = useState<'delivery' | 'pickup'>('delivery');
+  const [editLocationId, setEditLocationId] = useState('');
   const { toast } = useToast();
 
   const { data: ordersData, isLoading } = useQuery<{ orders: (WholesaleOrder & { locationName?: string | null; locationEmail?: string | null; locationContactName?: string | null; locationContactPhone?: string | null })[]; total: number }>({
@@ -94,6 +97,13 @@ export default function WholesaleOrders() {
 
   const selectedOrder = orders?.find(o => o.id === selectedOrderId);
   const selectedCustomer = customers?.find(c => c.id === selectedOrder?.customerId);
+
+  const { data: customerLocations = [] } = useQuery<WholesaleLocation[]>({
+    queryKey: ["/api/wholesale/customers", selectedOrder?.customerId, "locations"],
+    enabled: !!selectedOrder?.customerId,
+  });
+  const locationLabel = (loc: WholesaleLocation) =>
+    `${loc.locationName}${loc.address ? ` — ${loc.address}${loc.city ? `, ${loc.city}` : ''}` : ''}`;
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: string; status: string }) => {
@@ -177,11 +187,13 @@ export default function WholesaleOrders() {
   };
 
   const updateOrderMutation = useMutation({
-    mutationFn: async ({ orderId, items, notes, poNumber }: { orderId: string; items: EditItem[]; notes: string; poNumber: string }) => {
-      return await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, { 
+    mutationFn: async ({ orderId, items, notes, poNumber, fulfillmentMethod, locationId }: { orderId: string; items: EditItem[]; notes: string; poNumber: string; fulfillmentMethod: 'delivery' | 'pickup'; locationId: string | null }) => {
+      return await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, {
         items,
         notes: notes || null,
         poNumber: poNumber.trim() || null,
+        fulfillmentMethod,
+        locationId,
       });
     },
     onSuccess: () => {
@@ -234,6 +246,8 @@ export default function WholesaleOrders() {
       })));
       setEditNotes(selectedOrder.notes || '');
       setEditPoNumber((selectedOrder as any).poNumber || '');
+      setEditFulfillment(selectedOrder.fulfillmentMethod === 'pickup' ? 'pickup' : 'delivery');
+      setEditLocationId(selectedOrder.locationId || '');
       setIsEditMode(true);
     }
   };
@@ -267,11 +281,21 @@ export default function WholesaleOrders() {
       });
       return;
     }
+    if (editFulfillment === 'delivery' && !editLocationId) {
+      toast({
+        title: "Where is it going?",
+        description: "Choose a delivery location, or set the order to pickup.",
+        variant: "destructive",
+      });
+      return;
+    }
     updateOrderMutation.mutate({
       orderId: selectedOrderId,
       items: validItems,
       notes: editNotes,
       poNumber: editPoNumber,
+      fulfillmentMethod: editFulfillment,
+      locationId: editFulfillment === 'delivery' ? editLocationId : null,
     });
   };
 
@@ -851,6 +875,14 @@ export default function WholesaleOrders() {
                     <div><strong>Delivery Date:</strong> {new Date(selectedOrder.deliveryDate).toLocaleDateString()}</div>
                   )}
                   <div><strong>Total:</strong> ${Number(selectedOrder.totalAmount).toFixed(2)}</div>
+                  {!isEditMode && (
+                    <div className="col-span-2" data-testid="text-fulfillment">
+                      <strong>Fulfillment:</strong>{' '}
+                      {selectedOrder.fulfillmentMethod === 'pickup'
+                        ? 'Pickup at the brewery'
+                        : `Delivery${selectedOrder.locationName ? ` — ${selectedOrder.locationName}` : ''}`}
+                    </div>
+                  )}
                 </div>
                 {!isEditMode && (selectedOrder as any).poNumber && (
                   <div className="mb-2">
@@ -866,6 +898,50 @@ export default function WholesaleOrders() {
 
               {isEditMode ? (
                 <div className="space-y-4">
+                  <div className="space-y-2">
+                    <h3 className="font-semibold">Fulfillment</h3>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        variant={editFulfillment === 'delivery' ? 'default' : 'outline'}
+                        onClick={() => setEditFulfillment('delivery')}
+                        data-testid="button-edit-method-delivery"
+                      >
+                        Delivery
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={editFulfillment === 'pickup' ? 'default' : 'outline'}
+                        onClick={() => setEditFulfillment('pickup')}
+                        data-testid="button-edit-method-pickup"
+                      >
+                        Pickup
+                      </Button>
+                    </div>
+                    {editFulfillment === 'pickup' ? (
+                      <p className="text-xs text-muted-foreground">
+                        Collected at the brewery — this order comes off the delivery report and route.
+                      </p>
+                    ) : (
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Delivery location</Label>
+                        <Select value={editLocationId} onValueChange={setEditLocationId}>
+                          <SelectTrigger data-testid="select-edit-location">
+                            <SelectValue placeholder="Choose a location" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {customerLocations.map((loc) => (
+                              <SelectItem key={loc.id} value={loc.id}>{locationLabel(loc)}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {customerLocations.length === 0 && (
+                          <p className="text-xs text-muted-foreground mt-1">This customer has no locations on file — add one under Customers, or set the order to pickup.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <h3 className="font-semibold">Order Items</h3>
