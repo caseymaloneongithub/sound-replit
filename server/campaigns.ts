@@ -527,7 +527,27 @@ export async function withRetry<T>(label: string, fn: () => Promise<T>, attempts
   throw lastError;
 }
 
+/** Any way the worker can stop with the campaign still 'sending' is an alert:
+ *  the loop's own give-up (below) and, here, a throw from the steps around it —
+ *  the lookup and opt-out sweep exhausting their retries, or anything after the
+ *  loop. Until the next restart resumes it, the one-sending index blocks every
+ *  later campaign, so a person has to know. */
 export async function runCampaign(campaignId: string): Promise<void> {
+  try {
+    await runCampaignSteps(campaignId);
+  } catch (error: any) {
+    console.error(`[CAMPAIGN] ${campaignId}: stopped before finishing — still 'sending': ${error?.message}`);
+    void recordEvent({
+      severity: 'alert',
+      kind: 'campaign.stalled',
+      message: `Campaign ${campaignId} stopped before finishing — still 'sending' until the next restart: ${error?.message ?? 'unknown error'}`,
+      ref: { type: 'campaign', id: campaignId },
+    });
+    throw error;
+  }
+}
+
+async function runCampaignSteps(campaignId: string): Promise<void> {
   const [campaign] = await withRetry(`campaign ${campaignId} lookup`, () =>
     db.select().from(emailCampaigns).where(eq(emailCampaigns.id, campaignId)));
   if (!campaign || campaign.status !== 'sending') return;

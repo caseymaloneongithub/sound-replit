@@ -18,7 +18,7 @@ import { getCasePriceCents, CASE_SIZE } from "@shared/pricing";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
 import { wholesaleOrderRecipients, splitEmails, sameRecipients } from "./wholesale-recipients";
-import { recordEvent, listEvents, acknowledgeEvent, buildDigest } from "./ops-events";
+import { recordEvent, listEvents, countEvents, countOpenAlerts, acknowledgeEvent, buildDigest } from "./ops-events";
 import { registerClaimRoutes, getPendingClaim, holdPendingOrder, createLinkRequest } from "./claim-flow";
 import {
   frequencyToDays,
@@ -594,20 +594,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return { sent: false, to: [], reason: resolved.problem ?? resolved.label };
     }
     const locName = order.location?.locationName;
-    await sendWholesalePaymentReceipt({
-      poNumber: (order as any).poNumber ?? null,
-      customerEmail: recipients,
-      businessName: locName && locName !== 'Main Location' ? `${customer.businessName} — ${locName}` : customer.businessName,
-      contactName: order.location?.contactName || customer.contactName || customer.businessName,
-      invoiceNumber: order.invoiceNumber,
-      amount: Number(order.totalAmount),
-      paidAt,
-      items: items.map((item: any) => ({
-        productName: item.product.flavor ? `${item.product.name} - ${item.product.flavor}` : item.product.name,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-      })),
-    });
+    try {
+      await sendWholesalePaymentReceipt({
+        poNumber: (order as any).poNumber ?? null,
+        customerEmail: recipients,
+        businessName: locName && locName !== 'Main Location' ? `${customer.businessName} — ${locName}` : customer.businessName,
+        contactName: order.location?.contactName || customer.contactName || customer.businessName,
+        invoiceNumber: order.invoiceNumber,
+        amount: Number(order.totalAmount),
+        paidAt,
+        items: items.map((item: any) => ({
+          productName: item.product.flavor ? `${item.product.name} - ${item.product.flavor}` : item.product.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+        })),
+      });
+    } catch (e: any) {
+      // Recorded HERE so both callers — Stripe settlement and staff mark-paid —
+      // raise the same alert; the caller still decides what to tell the screen.
+      void recordEvent({ severity: 'alert', kind: 'wholesale.receipt_failed', message: `Receipt email for ${order.invoiceNumber} (${customer.businessName}) failed: ${e?.message ?? 'unknown error'}`, detail: { to: recipients }, ref: { type: 'wholesale_order', id: order.id } });
+      throw e;
+    }
     return { sent: true, to: recipients };
   }
 
@@ -6578,8 +6585,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const days = Math.min(90, Math.max(1, Number(req.query.days ?? 7) || 7));
       const severity = ['info', 'warn', 'alert'].includes(String(req.query.severity)) ? (String(req.query.severity) as 'info' | 'warn' | 'alert') : undefined;
-      const events = await listEvents({ since: new Date(Date.now() - days * 24 * 60 * 60 * 1000), severity, openOnly: req.query.open === 'true', limit: 300 });
-      res.json(events);
+      const filter = { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000), severity, openOnly: req.query.open === 'true' };
+      // Keyset paging: `before` is "<createdAt ISO>|<id>" of the last row shown.
+      const [beforeAt, beforeId] = String(req.query.before ?? '').split('|');
+      const before = beforeAt && beforeId && !isNaN(Date.parse(beforeAt)) ? { createdAt: new Date(beforeAt), id: beforeId } : undefined;
+      const PAGE = 100;
+      const [page, total, openAlerts] = await Promise.all([
+        listEvents({ ...filter, before, limit: PAGE + 1 }),
+        before ? Promise.resolve(null) : countEvents(filter),
+        before ? Promise.resolve(null) : countOpenAlerts(),
+      ]);
+      const events = page.slice(0, PAGE);
+      const last = events[events.length - 1];
+      res.json({
+        events,
+        nextCursor: page.length > PAGE && last ? `${last.createdAt.toISOString()}|${last.id}` : null,
+        total,
+        openAlerts,
+      });
     } catch (error: any) {
       res.status(500).json({ message: "Error listing events: " + error.message });
     }
@@ -8324,8 +8347,8 @@ If you have any questions, please don't hesitate to reach out!`,
           ? `receipt emailed to ${receipt.to.join(", ")}`
           : `no receipt sent (${receipt.reason ?? "no address on file"})`;
       } catch (e: any) {
+        // The alert is recorded by sendWholesaleReceiptForOrder itself.
         console.error('[MARK-PAID] Failed to send payment receipt:', e.message);
-        void recordEvent({ severity: 'alert', kind: 'wholesale.receipt_failed', message: `Receipt email failed after marking an invoice paid: ${e.message}`, ref: { type: 'wholesale_order', id: req.params.id } });
         receiptNote = `the receipt email failed (${e.message})`;
       }
 

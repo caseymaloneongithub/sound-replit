@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { StaffLayout } from "@/components/staff/staff-layout";
@@ -29,6 +29,14 @@ type OpsEvent = {
   acknowledgedAt: string | null;
 };
 
+/** One page from the server; `total` and `openAlerts` arrive with the first page only. */
+type EventsPage = {
+  events: OpsEvent[];
+  nextCursor: string | null;
+  total: number | null;
+  openAlerts: number | null;
+};
+
 const SEVERITY_STYLE: Record<OpsEvent["severity"], string> = {
   alert: "bg-red-100 text-red-800 border-red-200",
   warn: "bg-amber-100 text-amber-800 border-amber-200",
@@ -48,7 +56,21 @@ export default function AdminOpsEvents() {
   if (severity !== "all") params.set("severity", severity);
   if (openOnly) params.set("open", "true");
   const url = `/api/admin/ops-events?${params.toString()}`;
-  const { data: events = [], isLoading, isError } = useQuery<OpsEvent[]>({ queryKey: [url] });
+  // Pages are keyed by the cursor of the last row shown, so a long window (a spam
+  // burst, a month of billing runs) is walked in full rather than cut off.
+  const { data, isLoading, isError, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery<EventsPage>({
+    queryKey: [url],
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }) => {
+      const res = await fetch(pageParam ? `${url}&before=${encodeURIComponent(String(pageParam))}` : url, { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${(await res.text()) || res.statusText}`);
+      return res.json();
+    },
+    getNextPageParam: (last) => last.nextCursor,
+  });
+  const events = data?.pages.flatMap((p) => p.events) ?? [];
+  const total = data?.pages[0]?.total ?? events.length;
+  const openAlerts = data?.pages[0]?.openAlerts ?? 0;
 
   const ack = useMutation({
     mutationFn: async (id: string) => apiRequest("POST", `/api/admin/ops-events/${id}/acknowledge`),
@@ -57,8 +79,6 @@ export default function AdminOpsEvents() {
     },
     onError: (e: any) => toast({ title: "Couldn't acknowledge", description: e.message, variant: "destructive" }),
   });
-
-  const openAlerts = events.filter((e) => e.severity === "alert" && !e.acknowledgedAt).length;
 
   return (
     <StaffLayout>
@@ -97,7 +117,9 @@ export default function AdminOpsEvents() {
                 Unacknowledged only
               </label>
             </div>
-            <CardDescription className="pt-2">{events.length} event{events.length === 1 ? "" : "s"}</CardDescription>
+            <CardDescription className="pt-2" data-testid="text-event-count">
+              {total} event{total === 1 ? "" : "s"}{events.length < total ? ` · showing ${events.length}` : ""}
+            </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             {isLoading ? (
@@ -133,6 +155,14 @@ export default function AdminOpsEvents() {
                   </li>
                 ))}
               </ul>
+            )}
+            {hasNextPage && (
+              <div className="border-t p-3 text-center">
+                <Button variant="outline" size="sm" onClick={() => fetchNextPage()} disabled={isFetchingNextPage} data-testid="button-load-more">
+                  {isFetchingNextPage ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                  Show older events
+                </Button>
+              </div>
             )}
           </CardContent>
         </Card>

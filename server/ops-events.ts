@@ -74,17 +74,48 @@ async function sendAlertEmail(id: string, input: OpsEventInput): Promise<void> {
   });
 }
 
-export async function listEvents(opts: { since?: Date; severity?: OpsSeverity; openOnly?: boolean; limit?: number }) {
+export type EventFilter = { since?: Date; severity?: OpsSeverity; openOnly?: boolean };
+/** Keyset cursor: the last row of the previous page (newest-first order). */
+export type EventCursor = { createdAt: Date; id: string };
+
+function filterConds(opts: EventFilter) {
   const conds = [];
   if (opts.since) conds.push(gte(opsEvents.createdAt, opts.since));
   if (opts.severity) conds.push(eq(opsEvents.severity, opts.severity));
   if (opts.openOnly) conds.push(isNull(opsEvents.acknowledgedAt));
+  return conds;
+}
+
+/** One page, newest first. Pass the last row back as `before` for the next page. */
+export async function listEvents(opts: EventFilter & { limit?: number; before?: EventCursor }) {
+  const conds = filterConds(opts);
+  if (opts.before) {
+    conds.push(sql`(${opsEvents.createdAt}, ${opsEvents.id}) < (${opts.before.createdAt}, ${opts.before.id})`);
+  }
   return db
     .select()
     .from(opsEvents)
     .where(conds.length ? and(...conds) : undefined)
-    .orderBy(desc(opsEvents.createdAt))
+    .orderBy(desc(opsEvents.createdAt), desc(opsEvents.id))
     .limit(Math.min(500, opts.limit ?? 200));
+}
+
+/** How many events match — the page shows this, not the size of the page it loaded. */
+export async function countEvents(opts: EventFilter): Promise<number> {
+  const conds = filterConds(opts);
+  const [{ n }] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(opsEvents)
+    .where(conds.length ? and(...conds) : undefined);
+  return n;
+}
+
+export async function countOpenAlerts(): Promise<number> {
+  const [{ n }] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(opsEvents)
+    .where(and(eq(opsEvents.severity, "alert"), isNull(opsEvents.acknowledgedAt)));
+  return n;
 }
 
 export async function acknowledgeEvent(id: string, userId: string): Promise<boolean> {
@@ -96,23 +127,36 @@ export async function acknowledgeEvent(id: string, userId: string): Promise<bool
   return !!row;
 }
 
-/** The last 24 hours, grouped by kind, as a super admin would want to read it. */
+const DIGEST_SAMPLE = 8;
+
+/** The last 24 hours, grouped by kind, as a super admin would want to read it.
+ *  Counts and worst severity come from the WHOLE window (a burst of spam drops
+ *  must not push a billing failure out of the digest); only the newest few
+ *  messages per kind are quoted. */
 export async function buildDigest(now = new Date()): Promise<{ subject: string; lines: string[]; text: string; total: number }> {
   const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const rows = await listEvents({ since, limit: 500 });
-  const [{ openAlerts }] = await db
-    .select({ openAlerts: sql<number>`count(*)::int` })
-    .from(opsEvents)
-    .where(and(eq(opsEvents.severity, "alert"), isNull(opsEvents.acknowledgedAt)));
+  const result = await db.execute(sql`
+    SELECT kind, severity, message, rn, kind_count, worst, total FROM (
+      SELECT kind, severity, message,
+             row_number() OVER (PARTITION BY kind ORDER BY created_at DESC, id DESC) AS rn,
+             count(*) OVER (PARTITION BY kind)::int AS kind_count,
+             min(CASE severity WHEN 'alert' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END) OVER (PARTITION BY kind) AS worst,
+             count(*) OVER ()::int AS total
+      FROM ops_events
+      WHERE created_at >= ${since}
+    ) t
+    WHERE rn <= ${DIGEST_SAMPLE}
+    ORDER BY worst, kind_count DESC, kind, rn`);
+  const rows = result.rows as Array<{ kind: string; severity: string; message: string; rn: number; kind_count: number; worst: number; total: number }>;
+  const total = rows[0]?.total ?? 0;
+  const openAlerts = await countOpenAlerts();
 
-  const byKind = new Map<string, typeof rows>();
-  for (const r of rows) byKind.set(r.kind, [...(byKind.get(r.kind) ?? []), r]);
-  const order = { alert: 0, warn: 1, info: 2 } as Record<string, number>;
-  const kinds = Array.from(byKind.entries()).sort((a, b) => {
-    const sa = Math.min(...a[1].map((r) => order[r.severity] ?? 9));
-    const sb = Math.min(...b[1].map((r) => order[r.severity] ?? 9));
-    return sa - sb || b[1].length - a[1].length;
-  });
+  const kinds: Array<{ kind: string; count: number; worst: number; sample: string[] }> = [];
+  for (const r of rows) {
+    const last = kinds[kinds.length - 1];
+    if (last && last.kind === r.kind) last.sample.push(r.message);
+    else kinds.push({ kind: r.kind, count: Number(r.kind_count), worst: Number(r.worst), sample: [r.message] });
+  }
 
   const lines: string[] = [];
   const textLines: string[] = [];
@@ -120,20 +164,20 @@ export async function buildDigest(now = new Date()): Promise<{ subject: string; 
     lines.push(`<strong style="color:#b45309;">${openAlerts} alert${openAlerts === 1 ? "" : "s"} still open</strong> — acknowledge them on the events page once handled.`);
     textLines.push(`${openAlerts} alert(s) still open.`);
   }
-  for (const [kind, list] of kinds) {
-    const worst = list.reduce((w, r) => (order[r.severity] < order[w] ? r.severity : w), "info" as string);
-    const tag = worst === "alert" ? "ALERT" : worst === "warn" ? "warn" : "info";
-    lines.push(`<p style="margin:12px 0 4px;"><strong>${escapeHtml(kind)}</strong> — ${list.length} <span style="color:#6b7280;">(${tag})</span></p><ul style="margin:0;padding-left:18px;">${list.slice(0, 8).map((r) => `<li>${escapeHtml(r.message)}</li>`).join("")}${list.length > 8 ? `<li>… and ${list.length - 8} more</li>` : ""}</ul>`);
-    textLines.push(`${kind} — ${list.length} (${tag})`, ...list.slice(0, 8).map((r) => `  - ${r.message}`), ...(list.length > 8 ? [`  … and ${list.length - 8} more`] : []));
+  for (const { kind, count, worst, sample } of kinds) {
+    const tag = worst === 0 ? "ALERT" : worst === 1 ? "warn" : "info";
+    const more = count - sample.length;
+    lines.push(`<p style="margin:12px 0 4px;"><strong>${escapeHtml(kind)}</strong> — ${count} <span style="color:#6b7280;">(${tag})</span></p><ul style="margin:0;padding-left:18px;">${sample.map((m) => `<li>${escapeHtml(m)}</li>`).join("")}${more > 0 ? `<li>… and ${more} more</li>` : ""}</ul>`);
+    textLines.push(`${kind} — ${count} (${tag})`, ...sample.map((m) => `  - ${m}`), ...(more > 0 ? [`  … and ${more} more`] : []));
   }
-  if (rows.length === 0) {
+  if (total === 0) {
     lines.push("A quiet day: nothing recorded in the last 24 hours.");
     textLines.push("A quiet day: nothing recorded in the last 24 hours.");
   }
   lines.push(`<a href="${APP_URL}/admin/ops-events">Open the events page</a>`);
   textLines.push("", `${APP_URL}/admin/ops-events`);
   const day = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: PICKUP_POLICY.timezone });
-  return { subject: `Site digest — ${day}: ${rows.length} event${rows.length === 1 ? "" : "s"}${openAlerts ? `, ${openAlerts} open alert${openAlerts === 1 ? "" : "s"}` : ""}`, lines, text: textLines.join("\n"), total: rows.length };
+  return { subject: `Site digest — ${day}: ${total} event${total === 1 ? "" : "s"}${openAlerts ? `, ${openAlerts} open alert${openAlerts === 1 ? "" : "s"}` : ""}`, lines, text: textLines.join("\n"), total };
 }
 
 export async function sendDailyDigest(): Promise<void> {

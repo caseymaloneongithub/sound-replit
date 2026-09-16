@@ -356,35 +356,56 @@ export async function runRetailRefund(stripe: RefundGateway, orderId: string, ki
     throw error;
   }
 
-  await db.transaction(async (tx) => {
-    const [order] = await tx.select().from(retailOrders).where(eq(retailOrders.id, orderId)).for("update");
-    const refundId = refund!.id;
-    const [settled] = await tx
-      .update(retailOrderRefunds)
-      .set({ status: "done", stripeRefundId: refundId, completedAt: new Date() })
-      .where(and(eq(retailOrderRefunds.id, op.row.id), eq(retailOrderRefunds.status, "pending")))
-      .returning();
-    if (!settled || !order) return; // a concurrent call settled it first
-    const patch: Partial<typeof retailOrders.$inferInsert> = {
-      amountPaid: Math.max(0, money(effectiveAmountPaid(order) - amount)).toFixed(2),
-      updatedAt: new Date(),
-    };
-    if (op.row.kind === "deposit") {
-      patch.depositRefundedAt = new Date();
-      patch.depositRefundedByUserId = byUserId;
-    } else {
-      patch.notes = `${order.notes ? order.notes + " — " : ""}Refunded $${amount.toFixed(2)} difference after edit (${new Date().toLocaleDateString("en-US")})`;
-    }
-    await tx.update(retailOrders).set(patch).where(eq(retailOrders.id, orderId));
-    console.log(`[RETAIL REFUND] ${op.row.kind} $${amount.toFixed(2)} on ${order.orderNumber}: ${refundId}${op.reconciled ? " (reconciled)" : ""}`);
+  const refundId = refund!.id;
+  // The success event is recorded only after the bookkeeping COMMITS: Stripe has
+  // the money moved either way, but "settled" in Site Events must mean the order
+  // says so too. A failed commit is its own alert and leaves the operation
+  // pending, where the next attempt reconciles it against Stripe.
+  let orderNumber: string | null = null;
+  try {
+    orderNumber = await db.transaction(async (tx) => {
+      const [order] = await tx.select().from(retailOrders).where(eq(retailOrders.id, orderId)).for("update");
+      const [settled] = await tx
+        .update(retailOrderRefunds)
+        .set({ status: "done", stripeRefundId: refundId, completedAt: new Date() })
+        .where(and(eq(retailOrderRefunds.id, op.row.id), eq(retailOrderRefunds.status, "pending")))
+        .returning();
+      if (!settled || !order) return null; // a concurrent call settled it first
+      const patch: Partial<typeof retailOrders.$inferInsert> = {
+        amountPaid: Math.max(0, money(effectiveAmountPaid(order) - amount)).toFixed(2),
+        updatedAt: new Date(),
+      };
+      if (op.row.kind === "deposit") {
+        patch.depositRefundedAt = new Date();
+        patch.depositRefundedByUserId = byUserId;
+      } else {
+        patch.notes = `${order.notes ? order.notes + " — " : ""}Refunded $${amount.toFixed(2)} difference after edit (${new Date().toLocaleDateString("en-US")})`;
+      }
+      await tx.update(retailOrders).set(patch).where(eq(retailOrders.id, orderId));
+      return order.orderNumber;
+    });
+  } catch (error: any) {
+    console.error(`[RETAIL REFUND] ${op.row.kind} $${amount.toFixed(2)} refunded in Stripe (${refundId}) but bookkeeping failed: ${error?.message}`);
     void recordEvent({
-      severity: op.reconciled ? "warn" : "info",
-      kind: op.reconciled ? "refund.reconciled" : "refund.settled",
-      message: `${op.row.kind} refund of $${amount.toFixed(2)} on ${order.orderNumber}${op.reconciled ? " — completed an earlier operation whose bookkeeping had failed" : ""}`,
+      severity: "alert",
+      kind: "refund.bookkeeping_failed",
+      message: `${op.row.kind} refund of $${amount.toFixed(2)} went through in Stripe but the order wasn't updated — left pending for reconciliation: ${error?.message ?? "unknown error"}`,
       detail: { operationId: op.row.id, stripeRefundId: refundId },
       ref: { type: "retail_order", id: orderId },
     });
-  });
+    throw error;
+  }
 
-  return { refundId: refund!.id, amount, kind: op.row.kind as RefundKind, reconciled: op.reconciled };
+  if (orderNumber) {
+    console.log(`[RETAIL REFUND] ${op.row.kind} $${amount.toFixed(2)} on ${orderNumber}: ${refundId}${op.reconciled ? " (reconciled)" : ""}`);
+    void recordEvent({
+      severity: op.reconciled ? "warn" : "info",
+      kind: op.reconciled ? "refund.reconciled" : "refund.settled",
+      message: `${op.row.kind} refund of $${amount.toFixed(2)} on ${orderNumber}${op.reconciled ? " — completed an earlier operation whose bookkeeping had failed" : ""}`,
+      detail: { operationId: op.row.id, stripeRefundId: refundId },
+      ref: { type: "retail_order", id: orderId },
+    });
+  }
+
+  return { refundId, amount, kind: op.row.kind as RefundKind, reconciled: op.reconciled };
 }

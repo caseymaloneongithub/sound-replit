@@ -66,9 +66,18 @@ export async function geocodeForEdit(
   return (await geocodeWriteFor(next)) ?? CLEARED_PIN;
 }
 
-/** Geocode one stored location and persist the result. */
+/**
+ * Geocode one stored location and persist the result. A failed lookup clears
+ * whatever pin was there: the rows this revisits carry a guess from an
+ * incomplete address, and a guess that couldn't be confirmed must not stay
+ * routable. The location shows "Needs Geocoding" until the next run places it.
+ */
 export async function refreshLocationPin(loc: WholesaleLocation): Promise<GeocodeWrite | null> {
   const write = await geocodeWriteFor(loc);
-  if (write) await storage.updateWholesaleLocation(loc.id, write);
+  if (write) {
+    await storage.updateWholesaleLocation(loc.id, write);
+  } else if (loc.latitude != null || loc.longitude != null) {
+    await storage.updateWholesaleLocation(loc.id, CLEARED_PIN);
+  }
   return write;
 }
