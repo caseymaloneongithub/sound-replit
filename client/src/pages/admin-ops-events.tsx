@@ -58,7 +58,7 @@ export default function AdminOpsEvents() {
   const url = `/api/admin/ops-events?${params.toString()}`;
   // Pages are keyed by the cursor of the last row shown, so a long window (a spam
   // burst, a month of billing runs) is walked in full rather than cut off.
-  const { data, isLoading, isError, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery<EventsPage>({
+  const { data, isLoading, isError, isFetching, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery<EventsPage>({
     queryKey: [url],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) => {
@@ -68,6 +68,10 @@ export default function AdminOpsEvents() {
     },
     getNextPageParam: (last) => last.nextCursor,
   });
+  // One request at a time against this list: fetching the next page would cancel
+  // the refetch an acknowledgement triggers (and vice versa), leaving the row and
+  // the open-alert count stale. Both controls wait for whichever is in flight.
+  const busy = isFetching;
   const events = data?.pages.flatMap((p) => p.events) ?? [];
   const total = data?.pages[0]?.total ?? events.length;
   const openAlerts = data?.pages[0]?.openAlerts ?? 0;
@@ -147,7 +151,7 @@ export default function AdminOpsEvents() {
                         )}
                       </div>
                       {e.severity === "alert" && !e.acknowledgedAt && (
-                        <Button size="sm" variant="outline" onClick={() => ack.mutate(e.id)} disabled={ack.isPending} data-testid={`button-ack-${e.id}`}>
+                        <Button size="sm" variant="outline" onClick={() => ack.mutate(e.id)} disabled={ack.isPending || busy} data-testid={`button-ack-${e.id}`}>
                           <Check className="w-3.5 h-3.5 mr-1" /> Acknowledge
                         </Button>
                       )}
@@ -158,7 +162,7 @@ export default function AdminOpsEvents() {
             )}
             {hasNextPage && (
               <div className="border-t p-3 text-center">
-                <Button variant="outline" size="sm" onClick={() => fetchNextPage()} disabled={isFetchingNextPage} data-testid="button-load-more">
+                <Button variant="outline" size="sm" onClick={() => fetchNextPage()} disabled={busy || ack.isPending} data-testid="button-load-more">
                   {isFetchingNextPage ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
                   Show older events
                 </Button>

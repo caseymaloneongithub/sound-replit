@@ -6586,9 +6586,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const days = Math.min(90, Math.max(1, Number(req.query.days ?? 7) || 7));
       const severity = ['info', 'warn', 'alert'].includes(String(req.query.severity)) ? (String(req.query.severity) as 'info' | 'warn' | 'alert') : undefined;
       const filter = { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000), severity, openOnly: req.query.open === 'true' };
-      // Keyset paging: `before` is "<createdAt ISO>|<id>" of the last row shown.
-      const [beforeAt, beforeId] = String(req.query.before ?? '').split('|');
-      const before = beforeAt && beforeId && !isNaN(Date.parse(beforeAt)) ? { createdAt: new Date(beforeAt), id: beforeId } : undefined;
+      // Keyset paging: `before` is the id of the last row shown (its timestamp is
+      // read back in SQL at full precision — see EventCursor).
+      const before = typeof req.query.before === 'string' && /^[0-9a-f-]{36}$/i.test(req.query.before) ? req.query.before : undefined;
       const PAGE = 100;
       const [page, total, openAlerts] = await Promise.all([
         listEvents({ ...filter, before, limit: PAGE + 1 }),
@@ -6599,7 +6599,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const last = events[events.length - 1];
       res.json({
         events,
-        nextCursor: page.length > PAGE && last ? `${last.createdAt.toISOString()}|${last.id}` : null,
+        nextCursor: page.length > PAGE && last ? last.id : null,
         total,
         openAlerts,
       });

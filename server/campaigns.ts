@@ -655,6 +655,11 @@ async function runCampaignSteps(campaignId: string): Promise<void> {
       return;
     } catch (error: any) {
       console.error(`[CAMPAIGN] ${campaignId}: could not mark done (attempt ${attempt}): ${error?.message}`);
+      if (attempt === 5) {
+        // Every recipient is settled but the campaign still says 'sending' —
+        // the wrapper in runCampaign turns this into the stalled alert.
+        throw new Error(`could not mark the campaign done after ${attempt} attempts: ${error?.message ?? 'unknown error'}`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt));
     }
   }

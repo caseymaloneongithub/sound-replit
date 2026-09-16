@@ -75,8 +75,11 @@ async function sendAlertEmail(id: string, input: OpsEventInput): Promise<void> {
 }
 
 export type EventFilter = { since?: Date; severity?: OpsSeverity; openOnly?: boolean };
-/** Keyset cursor: the last row of the previous page (newest-first order). */
-export type EventCursor = { createdAt: Date; id: string };
+/** Keyset cursor: the id of the last row of the previous page (newest-first
+ *  order). Its created_at is read back inside the query — the driver hands the
+ *  app milliseconds while Postgres keeps microseconds, so a timestamp that made
+ *  the round trip through JSON would skip rows sharing the same millisecond. */
+export type EventCursor = string;
 
 function filterConds(opts: EventFilter) {
   const conds = [];
@@ -90,7 +93,7 @@ function filterConds(opts: EventFilter) {
 export async function listEvents(opts: EventFilter & { limit?: number; before?: EventCursor }) {
   const conds = filterConds(opts);
   if (opts.before) {
-    conds.push(sql`(${opsEvents.createdAt}, ${opsEvents.id}) < (${opts.before.createdAt}, ${opts.before.id})`);
+    conds.push(sql`(${opsEvents.createdAt}, ${opsEvents.id}) < (SELECT c.created_at, c.id FROM ops_events c WHERE c.id = ${opts.before})`);
   }
   return db
     .select()
