@@ -8402,11 +8402,17 @@ If you have any questions, please don't hesitate to reach out!`,
 
       let updated = order;
 
+      // The order editor's fields (fulfillment, PO, notes, items) are VALIDATED
+      // first and WRITTEN together in one transaction below — a rejected item
+      // used to leave a half-saved destination behind.
+      const editFields: { fulfillmentMethod?: 'delivery' | 'pickup'; locationId?: string | null; poNumber?: string | null; notes?: string | null } = {};
+
       // Delivery <-> pickup, or a different store, after the fact (owner,
       // 2026-09-16). Same rule as placing an order: pickup carries no location,
-      // delivery must name one of this customer's. Runs BEFORE the items block so
-      // a re-priced line uses the new store's price override. Allowed on a paid
-      // invoice — where the cases go doesn't change what was charged.
+      // delivery must name one of this customer's — and a store being newly
+      // assigned must be active (keeping an order on its current, since-retired
+      // store is fine). Allowed on a paid invoice: where the cases go doesn't
+      // change what was charged.
       let effectiveLocationId: string | null = order.locationId ?? null;
       if (fulfillmentMethod !== undefined || locationId !== undefined) {
         const method = fulfillmentMethod === undefined
@@ -8422,10 +8428,14 @@ If you have any questions, please don't hesitate to reach out!`,
           if (!loc || loc.customerId !== order.customerId) {
             return res.status(400).json({ message: "That location doesn't belong to this customer." });
           }
+          if (!loc.isActive && loc.id !== order.locationId) {
+            return res.status(400).json({ message: `${loc.locationName} is inactive — reactivate it under Customers, or choose another location.` });
+          }
           effectiveLocationId = loc.id;
         }
         if (method !== order.fulfillmentMethod || effectiveLocationId !== (order.locationId ?? null)) {
-          updated = await storage.updateWholesaleOrder(req.params.id, { fulfillmentMethod: method, locationId: effectiveLocationId }) || updated;
+          editFields.fulfillmentMethod = method;
+          editFields.locationId = effectiveLocationId;
         }
       }
 
@@ -8465,16 +8475,15 @@ If you have any questions, please don't hesitate to reach out!`,
 
       // PO number is editable after the fact — accounts often supply it late.
       if (poNumber !== undefined) {
-        const value = typeof poNumber === 'string' && poNumber.trim() ? poNumber.trim().slice(0, 50) : null;
-        updated = await storage.updateWholesaleOrder(req.params.id, { poNumber: value }) || updated;
+        editFields.poNumber = typeof poNumber === 'string' && poNumber.trim() ? poNumber.trim().slice(0, 50) : null;
       }
 
-      // Handle notes update
       if (notes !== undefined) {
-        updated = await storage.updateWholesaleOrder(req.params.id, { notes: notes || null }) || updated;
+        editFields.notes = notes || null;
       }
 
-      // Handle order items update (replace all items)
+      // Order items (replace all) — validated here, written in the transaction below.
+      let validatedItems: Array<{ unitTypeId: string; flavorId: string; quantity: number; unitPrice: string }> | undefined;
       if (items && Array.isArray(items)) {
         // Same payment locks as the invoice line editor — this endpoint used to
         // bypass them, letting a paid invoice's items (and total) be rewritten.
@@ -8498,8 +8507,7 @@ If you have any questions, please don't hesitate to reach out!`,
         // the existing lines are deleted — a fractional quantity or unknown
         // flavor used to pass this loop and then fail at the database AFTER the
         // delete, stranding the order itemless.
-        let newTotal = 0;
-        const validatedItems: Array<{ unitTypeId: string; flavorId: string; quantity: number; unitPrice: string }> = [];
+        validatedItems = [];
 
         for (const item of items) {
           if (!item.unitTypeId || !item.flavorId || !item.quantity || item.quantity <= 0) {
@@ -8526,31 +8534,23 @@ If you have any questions, please don't hesitate to reach out!`,
             quantity: item.quantity,
             unitPrice: unitPrice.toString(),
           });
-
-          newTotal += unitPrice * item.quantity;
         }
-
-        // Delete existing items
-        await storage.deleteWholesaleOrderItems(req.params.id);
-
-        // Create new items
-        for (const item of validatedItems) {
-          await storage.createWholesaleOrderItem({
-            orderId: req.params.id,
-            unitTypeId: item.unitTypeId,
-            flavorId: item.flavorId,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-          });
-        }
-
-        // Recompute the total through the shared path so invoice ADJUSTMENTS
-        // survive — summing just the items silently dropped them from the total.
-        await storage.recomputeWholesaleOrderTotal(req.params.id);
-        updated = await storage.getWholesaleOrder(req.params.id) || updated;
       }
 
-      res.json({ ...updated, stockWarnings });
+      // Everything validated — write the editor's fields and lines as one unit.
+      if (Object.keys(editFields).length || validatedItems) {
+        updated = await storage.saveWholesaleOrderEdit(req.params.id, { fields: editFields, lines: validatedItems }) || updated;
+      }
+
+      // A saved route that drove to this order is no longer right once the order
+      // is a pickup, goes to a different store, or moves to another day: the
+      // packet and the stored directions both point at the old stop. Clear it
+      // and let the Routes page rebuild.
+      const destinationChanged = editFields.fulfillmentMethod !== undefined || editFields.locationId !== undefined;
+      const dateChanged = deliveryDate !== undefined;
+      const routesCleared = destinationChanged || dateChanged ? await storage.deleteRoutesContainingOrder(req.params.id) : 0;
+
+      res.json({ ...updated, stockWarnings, routesCleared });
     } catch (error: any) {
       res.status(500).json({ message: "Error updating order: " + error.message });
     }

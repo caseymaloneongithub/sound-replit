@@ -187,19 +187,24 @@ export default function WholesaleOrders() {
   };
 
   const updateOrderMutation = useMutation({
-    mutationFn: async ({ orderId, items, notes, poNumber, fulfillmentMethod, locationId }: { orderId: string; items: EditItem[]; notes: string; poNumber: string; fulfillmentMethod: 'delivery' | 'pickup'; locationId: string | null }) => {
+    mutationFn: async ({ orderId, items, notes, poNumber, fulfillmentMethod, locationId }: { orderId: string; items?: EditItem[]; notes: string; poNumber: string; fulfillmentMethod: 'delivery' | 'pickup'; locationId: string | null }) => {
       return await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, {
-        items,
+        // Lines go only when they changed: a paid invoice's lines are locked, and
+        // sending them back unchanged would block a fulfillment-only edit.
+        ...(items ? { items } : {}),
         notes: notes || null,
         poNumber: poNumber.trim() || null,
         fulfillmentMethod,
         locationId,
       });
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
+      const cleared = Number(data?.routesCleared ?? 0);
       toast({
         title: "Order Updated",
-        description: "Order has been updated successfully",
+        description: cleared > 0
+          ? "Order saved. A saved delivery route included this order and was cleared — optimize that day again on the Routes page."
+          : "Order has been updated successfully",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/all-order-items"] });
@@ -289,9 +294,13 @@ export default function WholesaleOrders() {
       });
       return;
     }
+    const lineKey = (l: { unitTypeId: string | null; flavorId: string | null; quantity: number }) => `${l.unitTypeId}|${l.flavorId}|${l.quantity}`;
+    const itemsChanged =
+      validItems.length !== orderItems.length ||
+      validItems.map(lineKey).sort().join('\n') !== orderItems.map(lineKey).sort().join('\n');
     updateOrderMutation.mutate({
       orderId: selectedOrderId,
-      items: validItems,
+      items: itemsChanged ? validItems : undefined,
       notes: editNotes,
       poNumber: editPoNumber,
       fulfillmentMethod: editFulfillment,
@@ -930,12 +939,18 @@ export default function WholesaleOrders() {
                             <SelectValue placeholder="Choose a location" />
                           </SelectTrigger>
                           <SelectContent>
-                            {customerLocations.map((loc) => (
-                              <SelectItem key={loc.id} value={loc.id}>{locationLabel(loc)}</SelectItem>
-                            ))}
+                            {/* Active stores only — plus the order's current one even if it has
+                                since been retired, so the picker can show what's set. */}
+                            {customerLocations
+                              .filter((loc) => loc.isActive || loc.id === selectedOrder.locationId)
+                              .map((loc) => (
+                                <SelectItem key={loc.id} value={loc.id}>
+                                  {locationLabel(loc)}{loc.isActive ? '' : ' (inactive)'}
+                                </SelectItem>
+                              ))}
                           </SelectContent>
                         </Select>
-                        {customerLocations.length === 0 && (
+                        {customerLocations.filter((loc) => loc.isActive).length === 0 && (
                           <p className="text-xs text-muted-foreground mt-1">This customer has no locations on file — add one under Customers, or set the order to pickup.</p>
                         )}
                       </div>

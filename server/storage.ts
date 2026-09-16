@@ -276,6 +276,12 @@ export interface IStorage {
     locationId?: string | null;
   }): Promise<WholesaleOrder | undefined>;
   
+  saveWholesaleOrderEdit(orderId: string, edit: {
+    fields?: { fulfillmentMethod?: 'delivery' | 'pickup'; locationId?: string | null; poNumber?: string | null; notes?: string | null };
+    lines?: Array<{ unitTypeId: string; flavorId: string; quantity: number; unitPrice: string }>;
+  }): Promise<WholesaleOrder | undefined>;
+  deleteRoutesContainingOrder(orderId: string): Promise<number>;
+
   getAllWholesalePricing(): Promise<WholesalePricing[]>;
   getWholesalePricing(customerId: string): Promise<WholesalePricing[]>;
   getWholesalePrice(customerId: string, productTypeId: string): Promise<WholesalePricing | undefined>;
@@ -3068,6 +3074,59 @@ export class PostgresStorage implements IStorage {
    * The single writer for totalAmount whenever adjustments change â€” callers never send a
    * client-computed total. Returns the new total.
    */
+  /**
+   * The order editor's save as ONE transaction (owner, 2026-09-16 review): the
+   * destination, PO, notes and the replaced lines commit together or not at all —
+   * a rejected line used to leave a half-saved destination behind. Identical
+   * lines are merged the way createWholesaleOrderItem merges them, and the total
+   * is recomputed through the same sum as recomputeWholesaleOrderTotal so invoice
+   * adjustments survive.
+   */
+  async saveWholesaleOrderEdit(orderId: string, edit: {
+    fields?: { fulfillmentMethod?: 'delivery' | 'pickup'; locationId?: string | null; poNumber?: string | null; notes?: string | null };
+    lines?: Array<{ unitTypeId: string; flavorId: string; quantity: number; unitPrice: string }>;
+  }): Promise<WholesaleOrder | undefined> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'wholesale_order_items:' + orderId}))`);
+      if (edit.fields && Object.keys(edit.fields).length) {
+        await tx.update(wholesaleOrders).set({ ...edit.fields, updatedAt: new Date() }).where(eq(wholesaleOrders.id, orderId));
+      }
+      if (edit.lines) {
+        await tx.delete(wholesaleOrderItems).where(eq(wholesaleOrderItems.orderId, orderId));
+        const merged = new Map<string, { unitTypeId: string; flavorId: string; quantity: number; unitPrice: string }>();
+        for (const line of edit.lines) {
+          const key = `${line.unitTypeId}|${line.flavorId}|${Number(line.unitPrice).toFixed(2)}`;
+          const seen = merged.get(key);
+          if (seen) seen.quantity += line.quantity;
+          else merged.set(key, { ...line });
+        }
+        if (merged.size) {
+          await tx.insert(wholesaleOrderItems).values(Array.from(merged.values()).map((line) => ({ orderId, ...line })));
+        }
+        const [row] = (await tx.execute(sql`
+          SELECT
+            COALESCE((SELECT SUM(quantity * unit_price) FROM wholesale_order_items WHERE order_id = ${orderId}), 0)
+            + COALESCE((SELECT SUM(amount) FROM wholesale_order_adjustments WHERE order_id = ${orderId}), 0)
+            AS total
+        `)).rows as Array<{ total: string }>;
+        await tx.update(wholesaleOrders).set({ totalAmount: Number(row.total).toFixed(2), updatedAt: new Date() }).where(eq(wholesaleOrders.id, orderId));
+      }
+      const [order] = await tx.select().from(wholesaleOrders).where(eq(wholesaleOrders.id, orderId));
+      return order;
+    });
+  }
+
+  /** Remove every saved route that had this order as a stop (stops cascade). Returns how many. */
+  async deleteRoutesContainingOrder(orderId: string): Promise<number> {
+    const routeIds = await db
+      .selectDistinct({ id: deliveryRouteStops.routeId })
+      .from(deliveryRouteStops)
+      .where(eq(deliveryRouteStops.wholesaleOrderId, orderId));
+    if (routeIds.length === 0) return 0;
+    await db.delete(deliveryRoutes).where(inArray(deliveryRoutes.id, routeIds.map((r) => r.id)));
+    return routeIds.length;
+  }
+
   async recomputeWholesaleOrderTotal(orderId: string): Promise<number> {
     const [row] = (await db.execute(sql`
       SELECT
