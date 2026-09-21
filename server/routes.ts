@@ -11759,23 +11759,36 @@ If you have any questions, please don't hesitate to reach out!`,
         if (!routedOrders.has(o.id)) skeleton.push({ type: 'order', id: o.id, latitude: null, longitude: null, distanceFromPrevious: null, durationFromPrevious: null, routed: false });
       }
 
+      // Navigation uses the stop's CURRENT pin — never the coordinates frozen in
+      // the saved route, which point at wherever the address was when the
+      // route was built. A pin that has moved since (or been cleared by an
+      // address correction) marks the stop so the driver knows the drive
+      // order and legs are stale; with no pin at all, the client navigates by
+      // the current address text.
+      const pinMoved = (s: Skeleton, lat: number | null, lng: number | null) =>
+        s.routed && s.latitude != null && s.longitude != null
+        && (lat == null || lng == null || Math.abs(lat - s.latitude) > 0.0005 || Math.abs(lng - s.longitude) > 0.0005);
+
       const stops: any[] = [];
       for (const s of skeleton) {
         if (s.type === 'custom') {
           const custom = await storage.getDeliveryStop(s.id);
           if (!custom) continue;
+          const lat = custom.latitude ? Number(custom.latitude) : null;
+          const lng = custom.longitude ? Number(custom.longitude) : null;
           stops.push({
             key: `custom:${custom.id}`,
             type: 'custom',
             id: custom.id,
             name: custom.name,
             address: [custom.address, custom.city].filter(Boolean).join(', '),
-            latitude: s.latitude ?? (custom.latitude ? Number(custom.latitude) : null),
-            longitude: s.longitude ?? (custom.longitude ? Number(custom.longitude) : null),
+            latitude: lat,
+            longitude: lng,
             notes: custom.notes ?? null,
             distanceFromPrevious: s.distanceFromPrevious,
             durationFromPrevious: s.durationFromPrevious,
             routed: s.routed,
+            addressChanged: pinMoved(s, lat, lng),
           });
           continue;
         }
@@ -11792,6 +11805,8 @@ If you have any questions, please don't hesitate to reach out!`,
           label: it.product.flavor ? `${it.product.flavor} — ${it.product.name}` : it.product.name,
           quantity: it.quantity,
         }));
+        const lat = location?.latitude ? Number(location.latitude) : null;
+        const lng = location?.longitude ? Number(location.longitude) : null;
         stops.push({
           key: `order:${order.id}`,
           type: 'order',
@@ -11799,8 +11814,9 @@ If you have any questions, please don't hesitate to reach out!`,
           invoiceNumber: order.invoiceNumber,
           name: storeName ? `${customer.businessName} — ${storeName}` : customer.businessName,
           address: location ? [location.address, location.city].filter(Boolean).join(', ') : null,
-          latitude: s.latitude ?? (location?.latitude ? Number(location.latitude) : null),
-          longitude: s.longitude ?? (location?.longitude ? Number(location.longitude) : null),
+          latitude: lat,
+          longitude: lng,
+          addressChanged: pinMoved(s, lat, lng),
           contactName: location?.contactName || customer.contactName || null,
           contactPhone: location?.contactPhone || customer.phone || null,
           deliveryInstructions: location?.deliveryInstructions ?? null,

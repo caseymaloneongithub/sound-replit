@@ -130,7 +130,9 @@ export default function DeliveryRoutes() {
   // optimized, reversed or reordered on one computer is what every other
   // computer — and this one after a reload — sees for that day. Each mutation
   // below writes its response into this cache so the two never disagree.
-  const dateKey = selectedDate.toISOString().split("T")[0];
+  // The calendar day as the person sees it — not the UTC date, which is already
+  // tomorrow from 5 p.m. Pacific and made an evening visit plan the wrong day.
+  const dateKey = format(selectedDate, "yyyy-MM-dd");
   const routeKeyFor = (day: string) => ["/api/delivery/routes/for-date", day];
   const { data: savedRoute, isLoading: savedRouteLoading } = useQuery<OptimizedRouteResponse & { route: OptimizedRouteResponse["route"] | null }>({
     queryKey: routeKeyFor(dateKey),
@@ -186,10 +188,10 @@ export default function DeliveryRoutes() {
   });
 
   const { data: deliveryOrders = [], isLoading: ordersLoading } = useQuery<EnrichedOrder[]>({
-    queryKey: ["/api/delivery/orders", selectedDate.toISOString().split("T")[0]],
+    queryKey: ["/api/delivery/orders", dateKey],
     queryFn: async () => {
       const response = await fetch(
-        `/api/delivery/orders/${selectedDate.toISOString().split("T")[0]}`
+        `/api/delivery/orders/${dateKey}`
       );
       if (!response.ok) throw new Error("Failed to fetch delivery orders");
       return response.json();
@@ -203,9 +205,9 @@ export default function DeliveryRoutes() {
 
   // Day's demand vs finished-goods stock — surfaces shortages BEFORE the route is built.
   const { data: stockCheck } = useQuery<{ rows: Array<{ label: string; needed: number; inStock: number | null; short: boolean }>; shortages: number }>({
-    queryKey: ["/api/delivery/stock-check", selectedDate.toISOString().split("T")[0]],
+    queryKey: ["/api/delivery/stock-check", dateKey],
     queryFn: async () => {
-      const response = await fetch(`/api/delivery/stock-check/${selectedDate.toISOString().split("T")[0]}`);
+      const response = await fetch(`/api/delivery/stock-check/${dateKey}`);
       if (!response.ok) throw new Error("Failed to check stock");
       return response.json();
     },

@@ -37,6 +37,9 @@ interface DriverStop {
   distanceFromPrevious: number | null;
   durationFromPrevious: number | null;
   routed: boolean;
+  // The address moved (or lost its pin) since the route was built: Navigate
+  // goes to the CURRENT address, but the drive order and legs are stale.
+  addressChanged: boolean;
   // order stops
   invoiceNumber?: string;
   contactName?: string | null;
@@ -92,12 +95,15 @@ const navigateUrl = (stop: DriverStop): string | null => {
     : null;
 };
 
-/** The remaining stops as one trip. Google Maps takes at most nine waypoints
- *  plus a destination, so a long day is handed over ten stops at a time. */
+/** The remaining stops as one trip. A Maps URL opened in a mobile BROWSER
+ *  honors only three waypoints plus the destination (the app takes nine), and
+ *  the browser is where the link lands when the app isn't installed — so the
+ *  day is handed over four stops at a time. */
+const TRIP_BATCH = 4;
 const remainingTripUrl = (stops: DriverStop[]): { url: string; count: number; total: number } | null => {
   const points = stops.map(destinationOf).filter((d): d is string => !!d);
   if (points.length === 0) return null;
-  const batch = points.slice(0, 10);
+  const batch = points.slice(0, TRIP_BATCH);
   const destination = batch[batch.length - 1];
   const waypoints = batch.slice(0, -1);
   const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}` +
@@ -125,7 +131,9 @@ function useLocalDone(dateKey: string) {
 export default function DriverMode() {
   const { toast } = useToast();
   const [selectedDate, setSelectedDate] = useSharedDeliveryDate();
-  const dateKey = selectedDate.toISOString().split("T")[0];
+  // The calendar day as the driver sees it. The UTC date is already tomorrow
+  // from 5 p.m. Pacific, which loaded the next day's stops under "Today".
+  const dateKey = format(selectedDate, "yyyy-MM-dd");
   const { done: localDone, toggle: toggleLocalDone } = useLocalDone(dateKey);
   const [confirming, setConfirming] = useState<DriverStop | null>(null);
 
@@ -139,7 +147,9 @@ export default function DriverMode() {
     mutationFn: async ({ orderId, status }: { orderId: string; status: "delivered" | "packaged" }) =>
       apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, { status }),
     onSuccess: (data: any, { status }) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/day", dateKey] });
+      // Every loaded day, not just the one on screen: the driver may have moved
+      // to another day while the save was in flight.
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/day"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
       const warnings: string[] = Array.isArray(data?.stockWarnings) ? data.stockWarnings : [];
       toast({
@@ -157,7 +167,7 @@ export default function DriverMode() {
     [stops, localDone],
   );
   const trip = useMemo(() => remainingTripUrl(remaining), [remaining]);
-  const isToday = dateKey === new Date().toISOString().split("T")[0];
+  const isToday = dateKey === format(new Date(), "yyyy-MM-dd");
 
   return (
     <div className="min-h-screen bg-background text-foreground pb-24">
@@ -247,6 +257,11 @@ export default function DriverMode() {
                               <Badge variant="outline" className="font-normal">+{miles(stop.distanceFromPrevious)} · {minutes(stop.durationFromPrevious)}</Badge>
                             )}
                             {!stop.routed && day.route && <Badge variant="secondary" className="font-normal">Added after the route was built</Badge>}
+                            {stop.addressChanged && (
+                              <Badge variant="outline" className="font-normal whitespace-normal text-left border-amber-400 text-amber-800 dark:text-amber-300" data-testid={`badge-address-changed-${stop.key}`}>
+                                Address changed since the route was built — re-optimize
+                              </Badge>
+                            )}
                             {stop.type === "order" && (
                               <Badge variant={stop.paid ? "secondary" : "outline"} className={stop.paid ? "font-normal" : "font-normal border-amber-400 text-amber-800 dark:text-amber-300"}>
                                 {stop.paid ? "Paid" : "Unpaid"}
