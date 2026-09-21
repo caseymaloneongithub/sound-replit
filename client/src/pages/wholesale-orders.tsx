@@ -46,6 +46,21 @@ interface EditItem {
   quantity: number;
 }
 
+/**
+ * What the save toast should add about saved delivery routes, from the order
+ * PATCH response: routesCleared > 0 = a route that drove to this order was
+ * deleted; null = the server couldn't check. Undefined when there's nothing to say.
+ */
+function routeNote(data: any): string | undefined {
+  if (data?.routesCleared === null) {
+    return "Saved, but saved delivery routes couldn't be checked — if the old day has a route, delete it and optimize again on the Routes page.";
+  }
+  if (Number(data?.routesCleared ?? 0) > 0) {
+    return "Saved. A saved delivery route included this order and was cleared — optimize that day again on the Routes page.";
+  }
+  return undefined;
+}
+
 export default function WholesaleOrders() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -131,10 +146,12 @@ export default function WholesaleOrders() {
         deliveryDate: date ? date.toISOString() : null 
       });
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
+      // A moved order leaves any saved route for its old day wrong; the server
+      // clears that route (routesCleared > 0) or says it couldn't check (null).
       toast({
         title: "Delivery Date Updated",
-        description: "Order delivery date has been updated successfully",
+        description: routeNote(data) ?? "Order delivery date has been updated successfully",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
     },
@@ -151,17 +168,24 @@ export default function WholesaleOrders() {
   // order gets the same due-date re-anchoring as a one-off date change.
   const bulkDeliveryDateMutation = useMutation({
     mutationFn: async ({ orderIds, date }: { orderIds: string[]; date: Date }) => {
+      const results: any[] = [];
       for (const orderId of orderIds) {
-        await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, {
+        results.push(await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, {
           deliveryDate: date.toISOString(),
-        });
+        }));
       }
-      return orderIds.length;
+      return results;
     },
-    onSuccess: (count, { date }) => {
+    onSuccess: (results, { date }) => {
+      const count = results.length;
+      const cleared = results.filter((r) => Number(r?.routesCleared ?? 0) > 0).map((r) => r?.invoiceNumber);
+      const unchecked = results.filter((r) => r?.routesCleared === null).map((r) => r?.invoiceNumber);
+      const notes: string[] = [];
+      if (cleared.length) notes.push(`Saved routes that included ${cleared.join(', ')} were cleared — optimize those days again on the Routes page.`);
+      if (unchecked.length) notes.push(`Saved routes couldn't be checked for ${unchecked.join(', ')} — if their old days have routes, delete and optimize again.`);
       toast({
         title: "Delivery day set",
-        description: `${count} ${count === 1 ? 'order' : 'orders'} scheduled for ${format(date, 'MMM d, yyyy')}.`,
+        description: `${count} ${count === 1 ? 'order' : 'orders'} scheduled for ${format(date, 'MMM d, yyyy')}.${notes.length ? ' ' + notes.join(' ') : ''}`,
       });
       setSelectedForBulk(new Set());
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
@@ -199,15 +223,9 @@ export default function WholesaleOrders() {
       });
     },
     onSuccess: (data: any) => {
-      // null = the server couldn't check saved routes; the order itself is saved.
-      const cleared = data?.routesCleared === null ? null : Number(data?.routesCleared ?? 0);
       toast({
         title: "Order Updated",
-        description: cleared === null
-          ? "Order saved, but saved delivery routes couldn't be checked — if this day has a route, delete it and optimize again on the Routes page."
-          : cleared > 0
-            ? "Order saved. A saved delivery route included this order and was cleared — optimize that day again on the Routes page."
-            : "Order has been updated successfully",
+        description: routeNote(data) ?? "Order has been updated successfully",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/all-order-items"] });

@@ -287,10 +287,17 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
     // Without the last two, staff saw "Product" or the same generic name for
     // different flavors (review, 2026-09-21).
     const flavorIds = Array.from(new Set(items.flatMap((item) => [item.selectedFlavorId, item.retailProduct?.flavorId]).filter((id): id is string => !!id)));
+    // The order is COMMITTED by now: a failed lookup here must not report the
+    // billing as failed (a retry would skip the emails again). Fall back to
+    // product names and let the emails go out.
     const flavorNames = new Map<string, string>();
     if (flavorIds.length) {
-      const rows = await db.select({ id: flavors.id, name: flavors.name }).from(flavors).where(inArray(flavors.id, flavorIds));
-      for (const r of rows) flavorNames.set(r.id, r.name);
+      try {
+        const rows = await db.select({ id: flavors.id, name: flavors.name }).from(flavors).where(inArray(flavors.id, flavorIds));
+        for (const r of rows) flavorNames.set(r.id, r.name);
+      } catch (lookupError: any) {
+        console.error(`[BILLING] Order ${orderNumber} created, but flavor names couldn't be read for its emails: ${lookupError?.message}`);
+      }
     }
     const flavorLabelFor = (item: (typeof items)[number]) => subscriptionLineFlavorLabel(item, flavorNames);
 
