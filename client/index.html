@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
     <link rel="icon" type="image/png" href="/favicon.png" />
+    <!-- Installable as a home-screen app (driver mode, owner 2026-09-22): the
+         manifest makes Android offer "Add to Home screen"; the apple-* tags do
+         the same job on iPhone, where Safari ignores the manifest's icons. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#ad5c29" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="PSK Driver" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>Puget Sound Kombucha Co. - Pacific Northwest Craft Kombucha</title>
     <meta name="description" content="Discover Puget Sound Kombucha Co.'s premium craft kombucha from the Pacific Northwest. Local pickup subscriptions and wholesale ordering available. Handcrafted with organic ingredients." />
     <link rel="preconnect" href="https://fonts.googleapis.com">

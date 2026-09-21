@@ -31,6 +31,7 @@ import {
   FileSpreadsheet,
   Send,
   Activity,
+  Navigation,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useNewContactCount } from "@/components/staff/contact-requests-panel";
@@ -126,6 +127,7 @@ export function StaffSidebar({ onLinkClick, headerAction }: StaffSidebarProps) {
       title: "Today",
       items: [
         { title: "Orders Board", href: "/staff-portal/orders-board", icon: CalendarDays },
+        { title: "Driver Mode", href: "/driver", icon: Navigation },
         { title: "Weekly Checklist", href: "/staff-portal/checklist", icon: ClipboardCheck, count: overdueCount },
       ],
     },

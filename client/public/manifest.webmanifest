@@ -1,0 +1,16 @@
+{
+  "name": "Puget Sound Kombucha Driver",
+  "short_name": "PSK Driver",
+  "description": "The delivery day: route, navigation, and marking stops delivered.",
+  "start_url": "/driver",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f6f6",
+  "theme_color": "#ad5c29",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -11374,18 +11374,19 @@ If you have any questions, please don't hesitate to reach out!`,
   app.get("/api/delivery/orders/:date", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { date } = req.params;
-      const targetDate = new Date(date);
-      
-      // Get all scheduled wholesale orders for this date
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ message: "Date must be YYYY-MM-DD" });
+      const [dayStart, dayEnd] = routeDayBounds(date);
+
+      // Get all scheduled wholesale orders for this date. The day is the UTC
+      // day the date names — the same window optimize stores the route under —
+      // rather than the server clock's calendar day, so it doesn't drift with
+      // the host's timezone (identical on Railway, which runs in UTC).
       const { orders } = await storage.getWholesaleOrders();
-      const scheduledOrders = orders.filter(order => {
-        if (!order.deliveryDate) return false;
-        const orderDate = new Date(order.deliveryDate);
-        return orderDate.toDateString() === targetDate.toDateString() &&
-               order.status !== 'cancelled' &&
-               // Pickups are collected at the brewery — never route a driver to them.
-               order.fulfillmentMethod !== 'pickup';
-      });
+      const scheduledOrders = orders.filter(order =>
+        isOnRouteDay(order.deliveryDate, dayStart, dayEnd) &&
+        order.status !== 'cancelled' &&
+        // Pickups are collected at the brewery — never route a driver to them.
+        order.fulfillmentMethod !== 'pickup');
 
       // Enrich orders with customer and location data
       const enrichedOrders = await Promise.all(
@@ -11661,6 +11662,13 @@ If you have any questions, please don't hesitate to reach out!`,
     return [start, new Date(start.getTime() + 24 * 60 * 60 * 1000)];
   }
 
+  /** Does a delivery date fall on the route day? */
+  function isOnRouteDay(deliveryDate: Date | string | null | undefined, dayStart: Date, dayEnd: Date): boolean {
+    if (!deliveryDate) return false;
+    const t = new Date(deliveryDate).getTime();
+    return t >= dayStart.getTime() && t < dayEnd.getTime();
+  }
+
   /** Who generated a saved route and when — shown so a second computer knows
    *  what it is looking at. */
   async function routeProvenance(route: any): Promise<{ generatedAt: string | null; generatedBy: string | null }> {
@@ -11709,6 +11717,128 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error("Error loading the day's route:", error);
       res.status(500).json({ message: "Error loading the day's route: " + error.message });
+    }
+  });
+
+  // ---- Driver mode (owner, 2026-09-22: a phone app for deliveries — see the
+  // route, tap a stop to navigate, mark it delivered). One call gives the day
+  // as the driver needs it: the saved route's stops in drive order (or, with
+  // no route yet, the day's deliveries), each with the address, who to ask
+  // for, what to unload, and where the order stands. ----
+  app.get("/api/driver/day/:date", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { date } = req.params;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ message: "Date must be YYYY-MM-DD" });
+      const [dayStart, dayEnd] = routeDayBounds(date);
+      const [route] = await db
+        .select()
+        .from(deliveryRoutes)
+        .where(and(gte(deliveryRoutes.routeDate, dayStart), lt(deliveryRoutes.routeDate, dayEnd)))
+        .orderBy(desc(deliveryRoutes.generatedAt))
+        .limit(1);
+
+      // The day's deliveries — the same set the Routes page plans from.
+      const { orders } = await storage.getWholesaleOrders();
+      const dayOrders = orders.filter((o) =>
+        isOnRouteDay(o.deliveryDate, dayStart, dayEnd)
+        && o.status !== 'cancelled' && o.fulfillmentMethod !== 'pickup');
+      const dayOrderIds = new Set(dayOrders.map((o) => o.id));
+
+      type Skeleton = { type: 'order' | 'custom'; id: string; latitude: number | null; longitude: number | null; distanceFromPrevious: number | null; durationFromPrevious: number | null; routed: boolean };
+      const skeleton: Skeleton[] = [];
+      if (route) {
+        const saved: any[] = JSON.parse(route.optimizedStops ?? '[]');
+        for (const s of saved) {
+          skeleton.push({ type: s.type === 'custom' ? 'custom' : 'order', id: String(s.id), latitude: s.latitude ?? null, longitude: s.longitude ?? null, distanceFromPrevious: s.distanceFromPrevious ?? null, durationFromPrevious: s.durationFromPrevious ?? null, routed: true });
+        }
+      }
+      // Deliveries scheduled since the route was built (or with no route at
+      // all) ride along at the end, marked unrouted so the driver knows.
+      const routedOrders = new Set(skeleton.filter((s) => s.type === 'order').map((s) => s.id));
+      for (const o of dayOrders) {
+        if (!routedOrders.has(o.id)) skeleton.push({ type: 'order', id: o.id, latitude: null, longitude: null, distanceFromPrevious: null, durationFromPrevious: null, routed: false });
+      }
+
+      const stops: any[] = [];
+      for (const s of skeleton) {
+        if (s.type === 'custom') {
+          const custom = await storage.getDeliveryStop(s.id);
+          if (!custom) continue;
+          stops.push({
+            key: `custom:${custom.id}`,
+            type: 'custom',
+            id: custom.id,
+            name: custom.name,
+            address: [custom.address, custom.city].filter(Boolean).join(', '),
+            latitude: s.latitude ?? (custom.latitude ? Number(custom.latitude) : null),
+            longitude: s.longitude ?? (custom.longitude ? Number(custom.longitude) : null),
+            notes: custom.notes ?? null,
+            distanceFromPrevious: s.distanceFromPrevious,
+            durationFromPrevious: s.durationFromPrevious,
+            routed: s.routed,
+          });
+          continue;
+        }
+        // An order stop whose order was cancelled, moved to another day or
+        // deleted since the route was built is left out — that route is stale
+        // for it, and the driver shouldn't drive there.
+        if (!dayOrderIds.has(s.id)) continue;
+        const details = await storage.getWholesaleOrderWithDetails(s.id);
+        if (!details) continue;
+        const { order, customer, items } = details;
+        const location = order.locationId ? await storage.getWholesaleLocation(order.locationId) : null;
+        const storeName = location?.locationName && location.locationName !== 'Main Location' ? location.locationName : null;
+        const lines = items.map((it) => ({
+          label: it.product.flavor ? `${it.product.flavor} — ${it.product.name}` : it.product.name,
+          quantity: it.quantity,
+        }));
+        stops.push({
+          key: `order:${order.id}`,
+          type: 'order',
+          id: order.id,
+          invoiceNumber: order.invoiceNumber,
+          name: storeName ? `${customer.businessName} — ${storeName}` : customer.businessName,
+          address: location ? [location.address, location.city].filter(Boolean).join(', ') : null,
+          latitude: s.latitude ?? (location?.latitude ? Number(location.latitude) : null),
+          longitude: s.longitude ?? (location?.longitude ? Number(location.longitude) : null),
+          contactName: location?.contactName || customer.contactName || null,
+          contactPhone: location?.contactPhone || customer.phone || null,
+          deliveryInstructions: location?.deliveryInstructions ?? null,
+          orderNotes: order.notes ?? null,
+          poNumber: (order as any).poNumber ?? null,
+          status: order.status,
+          paid: !!order.paidAt,
+          total: Number(order.totalAmount),
+          lines,
+          cases: lines.reduce((n, l) => n + l.quantity, 0),
+          distanceFromPrevious: s.distanceFromPrevious,
+          durationFromPrevious: s.durationFromPrevious,
+          routed: s.routed,
+        });
+      }
+
+      const deliveries = stops.filter((s) => s.type === 'order');
+      res.json({
+        date,
+        route: route
+          ? {
+              id: route.id,
+              totalDistanceMeters: route.totalDistanceMeters,
+              totalDurationSeconds: route.totalDurationSeconds,
+              ...routeEndpoints(route),
+              ...(await routeProvenance(route)),
+            }
+          : null,
+        stops,
+        summary: {
+          deliveries: deliveries.length,
+          delivered: deliveries.filter((s) => s.status === 'delivered').length,
+          cases: deliveries.reduce((n, s) => n + s.cases, 0),
+        },
+      });
+    } catch (error: any) {
+      console.error("Error building the driver's day:", error);
+      res.status(500).json({ message: "Error loading the day: " + error.message });
     }
   });
 

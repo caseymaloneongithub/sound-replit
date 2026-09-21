@@ -62,6 +62,7 @@ import AccountingIncomeStatement from "@/pages/accounting-income-statement";
 import AdminEmailCampaign from "@/pages/admin-email-campaign";
 import AdminOpsEvents from "@/pages/admin-ops-events";
 import DeliveryRoutes from "@/pages/delivery-routes";
+import DriverMode from "@/pages/driver-mode";
 import AdminChecklist from "@/pages/admin-checklist";
 import OrdersBoard from "@/pages/orders-board";
 import Contact from "@/pages/contact";
@@ -128,6 +129,8 @@ function Router() {
       <StaffProtectedRoute path="/staff-portal/wholesale/delivery-report" component={WholesaleDeliveryReport} />
       <StaffProtectedRoute path="/staff-portal/wholesale/customers" component={WholesaleCustomers} />
       <StaffProtectedRoute path="/staff-portal/wholesale/delivery-routes" component={DeliveryRoutes} />
+      {/* Driver mode: the delivery day on a phone (owner, 2026-09-22). Short path — it's the installed app's start page. */}
+      <StaffProtectedRoute path="/driver" component={DriverMode} />
       <StaffProtectedRoute path="/staff-portal/wholesale/invoices" component={WholesaleInvoices} />
       <StaffProtectedRoute path="/staff-portal/orders-board" component={OrdersBoard} />
       <StaffProtectedRoute path="/staff-portal/checklist" component={AdminChecklist} />
