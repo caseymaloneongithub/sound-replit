@@ -132,17 +132,27 @@ export default function DeliveryRoutes() {
   // computer — and this one after a reload — sees for that day. Each mutation
   // below writes its response into this cache so the two never disagree.
   const dateKey = selectedDate.toISOString().split("T")[0];
-  const savedRouteKey = ["/api/delivery/routes/for-date", dateKey];
+  const routeKeyFor = (day: string) => ["/api/delivery/routes/for-date", day];
   const { data: savedRoute, isLoading: savedRouteLoading } = useQuery<OptimizedRouteResponse & { route: OptimizedRouteResponse["route"] | null }>({
-    queryKey: savedRouteKey,
+    queryKey: routeKeyFor(dateKey),
   });
+  // The displayed route follows the cache for the SELECTED day, so a result
+  // filed under another day never shows here.
   useEffect(() => {
     if (savedRoute === undefined) return;
     setOptimizedRoute(savedRoute.route ? savedRoute : null);
   }, [savedRoute]);
-  const rememberRoute = (data: OptimizedRouteResponse) => {
-    setOptimizedRoute(data);
-    queryClient.setQueryData(savedRouteKey, data);
+  // A mutation's result is filed under the day it was REQUESTED for (not the
+  // day selected when it finishes), after any fetch for that day still in
+  // flight is cancelled — otherwise a reverse started for Tuesday showed up
+  // under Wednesday, and an older fetch finishing late put the previous route
+  // back (review, 2026-09-22). A response with no route (nothing to optimize)
+  // says nothing about what's saved, so that day is refetched instead.
+  const rememberRoute = async (day: string, data: OptimizedRouteResponse) => {
+    const queryKey = routeKeyFor(day);
+    await queryClient.cancelQueries({ queryKey });
+    if (data.route) queryClient.setQueryData(queryKey, data);
+    else queryClient.invalidateQueries({ queryKey });
   };
 
   // Static map with numbered pins matching the stop list. Uses the public (pk.)
@@ -267,16 +277,16 @@ export default function DeliveryRoutes() {
   });
 
   const optimizeRouteMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ day }: { day: string }) => {
       const response = await apiRequest(
         "POST",
-        `/api/delivery/optimize/${selectedDate.toISOString().split("T")[0]}`,
+        `/api/delivery/optimize/${day}`,
         { customStopIds: selectedCustomStops, startAddress, endAddress }
       );
       return response as OptimizedRouteResponse;
     },
-    onSuccess: (data) => {
-      rememberRoute(data);
+    onSuccess: async (data, { day }) => {
+      await rememberRoute(day, data);
       if (data.stops.length === 0) {
         toast({
           title: "No stops to optimize",
@@ -300,10 +310,10 @@ export default function DeliveryRoutes() {
   });
 
   const reverseMutation = useMutation({
-    mutationFn: async (routeId: string) =>
+    mutationFn: async ({ routeId }: { routeId: string; day: string }) =>
       (await apiRequest("POST", `/api/delivery/routes/${routeId}/reverse`, {})) as OptimizedRouteResponse,
-    onSuccess: (data) => {
-      rememberRoute(data);
+    onSuccess: async (data, { day }) => {
+      await rememberRoute(day, data);
       toast({
         title: "Route reversed",
         description: `Now ${formatDistance(data.totalDistance)}, ${formatDuration(data.totalDuration)} the other way around`,
@@ -315,10 +325,10 @@ export default function DeliveryRoutes() {
   });
 
   const reorderMutation = useMutation({
-    mutationFn: async ({ routeId, order }: { routeId: string; order: string[] }) =>
+    mutationFn: async ({ routeId, order }: { routeId: string; order: string[]; day: string }) =>
       (await apiRequest("POST", `/api/delivery/routes/${routeId}/reorder`, { order })) as OptimizedRouteResponse,
-    onSuccess: (data) => {
-      rememberRoute(data);
+    onSuccess: async (data, { day }) => {
+      await rememberRoute(day, data);
       toast({
         title: "Route reordered",
         description: `Now ${formatDistance(data.totalDistance)}, ${formatDuration(data.totalDuration)}`,
@@ -338,7 +348,7 @@ export default function DeliveryRoutes() {
     const ids = optimizedRoute.stops.map((s) => String(s.id));
     const [moved] = ids.splice(from, 1);
     ids.splice(target, 0, moved);
-    reorderMutation.mutate({ routeId: optimizedRoute.route.id, order: ids });
+    reorderMutation.mutate({ routeId: optimizedRoute.route.id, order: ids, day: dateKey });
   };
 
   // Per-stop ETAs: leave time + minutes-per-stop dwell, applied cumulatively down
@@ -419,7 +429,7 @@ export default function DeliveryRoutes() {
             </Popover>
 
             <Button
-              onClick={() => optimizeRouteMutation.mutate()}
+              onClick={() => optimizeRouteMutation.mutate({ day: dateKey })}
               disabled={optimizeRouteMutation.isPending || ordersWithGeocode.length === 0}
               data-testid="button-optimize-route"
             >
@@ -605,7 +615,7 @@ export default function DeliveryRoutes() {
                           size="sm"
                           className="ml-2"
                           disabled={reverseMutation.isPending}
-                          onClick={() => reverseMutation.mutate(optimizedRoute.route!.id)}
+                          onClick={() => reverseMutation.mutate({ routeId: optimizedRoute.route!.id, day: dateKey })}
                           data-testid="button-reverse-route"
                         >
                           {reverseMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ArrowLeftRight className="w-4 h-4 mr-1" />}

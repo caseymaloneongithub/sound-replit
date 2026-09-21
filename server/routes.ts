@@ -11594,43 +11594,48 @@ If you have any questions, please don't hesitate to reach out!`,
           durationFromPrevious: optStop.durationFromPrevious,
         }));
 
-      // Save the route (endpoint columns stay null for the brewery default)
-      const savedRoute = await storage.createDeliveryRoute({
-        routeDate: targetDate,
-        // Mapbox returns fractional meters/seconds; the columns are integers.
-        totalDistanceMeters: Math.round(optimizedRoute.totalDistance),
-        totalDurationSeconds: Math.round(optimizedRoute.totalDuration),
-        optimizedStops: JSON.stringify(reorderedStops),
-        startLabel: startPoint.isFacility ? null : startPoint.label,
-        startLatitude: startPoint.isFacility ? null : String(startPoint.latitude),
-        startLongitude: startPoint.isFacility ? null : String(startPoint.longitude),
-        endLabel: endPoint.isFacility ? null : endPoint.label,
-        endLatitude: endPoint.isFacility ? null : String(endPoint.latitude),
-        endLongitude: endPoint.isFacility ? null : String(endPoint.longitude),
-        generatedByUserId: req.user!.id,
-      });
-
-      // Save individual route stops
-      for (const stop of reorderedStops) {
-        await storage.createDeliveryRouteStop({
-          routeId: savedRoute.id,
-          stopOrder: stop.stopOrder,
-          stopType: stop.type,
-          wholesaleOrderId: stop.type === 'order' ? stop.id : null,
-          deliveryStopId: stop.type === 'custom' ? stop.id : null,
-          distanceFromPrevious: stop.distanceFromPrevious != null ? Math.round(stop.distanceFromPrevious) : null,
-          durationFromPrevious: stop.durationFromPrevious != null ? Math.round(stop.durationFromPrevious) : null,
-        });
-      }
-
-      // One saved route per day (owner, 2026-09-22): optimizing again replaces
-      // the day's earlier route, so what the page loads back is never ambiguous.
+      // One saved route per day (owner, 2026-09-22): the new route, its stops,
+      // and the removal of the day's earlier routes commit as ONE unit, and
+      // saves for the same day are serialized on an advisory lock — two
+      // computers optimizing the same day at once used to each delete the
+      // other's new route and leave none (review). Under the lock the later
+      // save wins; the other computer picks the survivor up on its next load.
       const [dayStart, dayEnd] = routeDayBounds(date);
-      await db.delete(deliveryRoutes).where(and(
-        gte(deliveryRoutes.routeDate, dayStart),
-        lt(deliveryRoutes.routeDate, dayEnd),
-        ne(deliveryRoutes.id, savedRoute.id),
-      ));
+      const savedRoute = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'delivery_route_day:' + date}))`);
+        // Endpoint columns stay null for the brewery default. Mapbox returns
+        // fractional meters/seconds; the columns are integers.
+        const [created] = await tx.insert(deliveryRoutes).values({
+          routeDate: targetDate,
+          totalDistanceMeters: Math.round(optimizedRoute.totalDistance),
+          totalDurationSeconds: Math.round(optimizedRoute.totalDuration),
+          optimizedStops: JSON.stringify(reorderedStops),
+          startLabel: startPoint.isFacility ? null : startPoint.label,
+          startLatitude: startPoint.isFacility ? null : String(startPoint.latitude),
+          startLongitude: startPoint.isFacility ? null : String(startPoint.longitude),
+          endLabel: endPoint.isFacility ? null : endPoint.label,
+          endLatitude: endPoint.isFacility ? null : String(endPoint.latitude),
+          endLongitude: endPoint.isFacility ? null : String(endPoint.longitude),
+          generatedByUserId: req.user!.id,
+        }).returning();
+        if (reorderedStops.length) {
+          await tx.insert(deliveryRouteStops).values(reorderedStops.map((stop) => ({
+            routeId: created.id,
+            stopOrder: stop.stopOrder,
+            stopType: stop.type,
+            wholesaleOrderId: stop.type === 'order' ? stop.id : null,
+            deliveryStopId: stop.type === 'custom' ? stop.id : null,
+            distanceFromPrevious: stop.distanceFromPrevious != null ? Math.round(stop.distanceFromPrevious) : null,
+            durationFromPrevious: stop.durationFromPrevious != null ? Math.round(stop.durationFromPrevious) : null,
+          })));
+        }
+        await tx.delete(deliveryRoutes).where(and(
+          gte(deliveryRoutes.routeDate, dayStart),
+          lt(deliveryRoutes.routeDate, dayEnd),
+          ne(deliveryRoutes.id, created.id),
+        ));
+        return created;
+      });
 
       res.json({
         success: true,
