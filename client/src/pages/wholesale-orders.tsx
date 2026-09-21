@@ -199,12 +199,15 @@ export default function WholesaleOrders() {
       });
     },
     onSuccess: (data: any) => {
-      const cleared = Number(data?.routesCleared ?? 0);
+      // null = the server couldn't check saved routes; the order itself is saved.
+      const cleared = data?.routesCleared === null ? null : Number(data?.routesCleared ?? 0);
       toast({
         title: "Order Updated",
-        description: cleared > 0
-          ? "Order saved. A saved delivery route included this order and was cleared — optimize that day again on the Routes page."
-          : "Order has been updated successfully",
+        description: cleared === null
+          ? "Order saved, but saved delivery routes couldn't be checked — if this day has a route, delete it and optimize again on the Routes page."
+          : cleared > 0
+            ? "Order saved. A saved delivery route included this order and was cleared — optimize that day again on the Routes page."
+            : "Order has been updated successfully",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/all-order-items"] });

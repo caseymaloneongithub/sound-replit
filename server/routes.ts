@@ -8548,7 +8548,23 @@ If you have any questions, please don't hesitate to reach out!`,
       // and let the Routes page rebuild.
       const destinationChanged = editFields.fulfillmentMethod !== undefined || editFields.locationId !== undefined;
       const dateChanged = deliveryDate !== undefined;
-      const routesCleared = destinationChanged || dateChanged ? await storage.deleteRoutesContainingOrder(req.params.id) : 0;
+      // The order is saved by now; a cleanup failure must not report the save as
+      // failed. It becomes a warning the response and Site Events both carry.
+      let routesCleared: number | null = 0;
+      if (destinationChanged || dateChanged) {
+        try {
+          routesCleared = await storage.deleteRoutesContainingOrder(req.params.id);
+        } catch (cleanupError: any) {
+          routesCleared = null;
+          console.error(`[WHOLESALE] Order ${order.invoiceNumber} saved, but clearing its saved routes failed: ${cleanupError?.message}`);
+          void recordEvent({
+            severity: 'warn',
+            kind: 'wholesale.route_cleanup_failed',
+            message: `${order.invoiceNumber} changed destination or date, but its saved delivery route couldn't be cleared — delete and re-optimize that day's route: ${cleanupError?.message ?? 'unknown error'}`,
+            ref: { type: 'wholesale_order', id: order.id },
+          });
+        }
+      }
 
       res.json({ ...updated, stockWarnings, routesCleared });
     } catch (error: any) {

@@ -4,7 +4,7 @@ import Stripe from 'stripe';
 import { db } from './db';
 import { pool } from './storage';
 import { retailOrders, retailOrderItemsV2, retailSubscriptions, retailSubscriptionItems, retailProducts, flavors, users } from '../shared/schema';
-import { eq, and, lte, sql, gte, lt, or, isNull } from 'drizzle-orm';
+import { eq, and, lte, sql, gte, lt, or, isNull, inArray } from 'drizzle-orm';
 import { normalizeToAllowedPickupDay, getBillingDateForPickup, PICKUP_POLICY } from '../shared/pickup-policy';
 import { frequencyToDays } from '../shared/subscription-frequency';
 
@@ -45,6 +45,22 @@ const stripe = process.env.STRIPE_SECRET_KEY
   : null;
 
 const MAX_RETRY_ATTEMPTS = 3;
+
+/**
+ * The flavor a subscription line is for, as a person would name it: a split case
+ * by its note ("Blueberry Mint / Ginger"), otherwise the chosen flavor, otherwise
+ * the product's own flavor (a single-flavor product has nothing to choose).
+ * `names` maps flavor id → name for every id the lines can reference.
+ */
+export function subscriptionLineFlavorLabel(
+  item: { notes?: string | null; selectedFlavorId?: string | null; retailProduct?: { flavorId?: string | null } | null },
+  names: Map<string, string>,
+): string | undefined {
+  const note = String(item.notes ?? '');
+  if (/^Split: /.test(note)) return note.replace(/^Split: /, '');
+  const chosen = item.selectedFlavorId ?? item.retailProduct?.flavorId ?? null;
+  return chosen ? names.get(chosen) : undefined;
+}
 
 /**
  * Finalize retail subscription charge by creating order
@@ -265,30 +281,32 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
 
     console.log(`[BILLING] ✅ Finalized retail subscription charge ${sub.id} - Order ${orderNumber} created`);
 
+    // What each line IS, for both emails below: a split case is named by its note
+    // ("Blueberry Mint / Ginger"), otherwise the chosen flavor, otherwise the
+    // product's own flavor (a single-flavor product has no selection to make).
+    // Without the last two, staff saw "Product" or the same generic name for
+    // different flavors (review, 2026-09-21).
+    const flavorIds = Array.from(new Set(items.flatMap((item) => [item.selectedFlavorId, item.retailProduct?.flavorId]).filter((id): id is string => !!id)));
+    const flavorNames = new Map<string, string>();
+    if (flavorIds.length) {
+      const rows = await db.select({ id: flavors.id, name: flavors.name }).from(flavors).where(inArray(flavors.id, flavorIds));
+      for (const r of rows) flavorNames.set(r.id, r.name);
+    }
+    const flavorLabelFor = (item: (typeof items)[number]) => subscriptionLineFlavorLabel(item, flavorNames);
+
     // Send charge confirmation email with pickup instructions
     try {
       // The pickup this charge pays for (signup = now, renewal = the scheduled date)
       const pickupDate = orderPickupDate;
-      
+
       // Build subscription items with product and flavor names for the email
       const subscriptionItemsForEmail = await Promise.all(items.map(async (item) => {
         if (!item.retailProduct) {
           return null;
         }
-        
-        // Get flavor name if selected. A split case stores Mixed + a note naming its
-        // two flavors — the receipt shows those, not a bare "Mixed".
-        let flavorName: string | undefined;
-        if (/^Split: /.test((item as any).notes ?? '')) {
-          flavorName = (item as any).notes.replace(/^Split: /, '');
-        } else if (item.selectedFlavorId) {
-          const [flavor] = await db
-            .select({ name: flavors.name })
-            .from(flavors)
-            .where(eq(flavors.id, item.selectedFlavorId));
-          flavorName = flavor?.name;
-        }
-        
+
+        const flavorName = flavorLabelFor(item);
+
         const basePrice = parseFloat(item.retailProduct.price);
         const discount = item.retailProduct.subscriptionDiscount ? Number(item.retailProduct.subscriptionDiscount) : 0;
         const unitPrice = basePrice * (1 - discount / 100);
@@ -330,14 +348,14 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
         .where(or(eq(users.role, 'admin'), eq(users.role, 'super_admin')));
       const adminEmails = adminRows.map((u) => u.email).filter((e): e is string => !!e);
       if (adminEmails.length > 0) {
+        // Same shape as the checkout notification: "Flavor - 12 x 16oz bottles".
         const orderItems = items
           .filter((item) => item.retailProduct)
           .map((item) => {
-            const note = String((item as any).notes ?? '');
-            const flavorLabel = /^Split: /.test(note) ? note.replace(/^Split: /, '') : null;
-            const base = item.retailProduct!.productName || 'Product';
+            const flavorLabel = flavorLabelFor(item) ?? item.retailProduct!.productName;
+            const pkg = item.retailProduct!.unitDescription;
             return {
-              productName: flavorLabel ? `${flavorLabel} - ${base}` : base,
+              productName: flavorLabel ? `${flavorLabel} - ${pkg}` : pkg,
               quantity: item.quantity,
               unitPrice: resolveUnitPrice(item).toFixed(2),
             };
