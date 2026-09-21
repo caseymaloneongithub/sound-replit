@@ -7377,7 +7377,8 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(404).json({ message: "Wholesale customer not found" });
       }
       const locations = await storage.getWholesaleLocations(wholesaleCustomer.id);
-      res.json(locations);
+      // driverNotes are ours, not the customer's — they never leave the staff side.
+      res.json(locations.map(({ driverNotes: _internal, ...l }) => l));
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching locations: " + error.message });
     }
@@ -7393,9 +7394,9 @@ If you have any questions, please don't hesitate to reach out!`,
       // geocoding cache that feeds delivery routing — a client must not be able to set
       // them, or an address could be routed to arbitrary coordinates.
       const location = insertWholesaleLocationSchema
-        .omit({ latitude: true, longitude: true })
+        .omit({ latitude: true, longitude: true, driverNotes: true })
         .parse({ ...req.body, customerId: wholesaleCustomer.id });
-      const created = await storage.createWholesaleLocation(location);
+      const { driverNotes: _internal, ...created } = await storage.createWholesaleLocation(location);
       res.json(created);
     } catch (error: any) {
       res.status(400).json({ message: "Error creating location: " + error.message });
@@ -7423,12 +7424,13 @@ If you have any questions, please don't hesitate to reach out!`,
       // lat/long are server-managed geocoding output that feeds delivery routing;
       // an edited address moves the pin.
       const updates = insertWholesaleLocationSchema
-        .omit({ customerId: true, latitude: true, longitude: true })
+        .omit({ customerId: true, latitude: true, longitude: true, driverNotes: true })
         .partial()
         .parse(req.body);
       const pin = await geocodeForEdit(location, updates);
       const updated = await storage.updateWholesaleLocation(req.params.id, { ...updates, ...pin });
-      res.json(updated);
+      const { driverNotes: _internal, ...visible } = updated ?? ({} as any);
+      res.json(updated ? visible : updated);
     } catch (error: any) {
       res.status(400).json({ message: "Error updating location: " + error.message });
     }
@@ -11820,6 +11822,7 @@ If you have any questions, please don't hesitate to reach out!`,
           contactName: location?.contactName || customer.contactName || null,
           contactPhone: location?.contactPhone || customer.phone || null,
           deliveryInstructions: location?.deliveryInstructions ?? null,
+          driverNotes: location?.driverNotes ?? null,
           orderNotes: order.notes ?? null,
           poNumber: (order as any).poNumber ?? null,
           status: order.status,

@@ -447,6 +447,9 @@ export const wholesaleLocations = pgTable("wholesale_locations", {
   // inbox); the account email is the fallback.
   contactEmail: text("contact_email"),
   deliveryInstructions: text("delivery_instructions"),
+  // Our own notes for the driver (owner, 2026-09-22): staff-written, shown in
+  // Driver Mode next to the customer's instructions, never sent to the customer.
+  driverNotes: text("driver_notes"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   // Geocoding cache

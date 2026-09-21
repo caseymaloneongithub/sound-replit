@@ -291,6 +291,7 @@ export default function WholesaleCustomers() {
       contactName: "",
       contactPhone: "",
       contactEmail: "",
+      driverNotes: "",
     },
   });
 
@@ -387,6 +388,7 @@ export default function WholesaleCustomers() {
       contactName: location.contactName || "",
       contactPhone: location.contactPhone || "",
       contactEmail: (location as any).contactEmail || "",
+      driverNotes: (location as any).driverNotes || "",
     });
   };
 
@@ -1006,6 +1008,11 @@ export default function WholesaleCustomers() {
                               {(location as any).contactEmail && <div>{(location as any).contactEmail}</div>}
                             </div>
                           )}
+                          {(location as any).driverNotes && (
+                            <div className="text-sm text-muted-foreground mt-2" data-testid={`text-location-driver-notes-${location.id}`}>
+                              <span className="font-medium">Driver notes:</span> {(location as any).driverNotes}
+                            </div>
+                          )}
                         </div>
                         <div className="flex gap-2">
                           <Button
@@ -1118,6 +1125,22 @@ export default function WholesaleCustomers() {
                       </FormItem>
                     )}
                   />
+                  {/* Our own notes for the driver (owner, 2026-09-22) — shown in Driver
+                      Mode next to whatever the customer wrote; the customer never sees them. */}
+                  <FormField
+                    control={locationForm.control}
+                    name="driverNotes"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Driver Notes (internal)</FormLabel>
+                        <FormControl>
+                          <Textarea {...field} value={field.value || ""} rows={2} placeholder="Alley door, cooler on the left, ask for the manager on Tuesdays…" data-testid="textarea-location-driver-notes" />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">Shown to the driver in Driver Mode. The customer never sees this.</p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                   <div className="flex gap-2">
                     {editingLocation && (
                       <Button
@@ -1135,6 +1158,7 @@ export default function WholesaleCustomers() {
                             contactName: "",
                             contactPhone: "",
                             contactEmail: "",
+                            driverNotes: "",
                           });
                         }}
                         data-testid="button-cancel-edit-location"

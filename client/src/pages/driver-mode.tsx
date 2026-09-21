@@ -45,6 +45,8 @@ interface DriverStop {
   contactName?: string | null;
   contactPhone?: string | null;
   deliveryInstructions?: string | null;
+  // Our own notes for this store, written by staff under Customers → location.
+  driverNotes?: string | null;
   orderNotes?: string | null;
   poNumber?: string | null;
   status?: string;
@@ -287,9 +289,14 @@ export default function DriverMode() {
                         </ul>
                       )}
 
+                      {stop.driverNotes && (
+                        <p className="text-sm rounded-md border border-cedar/40 bg-cedar/10 px-3 py-2 whitespace-pre-line" data-testid={`text-driver-notes-${stop.key}`}>
+                          <span className="font-medium">Our notes:</span> {stop.driverNotes}
+                        </p>
+                      )}
                       {stop.deliveryInstructions && (
-                        <p className="text-sm rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 px-3 py-2" data-testid={`text-instructions-${stop.key}`}>
-                          <span className="font-medium">Delivery instructions:</span> {stop.deliveryInstructions}
+                        <p className="text-sm rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 px-3 py-2 whitespace-pre-line" data-testid={`text-instructions-${stop.key}`}>
+                          <span className="font-medium">Customer's instructions:</span> {stop.deliveryInstructions}
                         </p>
                       )}
                       {stop.orderNotes && (
