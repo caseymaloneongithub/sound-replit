@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSharedDeliveryDate } from "@/components/staff/deliveries-tabs";
 import {
-  Navigation, Phone, Check, ChevronLeft, ChevronRight, Loader2, MapPinned, Undo2, LayoutDashboard, Route as RouteIcon,
+  Navigation, Check, ChevronLeft, ChevronRight, Loader2, MapPinned, Undo2, LayoutDashboard, Route as RouteIcon,
 } from "lucide-react";
 
 /**
@@ -302,20 +302,14 @@ export default function DriverMode() {
                         <p className="text-sm text-muted-foreground">Ask for <span className="text-foreground">{stop.contactName}</span></p>
                       )}
 
-                      <div className="grid grid-cols-3 gap-2 pt-1">
+                      {/* Navigate and Delivered only — no Call button (owner, 2026-09-22). */}
+                      <div className="grid grid-cols-2 gap-2 pt-1">
                         {nav ? (
                           <Button asChild className="h-12" data-testid={`button-navigate-${stop.key}`}>
                             <a href={nav} target="_blank" rel="noopener noreferrer"><Navigation className="w-4 h-4 mr-1.5" /> Navigate</a>
                           </Button>
                         ) : (
                           <Button className="h-12" disabled>Navigate</Button>
-                        )}
-                        {stop.contactPhone ? (
-                          <Button asChild variant="outline" className="h-12" data-testid={`button-call-${stop.key}`}>
-                            <a href={`tel:${stop.contactPhone.replace(/[^\d+]/g, "")}`}><Phone className="w-4 h-4 mr-1.5" /> Call</a>
-                          </Button>
-                        ) : (
-                          <Button variant="outline" className="h-12" disabled><Phone className="w-4 h-4 mr-1.5" /> Call</Button>
                         )}
                         {stop.type === "order" ? (
                           isDone ? (
