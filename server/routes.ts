@@ -6,7 +6,7 @@ import Stripe from "stripe";
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { storage } from "./storage";
 import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, insertMaterialSchema, insertSupplierSchema, insertProcessSchema, insertProductionSchema, insertMaterialOrderSchema, retailProducts, retailProductFlavors, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings, wholesaleOrderItems, wholesaleUnitTypes, deliveryRoutes, deliveryRouteStops } from "@shared/schema";
-import { eq, sql, and, desc, isNull, inArray, gte } from "drizzle-orm";
+import { eq, sql, and, desc, isNull, inArray, gte, lt, ne } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
 import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
@@ -11623,6 +11623,15 @@ If you have any questions, please don't hesitate to reach out!`,
         });
       }
 
+      // One saved route per day (owner, 2026-09-22): optimizing again replaces
+      // the day's earlier route, so what the page loads back is never ambiguous.
+      const [dayStart, dayEnd] = routeDayBounds(date);
+      await db.delete(deliveryRoutes).where(and(
+        gte(deliveryRoutes.routeDate, dayStart),
+        lt(deliveryRoutes.routeDate, dayEnd),
+        ne(deliveryRoutes.id, savedRoute.id),
+      ));
+
       res.json({
         success: true,
         route: savedRoute,
@@ -11632,10 +11641,69 @@ If you have any questions, please don't hesitate to reach out!`,
         geometry: optimizedRoute.geometry,
         start: { label: startPoint.label, latitude: startPoint.latitude, longitude: startPoint.longitude },
         end: { label: endPoint.label, latitude: endPoint.latitude, longitude: endPoint.longitude },
+        ...(await routeProvenance(savedRoute)),
       });
     } catch (error: any) {
       console.error("Error optimizing route:", error);
       res.status(500).json({ message: "Error optimizing route: " + error.message });
+    }
+  });
+
+  /** The UTC day a route date string ("YYYY-MM-DD") names — the same instant
+   *  optimize stores as routeDate, so lookups by day find what optimize saved. */
+  function routeDayBounds(date: string): [Date, Date] {
+    const start = new Date(date);
+    return [start, new Date(start.getTime() + 24 * 60 * 60 * 1000)];
+  }
+
+  /** Who generated a saved route and when — shown so a second computer knows
+   *  what it is looking at. */
+  async function routeProvenance(route: any): Promise<{ generatedAt: string | null; generatedBy: string | null }> {
+    const generatedAt = route?.generatedAt ? new Date(route.generatedAt).toISOString() : null;
+    let generatedBy: string | null = null;
+    if (route?.generatedByUserId) {
+      const user = await storage.getUser(route.generatedByUserId);
+      if (user) generatedBy = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.username || user.email || null;
+    }
+    return { generatedAt, generatedBy };
+  }
+
+  /** A saved route in the shape the Routes page renders (what optimize,
+   *  reverse and reorder respond with), rebuilt from the stored stops. */
+  async function savedRouteResponse(route: any) {
+    const stops: any[] = JSON.parse(route.optimizedStops ?? '[]');
+    const { start, end } = routeEndpoints(route);
+    return {
+      success: true,
+      route,
+      stops,
+      totalDuration: route.totalDurationSeconds ?? 0,
+      totalDistance: route.totalDistanceMeters ?? 0,
+      start,
+      end,
+      ...(await routeProvenance(route)),
+    };
+  }
+
+  // The day's saved route, for the page to show on open and on every computer
+  // (owner, 2026-09-22: "Does the last calculated route for a given day persist
+  // when the page is loaded again or on a different computer?" — it didn't).
+  // `route: null` when the day has none yet.
+  app.get("/api/delivery/routes/for-date/:date", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(req.params.date)) return res.status(400).json({ message: "Date must be YYYY-MM-DD" });
+      const [dayStart, dayEnd] = routeDayBounds(req.params.date);
+      const [route] = await db
+        .select()
+        .from(deliveryRoutes)
+        .where(and(gte(deliveryRoutes.routeDate, dayStart), lt(deliveryRoutes.routeDate, dayEnd)))
+        .orderBy(desc(deliveryRoutes.generatedAt))
+        .limit(1);
+      if (!route) return res.json({ success: true, route: null, stops: [], totalDuration: 0, totalDistance: 0 });
+      res.json(await savedRouteResponse(route));
+    } catch (error: any) {
+      console.error("Error loading the day's route:", error);
+      res.status(500).json({ message: "Error loading the day's route: " + error.message });
     }
   });
 
@@ -11699,6 +11767,7 @@ If you have any questions, please don't hesitate to reach out!`,
         geometry: directions.geometry,
         start: finalEndpoints.start,
         end: finalEndpoints.end,
+        ...(await routeProvenance(savedRoute)),
       });
   }
 

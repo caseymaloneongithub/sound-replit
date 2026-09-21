@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -83,6 +83,9 @@ interface OptimizedRouteResponse {
   // Route endpoints — the brewery unless a custom address was set.
   start?: { label: string; latitude: number; longitude: number };
   end?: { label: string; latitude: number; longitude: number };
+  // Who saved this route and when — the same route shows on every computer.
+  generatedAt?: string | null;
+  generatedBy?: string | null;
   message?: string;
 }
 
@@ -123,6 +126,24 @@ export default function DeliveryRoutes() {
   // Blank = brewery; anything typed here is geocoded server-side on Optimize.
   const [startAddress, setStartAddress] = useState("");
   const [endAddress, setEndAddress] = useState("");
+
+  // The day's saved route comes from the server (owner, 2026-09-22): a route
+  // optimized, reversed or reordered on one computer is what every other
+  // computer — and this one after a reload — sees for that day. Each mutation
+  // below writes its response into this cache so the two never disagree.
+  const dateKey = selectedDate.toISOString().split("T")[0];
+  const savedRouteKey = ["/api/delivery/routes/for-date", dateKey];
+  const { data: savedRoute, isLoading: savedRouteLoading } = useQuery<OptimizedRouteResponse & { route: OptimizedRouteResponse["route"] | null }>({
+    queryKey: savedRouteKey,
+  });
+  useEffect(() => {
+    if (savedRoute === undefined) return;
+    setOptimizedRoute(savedRoute.route ? savedRoute : null);
+  }, [savedRoute]);
+  const rememberRoute = (data: OptimizedRouteResponse) => {
+    setOptimizedRoute(data);
+    queryClient.setQueryData(savedRouteKey, data);
+  };
 
   // Static map with numbered pins matching the stop list. Uses the public (pk.)
   // browser token; the packet PDF builds the same map server-side.
@@ -255,7 +276,7 @@ export default function DeliveryRoutes() {
       return response as OptimizedRouteResponse;
     },
     onSuccess: (data) => {
-      setOptimizedRoute(data);
+      rememberRoute(data);
       if (data.stops.length === 0) {
         toast({
           title: "No stops to optimize",
@@ -282,7 +303,7 @@ export default function DeliveryRoutes() {
     mutationFn: async (routeId: string) =>
       (await apiRequest("POST", `/api/delivery/routes/${routeId}/reverse`, {})) as OptimizedRouteResponse,
     onSuccess: (data) => {
-      setOptimizedRoute(data);
+      rememberRoute(data);
       toast({
         title: "Route reversed",
         description: `Now ${formatDistance(data.totalDistance)}, ${formatDuration(data.totalDuration)} the other way around`,
@@ -297,7 +318,7 @@ export default function DeliveryRoutes() {
     mutationFn: async ({ routeId, order }: { routeId: string; order: string[] }) =>
       (await apiRequest("POST", `/api/delivery/routes/${routeId}/reorder`, { order })) as OptimizedRouteResponse,
     onSuccess: (data) => {
-      setOptimizedRoute(data);
+      rememberRoute(data);
       toast({
         title: "Route reordered",
         description: `Now ${formatDistance(data.totalDistance)}, ${formatDuration(data.totalDuration)}`,
@@ -403,7 +424,7 @@ export default function DeliveryRoutes() {
               data-testid="button-optimize-route"
             >
               <Route className="mr-2 h-4 w-4" />
-              {optimizeRouteMutation.isPending ? "Optimizing..." : "Optimize Route"}
+              {optimizeRouteMutation.isPending ? "Optimizing..." : optimizedRoute?.route ? "Re-optimize Route" : "Optimize Route"}
             </Button>
           </div>
         </div>
@@ -546,12 +567,25 @@ export default function DeliveryRoutes() {
               </CardContent>
             </Card>
 
+            {savedRouteLoading && !optimizedRoute && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="text-route-loading">
+                <Loader2 className="w-4 h-4 animate-spin" /> Checking for a saved route…
+              </div>
+            )}
+
             {optimizedRoute && optimizedRoute.stops.length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     Optimized Route
                   </CardTitle>
+                  {optimizedRoute.generatedAt && (
+                    <p className="text-xs text-muted-foreground" data-testid="text-route-provenance">
+                      Saved {format(new Date(optimizedRoute.generatedAt), "MMM d 'at' h:mm a")}
+                      {optimizedRoute.generatedBy ? ` by ${optimizedRoute.generatedBy}` : ""} — the same route on every computer.
+                      Reverse and drag changes are saved too; Re-optimize starts over.
+                    </p>
+                  )}
                   <CardDescription>
                     Total: {formatDistance(optimizedRoute.totalDistance)} -{" "}
                     {formatDuration(optimizedRoute.totalDuration)}
