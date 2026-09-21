@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -122,7 +122,6 @@ export default function DeliveryRoutes() {
   const [selectedDate, setSelectedDate] = useSharedDeliveryDate();
   const [selectedCustomStops, setSelectedCustomStops] = useState<string[]>([]);
   const [isAddStopOpen, setIsAddStopOpen] = useState(false);
-  const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRouteResponse | null>(null);
   // Blank = brewery; anything typed here is geocoded server-side on Optimize.
   const [startAddress, setStartAddress] = useState("");
   const [endAddress, setEndAddress] = useState("");
@@ -136,12 +135,11 @@ export default function DeliveryRoutes() {
   const { data: savedRoute, isLoading: savedRouteLoading } = useQuery<OptimizedRouteResponse & { route: OptimizedRouteResponse["route"] | null }>({
     queryKey: routeKeyFor(dateKey),
   });
-  // The displayed route follows the cache for the SELECTED day, so a result
-  // filed under another day never shows here.
-  useEffect(() => {
-    if (savedRoute === undefined) return;
-    setOptimizedRoute(savedRoute.route ? savedRoute : null);
-  }, [savedRoute]);
+  // The displayed route IS the selected day's cache entry — derived, not
+  // copied into state. While another day is still loading there is no route
+  // on screen, so Reverse and drag can't act on the previous day's route and
+  // file the result under the new one (review, 2026-09-22).
+  const optimizedRoute: OptimizedRouteResponse | null = savedRoute?.route ? savedRoute : null;
   // A mutation's result is filed under the day it was REQUESTED for (not the
   // day selected when it finishes), after any fetch for that day still in
   // flight is cancelled — otherwise a reverse started for Tuesday showed up
