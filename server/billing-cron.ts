@@ -36,6 +36,7 @@ import {
   sendSubscriptionChargeConfirmationEmail,
   sendPaymentFailureEmail,
   sendStaffPaymentFailureNotification,
+  sendRetailOrderAdminNotification,
 } from './email';
 import { addDays, startOfDay, endOfDay } from 'date-fns';
 
@@ -316,6 +317,47 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
     } catch (emailError) {
       // Log but don't fail the billing process if email fails
       console.error(`[BILLING] Failed to send confirmation email for subscription ${sub.id}:`, emailError);
+    }
+
+    // Admins hear about every subscription order the way they hear about a site
+    // checkout (owner, 2026-09-21): the first order as "New Subscription", each
+    // charge after it as "Subscription Renewal", with the pickup it pays for.
+    // Only the cart-checkout path emailed admins before, so renewals were silent.
+    try {
+      const adminRows = await db
+        .select({ email: users.email })
+        .from(users)
+        .where(or(eq(users.role, 'admin'), eq(users.role, 'super_admin')));
+      const adminEmails = adminRows.map((u) => u.email).filter((e): e is string => !!e);
+      if (adminEmails.length > 0) {
+        const orderItems = items
+          .filter((item) => item.retailProduct)
+          .map((item) => {
+            const note = String((item as any).notes ?? '');
+            const flavorLabel = /^Split: /.test(note) ? note.replace(/^Split: /, '') : null;
+            const base = item.retailProduct!.productName || 'Product';
+            return {
+              productName: flavorLabel ? `${flavorLabel} - ${base}` : base,
+              quantity: item.quantity,
+              unitPrice: resolveUnitPrice(item).toFixed(2),
+            };
+          });
+        await sendRetailOrderAdminNotification({
+          adminEmails,
+          customerName: sub.customerName,
+          customerEmail: sub.customerEmail,
+          orderNumber,
+          orderDate: new Date(),
+          orderItems,
+          subtotal,
+          taxAmount: taxAmount > 0 ? taxAmount : undefined,
+          total: totalAmount,
+          orderType: isFirstOrder ? 'subscription' : 'renewal',
+          pickupDate: orderPickupDate,
+        });
+      }
+    } catch (emailError) {
+      console.error(`[BILLING] Failed to send admin notification for order ${orderNumber}:`, emailError);
     }
 
     return true;

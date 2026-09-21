@@ -660,7 +660,11 @@ interface RetailOrderAdminNotificationParams {
   subtotal: number;
   taxAmount?: number;
   total: number;
-  orderType: 'one-time' | 'subscription';
+  // 'renewal' = a subscription's card was charged for its next pickup (owner,
+  // 2026-09-21: "add the renewal email to admins").
+  orderType: 'one-time' | 'subscription' | 'renewal';
+  // The pickup this order is for, when it's scheduled (subscription orders).
+  pickupDate?: Date | null;
 }
 
 export async function sendRetailOrderAdminNotification(params: RetailOrderAdminNotificationParams): Promise<void> {
@@ -690,10 +694,14 @@ export async function sendRetailOrderAdminNotification(params: RetailOrderAdminN
     return `- ${item.productName} x ${item.quantity} = $${lineTotal.toFixed(2)}`;
   }).join('\n');
 
-  const orderTypeLabel = params.orderType === 'subscription' ? 'New Subscription' : 'New Retail Order';
-  const orderTypeBgColor = params.orderType === 'subscription' ? '#dcfce7' : '#dbeafe';
-  const orderTypeBorderColor = params.orderType === 'subscription' ? '#22c55e' : '#3b82f6';
-  const orderTypeTextColor = params.orderType === 'subscription' ? '#166534' : '#1e40af';
+  const orderTypeLabel = params.orderType === 'subscription' ? 'New Subscription'
+    : params.orderType === 'renewal' ? 'Subscription Renewal'
+    : 'New Retail Order';
+  const isSubscriptionType = params.orderType !== 'one-time';
+  const orderTypeBgColor = isSubscriptionType ? '#dcfce7' : '#dbeafe';
+  const orderTypeBorderColor = isSubscriptionType ? '#22c55e' : '#3b82f6';
+  const orderTypeTextColor = isSubscriptionType ? '#166534' : '#1e40af';
+  const pickupDateFormatted = params.pickupDate ? format(params.pickupDate, 'EEEE, MMMM d, yyyy') : null;
 
   const mailOptions = {
     from: process.env.GMAIL_USER,
@@ -706,6 +714,7 @@ Order #: ${params.orderNumber}
 Customer: ${params.customerName}
 Email: ${params.customerEmail}
 Order Date: ${orderDateFormatted}
+${pickupDateFormatted ? `Pickup: ${pickupDateFormatted}` : ''}
 
 Items:
 ${itemsText}
@@ -741,11 +750,16 @@ Puget Sound Kombucha Co.
         <td style="padding: 10px 0; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};">${params.customerEmail}</td>
       </tr>
       <tr>
-        <td style="padding: 10px 0; color: ${BRAND_COLORS.mediumGrey};">Order Date</td>
-        <td style="padding: 10px 0; color: ${BRAND_COLORS.darkGrey};">${orderDateFormatted}</td>
+        <td style="padding: 10px 0; ${pickupDateFormatted ? `border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; ` : ''}color: ${BRAND_COLORS.mediumGrey};">Order Date</td>
+        <td style="padding: 10px 0; ${pickupDateFormatted ? `border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; ` : ''}color: ${BRAND_COLORS.darkGrey};">${orderDateFormatted}</td>
       </tr>
+      ${pickupDateFormatted ? `
+      <tr>
+        <td style="padding: 10px 0; color: ${BRAND_COLORS.mediumGrey};">Pickup</td>
+        <td style="padding: 10px 0; color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${pickupDateFormatted}</td>
+      </tr>` : ''}
     </table>
-    
+
     <h3 style="font-size: 14px; color: ${BRAND_COLORS.darkGrey}; margin: 0 0 12px 0;">Order Items</h3>
     
     <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
