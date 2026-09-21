@@ -167,36 +167,48 @@ export default function WholesaleOrders() {
   // One PATCH per order, sequentially — reuses the single-order endpoint so each
   // order gets the same due-date re-anchoring as a one-off date change.
   const bulkDeliveryDateMutation = useMutation({
+    // Never throws for one order's failure: every order is attempted, and the
+    // ones that saved keep their route warnings even when a later one fails —
+    // a thrown error used to discard them, leaving staff without the invoice
+    // numbers to repair (review, 2026-09-21).
     mutationFn: async ({ orderIds, date }: { orderIds: string[]; date: Date }) => {
-      const results: any[] = [];
+      const saved: any[] = [];
+      const failed: Array<{ orderId: string; message: string }> = [];
       for (const orderId of orderIds) {
-        results.push(await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, {
-          deliveryDate: date.toISOString(),
-        }));
+        try {
+          saved.push(await apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, {
+            deliveryDate: date.toISOString(),
+          }));
+        } catch (e: any) {
+          failed.push({ orderId, message: e?.message || "request failed" });
+        }
       }
-      return results;
+      return { saved, failed };
     },
-    onSuccess: (results, { date }) => {
-      const count = results.length;
-      const cleared = results.filter((r) => Number(r?.routesCleared ?? 0) > 0).map((r) => r?.invoiceNumber);
-      const unchecked = results.filter((r) => r?.routesCleared === null).map((r) => r?.invoiceNumber);
+    onSuccess: ({ saved, failed }, { date }) => {
+      const cleared = saved.filter((r) => Number(r?.routesCleared ?? 0) > 0).map((r) => r?.invoiceNumber);
+      const unchecked = saved.filter((r) => r?.routesCleared === null).map((r) => r?.invoiceNumber);
       const notes: string[] = [];
       if (cleared.length) notes.push(`Saved routes that included ${cleared.join(', ')} were cleared — optimize those days again on the Routes page.`);
       if (unchecked.length) notes.push(`Saved routes couldn't be checked for ${unchecked.join(', ')} — if their old days have routes, delete and optimize again.`);
-      toast({
-        title: "Delivery day set",
-        description: `${count} ${count === 1 ? 'order' : 'orders'} scheduled for ${format(date, 'MMM d, yyyy')}.${notes.length ? ' ' + notes.join(' ') : ''}`,
-      });
-      setSelectedForBulk(new Set());
-      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to set delivery dates — some orders may have been updated.",
-        variant: "destructive",
-      });
-      // Partial success is possible mid-loop; refetch so the table shows reality.
+      const invoiceOf = (id: string) => orders.find((o) => o.id === id)?.invoiceNumber ?? id;
+      const savedLine = `${saved.length} ${saved.length === 1 ? 'order' : 'orders'} scheduled for ${format(date, 'MMM d, yyyy')}.`;
+      if (failed.length) {
+        const failedLine = `Not saved: ${failed.map((f) => `${invoiceOf(f.orderId)} (${f.message})`).join('; ')}.`;
+        toast({
+          title: failed.length === saved.length + failed.length ? "Delivery day not set" : "Delivery day partly set",
+          description: [saved.length ? savedLine : null, failedLine, ...notes].filter(Boolean).join(' '),
+          variant: "destructive",
+        });
+        // Keep the failed ones selected so a retry is one click.
+        setSelectedForBulk(new Set(failed.map((f) => f.orderId)));
+      } else {
+        toast({
+          title: "Delivery day set",
+          description: [savedLine, ...notes].join(' '),
+        });
+        setSelectedForBulk(new Set());
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
     },
   });
