@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSharedDeliveryDate } from "@/components/staff/deliveries-tabs";
+import { mapsLink, type MapsLink } from "@/lib/maps-links";
 import {
   Navigation, Check, ChevronLeft, ChevronRight, Loader2, MapPinned, Undo2, LayoutDashboard, Route as RouteIcon,
 } from "lucide-react";
@@ -88,13 +89,11 @@ const destinationOf = (stop: DriverStop): string | null =>
       ? stop.address
       : null;
 
-/** Directions from wherever the phone is. Opens the Google Maps app when it's
- *  installed (Android and iPhone both honor this link), the website otherwise. */
-const navigateUrl = (stop: DriverStop): string | null => {
+/** Directions from wherever the phone is, straight into the Google Maps app
+ *  where the platform allows it (see lib/maps-links). */
+const navigateLink = (stop: DriverStop): MapsLink | null => {
   const destination = destinationOf(stop);
-  return destination
-    ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`
-    : null;
+  return destination ? mapsLink(destination) : null;
 };
 
 /** The remaining stops as one trip. A Maps URL opened in a mobile BROWSER
@@ -102,15 +101,13 @@ const navigateUrl = (stop: DriverStop): string | null => {
  *  the browser is where the link lands when the app isn't installed — so the
  *  day is handed over four stops at a time. */
 const TRIP_BATCH = 4;
-const remainingTripUrl = (stops: DriverStop[]): { url: string; count: number; total: number } | null => {
+const remainingTrip = (stops: DriverStop[]): { link: MapsLink; count: number; total: number } | null => {
   const points = stops.map(destinationOf).filter((d): d is string => !!d);
   if (points.length === 0) return null;
   const batch = points.slice(0, TRIP_BATCH);
   const destination = batch[batch.length - 1];
   const waypoints = batch.slice(0, -1);
-  const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}` +
-    (waypoints.length ? `&waypoints=${encodeURIComponent(waypoints.join("|"))}` : "") + `&travelmode=driving`;
-  return { url, count: batch.length, total: points.length };
+  return { link: mapsLink(destination, waypoints), count: batch.length, total: points.length };
 };
 
 /** Custom stops have no order to mark; "done" lives on this phone, per day. */
@@ -193,7 +190,7 @@ export default function DriverMode() {
     () => stops.filter((s) => (s.type === "order" ? s.status !== "delivered" : !localDone[s.id])),
     [stops, localDone],
   );
-  const trip = useMemo(() => remainingTripUrl(remaining), [remaining]);
+  const trip = useMemo(() => remainingTrip(remaining), [remaining]);
   const isToday = dateKey === format(new Date(), "yyyy-MM-dd");
 
   return (
@@ -254,7 +251,7 @@ export default function DriverMode() {
 
             {trip && remaining.length > 1 && (
               <Button asChild variant="outline" className="w-full h-11" data-testid="button-open-trip">
-                <a href={trip.url} target="_blank" rel="noopener noreferrer">
+                <a href={trip.link.href} target={trip.link.external ? "_blank" : undefined} rel="noopener noreferrer">
                   <MapPinned className="w-4 h-4 mr-2" />
                   {trip.count < trip.total ? `Open next ${trip.count} stops in Google Maps` : `Open all ${trip.count} remaining stops in Google Maps`}
                 </a>
@@ -264,7 +261,7 @@ export default function DriverMode() {
             <ol className="space-y-3">
               {stops.map((stop, index) => {
                 const isDone = stop.type === "order" ? stop.status === "delivered" : !!localDone[stop.id];
-                const nav = navigateUrl(stop);
+                const nav = navigateLink(stop);
                 return (
                   <li key={stop.key} className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDone ? "opacity-70" : ""}`} data-testid={`stop-${stop.key}`}>
                     <div className="p-3 space-y-2">
@@ -330,15 +327,12 @@ export default function DriverMode() {
                       {stop.notes && (
                         <p className="text-sm text-muted-foreground">{stop.notes}</p>
                       )}
-                      {stop.contactName && (
-                        <p className="text-sm text-muted-foreground">Ask for <span className="text-foreground">{stop.contactName}</span></p>
-                      )}
 
                       {/* Navigate and Delivered only — no Call button (owner, 2026-09-22). */}
                       <div className="grid grid-cols-2 gap-2 pt-1">
                         {nav ? (
                           <Button asChild className="h-12" data-testid={`button-navigate-${stop.key}`}>
-                            <a href={nav} target="_blank" rel="noopener noreferrer"><Navigation className="w-4 h-4 mr-1.5" /> Navigate</a>
+                            <a href={nav.href} target={nav.external ? "_blank" : undefined} rel="noopener noreferrer"><Navigation className="w-4 h-4 mr-1.5" /> Navigate</a>
                           </Button>
                         ) : (
                           <Button className="h-12" disabled>Navigate</Button>
