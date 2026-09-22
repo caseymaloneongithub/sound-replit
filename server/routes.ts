@@ -11739,11 +11739,12 @@ If you have any questions, please don't hesitate to reach out!`,
         .orderBy(desc(deliveryRoutes.generatedAt))
         .limit(1);
 
-      // The day's deliveries — the same set the Routes page plans from.
-      const { orders } = await storage.getWholesaleOrders();
-      const dayOrders = orders.filter((o) =>
-        isOnRouteDay(o.deliveryDate, dayStart, dayEnd)
-        && o.status !== 'cancelled' && o.fulfillmentMethod !== 'pickup');
+      // The day's deliveries — the same window the Routes page plans from,
+      // read as one range query rather than every order the company has ever
+      // taken (that scan was most of this call's time; the driver waits on it
+      // after every Delivered tap).
+      const dayOrders = (await storage.getWholesaleOrdersByDeliveryDateRange(dayStart, dayEnd))
+        .filter((o) => o.status !== 'cancelled');
       const dayOrderIds = new Set(dayOrders.map((o) => o.id));
 
       type Skeleton = { type: 'order' | 'custom'; id: string; latitude: number | null; longitude: number | null; distanceFromPrevious: number | null; durationFromPrevious: number | null; routed: boolean };
@@ -11771,14 +11772,15 @@ If you have any questions, please don't hesitate to reach out!`,
         s.routed && s.latitude != null && s.longitude != null
         && (lat == null || lng == null || Math.abs(lat - s.latitude) > 0.0005 || Math.abs(lng - s.longitude) > 0.0005);
 
-      const stops: any[] = [];
-      for (const s of skeleton) {
+      // Stops are built side by side (each is a handful of queries) and kept
+      // in drive order; a stop that no longer applies comes back null.
+      const buildStop = async (s: Skeleton): Promise<any | null> => {
         if (s.type === 'custom') {
           const custom = await storage.getDeliveryStop(s.id);
-          if (!custom) continue;
+          if (!custom) return null;
           const lat = custom.latitude ? Number(custom.latitude) : null;
           const lng = custom.longitude ? Number(custom.longitude) : null;
-          stops.push({
+          return {
             key: `custom:${custom.id}`,
             type: 'custom',
             id: custom.id,
@@ -11791,15 +11793,14 @@ If you have any questions, please don't hesitate to reach out!`,
             durationFromPrevious: s.durationFromPrevious,
             routed: s.routed,
             addressChanged: pinMoved(s, lat, lng),
-          });
-          continue;
+          };
         }
         // An order stop whose order was cancelled, moved to another day or
         // deleted since the route was built is left out — that route is stale
         // for it, and the driver shouldn't drive there.
-        if (!dayOrderIds.has(s.id)) continue;
+        if (!dayOrderIds.has(s.id)) return null;
         const details = await storage.getWholesaleOrderWithDetails(s.id);
-        if (!details) continue;
+        if (!details) return null;
         const { order, customer, items } = details;
         const location = order.locationId ? await storage.getWholesaleLocation(order.locationId) : null;
         const storeName = location?.locationName && location.locationName !== 'Main Location' ? location.locationName : null;
@@ -11809,7 +11810,7 @@ If you have any questions, please don't hesitate to reach out!`,
         }));
         const lat = location?.latitude ? Number(location.latitude) : null;
         const lng = location?.longitude ? Number(location.longitude) : null;
-        stops.push({
+        return {
           key: `order:${order.id}`,
           type: 'order',
           id: order.id,
@@ -11833,8 +11834,9 @@ If you have any questions, please don't hesitate to reach out!`,
           distanceFromPrevious: s.distanceFromPrevious,
           durationFromPrevious: s.durationFromPrevious,
           routed: s.routed,
-        });
-      }
+        };
+      };
+      const stops: any[] = (await Promise.all(skeleton.map(buildStop))).filter((s) => s !== null);
 
       const deliveries = stops.filter((s) => s.type === 'order');
       res.json({

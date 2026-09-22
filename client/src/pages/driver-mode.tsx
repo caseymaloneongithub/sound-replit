@@ -145,14 +145,34 @@ export default function DriverMode() {
     refetchInterval: 60_000,
   });
 
+  // The tap shows at once (owner, 2026-09-22: "doesn't refresh fast enough"):
+  // the day's cache is updated optimistically for the day the tap was made on,
+  // the server is told, and the real day is reloaded afterwards. A failure
+  // puts the card back and says so.
+  type StatusVars = { orderId: string; status: "delivered" | "packaged"; day: string };
   const setStatus = useMutation({
-    mutationFn: async ({ orderId, status }: { orderId: string; status: "delivered" | "packaged" }) =>
+    mutationFn: async ({ orderId, status }: StatusVars) =>
       apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, { status }),
+    onMutate: async ({ orderId, status, day }) => {
+      const queryKey = ["/api/driver/day", day];
+      await queryClient.cancelQueries({ queryKey });
+      const before = queryClient.getQueryData<DriverDay>(queryKey);
+      if (before) {
+        const stops = before.stops.map((s) => (s.type === "order" && s.id === orderId ? { ...s, status } : s));
+        const deliveries = stops.filter((s) => s.type === "order");
+        queryClient.setQueryData<DriverDay>(queryKey, {
+          ...before,
+          stops,
+          summary: { ...before.summary, delivered: deliveries.filter((s) => s.status === "delivered").length },
+        });
+      }
+      return { queryKey, before };
+    },
+    onError: (e: any, _vars, context) => {
+      if (context?.before) queryClient.setQueryData(context.queryKey, context.before);
+      toast({ title: "Couldn't update the order", description: e.message, variant: "destructive" });
+    },
     onSuccess: (data: any, { status }) => {
-      // Every loaded day, not just the one on screen: the driver may have moved
-      // to another day while the save was in flight.
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/day"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
       const warnings: string[] = Array.isArray(data?.stockWarnings) ? data.stockWarnings : [];
       toast({
         title: status === "delivered" ? "Delivered" : "Delivery undone",
@@ -160,7 +180,12 @@ export default function DriverMode() {
         variant: warnings.length ? "destructive" : undefined,
       });
     },
-    onError: (e: any) => toast({ title: "Couldn't update the order", description: e.message, variant: "destructive" }),
+    onSettled: () => {
+      // Every loaded day, not just the one on screen: the driver may have moved
+      // to another day while the save was in flight.
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/day"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
+    },
   });
 
   const stops = day?.stops ?? [];
@@ -321,7 +346,7 @@ export default function DriverMode() {
                         {stop.type === "order" ? (
                           isDone ? (
                             <Button variant="outline" className="h-12" disabled={setStatus.isPending}
-                              onClick={() => setStatus.mutate({ orderId: stop.id, status: "packaged" })} data-testid={`button-undo-${stop.key}`}>
+                              onClick={() => setStatus.mutate({ orderId: stop.id, status: "packaged", day: dateKey })} data-testid={`button-undo-${stop.key}`}>
                               <Undo2 className="w-4 h-4 mr-1.5" /> Undo
                             </Button>
                           ) : (
@@ -368,7 +393,7 @@ export default function DriverMode() {
             <AlertDialogCancel className="h-11" data-testid="button-cancel-delivered">Not yet</AlertDialogCancel>
             <AlertDialogAction
               className="h-11 bg-green-700 hover:bg-green-800"
-              onClick={() => { if (confirming) setStatus.mutate({ orderId: confirming.id, status: "delivered" }); setConfirming(null); }}
+              onClick={() => { if (confirming) setStatus.mutate({ orderId: confirming.id, status: "delivered", day: dateKey }); setConfirming(null); }}
               data-testid="button-confirm-delivered"
             >
               Delivered
