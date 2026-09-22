@@ -134,7 +134,9 @@ export default function DriverMode() {
   // from 5 p.m. Pacific, which loaded the next day's stops under "Today".
   const dateKey = format(selectedDate, "yyyy-MM-dd");
   const { done: localDone, toggle: toggleLocalDone } = useLocalDone(dateKey);
-  const [confirming, setConfirming] = useState<DriverStop | null>(null);
+  // Both directions ask first (owner, 2026-09-22: "add a confirmation to undo
+  // a delivery") — a stray tap must not move stock either way.
+  const [confirming, setConfirming] = useState<{ stop: DriverStop; action: "delivered" | "undo" } | null>(null);
 
   const { data: day, isLoading, isError, error } = useQuery<DriverDay>({
     queryKey: ["/api/driver/day", dateKey],
@@ -340,12 +342,12 @@ export default function DriverMode() {
                         {stop.type === "order" ? (
                           isDone ? (
                             <Button variant="outline" className="h-12" disabled={setStatus.isPending}
-                              onClick={() => setStatus.mutate({ orderId: stop.id, status: "packaged", day: dateKey })} data-testid={`button-undo-${stop.key}`}>
+                              onClick={() => setConfirming({ stop, action: "undo" })} data-testid={`button-undo-${stop.key}`}>
                               <Undo2 className="w-4 h-4 mr-1.5" /> Undo
                             </Button>
                           ) : (
                             <Button className="h-12 bg-green-700 hover:bg-green-800 text-white" disabled={setStatus.isPending}
-                              onClick={() => setConfirming(stop)} data-testid={`button-delivered-${stop.key}`}>
+                              onClick={() => setConfirming({ stop, action: "delivered" })} data-testid={`button-delivered-${stop.key}`}>
                               <Check className="w-4 h-4 mr-1.5" /> Delivered
                             </Button>
                           )
@@ -377,20 +379,27 @@ export default function DriverMode() {
       <AlertDialog open={!!confirming} onOpenChange={(open) => !open && setConfirming(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Mark delivered?</AlertDialogTitle>
+            <AlertDialogTitle>{confirming?.action === "undo" ? "Undo this delivery?" : "Mark delivered?"}</AlertDialogTitle>
             <AlertDialogDescription>
-              {confirming?.name}{confirming?.cases ? ` — ${confirming.cases} case${confirming.cases === 1 ? "" : "s"}` : ""}.
-              The order is marked delivered and its stock comes off the shelf. Undo is one tap away if this was a slip.
+              {confirming?.stop.name}{confirming?.stop.cases ? ` — ${confirming.stop.cases} case${confirming.stop.cases === 1 ? "" : "s"}` : ""}.{" "}
+              {confirming?.action === "undo"
+                ? "The order goes back to packaged and its stock returns to the shelf."
+                : "The order is marked delivered and its stock comes off the shelf."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="h-11" data-testid="button-cancel-delivered">Not yet</AlertDialogCancel>
+            <AlertDialogCancel className="h-11" data-testid="button-cancel-confirm">Keep as is</AlertDialogCancel>
             <AlertDialogAction
-              className="h-11 bg-green-700 hover:bg-green-800"
-              onClick={() => { if (confirming) setStatus.mutate({ orderId: confirming.id, status: "delivered", day: dateKey }); setConfirming(null); }}
-              data-testid="button-confirm-delivered"
+              className={confirming?.action === "undo" ? "h-11" : "h-11 bg-green-700 hover:bg-green-800"}
+              onClick={() => {
+                if (confirming) {
+                  setStatus.mutate({ orderId: confirming.stop.id, status: confirming.action === "undo" ? "packaged" : "delivered", day: dateKey });
+                }
+                setConfirming(null);
+              }}
+              data-testid={confirming?.action === "undo" ? "button-confirm-undo" : "button-confirm-delivered"}
             >
-              Delivered
+              {confirming?.action === "undo" ? "Undo delivery" : "Delivered"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
