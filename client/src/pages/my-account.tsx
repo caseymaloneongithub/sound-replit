@@ -14,6 +14,7 @@ import { apiRequest, apiErrorMessage, queryClient } from "@/lib/queryClient";
 import { reloadCart } from "@/lib/cart-refresh";
 import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useLocation } from "wouter";
 import { PickupInfo } from "@/components/pickup-info";
 import { frequencyLabel, FREQUENCY_OPTIONS } from "@shared/subscription-frequency";
@@ -311,23 +312,44 @@ export default function MyAccount() {
     },
   });
 
+  // After a reorder, checkout only once the cart has been read fresh from the
+  // server: checkout reads a cached cart as current, and a stale empty one sent
+  // the customer back to the shop. If that read fails the items are still in the
+  // cart, so say so and offer to read it again; the reorder itself is never
+  // repeated, and the header cart reads it afresh on opening too (review,
+  // 2026-09-23).
+  const checkoutAfterReorder = async (message: string, leftSomethingOut: boolean): Promise<void> => {
+    if (await reloadCart(queryClient)) {
+      toast({
+        title: "Items added to cart",
+        description: message,
+        // What was left out is worth reading, not just registering.
+        ...(leftSomethingOut ? { duration: 8000 } : {}),
+      });
+      setLocation("/cart-checkout");
+      return;
+    }
+    toast({
+      title: "Items added to cart",
+      description: `${message} Your cart didn't load just now.`,
+      duration: 20000,
+      action: (
+        <ToastAction altText="Load the cart again" onClick={() => void checkoutAfterReorder(message, leftSomethingOut)} data-testid="button-reorder-retry-cart">
+          Try again
+        </ToastAction>
+      ),
+    });
+  };
+
   const reorderMutation = useMutation({
     mutationFn: async (orderId: string) => {
       return await apiRequest("POST", `/api/orders/${orderId}/reorder`);
     },
     onSuccess: async (data: any) => {
-      // Checkout only once the cart has been read fresh from the server: it
-      // reads a cached cart as current, and a stale empty one sent the customer
-      // back to the shop. If that read fails the items are still in the cart, so
-      // say so and stay here; the reorder itself is never repeated.
-      const cartReady = await reloadCart(queryClient);
       // The server says what went in and names anything that didn't.
       const message = data?.message || "Your order items have been added to the cart.";
-      toast({
-        title: "Items added to cart",
-        description: cartReady ? message : `${message} Open your cart to check out.`,
-      });
-      if (cartReady) setLocation("/cart-checkout");
+      const leftSomethingOut = (data?.unavailable?.length ?? 0) + (data?.pickAgain?.length ?? 0) > 0;
+      await checkoutAfterReorder(message, leftSomethingOut);
     },
     onError: (error: any) => {
       toast({

@@ -132,20 +132,11 @@ async function splitItemFields(
 }
 
 /**
- * The two flavor names in a split case's packing note, the reverse of
- * splitItemFields: "Split: 6 Bonfire / 6 Mist" gives ["Bonfire", "Mist"]. Null
- * when the note isn't a split.
- */
-function parseSplitNote(note: string | null | undefined): [string, string] | null {
-  const m = /^Split:\s*(?:\d+\s+)?(.+?)\s*\/\s*(?:\d+\s+)?(.+?)\s*$/.exec(note ?? '');
-  return m ? [m[1], m[2]] : null;
-}
-
-/**
- * A custom Mixed case's packing note as bottle counts per flavor, the way staff
- * type them on a subscription item: "6 Bonfire, 6 Mist" or "6 × HUM / 6 Mist"
- * gives [{ count: 6, flavor: "Bonfire" }, { count: 6, flavor: "Mist" }]. Null
- * when any part isn't "<count> <flavor>" (free-text instructions).
+ * A packing note as bottle counts per flavor: a custom Mixed case the way staff
+ * type it on a subscription item ("6 Bonfire, 6 Mist", "6 × HUM / 6 Mist"), or
+ * the body of a split case's note after "Split:" ("6 Bonfire / 6 Mist", see
+ * splitItemFields). Gives [{ count: 6, flavor: "Bonfire" }, { count: 6, flavor:
+ * "Mist" }]. Null when any part isn't "<count> <flavor>" (free-text instructions).
  */
 function parseMixNote(note: string | null | undefined): Array<{ count: number; flavor: string }> | null {
   const parts = (note ?? '').split(/\s*(?:,|\/|\+|&|\band\b)\s*/i).map((p) => p.trim()).filter(Boolean);
@@ -5974,13 +5965,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const isMixed = !!mixedId && (selectedFlavorId ?? product?.flavorId) === mixedId;
           const note = line.notes?.trim() ?? '';
 
-          const split = parseSplitNote(note);
-          if (split) {
-            // A split case goes back in as its two flavors, the way the shop takes it.
-            const [a, b] = split.map((n) => resolveFlavor(n));
-            const name = `${split[0]} / ${split[1]} split case`;
+          if (/^Split:/i.test(note)) {
+            // A split case goes back in as its two flavors, the way the shop takes
+            // it, but only as the shop's split: half and half. The note carries the
+            // counts, and staff can type others ("Split: 8 Bonfire / 4 Mist") the
+            // cart can't hold; those are left for the customer to choose (review,
+            // 2026-09-23), never evened out.
+            const body = note.replace(/^Split:\s*/i, '');
+            const parts = parseMixNote(body);
+            if (!parts || parts.length !== 2 || parts[0].count !== parts[1].count || parts[0].count * 2 !== CASE_SIZE) {
+              pickAgain.push(`${body} split case`);
+              continue;
+            }
+            const [a, b] = parts.map((p) => resolveFlavor(p.flavor));
+            const name = `${parts[0].flavor} / ${parts[1].flavor} split case`;
             if (!a || !b) {
               unavailable.push(name);
+              continue;
+            }
+            // Two different regular flavors; Mixed is never half of a split.
+            if (a.id === b.id || a.id === mixedId || b.id === mixedId) {
+              pickAgain.push(name);
               continue;
             }
             const refused = await tryAdd(retailProductId, a.id, b.id, line.quantity);

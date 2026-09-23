@@ -23,7 +23,18 @@ export function CartDrawer() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
 
-  const { items: unifiedItems, isLoading } = useUnifiedCart();
+  const { items: unifiedItems, isLoading, isFetching, refresh } = useUnifiedCart();
+
+  // Opening the drawer reads the cart from the server again: a cached cart can
+  // be out of date (a reorder whose follow-up read failed left an empty one),
+  // and an empty drawer offers no way to check out (review, 2026-09-23).
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (next) void refresh();
+  };
+  // Until that read lands, a cart cached as empty shows as loading rather than
+  // "Your cart is empty".
+  const showLoading = isLoading || (isFetching && unifiedItems.length === 0);
 
   const updateQuantityMutation = useMutation({
     mutationFn: async ({ id, quantity, type }: { id: string; quantity: number; type: 'legacy' | 'retail_v2' }) => {
@@ -146,7 +157,7 @@ export function CartDrawer() {
   const cartTotal = subtotal + depositTotal + taxAmount;
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetTrigger asChild>
         <Button variant="ghost" size="icon" className="relative" data-testid="button-cart">
           <ShoppingCart className="w-5 h-5" />
@@ -166,7 +177,7 @@ export function CartDrawer() {
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto py-6">
-          {isLoading ? (
+          {showLoading ? (
             <div className="space-y-4">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="flex gap-4 animate-pulse">
