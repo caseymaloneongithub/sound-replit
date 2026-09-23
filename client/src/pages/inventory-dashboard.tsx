@@ -16,10 +16,12 @@ import { Loader2 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   MATERIAL_LEVEL_LABELS,
+  ORDER_NOW_REASON_LABELS,
+  ORDER_NOW_SHARE_OF_REORDER,
   SAFETY_BUFFER,
   WATCH_MULTIPLIER,
-  USAGE_WINDOW_DAYS,
   type MaterialLevelKey,
+  type OrderNowReason,
 } from "@shared/material-health";
 
 type Dashboard = {
@@ -56,6 +58,7 @@ type ReorderRow = {
   id: string; title: string; unit: string; stock: number; supplierName: string | null;
   dailyUsage: number; daysOfCover: number | null; leadTimeDays: number;
   orderNowAt: number | null; watchAt: number | null; suggestedQty: number; status: MaterialLevelKey;
+  orderNowReasons: OrderNowReason[]; orderSize: number;
 };
 
 const money = (v: number) =>
@@ -63,6 +66,11 @@ const money = (v: number) =>
 // Per-unit costs need cents — rounding $11.05 to "$11" hides the real margin.
 const moneyPrecise = (v: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(v);
+// Spices run a few hundredths of a pound a day and cans hundreds, so "0.0" would
+// hide the rate that sets a spice's level: two significant digits under 1.
+const perDay = (x: number) => x < 1
+  ? x.toLocaleString("en-US", { maximumSignificantDigits: 2 })
+  : x.toLocaleString("en-US", { maximumFractionDigits: 1 });
 const shortMaterial = (t: string) => {
   const i = t.indexOf(":");
   return i === -1 ? t : t.slice(i + 1).trim();
@@ -226,8 +234,9 @@ export default function InventoryDashboard() {
               Reorder alerts
             </CardTitle>
             <CardDescription data-testid="text-reorder-rule">
-              Order now when stock won't last through the supplier's lead time plus {Math.round((SAFETY_BUFFER - 1) * 100)}%.
-              Watch within {WATCH_MULTIPLIER} times that. Usage from the last {USAGE_WINDOW_DAYS} days.
+              Order now when stock won't last through the supplier's lead time plus {Math.round((SAFETY_BUFFER - 1) * 100)}%,
+              or is down to {Math.round(ORDER_NOW_SHARE_OF_REORDER * 100)}% of its reorder size. Watch within {WATCH_MULTIPLIER} times
+              the lead-time level. Usage counts only the time since a material was first used, with the last 30 days weighted most.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -255,11 +264,11 @@ export default function InventoryDashboard() {
                       <TableCell className="font-medium text-sm">{shortMaterial(r.title)}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{r.supplierName ?? "—"}</TableCell>
                       <TableCell className="text-right tabular-nums text-sm">
-                        {Math.round(r.stock).toLocaleString()} <span className="text-muted-foreground text-xs">{r.unit}</span>
+                        {r.stock.toLocaleString()} <span className="text-muted-foreground text-xs">{r.unit}</span>
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">{r.dailyUsage.toFixed(1)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm">{perDay(r.dailyUsage)}</TableCell>
                       <TableCell className="text-right tabular-nums text-sm">
-                        {r.daysOfCover === null ? "—" : `${Math.round(r.daysOfCover)}d`}
+                        {r.daysOfCover === null ? "—" : `${Math.max(0, Math.floor(r.daysOfCover))}d`}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-sm text-muted-foreground">{r.leadTimeDays}d</TableCell>
                       <TableCell className="text-right tabular-nums text-sm font-medium">
@@ -267,7 +276,14 @@ export default function InventoryDashboard() {
                       </TableCell>
                       <TableCell>
                         {r.status === "order-now" ? (
-                          <Badge className="bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300 border-0">{MATERIAL_LEVEL_LABELS["order-now"]}</Badge>
+                          <>
+                            <Badge className="bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300 border-0">{MATERIAL_LEVEL_LABELS["order-now"]}</Badge>
+                            <div className="text-xs text-muted-foreground mt-1 whitespace-nowrap" data-testid={`text-order-now-reason-${r.id}`}>
+                              {r.orderNowReasons.map((reason) => reason === "reorder-size" && r.orderSize > 0
+                                ? `At ${Math.round((100 * r.stock) / r.orderSize)}% of reorder size`
+                                : ORDER_NOW_REASON_LABELS[reason]).join(" · ")}
+                            </div>
+                          </>
                         ) : (
                           <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-0">{MATERIAL_LEVEL_LABELS.watch}</Badge>
                         )}

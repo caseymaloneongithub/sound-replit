@@ -17,8 +17,8 @@
  * materials.watch_alerted_at / reorder_alerted_at record what has been sent.
  *
  * checkMaterialStockAlerts() runs after anything that changes stock, usage, lead
- * time or a material's active state, and once each morning (usage is a sliding
- * 90-day window, so levels drift without anyone touching stock). The thresholds
+ * time or a material's active state, and once each morning (usage is measured
+ * over sliding windows, so levels drift without anyone touching stock). The thresholds
  * are worked out in code, then every claim and re-arm is one UPDATE whose stock
  * and flag conditions are checked on the row itself, so two checks running at
  * once can't announce the same drop twice. It never throws: a failed email must
@@ -31,6 +31,7 @@ import { storage } from "./storage";
 import { recordEvent } from "./ops-events";
 import { sendMaterialStockAlert, type MaterialStockAlertItem } from "./email";
 import { PICKUP_POLICY } from "@shared/pickup-policy";
+import { materialLevel } from "@shared/material-health";
 
 type Claimed = { id: string; title: string; unit: string; stock: string; supplierName: string | null };
 const RETURNING = sql`RETURNING m.id, m.title, m.unit, m.stock,
@@ -54,14 +55,19 @@ export async function checkMaterialStockAlerts(opts: { notify?: boolean } = {}):
       sql`, `,
     )}) AS lv(id, order_now_at, watch_at)`;
 
-    // Back above Watch (restocked, counted up, usage fell, lead time shortened,
-    // switched off): both levels re-arm.
+    // Above every alert level (restocked, counted up, usage fell, lead time
+    // shortened, switched off): both levels re-arm. "Every level" is the higher
+    // of Watch and Order now: the reorder-size check can put Order now above
+    // Watch, or give a material with no recent use an Order now level and no
+    // Watch level at all (GREATEST skips NULLs).
     await db.execute(sql`
       UPDATE materials m SET watch_alerted_at = NULL, reorder_alerted_at = NULL
       FROM ${levels}
       WHERE m.id = lv.id
         AND (m.watch_alerted_at IS NOT NULL OR m.reorder_alerted_at IS NOT NULL)
-        AND (NOT m.is_active OR m.deleted_at IS NOT NULL OR lv.watch_at IS NULL OR m.stock > lv.watch_at)`);
+        AND (NOT m.is_active OR m.deleted_at IS NOT NULL
+          OR (lv.order_now_at IS NULL AND lv.watch_at IS NULL)
+          OR m.stock > GREATEST(lv.order_now_at, lv.watch_at))`);
     // Back above Order now but still in Watch: Order now re-arms; climbing into
     // Watch from below isn't news, so no email.
     await db.execute(sql`
@@ -94,23 +100,37 @@ export async function checkMaterialStockAlerts(opts: { notify?: boolean } = {}):
     const toItem = (m: Claimed, level: MaterialStockAlertItem["level"]): MaterialStockAlertItem => {
       const lv = byId.get(m.id)!;
       const stock = Number(m.stock);
+      // Reasons from the stock the claim just saw, by the same rule.
+      const now = materialLevel(stock, lv.level.dailyUsage, lv.level.leadTimeDays, Number(lv.orderSize));
       return {
         level,
         title: m.title,
         unit: m.unit,
         stock,
         dailyUsage: lv.level.dailyUsage,
-        daysOfCover: lv.level.dailyUsage > 0 ? stock / lv.level.dailyUsage : null,
+        daysOfCover: now.daysOfCover,
         leadTimeDays: lv.level.leadTimeDays,
         suggestedQty: lv.suggestedQty,
+        orderSize: Number(lv.orderSize),
+        orderNowReasons: level === "order-now" ? now.orderNowReasons : [],
         supplierName: m.supplierName,
       };
     };
     const items = [...orderNow.map((m) => toItem(m, "order-now")), ...watch.map((m) => toItem(m, "watch"))]
       .sort((a, b) => (a.level === b.level ? (a.daysOfCover ?? 0) - (b.daysOfCover ?? 0) : a.level === "order-now" ? -1 : 1));
+    const describe = (i: MaterialStockAlertItem) => {
+      const parts = [
+        i.daysOfCover === null ? "no recent use" : `${Math.floor(i.daysOfCover)} days left`,
+        `${i.leadTimeDays}-day lead time`,
+      ];
+      if (i.orderNowReasons.includes("reorder-size") && i.orderSize > 0) {
+        parts.push(`${Math.round((100 * i.stock) / i.orderSize)}% of reorder size`);
+      }
+      return `${i.title} (${parts.join(", ")})`;
+    };
     const list = (level: MaterialStockAlertItem["level"]) => items
       .filter((i) => i.level === level)
-      .map((i) => `${i.title} (${i.daysOfCover === null ? "?" : Math.floor(i.daysOfCover)} days left, ${i.leadTimeDays}-day lead time)`)
+      .map(describe)
       .join(", ");
 
     const admins = [...(await storage.getUsersByRole("admin")), ...(await storage.getUsersByRole("super_admin"))];
@@ -156,8 +176,8 @@ export async function checkMaterialStockAlerts(opts: { notify?: boolean } = {}):
 }
 
 /**
- * Once a day as well, before the 7 a.m. digest: usage is a sliding 90-day
- * window, so a material can drift into Watch or Order now without anyone
+ * Once a day as well, before the 7 a.m. digest: usage is measured over sliding
+ * windows, so a material can drift into Watch or Order now without anyone
  * touching its stock. Gated by DISABLE_CRON in index.ts like the other jobs.
  */
 export function startMaterialStockAlertCron(): void {

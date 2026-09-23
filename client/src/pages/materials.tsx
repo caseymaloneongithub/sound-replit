@@ -21,9 +21,9 @@ import { Loader2, Search, Plus } from "lucide-react";
 import type { Material, Supplier } from "@shared/schema";
 import {
   MATERIAL_LEVEL_LABELS,
+  ORDER_NOW_SHARE_OF_REORDER,
   SAFETY_BUFFER,
   WATCH_MULTIPLIER,
-  USAGE_WINDOW_DAYS,
   type MaterialLevel,
   type MaterialLevelKey,
 } from "@shared/material-health";
@@ -45,8 +45,9 @@ const money = (v: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v);
 
 // Stock level (owner, 2026-09-23): Order now when stock won't last through the
-// supplier's lead time plus 25%, Watch within 1.5 times that, from the last 90
-// days of usage. Computed on the server; the dashboard and emails use the same.
+// supplier's lead time plus 25% or is down to 25% of the reorder size; Watch
+// within 1.5 times the lead-time level. Rule: shared/material-health.ts.
+// Computed on the server; the dashboard and emails use the same.
 const LEVEL_STYLES: Record<MaterialLevelKey, string> = {
   "order-now": "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
   watch: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
@@ -177,9 +178,9 @@ function MaterialForm({
           <Input type="number" step="0.0001" min="0" value={orderSize}
             onChange={(e) => setOrderSize(e.target.value)} data-testid="input-material-ordersize" />
           <p className="text-xs text-muted-foreground">
-            How much to order at a time. The stock level doesn't use this: it's Order now when stock won't last through
-            the supplier's lead time plus {Math.round((SAFETY_BUFFER - 1) * 100)}%, and Watch within {WATCH_MULTIPLIER} times
-            that, from the last {USAGE_WINDOW_DAYS} days of usage. Admins are emailed when it drops to each.
+            How much to order at a time. It's Order now when stock is down to {Math.round(ORDER_NOW_SHARE_OF_REORDER * 100)}% of this,
+            or won't last through the supplier's lead time plus {Math.round((SAFETY_BUFFER - 1) * 100)}%; Watch within {WATCH_MULTIPLIER} times
+            the lead-time level. Admins are emailed when it drops to each.
           </p>
         </div>
       </div>
@@ -479,6 +480,11 @@ export default function Materials() {
                             {m.level.daysOfCover !== null && (
                               <div className="text-xs text-muted-foreground tabular-nums mt-1" data-testid={`text-days-left-${m.id}`}>
                                 {daysLeft(m.level.daysOfCover)} left
+                              </div>
+                            )}
+                            {m.level.orderNowReasons.includes("reorder-size") && n(m.orderSize) > 0 && (
+                              <div className="text-xs text-muted-foreground tabular-nums" data-testid={`text-reorder-share-${m.id}`}>
+                                {Math.round((100 * n(m.stock)) / n(m.orderSize))}% of reorder size
                               </div>
                             )}
                           </>

@@ -34,7 +34,9 @@ for (const key of ["order-now", "watch", "healthy", "no-usage"] as const) {
   if (key === "order-now" || key === "watch") {
     for (const r of rows) {
       const days = r.daysOfCover === null ? "?" : Math.floor(r.daysOfCover);
-      console.log(`    - ${r.title}: ${Number(r.stock.toFixed(2))} ${r.unit}, ${days} days left, ${r.leadTimeDays}-day lead time`);
+      const share = r.orderSize > 0 ? `, ${Math.round((100 * r.stock) / r.orderSize)}% of reorder size` : "";
+      const why = r.orderNowReasons.length ? ` [${r.orderNowReasons.join(" + ")}]` : "";
+      console.log(`    - ${r.title}: ${Number(r.stock.toFixed(2))} ${r.unit}, ${days} days left, ${r.leadTimeDays}-day lead time${share}${why}`);
     }
   }
 }

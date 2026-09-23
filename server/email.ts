@@ -929,12 +929,16 @@ export type MaterialStockAlertItem = {
   daysOfCover: number | null;
   leadTimeDays: number;
   suggestedQty: number;
+  /** The material's reorder size (0 = none set). */
+  orderSize: number;
+  /** Why it's at Order now: won't last the lead time, and/or down to 25% of its reorder size. */
+  orderNowReasons: Array<'lead-time' | 'reorder-size'>;
   supplierName: string | null;
 };
 
 /**
- * A raw material dropped to Watch or Order now — levels from the last 90 days of
- * usage against the supplier's lead time (shared/material-health.ts; owner,
+ * A raw material dropped to Watch or Order now — levels from recent usage, the
+ * supplier's lead time and the reorder size (shared/material-health.ts; owner,
  * 2026-09-23). Sent to admins and super admins once per level per dip; materials
  * crossing together share one email, Order now rows first. See
  * server/material-alerts.ts.
@@ -955,9 +959,18 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
   const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
   const label = (level: MaterialStockAlertItem['level']) => (level === 'order-now' ? 'Order now' : 'Watch');
 
+  const pctOfOrder = (i: MaterialStockAlertItem) => (i.orderSize > 0 ? `${Math.round((100 * i.stock) / i.orderSize)}%` : '');
+  // Order now because stock is down to 25% of a new order — not because it won't last the lead time.
+  const sizeOnly = (i: MaterialStockAlertItem) => i.orderNowReasons.includes('reorder-size') && !i.orderNowReasons.includes('lead-time');
+  const reasonText = (i: MaterialStockAlertItem) => i.orderNowReasons
+    .map((r) => (r === 'lead-time' ? "Won't last the lead time" : `At ${pctOfOrder(i)} of reorder size`))
+    .join(' · ');
+
   const only = params.items.length === 1 ? params.items[0] : null;
   const subject = only
-    ? `${label(only.level)}: ${only.title} has ${daysLeft(only)} left, ${only.leadTimeDays}-day lead time`
+    ? only.level === 'order-now' && sizeOnly(only)
+      ? `Order now: ${only.title} is at ${pctOfOrder(only)} of its reorder size`
+      : `${label(only.level)}: ${only.title} has ${daysLeft(only)} left, ${only.leadTimeDays}-day lead time`
     : orderNow.length && watch.length
       ? `Stock alert: ${orderNow.length} to order now, ${watch.length} to watch`
       : orderNow.length
@@ -966,10 +979,10 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
 
   const intro = [
     orderNow.length
-      ? `<strong>Order now:</strong> ${plural(orderNow.length, 'this material', 'these materials')} won't last through the supplier's lead time plus a 25% buffer.`
+      ? `<strong>Order now:</strong> ${plural(orderNow.length, "this material won't", "these materials won't")} last through the supplier's lead time plus a 25% buffer, or ${plural(orderNow.length, "it's", "they're")} down to 25% of the reorder size.`
       : '',
     watch.length
-      ? `<strong>Watch:</strong> ${plural(watch.length, 'this material is', 'these materials are')} within one and a half times that.`
+      ? `<strong>Watch:</strong> ${plural(watch.length, "this material won't", "these materials won't")} last through one and a half times the supplier's lead time plus a 25% buffer.`
       : '',
   ].filter(Boolean).join(' ');
 
@@ -980,7 +993,7 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
     : '<span style="background-color: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600;">Watch</span>';
   const rows = params.items.map((i) => `
       <tr>
-        <td style="${cell}">${badge(i.level)}</td>
+        <td style="${cell}">${badge(i.level)}${i.level === 'order-now' && i.orderNowReasons.length ? `<div style="font-size: 11px; color: ${BRAND_COLORS.mediumGrey}; margin-top: 4px;">${escapeHtml(reasonText(i))}</div>` : ''}</td>
         <td style="${cell}">${escapeHtml(i.title)}${i.supplierName ? `<div style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">${escapeHtml(i.supplierName)}</div>` : ''}</td>
         <td style="${cell} text-align: right; white-space: nowrap;">${qty(i.stock)} ${escapeHtml(i.unit)}</td>
         <td style="${cell} text-align: right; white-space: nowrap; font-weight: 600;">${daysLeft(i)}</td>
@@ -1007,15 +1020,15 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
       <tbody>${rows}</tbody>
     </table>
     <p style="margin: 0 0 8px;"><a href="${appUrl}/inventory/purchase-orders" style="color: ${BRAND_COLORS.darkGrey};">Start a purchase order</a> · <a href="${appUrl}/inventory/dashboard" style="color: ${BRAND_COLORS.darkGrey};">Open the inventory dashboard</a></p>
-    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; margin-top: 24px;">Sent to admins once when a material drops to Watch and again when it drops to Order now. Order now = stock at or below daily usage × supplier lead time × 1.25; Watch = up to 1.5 times that. Usage is the last 90 days.</p>
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; margin-top: 24px;">Sent to admins once when a material drops to Watch and again when it drops to Order now. Order now = stock at or below daily usage × supplier lead time × 1.25, or at or below 25% of the reorder size. Watch = up to 1.5 times the lead-time level. Usage counts only the time since a material was first used, with the last 30 days weighted most.</p>
   </div>
 </div>`.trim();
 
   const line = (i: MaterialStockAlertItem) =>
-    `- ${i.title}: ${qty(i.stock)} ${i.unit} on hand, lasts ${daysLeft(i)}, lead time ${i.leadTimeDays} days, suggested order ${qty(i.suggestedQty)} ${i.unit}${i.supplierName ? ` from ${i.supplierName}` : ''}`;
+    `- ${i.title}: ${qty(i.stock)} ${i.unit} on hand, ${i.daysOfCover === null ? 'no recent use' : `lasts ${daysLeft(i)}`}, lead time ${i.leadTimeDays} days, suggested order ${qty(i.suggestedQty)} ${i.unit}${i.supplierName ? ` from ${i.supplierName}` : ''}${i.level === 'order-now' && i.orderNowReasons.length ? ` (${reasonText(i)})` : ''}`;
   const text = [
-    ...(orderNow.length ? ["ORDER NOW (won't last through lead time + 25%):", ...orderNow.map(line), ''] : []),
-    ...(watch.length ? ['WATCH (within 1.5 times that):', ...watch.map(line), ''] : []),
+    ...(orderNow.length ? ["ORDER NOW (won't last through lead time + 25%, or down to 25% of reorder size):", ...orderNow.map(line), ''] : []),
+    ...(watch.length ? ["WATCH (won't last through 1.5 times lead time + 25%):", ...watch.map(line), ''] : []),
     `Start a purchase order: ${appUrl}/inventory/purchase-orders`,
     `Inventory dashboard: ${appUrl}/inventory/dashboard`,
   ].join('\n');

@@ -101,10 +101,11 @@ import { eq, and, or, desc, asc, sql, inArray, isNull, gte, lt } from "drizzle-o
 import {
   materialLevel,
   suggestedOrderQty,
-  USAGE_WINDOW_DAYS,
+  usageRate,
   DEFAULT_LEAD_TIME_DAYS,
   type MaterialLevel,
   type MaterialLevelKey,
+  type OrderNowReason,
 } from "@shared/material-health";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
@@ -1363,34 +1364,43 @@ export class PostgresStorage implements IStorage {
   // ===== Analytics: smart reorder + dashboard =====
 
   /**
-   * Units of each material used over the last USAGE_WINDOW_DAYS: each batch's
+   * Each material's daily usage rate by the shared rule (usageRate in
+   * shared/material-health.ts): only the time since its first recorded use,
+   * with the last 30 days weighted most. Consumption per batch is the batch's
    * recorded consumption (production_material_usage, kept since 2026-08-31) or,
    * for batches logged before that, its recipe times the units produced.
    */
-  async getMaterialUsageInWindow(): Promise<Map<string, number>> {
-    const cutoff = new Date(Date.now() - USAGE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  async getMaterialUsageRates(): Promise<Map<string, number>> {
+    const DAY = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const since = (days: number) => new Date(now - days * DAY);
     const rows = (await db.execute(sql`
-      WITH win AS (SELECT id, process_id, units FROM productions WHERE date >= ${cutoff}),
-      recorded AS (
-        SELECT u.material_id, u.units_consumed AS qty
-        FROM production_material_usage u JOIN win w ON w.id = u.production_id
-      ),
-      by_recipe AS (
-        SELECT pm.material_id, w.units * pm.units AS qty
-        FROM win w JOIN process_materials pm ON pm.process_id = w.process_id
-        WHERE NOT EXISTS (SELECT 1 FROM production_material_usage u WHERE u.production_id = w.id)
+      WITH per_batch AS (
+        SELECT u.material_id, p.date, u.units_consumed AS qty
+        FROM production_material_usage u JOIN productions p ON p.id = u.production_id
+        UNION ALL
+        SELECT pm.material_id, p.date, p.units * pm.units AS qty
+        FROM productions p JOIN process_materials pm ON pm.process_id = p.process_id
+        WHERE NOT EXISTS (SELECT 1 FROM production_material_usage u WHERE u.production_id = p.id)
       )
-      SELECT material_id AS "materialId", sum(qty)::float8 AS used
-      FROM (SELECT * FROM recorded UNION ALL SELECT * FROM by_recipe) x
-      GROUP BY material_id`)).rows as Array<{ materialId: string; used: number }>;
-    return new Map(rows.map((r) => [r.materialId, Number(r.used)]));
+      SELECT material_id AS "materialId",
+        min(date) AS "firstUse",
+        coalesce(sum(qty) FILTER (WHERE date >= ${since(30)}), 0)::float8 AS "used30",
+        coalesce(sum(qty) FILTER (WHERE date >= ${since(60)}), 0)::float8 AS "used60",
+        coalesce(sum(qty) FILTER (WHERE date >= ${since(90)}), 0)::float8 AS "used90"
+      FROM per_batch
+      GROUP BY material_id`)).rows as Array<{ materialId: string; firstUse: Date | string | null; used30: number; used60: number; used90: number }>;
+    return new Map(rows.map((r) => {
+      const historyDays = r.firstUse ? Math.max(0, (now - new Date(r.firstUse).getTime()) / DAY) : null;
+      return [r.materialId, usageRate(historyDays, { 30: Number(r.used30), 60: Number(r.used60), 90: Number(r.used90) })];
+    }));
   }
 
   /**
    * Every material's stock level by the shared rule (shared/material-health.ts):
-   * daily usage over the last 90 days against the supplier's lead time. The
-   * inventory dashboard, the Materials table and the stock emails all read this,
-   * so they can't disagree.
+   * recency-weighted daily usage against the supplier's lead time, plus the
+   * reorder-size check. The inventory dashboard, the Materials table and the
+   * stock emails all read this, so they can't disagree.
    */
   async getMaterialLevels(): Promise<Array<Material & {
     supplierName: string | null;
@@ -1398,10 +1408,10 @@ export class PostgresStorage implements IStorage {
     level: MaterialLevel;
     suggestedQty: number;
   }>> {
-    const [mats, used] = await Promise.all([this.getMaterials(), this.getMaterialUsageInWindow()]);
+    const [mats, rates] = await Promise.all([this.getMaterials(), this.getMaterialUsageRates()]);
     return mats.map((m) => {
-      const dailyUsage = (used.get(m.id) ?? 0) / USAGE_WINDOW_DAYS;
-      const level = materialLevel(Number(m.stock), dailyUsage, m.supplierLeadTimeDays ?? DEFAULT_LEAD_TIME_DAYS);
+      const dailyUsage = rates.get(m.id) ?? 0;
+      const level = materialLevel(Number(m.stock), dailyUsage, m.supplierLeadTimeDays ?? DEFAULT_LEAD_TIME_DAYS, Number(m.orderSize));
       return { ...m, level, suggestedQty: suggestedOrderQty(Number(m.orderSize), dailyUsage) };
     });
   }
@@ -1411,6 +1421,7 @@ export class PostgresStorage implements IStorage {
     id: string; title: string; unit: string; stock: number; supplierName: string | null;
     dailyUsage: number; daysOfCover: number | null; leadTimeDays: number;
     orderNowAt: number | null; watchAt: number | null; suggestedQty: number; status: MaterialLevelKey;
+    orderNowReasons: OrderNowReason[]; orderSize: number;
   }>> {
     // Inactive materials are retired — never suggest reordering them.
     return (await this.getMaterialLevels())
@@ -1428,6 +1439,8 @@ export class PostgresStorage implements IStorage {
         watchAt: m.level.watchAt,
         suggestedQty: m.suggestedQty,
         status: m.level.key,
+        orderNowReasons: m.level.orderNowReasons,
+        orderSize: Number(m.orderSize),
       }));
   }
 
