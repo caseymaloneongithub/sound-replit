@@ -4,15 +4,17 @@
  *
  *   Order now   stock at or below daily usage × supplier lead time × 1.25
  *               ("won't last through the lead time plus a 25% buffer"), OR
- *               stock at or below 25% of the reorder size — the amount a new
- *               order brings in. Added because the usage prediction alone read
- *               low stock as fine: materials are used in whole batches, so a
- *               90-day daily average can say "9 days left" when one batch
- *               needs more than is on hand.
+ *               stock at or below 15% of the reorder size — the amount a new
+ *               order brings in. The prediction leads; the reorder-size floor
+ *               is a failsafe for what it can miss: materials are used in
+ *               whole batches, so a daily average can say "9 days left" when
+ *               one batch needs more than is on hand. (Owner: 25% at first,
+ *               then "make our floor 15% of reorder just as a failsafe to take
+ *               better advantage of the prediction model".)
  *   Watch       stock up to 1.5 × the lead-time level.
  *   Healthy     anything above.
- *   No recent use   not used in the last 90 days and not under 25% of its
- *               reorder size — nothing to measure it against.
+ *   No recent use   not used in the last 90 days and above the reorder-size
+ *               floor — nothing to measure it against.
  *
  * Daily usage (usageRate below; owner: "only account for the time in which that
  * material has been used and weight recent activity (last 30/60/90 days if we
@@ -39,8 +41,8 @@ export const USAGE_WINDOWS = [30, 60, 90] as const;
 export const MIN_HISTORY_DAYS = 7;
 export const SAFETY_BUFFER = 1.25;
 export const WATCH_MULTIPLIER = 1.5;
-/** Order now at or below this share of the reorder size (a new order's amount). */
-export const ORDER_NOW_SHARE_OF_REORDER = 0.25;
+/** The failsafe floor: Order now at or below this share of the reorder size (a new order's amount). */
+export const ORDER_NOW_SHARE_OF_REORDER = 0.15;
 /** Lead time for a material with no supplier on file. */
 export const DEFAULT_LEAD_TIME_DAYS = 14;
 

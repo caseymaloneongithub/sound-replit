@@ -235,7 +235,7 @@ export default function InventoryDashboard() {
             </CardTitle>
             <CardDescription data-testid="text-reorder-rule">
               Order now when stock won't last through the supplier's lead time plus {Math.round((SAFETY_BUFFER - 1) * 100)}%,
-              or is down to {Math.round(ORDER_NOW_SHARE_OF_REORDER * 100)}% of its reorder size. Watch within {WATCH_MULTIPLIER} times
+              or, as a failsafe, when it's down to {Math.round(ORDER_NOW_SHARE_OF_REORDER * 100)}% of its reorder size. Watch within {WATCH_MULTIPLIER} times
               the lead-time level. Usage counts only the time since a material was first used, with the last 30 days weighted most.
             </CardDescription>
           </CardHeader>

@@ -2205,7 +2205,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteSupplier(req.params.id);
       res.json({ message: "Supplier deleted successfully" });
-      void checkMaterialStockAlerts(); // its materials fall back to the default lead time
+      void checkMaterialStockAlerts(); // (a deleted supplier stays joined to its materials, lead time included)
     } catch (error: any) {
       res.status(500).json({ message: "Error deleting supplier: " + error.message });
     }

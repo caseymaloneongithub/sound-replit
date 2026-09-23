@@ -33,9 +33,10 @@ import { sendMaterialStockAlert, type MaterialStockAlertItem } from "./email";
 import { PICKUP_POLICY } from "@shared/pickup-policy";
 import { materialLevel } from "@shared/material-health";
 
-type Claimed = { id: string; title: string; unit: string; stock: string; supplierName: string | null };
+type Claimed = { id: string; title: string; unit: string; stock: string; supplierName: string | null; supplierWebsite: string | null };
 const RETURNING = sql`RETURNING m.id, m.title, m.unit, m.stock,
-  (SELECT s.name FROM suppliers s WHERE s.id = m.supplier_id) AS "supplierName"`;
+  (SELECT s.name FROM suppliers s WHERE s.id = m.supplier_id) AS "supplierName",
+  (SELECT s.website FROM suppliers s WHERE s.id = m.supplier_id) AS "supplierWebsite"`;
 
 /**
  * @param opts.notify false = record levels without emailing or logging events —
@@ -114,6 +115,7 @@ export async function checkMaterialStockAlerts(opts: { notify?: boolean } = {}):
         orderSize: Number(lv.orderSize),
         orderNowReasons: level === "order-now" ? now.orderNowReasons : [],
         supplierName: m.supplierName,
+        supplierWebsite: m.supplierWebsite,
       };
     };
     const items = [...orderNow.map((m) => toItem(m, "order-now")), ...watch.map((m) => toItem(m, "watch"))]

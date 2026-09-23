@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import PDFDocument from 'pdfkit';
 import { existsSync } from 'fs';
 import { join } from 'path';
+import { ORDER_NOW_SHARE_OF_REORDER, SAFETY_BUFFER } from '@shared/material-health';
 
 // Email branding - black, grey, and white color scheme
 const BRAND_COLORS = {
@@ -931,10 +932,30 @@ export type MaterialStockAlertItem = {
   suggestedQty: number;
   /** The material's reorder size (0 = none set). */
   orderSize: number;
-  /** Why it's at Order now: won't last the lead time, and/or down to 25% of its reorder size. */
+  /** Why it's at Order now: won't last the lead time, and/or down to the reorder-size floor. */
   orderNowReasons: Array<'lead-time' | 'reorder-size'>;
   supplierName: string | null;
+  /** The supplier's website as typed on the Suppliers page, if any. */
+  supplierWebsite: string | null;
 };
+
+/**
+ * A supplier website as typed on the Suppliers page ("stickermule.com",
+ * "https://nuts.com/") as a link, or null when it isn't a web address.
+ */
+export function supplierHref(raw: string | null | undefined): string | null {
+  const s = raw?.trim();
+  if (!s) return null;
+  // Typed without a scheme: assume https. Any other scheme (javascript:, mailto:) isn't a website.
+  const candidate = /^https?:\/\//i.test(s) ? s : /^[a-z][a-z0-9+.-]*:/i.test(s) ? null : `https://${s}`;
+  if (!candidate) return null;
+  try {
+    const url = new URL(candidate);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && url.hostname.includes('.') ? url.href : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * A raw material dropped to Watch or Order now — levels from recent usage, the
@@ -958,9 +979,11 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
   const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
   const label = (level: MaterialStockAlertItem['level']) => (level === 'order-now' ? 'Order now' : 'Watch');
+  const floorPct = `${Math.round(ORDER_NOW_SHARE_OF_REORDER * 100)}%`;
+  const bufferPct = `${Math.round((SAFETY_BUFFER - 1) * 100)}%`;
 
   const pctOfOrder = (i: MaterialStockAlertItem) => (i.orderSize > 0 ? `${Math.round((100 * i.stock) / i.orderSize)}%` : '');
-  // Order now because stock is down to 25% of a new order — not because it won't last the lead time.
+  // Order now only because of the reorder-size floor, not because it won't last the lead time.
   const sizeOnly = (i: MaterialStockAlertItem) => i.orderNowReasons.includes('reorder-size') && !i.orderNowReasons.includes('lead-time');
   const reasonText = (i: MaterialStockAlertItem) => i.orderNowReasons
     .map((r) => (r === 'lead-time' ? "Won't last the lead time" : `At ${pctOfOrder(i)} of reorder size`))
@@ -979,10 +1002,10 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
 
   const intro = [
     orderNow.length
-      ? `<strong>Order now:</strong> ${plural(orderNow.length, "this material won't", "these materials won't")} last through the supplier's lead time plus a 25% buffer, or ${plural(orderNow.length, "it's", "they're")} down to 25% of the reorder size.`
+      ? `<strong>Order now:</strong> ${plural(orderNow.length, "this material won't", "these materials won't")} last through the supplier's lead time plus a ${bufferPct} buffer, or, as a failsafe, ${plural(orderNow.length, "it's", "they're")} down to ${floorPct} of the reorder size.`
       : '',
     watch.length
-      ? `<strong>Watch:</strong> ${plural(watch.length, "this material won't", "these materials won't")} last through one and a half times the supplier's lead time plus a 25% buffer.`
+      ? `<strong>Watch:</strong> ${plural(watch.length, "this material won't", "these materials won't")} last through one and a half times the supplier's lead time plus a ${bufferPct} buffer.`
       : '',
   ].filter(Boolean).join(' ');
 
@@ -991,10 +1014,18 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
   const badge = (level: MaterialStockAlertItem['level']) => level === 'order-now'
     ? '<span style="background-color: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600; white-space: nowrap;">Order now</span>'
     : '<span style="background-color: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600;">Watch</span>';
+  // The supplier's name, linked to its website when one is on file.
+  const supplierLine = (i: MaterialStockAlertItem) => {
+    const href = supplierHref(i.supplierWebsite);
+    const name = escapeHtml(i.supplierName ?? '');
+    return href
+      ? `<a href="${escapeHtml(href)}" style="color: ${BRAND_COLORS.mediumGrey}; text-decoration: underline;">${name}</a>`
+      : name;
+  };
   const rows = params.items.map((i) => `
       <tr>
         <td style="${cell}">${badge(i.level)}${i.level === 'order-now' && i.orderNowReasons.length ? `<div style="font-size: 11px; color: ${BRAND_COLORS.mediumGrey}; margin-top: 4px;">${escapeHtml(reasonText(i))}</div>` : ''}</td>
-        <td style="${cell}">${escapeHtml(i.title)}${i.supplierName ? `<div style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">${escapeHtml(i.supplierName)}</div>` : ''}</td>
+        <td style="${cell}">${escapeHtml(i.title)}${i.supplierName ? `<div style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">${supplierLine(i)}</div>` : ''}</td>
         <td style="${cell} text-align: right; white-space: nowrap;">${qty(i.stock)} ${escapeHtml(i.unit)}</td>
         <td style="${cell} text-align: right; white-space: nowrap; font-weight: 600;">${daysLeft(i)}</td>
         <td style="${cell} text-align: right; white-space: nowrap;">${i.leadTimeDays} days</td>
@@ -1020,15 +1051,17 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
       <tbody>${rows}</tbody>
     </table>
     <p style="margin: 0 0 8px;"><a href="${appUrl}/inventory/purchase-orders" style="color: ${BRAND_COLORS.darkGrey};">Start a purchase order</a> · <a href="${appUrl}/inventory/dashboard" style="color: ${BRAND_COLORS.darkGrey};">Open the inventory dashboard</a></p>
-    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; margin-top: 24px;">Sent to admins once when a material drops to Watch and again when it drops to Order now. Order now = stock at or below daily usage × supplier lead time × 1.25, or at or below 25% of the reorder size. Watch = up to 1.5 times the lead-time level. Usage counts only the time since a material was first used, with the last 30 days weighted most.</p>
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; margin-top: 24px;">Sent to admins once when a material drops to Watch and again when it drops to Order now. Order now = stock at or below daily usage × supplier lead time × ${SAFETY_BUFFER}, or, as a failsafe, at or below ${floorPct} of the reorder size. Watch = up to 1.5 times the lead-time level. Usage counts only the time since a material was first used, with the last 30 days weighted most.</p>
   </div>
 </div>`.trim();
 
-  const line = (i: MaterialStockAlertItem) =>
-    `- ${i.title}: ${qty(i.stock)} ${i.unit} on hand, ${i.daysOfCover === null ? 'no recent use' : `lasts ${daysLeft(i)}`}, lead time ${i.leadTimeDays} days, suggested order ${qty(i.suggestedQty)} ${i.unit}${i.supplierName ? ` from ${i.supplierName}` : ''}${i.level === 'order-now' && i.orderNowReasons.length ? ` (${reasonText(i)})` : ''}`;
+  const line = (i: MaterialStockAlertItem) => {
+    const href = i.supplierName ? supplierHref(i.supplierWebsite) : null;
+    return `- ${i.title}: ${qty(i.stock)} ${i.unit} on hand, ${i.daysOfCover === null ? 'no recent use' : `lasts ${daysLeft(i)}`}, lead time ${i.leadTimeDays} days, suggested order ${qty(i.suggestedQty)} ${i.unit}${i.supplierName ? ` from ${i.supplierName}` : ''}${i.level === 'order-now' && i.orderNowReasons.length ? ` (${reasonText(i)})` : ''}${href ? `\n  ${i.supplierName}: ${href}` : ''}`;
+  };
   const text = [
-    ...(orderNow.length ? ["ORDER NOW (won't last through lead time + 25%, or down to 25% of reorder size):", ...orderNow.map(line), ''] : []),
-    ...(watch.length ? ["WATCH (won't last through 1.5 times lead time + 25%):", ...watch.map(line), ''] : []),
+    ...(orderNow.length ? [`ORDER NOW (won't last through lead time + ${bufferPct}, or, as a failsafe, down to ${floorPct} of reorder size):`, ...orderNow.map(line), ''] : []),
+    ...(watch.length ? [`WATCH (won't last through 1.5 times lead time + ${bufferPct}):`, ...watch.map(line), ''] : []),
     `Start a purchase order: ${appUrl}/inventory/purchase-orders`,
     `Inventory dashboard: ${appUrl}/inventory/dashboard`,
   ].join('\n');

@@ -45,7 +45,7 @@ const money = (v: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v);
 
 // Stock level (owner, 2026-09-23): Order now when stock won't last through the
-// supplier's lead time plus 25% or is down to 25% of the reorder size; Watch
+// supplier's lead time plus 25% or, as a failsafe, is down to 15% of the reorder size; Watch
 // within 1.5 times the lead-time level. Rule: shared/material-health.ts.
 // Computed on the server; the dashboard and emails use the same.
 const LEVEL_STYLES: Record<MaterialLevelKey, string> = {
@@ -178,8 +178,8 @@ function MaterialForm({
           <Input type="number" step="0.0001" min="0" value={orderSize}
             onChange={(e) => setOrderSize(e.target.value)} data-testid="input-material-ordersize" />
           <p className="text-xs text-muted-foreground">
-            How much to order at a time. It's Order now when stock is down to {Math.round(ORDER_NOW_SHARE_OF_REORDER * 100)}% of this,
-            or won't last through the supplier's lead time plus {Math.round((SAFETY_BUFFER - 1) * 100)}%; Watch within {WATCH_MULTIPLIER} times
+            How much to order at a time. It's Order now when stock won't last through the supplier's lead time plus {Math.round((SAFETY_BUFFER - 1) * 100)}%,
+            or, as a failsafe, when it's down to {Math.round(ORDER_NOW_SHARE_OF_REORDER * 100)}% of this. Watch is within {WATCH_MULTIPLIER} times
             the lead-time level. Admins are emailed when it drops to each.
           </p>
         </div>
