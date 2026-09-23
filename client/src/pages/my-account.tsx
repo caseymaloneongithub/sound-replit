@@ -11,6 +11,7 @@ import { PaymentMethodsOnFile } from "@/pages/account";
 import { Package, Repeat, Plus, Trash2, X, CreditCard, ShoppingCart, Mail, SkipForward, PauseCircle, PlayCircle } from "lucide-react";
 import { format, startOfWeek } from "date-fns";
 import { apiRequest, apiErrorMessage, queryClient } from "@/lib/queryClient";
+import { reloadCart } from "@/lib/cart-refresh";
 import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
@@ -315,16 +316,18 @@ export default function MyAccount() {
       return await apiRequest("POST", `/api/orders/${orderId}/reorder`);
     },
     onSuccess: async (data: any) => {
-      // Reload the cart BEFORE going to checkout: checkout reads a cached cart as
-      // current, so a stale empty one sent the customer back to the shop with
-      // "Cart is empty". refetchType "all" covers a cart query nothing is showing.
-      await queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"], refetchType: "all" });
-      // The server says what went in and names anything no longer available.
+      // Checkout only once the cart has been read fresh from the server: it
+      // reads a cached cart as current, and a stale empty one sent the customer
+      // back to the shop. If that read fails the items are still in the cart, so
+      // say so and stay here; the reorder itself is never repeated.
+      const cartReady = await reloadCart(queryClient);
+      // The server says what went in and names anything that didn't.
+      const message = data?.message || "Your order items have been added to the cart.";
       toast({
         title: "Items added to cart",
-        description: data?.message || "Your order items have been added to the cart",
+        description: cartReady ? message : `${message} Open your cart to check out.`,
       });
-      setLocation("/cart-checkout");
+      if (cartReady) setLocation("/cart-checkout");
     },
     onError: (error: any) => {
       toast({

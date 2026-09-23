@@ -141,6 +141,24 @@ function parseSplitNote(note: string | null | undefined): [string, string] | nul
   return m ? [m[1], m[2]] : null;
 }
 
+/**
+ * A custom Mixed case's packing note as bottle counts per flavor, the way staff
+ * type them on a subscription item: "6 Bonfire, 6 Mist" or "6 × HUM / 6 Mist"
+ * gives [{ count: 6, flavor: "Bonfire" }, { count: 6, flavor: "Mist" }]. Null
+ * when any part isn't "<count> <flavor>" (free-text instructions).
+ */
+function parseMixNote(note: string | null | undefined): Array<{ count: number; flavor: string }> | null {
+  const parts = (note ?? '').split(/\s*(?:,|\/|\+|&|\band\b)\s*/i).map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
+  const counts: Array<{ count: number; flavor: string }> = [];
+  for (const part of parts) {
+    const m = /^(\d+)\s*[x×]?\s+(.+)$/i.exec(part);
+    if (!m) return null;
+    counts.push({ count: Number(m[1]), flavor: m[2].trim() });
+  }
+  return counts;
+}
+
 // Paid-but-no-order alerts already sent this process, keyed by payment intent —
 // Stripe redelivers failing events many times; one email per incident is enough.
 const notifiedOrderFailures = new Set<string>();
@@ -5799,8 +5817,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // under Mixed with a "Split: 6 A / 6 B" note, see splitItemFields); the
   // legacy retail_order_items path stays for older orders. Every line goes
   // through the same checks as adding it to the cart by hand
-  // (checkRetailCartLine), so nothing switched off or sold out goes back in, and
-  // the customer is told what was left out.
+  // (checkRetailCartLine), so nothing switched off or sold out goes back in.
+  // What the cart can't take as ordered is never swapped for something else:
+  // the customer is told what was left out (review, 2026-09-23).
   app.post("/api/orders/:id/reorder", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
@@ -5816,28 +5835,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       let itemsAdded = 0;
-      // Past lines that can't go back in, named for the customer's toast.
+      // Past lines that didn't go back in, named for the customer's toast.
       const unavailable: string[] = [];
       const soldOut: string[] = [];
+      const pickAgain: string[] = [];
       const productCache = new Map<string, RetailProductForCart | undefined>();
       const getProduct = async (id: string) => {
         if (!productCache.has(id)) productCache.set(id, await storage.getRetailProduct(id));
         return productCache.get(id);
       };
-      // One line into the cart, if the shop would take it by hand. `name`, when
-      // given, is how a refused line is named (a split case by its two flavors).
-      const addLine = async (retailProductId: string, selectedFlavorId: string | null, splitFlavorId: string | null, quantity: number, name?: string) => {
+
+      type Refusal = { kind: 'unavailable' | 'sold-out' | 'invalid' | 'missing'; label: string };
+      // One line into the cart if the shop would take it by hand; else why not.
+      const tryAdd = async (retailProductId: string, selectedFlavorId: string | null, splitFlavorId: string | null, quantity: number): Promise<Refusal | null> => {
         const product = await getProduct(retailProductId);
-        if (!product) {
-          unavailable.push(name ?? 'An item');
-          return;
-        }
+        if (!product) return { kind: 'missing', label: 'An item' };
         const check = await checkRetailCartLine(product, selectedFlavorId, splitFlavorId);
-        if (!check.ok) {
-          if (check.kind === 'sold-out') soldOut.push(check.label);
-          else unavailable.push(name ?? check.label);
-          return;
-        }
+        if (!check.ok) return { kind: check.kind, label: check.label };
         await storage.addRetailProductToCart({
           sessionId,
           retailProductId,
@@ -5848,6 +5862,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
           subscriptionFrequency: null,
         });
         itemsAdded++;
+        return null;
+      };
+      // Where a refused line is named: sold-out bottles on their own (they may
+      // come back); a custom mix the cart can't take as asked, under "pick the
+      // flavors again"; everything else, no longer available. `name` is the line
+      // as the customer knew it.
+      const refuse = (r: Refusal, name?: string, invalidMeansPickAgain = false) => {
+        if (r.kind === 'sold-out') soldOut.push(r.label);
+        else if (r.kind === 'invalid' && invalidMeansPickAgain && name) pickAgain.push(name);
+        else unavailable.push(name ?? r.label);
+      };
+
+      // Today's catalogue, for lines on products that have since been retired.
+      const liveProducts = await db
+        .select({
+          id: retailProducts.id,
+          productType: retailProducts.productType,
+          flavorId: retailProducts.flavorId,
+          container: retailProducts.container,
+          unitDescription: retailProducts.unitDescription,
+        })
+        .from(retailProducts)
+        .where(eq(retailProducts.isActive, true));
+      const liveFlavorLinks = liveProducts.length > 0
+        ? await db
+            .select({ productId: retailProductFlavors.retailProductId, flavorId: retailProductFlavors.flavorId })
+            .from(retailProductFlavors)
+            .where(inArray(retailProductFlavors.retailProductId, liveProducts.map((p) => p.id)))
+        : [];
+      const sameUnit = (a: string | null | undefined, b: string | null | undefined) =>
+        (a ?? '').toLowerCase().replace(/\s+/g, '') === (b ?? '').toLowerCase().replace(/\s+/g, '');
+      // Today's product for a flavor in a package (container). The case
+      // consolidation (2026-09-03, scripts/activate-case-product.mjs) switched the
+      // per-flavor bottle products off and moved subscriptions and carts to one
+      // multi-flavor product with the old product's flavor selected; order
+      // history kept the old ids, so a reorder makes the same move. An active
+      // single-flavor product for the flavor wins, else a multi-flavor one that
+      // offers it; the unit description settles a tie; still ambiguous → null,
+      // and the line is refused rather than guessed.
+      const currentProductFor = (flavorId: string | null | undefined, container: string | null | undefined, unitDescription?: string | null) => {
+        if (!flavorId || !container) return null;
+        const pick = <T extends { unitDescription: string }>(candidates: T[]): T | null => {
+          const narrowed = candidates.length > 1 ? candidates.filter((c) => sameUnit(c.unitDescription, unitDescription)) : candidates;
+          return narrowed.length === 1 ? narrowed[0] : null;
+        };
+        const single = pick(liveProducts.filter((p) => p.productType === 'single-flavor' && p.container === container && p.flavorId === flavorId));
+        if (single) return { retailProductId: single.id, selectedFlavorId: null as string | null };
+        const multi = pick(liveProducts.filter((p) => p.productType === 'multi-flavor' && p.container === container
+          && liveFlavorLinks.some((l) => l.productId === p.id && l.flavorId === flavorId)));
+        return multi ? { retailProductId: multi.id, selectedFlavorId: flavorId as string | null } : null;
       };
 
       // Orders from the current shop.
@@ -5861,29 +5925,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from(retailOrderItemsV2)
         .where(eq(retailOrderItemsV2.orderId, orderId));
       if (lines.length > 0) {
-        // Every flavor, switched-off ones included, so a split note's names resolve
-        // (and a switched-off one is refused by name rather than lost). If two
-        // flavors share a name, the active one wins.
-        const flavorByName = new Map<string, { id: string; isActive: boolean }>();
-        for (const f of await db.select({ id: flavors.id, name: flavors.name, isActive: flavors.isActive }).from(flavors)) {
-          const key = f.name.trim().toLowerCase();
-          const seen = flavorByName.get(key);
-          if (!seen || (!seen.isActive && f.isActive)) flavorByName.set(key, f);
-        }
+        // Every flavor, switched-off ones included, so the names in a note resolve
+        // (and a switched-off one is refused by name rather than lost). A name
+        // matches exactly, else as the start of exactly one flavor's name (three
+        // letters or more: "HUM" is Hummingbrew); between flavors sharing it, the
+        // active one; still ambiguous → no match.
+        const allFlavors = await db.select({ id: flavors.id, name: flavors.name, isActive: flavors.isActive }).from(flavors);
+        const mixedId = allFlavors.find((f) => f.name === 'Mixed')?.id ?? null;
+        const resolveFlavor = (text: string) => {
+          const key = text.trim().toLowerCase();
+          const exact = allFlavors.filter((f) => f.name.trim().toLowerCase() === key);
+          const found = exact.length > 0 ? exact
+            : key.length >= 3 ? allFlavors.filter((f) => f.name.trim().toLowerCase().startsWith(key)) : [];
+          const active = found.filter((f) => f.isActive);
+          const candidates = found.length > 1 && active.length > 0 ? active : found;
+          return candidates.length === 1 ? candidates[0] : null;
+        };
+        // A custom Mixed case the cart can hold exactly: one flavor for the whole
+        // case, or two flavors half and half (a split case). Anything else is not
+        // restored.
+        const restoreMix = (note: string): { selectedFlavorId: string; splitFlavorId: string | null } | null => {
+          const parts = parseMixNote(note);
+          if (!parts) return null;
+          const found = parts.map((p) => resolveFlavor(p.flavor));
+          if (found.some((f) => !f || f.id === mixedId)) return null;
+          const [a, b] = found as Array<{ id: string }>;
+          if (parts.length === 1 && parts[0].count === CASE_SIZE) return { selectedFlavorId: a.id, splitFlavorId: null };
+          if (parts.length === 2 && parts[0].count === parts[1].count && parts[0].count * 2 === CASE_SIZE && a.id !== b.id) {
+            return { selectedFlavorId: a.id, splitFlavorId: b.id };
+          }
+          return null;
+        };
+
         for (const line of lines) {
-          const split = parseSplitNote(line.notes);
-          if (!split) {
-            await addLine(line.retailProductId, line.selectedFlavorId ?? null, null, line.quantity);
-            continue;
+          // A line on a retired product moves to today's product for the same
+          // flavor and package, its flavor carried forward.
+          let retailProductId = line.retailProductId;
+          let selectedFlavorId = line.selectedFlavorId ?? null;
+          const original = await getProduct(line.retailProductId) as any;
+          if (original && original.isActive === false) {
+            const current = currentProductFor(selectedFlavorId ?? original.flavorId, original.container, original.unitDescription);
+            if (current) {
+              retailProductId = current.retailProductId;
+              selectedFlavorId = current.selectedFlavorId;
+            }
           }
-          // A split case goes back in as its two flavors, the way the shop takes it.
-          const [a, b] = split.map((n) => flavorByName.get(n.trim().toLowerCase()));
-          const name = `${split[0]} / ${split[1]} split case`;
-          if (!a || !b) {
-            unavailable.push(name);
-            continue;
+          const product = await getProduct(retailProductId) as any;
+          const isMixed = !!mixedId && (selectedFlavorId ?? product?.flavorId) === mixedId;
+          const note = line.notes?.trim() ?? '';
+
+          const split = parseSplitNote(note);
+          if (split) {
+            // A split case goes back in as its two flavors, the way the shop takes it.
+            const [a, b] = split.map((n) => resolveFlavor(n));
+            const name = `${split[0]} / ${split[1]} split case`;
+            if (!a || !b) {
+              unavailable.push(name);
+              continue;
+            }
+            const refused = await tryAdd(retailProductId, a.id, b.id, line.quantity);
+            if (refused) refuse(refused, name);
+          } else if (isMixed && note) {
+            // A Mixed case whose packing note says what's in it: restored exactly
+            // when the cart can hold that, otherwise left for the customer to
+            // choose — never swapped for a standard Mixed case.
+            const name = `Mixed case (${note})`;
+            const mix = product?.productType === 'multi-flavor' ? restoreMix(note) : null;
+            if (!mix) {
+              pickAgain.push(name);
+              continue;
+            }
+            const refused = await tryAdd(retailProductId, mix.selectedFlavorId, mix.splitFlavorId, line.quantity);
+            if (refused) refuse(refused, name, true);
+          } else {
+            const refused = await tryAdd(retailProductId, selectedFlavorId, null, line.quantity);
+            if (refused) refuse(refused);
           }
-          await addLine(line.retailProductId, a.id, b.id, line.quantity, name);
         }
       }
 
@@ -5908,25 +6025,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 )
               })
             : undefined;
-          if (!retailProduct) {
+          // No per-flavor product any more: today's product for its flavor and package.
+          const current = retailProduct
+            ? { retailProductId: retailProduct.id, selectedFlavorId: null as string | null }
+            : currentProductFor(product.flavorId, product.container);
+          if (!current) {
             console.warn(`[WARN] Reorder: no retail product on offer for '${product.name}', skipping`);
             unavailable.push(product.name);
             continue;
           }
-          await addLine(retailProduct.id, null, null, item.quantity, product.name);
+          const refused = await tryAdd(current.retailProductId, current.selectedFlavorId, null, item.quantity);
+          if (refused) refuse(refused, product.name);
         }
       }
 
       const gone = Array.from(new Set(unavailable));
       const out = Array.from(new Set(soldOut));
+      const again = Array.from(new Set(pickAgain));
       const note = (gone.length > 0 ? ` No longer available: ${gone.join(', ')}.` : '')
-        + (out.length > 0 ? ` Sold out in bottles: ${out.join(', ')}.` : '');
+        + (out.length > 0 ? ` Sold out in bottles: ${out.join(', ')}.` : '')
+        + (again.length > 0 ? ` Pick the flavors again for: ${again.join(', ')}.` : '');
       const skipped = [...gone, ...out];
       if (itemsAdded === 0) {
-        return res.status(400).json({ message: `Unable to add items to cart.${note || ' Products may no longer be available.'}`, unavailable: skipped });
+        return res.status(400).json({ message: `Unable to add items to cart.${note || ' Products may no longer be available.'}`, unavailable: skipped, pickAgain: again });
       }
 
-      res.json({ success: true, message: `${itemsAdded} item(s) added to cart.${note}`, itemsAdded, unavailable: skipped });
+      res.json({ success: true, message: `${itemsAdded} item(s) added to cart.${note}`, itemsAdded, unavailable: skipped, pickAgain: again });
     } catch (error: any) {
       console.error('[ERROR] Failed to reorder:', error);
       res.status(500).json({ message: "Error reordering: " + error.message });
