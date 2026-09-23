@@ -2546,7 +2546,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Only admins can view inactive products" });
       }
       
-      const retailProds = await storage.getRetailProducts(includeInactive);
+      // A flavor switched off on the Flavors page is off the shop (owner,
+      // 2026-09-23: "take Evergreen off the display for everything"): a product
+      // that IS that flavor is not listed, and no picker offers it. Admins asking
+      // for inactive products still see everything.
+      const retailProds = (await storage.getRetailProducts(includeInactive))
+        .filter((p: any) => includeInactive || !p.flavor || p.flavor.isActive !== false)
+        .map((p: any) => ({
+          ...p,
+          flavors: Array.isArray(p.flavors) ? p.flavors.filter((f: any) => includeInactive || f.isActive !== false) : p.flavors,
+        }));
 
       // Bottle sell-through (owner, cans launch 2026-09-11): bottles stay on sale
       // until each flavor's finished-goods stock reaches zero, then that flavor
@@ -7693,11 +7702,14 @@ If you have any questions, please don't hesitate to reach out!`,
       // retail_products.finished_product_id. Unlinked labels stay null (shown as a dash).
       // Mixed-case stock is untracked (owner, 2026-08-31): its column still shows
       // demand when orders exist, but In Stock renders as a dash.
+      // A flavor switched off on the Flavors page is off this board too (owner,
+      // 2026-09-23: "take Evergreen off the display for everything"). Orders that
+      // still carry it keep their demand column; only the catalog/stock column goes.
       const stockRows = (await pool.query(
-        "select p.id, f.name as flavor, p.container, p.stock_quantity from products p join flavors f on f.id = p.flavor_id where f.name <> 'Mixed'"
+        "select p.id, f.name as flavor, p.container, p.stock_quantity from products p join flavors f on f.id = p.flavor_id where f.name <> 'Mixed' and f.is_active = true"
       )).rows;
       const retailStockRows = (await pool.query(
-        "select p.id, rp.unit_description, f.name as flavor, p.stock_quantity from retail_products rp left join flavors f on f.id = rp.flavor_id left join products p on p.id = rp.finished_product_id where f.name is null or f.name <> 'Mixed'"
+        "select p.id, rp.unit_description, f.name as flavor, p.stock_quantity from retail_products rp left join flavors f on f.id = rp.flavor_id left join products p on p.id = rp.finished_product_id where (f.name is null or f.name <> 'Mixed') and (f.id is null or f.is_active = true)"
       )).rows;
       const containerByUnit = new Map(unitRows.map((u: any) => [u.name, u.container]));
       const shelfByFlavorContainer = new Map(stockRows.map((r: any) => [`${r.flavor}|${r.container}`, { quantity: r.stock_quantity, productId: r.id }]));

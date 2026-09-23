@@ -1856,13 +1856,17 @@ export class PostgresStorage implements IStorage {
     
     const unitTypesWithFlavors = await Promise.all(
       unitTypes.map(async (unitType) => {
+        // Only ACTIVE flavors reach any catalogue — customer portal, guest form,
+        // staff ordering, the units admin page (owner, 2026-09-23: a flavor
+        // switched off on the Flavors page is off every display). The link row
+        // stays, so switching the flavor back on brings it back everywhere.
         const links = await db
           .select({
             flavor: flavors
           })
           .from(wholesaleUnitTypeFlavors)
           .innerJoin(flavors, eq(wholesaleUnitTypeFlavors.flavorId, flavors.id))
-          .where(eq(wholesaleUnitTypeFlavors.unitTypeId, unitType.id));
+          .where(and(eq(wholesaleUnitTypeFlavors.unitTypeId, unitType.id), eq(flavors.isActive, true)));
 
         return {
           ...unitType,
