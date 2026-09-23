@@ -921,23 +921,27 @@ export async function sendOpsEmail(params: { to: string[]; subject: string; head
 
 /** One material in a stock alert email; `level` is the level it just dropped to. */
 export type MaterialStockAlertItem = {
-  level: 'watch' | 'reorder';
+  level: 'order-now' | 'watch';
   title: string;
   unit: string;
   stock: number;
-  orderSize: number;
+  dailyUsage: number;
+  daysOfCover: number | null;
+  leadTimeDays: number;
+  suggestedQty: number;
   supplierName: string | null;
 };
 
 /**
- * A raw material dropped to Watch (50% or less of its reorder size) or Reorder
- * (25% or less) — owner, 2026-09-23. Sent to admins and super admins once per
- * level per dip; materials crossing together share one email, Reorder rows
- * first. See server/material-alerts.ts.
+ * A raw material dropped to Watch or Order now — levels from the last 90 days of
+ * usage against the supplier's lead time (shared/material-health.ts; owner,
+ * 2026-09-23). Sent to admins and super admins once per level per dip; materials
+ * crossing together share one email, Order now rows first. See
+ * server/material-alerts.ts.
  */
 export async function sendMaterialStockAlert(params: { adminEmails: string[]; items: MaterialStockAlertItem[] }): Promise<void> {
   const transporter = createTransporter();
-  const reorder = params.items.filter((i) => i.level === 'reorder');
+  const orderNow = params.items.filter((i) => i.level === 'order-now');
   const watch = params.items.filter((i) => i.level === 'watch');
   if (!transporter) {
     const names = params.items.map((i) => `${i.title} [${i.level}]`).join(', ');
@@ -945,43 +949,48 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
     return;
   }
   const appUrl = (process.env.APP_URL || 'https://soundkombucha.com').replace(/\/+$/, '');
-  const pct = (i: { stock: number; orderSize: number }) => `${Math.round((100 * i.stock) / i.orderSize)}%`;
-  const qty = (n: number) => Number(n.toFixed(4)).toLocaleString('en-US');
+  const qty = (n: number) => Number(n.toFixed(2)).toLocaleString('en-US');
+  const daysLeft = (i: MaterialStockAlertItem) => (i.daysOfCover === null ? '—' : `${Math.max(0, Math.floor(i.daysOfCover))} days`);
   const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+  const label = (level: MaterialStockAlertItem['level']) => (level === 'order-now' ? 'Order now' : 'Watch');
 
   const only = params.items.length === 1 ? params.items[0] : null;
   const subject = only
-    ? `${only.level === 'reorder' ? 'Reorder' : 'Watch'}: ${only.title} is at ${pct(only)} of its reorder size`
-    : reorder.length && watch.length
-      ? `Stock alert: ${reorder.length} to reorder, ${watch.length} to watch`
-      : reorder.length
-        ? `Reorder: ${reorder.length} materials are at 25% or less`
-        : `Watch: ${watch.length} materials are at 50% or less`;
+    ? `${label(only.level)}: ${only.title} has ${daysLeft(only)} left, ${only.leadTimeDays}-day lead time`
+    : orderNow.length && watch.length
+      ? `Stock alert: ${orderNow.length} to order now, ${watch.length} to watch`
+      : orderNow.length
+        ? `Order now: ${orderNow.length} materials`
+        : `Watch: ${watch.length} materials`;
 
   const intro = [
-    reorder.length ? `${reorder.length} ${plural(reorder.length, 'material has', 'materials have')} dropped to <strong>Reorder</strong> (25% or less of ${plural(reorder.length, 'its', 'their')} reorder size).` : '',
-    watch.length ? `${watch.length} ${plural(watch.length, 'material has', 'materials have')} dropped to <strong>Watch</strong> (50% or less).` : '',
+    orderNow.length
+      ? `<strong>Order now:</strong> ${plural(orderNow.length, 'this material', 'these materials')} won't last through the supplier's lead time plus a 25% buffer.`
+      : '',
+    watch.length
+      ? `<strong>Watch:</strong> ${plural(watch.length, 'this material is', 'these materials are')} within one and a half times that.`
+      : '',
   ].filter(Boolean).join(' ');
 
-  const cell = `padding: 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey};`;
+  const cell = `padding: 8px; border-bottom: 1px solid ${BRAND_COLORS.borderGrey}; color: ${BRAND_COLORS.darkGrey}; vertical-align: top;`;
   const head = `padding: 8px; text-align: left; font-size: 12px; color: ${BRAND_COLORS.mediumGrey};`;
-  const badge = (level: MaterialStockAlertItem['level']) => level === 'reorder'
-    ? '<span style="background-color: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600;">Reorder</span>'
+  const badge = (level: MaterialStockAlertItem['level']) => level === 'order-now'
+    ? '<span style="background-color: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600; white-space: nowrap;">Order now</span>'
     : '<span style="background-color: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600;">Watch</span>';
   const rows = params.items.map((i) => `
       <tr>
         <td style="${cell}">${badge(i.level)}</td>
-        <td style="${cell}">${escapeHtml(i.title)}</td>
+        <td style="${cell}">${escapeHtml(i.title)}${i.supplierName ? `<div style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">${escapeHtml(i.supplierName)}</div>` : ''}</td>
         <td style="${cell} text-align: right; white-space: nowrap;">${qty(i.stock)} ${escapeHtml(i.unit)}</td>
-        <td style="${cell} text-align: right; white-space: nowrap;">${qty(i.orderSize)} ${escapeHtml(i.unit)}</td>
-        <td style="${cell} text-align: right; font-weight: 600;">${pct(i)}</td>
-        <td style="${cell}">${i.supplierName ? escapeHtml(i.supplierName) : '—'}</td>
+        <td style="${cell} text-align: right; white-space: nowrap; font-weight: 600;">${daysLeft(i)}</td>
+        <td style="${cell} text-align: right; white-space: nowrap;">${i.leadTimeDays} days</td>
+        <td style="${cell} text-align: right; white-space: nowrap;">${qty(i.suggestedQty)} ${escapeHtml(i.unit)}</td>
       </tr>`).join('');
 
   const html = `
 <div style="max-width: 600px; margin: 0 auto; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 15px; line-height: 1.6; color: ${BRAND_COLORS.darkGrey};">
-  ${getEmailHeader(reorder.length ? 'Time to reorder' : 'Running low')}
+  ${getEmailHeader(orderNow.length ? 'Time to order' : 'Running low')}
   <div style="padding: 24px; background-color: ${BRAND_COLORS.white};">
     <p style="margin: 0 0 16px;">${intro}</p>
     <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 14px;">
@@ -990,24 +999,25 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
           <th style="${head}">Status</th>
           <th style="${head}">Material</th>
           <th style="${head} text-align: right;">On hand</th>
-          <th style="${head} text-align: right;">Reorder size</th>
-          <th style="${head} text-align: right;">Level</th>
-          <th style="${head}">Supplier</th>
+          <th style="${head} text-align: right;">Lasts</th>
+          <th style="${head} text-align: right;">Lead time</th>
+          <th style="${head} text-align: right;">Suggested order</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
-    <p style="margin: 0 0 8px;"><a href="${appUrl}/inventory/purchase-orders" style="color: ${BRAND_COLORS.darkGrey};">Start a purchase order</a> · <a href="${appUrl}/inventory/materials" style="color: ${BRAND_COLORS.darkGrey};">Open Materials</a></p>
-    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; margin-top: 24px;">Sent to admins once when a material drops to Watch (50% of its reorder size) and again when it drops to Reorder (25%).</p>
+    <p style="margin: 0 0 8px;"><a href="${appUrl}/inventory/purchase-orders" style="color: ${BRAND_COLORS.darkGrey};">Start a purchase order</a> · <a href="${appUrl}/inventory/dashboard" style="color: ${BRAND_COLORS.darkGrey};">Open the inventory dashboard</a></p>
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; margin-top: 24px;">Sent to admins once when a material drops to Watch and again when it drops to Order now. Order now = stock at or below daily usage × supplier lead time × 1.25; Watch = up to 1.5 times that. Usage is the last 90 days.</p>
   </div>
 </div>`.trim();
 
-  const line = (i: MaterialStockAlertItem) => `- ${i.title}: ${qty(i.stock)} of ${qty(i.orderSize)} ${i.unit} (${pct(i)})${i.supplierName ? ` — ${i.supplierName}` : ''}`;
+  const line = (i: MaterialStockAlertItem) =>
+    `- ${i.title}: ${qty(i.stock)} ${i.unit} on hand, lasts ${daysLeft(i)}, lead time ${i.leadTimeDays} days, suggested order ${qty(i.suggestedQty)} ${i.unit}${i.supplierName ? ` from ${i.supplierName}` : ''}`;
   const text = [
-    ...(reorder.length ? ['REORDER (25% or less of reorder size):', ...reorder.map(line), ''] : []),
-    ...(watch.length ? ['WATCH (50% or less):', ...watch.map(line), ''] : []),
+    ...(orderNow.length ? ["ORDER NOW (won't last through lead time + 25%):", ...orderNow.map(line), ''] : []),
+    ...(watch.length ? ['WATCH (within 1.5 times that):', ...watch.map(line), ''] : []),
     `Start a purchase order: ${appUrl}/inventory/purchase-orders`,
-    `Materials: ${appUrl}/inventory/materials`,
+    `Inventory dashboard: ${appUrl}/inventory/dashboard`,
   ].join('\n');
 
   await transporter.sendMail({

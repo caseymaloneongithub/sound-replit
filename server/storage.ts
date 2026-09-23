@@ -98,6 +98,14 @@ import {
   type OrderMaterial,
 } from "@shared/schema";
 import { eq, and, or, desc, asc, sql, inArray, isNull, gte, lt } from "drizzle-orm";
+import {
+  materialLevel,
+  suggestedOrderQty,
+  USAGE_WINDOW_DAYS,
+  DEFAULT_LEAD_TIME_DAYS,
+  type MaterialLevel,
+  type MaterialLevelKey,
+} from "@shared/material-health";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import session from "express-session";
@@ -1354,53 +1362,73 @@ export class PostgresStorage implements IStorage {
 
   // ===== Analytics: smart reorder + dashboard =====
 
-  // Estimate each material's consumption rate from production history, then flag
-  // what will run out before a replenishment order could arrive (usage Ã— lead time).
-  async getReorderReport(windowDays = 90): Promise<{
+  /**
+   * Units of each material used over the last USAGE_WINDOW_DAYS: each batch's
+   * recorded consumption (production_material_usage, kept since 2026-08-31) or,
+   * for batches logged before that, its recipe times the units produced.
+   */
+  async getMaterialUsageInWindow(): Promise<Map<string, number>> {
+    const cutoff = new Date(Date.now() - USAGE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const rows = (await db.execute(sql`
+      WITH win AS (SELECT id, process_id, units FROM productions WHERE date >= ${cutoff}),
+      recorded AS (
+        SELECT u.material_id, u.units_consumed AS qty
+        FROM production_material_usage u JOIN win w ON w.id = u.production_id
+      ),
+      by_recipe AS (
+        SELECT pm.material_id, w.units * pm.units AS qty
+        FROM win w JOIN process_materials pm ON pm.process_id = w.process_id
+        WHERE NOT EXISTS (SELECT 1 FROM production_material_usage u WHERE u.production_id = w.id)
+      )
+      SELECT material_id AS "materialId", sum(qty)::float8 AS used
+      FROM (SELECT * FROM recorded UNION ALL SELECT * FROM by_recipe) x
+      GROUP BY material_id`)).rows as Array<{ materialId: string; used: number }>;
+    return new Map(rows.map((r) => [r.materialId, Number(r.used)]));
+  }
+
+  /**
+   * Every material's stock level by the shared rule (shared/material-health.ts):
+   * daily usage over the last 90 days against the supplier's lead time. The
+   * inventory dashboard, the Materials table and the stock emails all read this,
+   * so they can't disagree.
+   */
+  async getMaterialLevels(): Promise<Array<Material & {
+    supplierName: string | null;
+    supplierLeadTimeDays: number | null;
+    level: MaterialLevel;
+    suggestedQty: number;
+  }>> {
+    const [mats, used] = await Promise.all([this.getMaterials(), this.getMaterialUsageInWindow()]);
+    return mats.map((m) => {
+      const dailyUsage = (used.get(m.id) ?? 0) / USAGE_WINDOW_DAYS;
+      const level = materialLevel(Number(m.stock), dailyUsage, m.supplierLeadTimeDays ?? DEFAULT_LEAD_TIME_DAYS);
+      return { ...m, level, suggestedQty: suggestedOrderQty(Number(m.orderSize), dailyUsage) };
+    });
+  }
+
+  /** The dashboard's Reorder alerts: active materials, in the shape the panel reads. */
+  async getReorderReport(): Promise<Array<{
     id: string; title: string; unit: string; stock: number; supplierName: string | null;
     dailyUsage: number; daysOfCover: number | null; leadTimeDays: number;
-    reorderPoint: number; suggestedQty: number; status: 'order-now' | 'watch' | 'ok';
-  }[]> {
+    orderNowAt: number | null; watchAt: number | null; suggestedQty: number; status: MaterialLevelKey;
+  }>> {
     // Inactive materials are retired — never suggest reordering them.
-    const mats = (await this.getMaterials()).filter((m) => m.isActive);
-    const bom = await db.select().from(processMaterials);
-
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - windowDays);
-    const prods = await db.select().from(productions).where(gte(productions.date, cutoff));
-
-    // Total output units per process in the window
-    const producedByProcess = new Map<string, number>();
-    for (const p of prods) {
-      producedByProcess.set(p.processId, (producedByProcess.get(p.processId) ?? 0) + Number(p.units));
-    }
-    // Material consumption = Î£ (process output Ã— per-unit BOM amount)
-    const consumption = new Map<string, number>();
-    for (const b of bom) {
-      const produced = producedByProcess.get(b.processId) ?? 0;
-      if (produced > 0) {
-        consumption.set(b.materialId, (consumption.get(b.materialId) ?? 0) + produced * Number(b.units));
-      }
-    }
-
-    return mats.map((m) => {
-      const stock = Number(m.stock);
-      const dailyUsage = (consumption.get(m.id) ?? 0) / windowDays;
-      const leadTimeDays = m.supplierLeadTimeDays ?? 14;
-      const daysOfCover = dailyUsage > 0 ? stock / dailyUsage : null;
-      const reorderPoint = dailyUsage * leadTimeDays * 1.2; // 20% safety buffer
-      const orderSize = Number(m.orderSize);
-      const suggestedQty = orderSize > 0 ? orderSize : Math.ceil(dailyUsage * 30);
-      let status: 'order-now' | 'watch' | 'ok';
-      if (dailyUsage <= 0) status = 'ok';
-      else if (stock <= reorderPoint) status = 'order-now';
-      else if (stock <= reorderPoint * 1.5) status = 'watch';
-      else status = 'ok';
-      return {
-        id: m.id, title: m.title, unit: m.unit, stock, supplierName: m.supplierName,
-        dailyUsage, daysOfCover, leadTimeDays, reorderPoint, suggestedQty, status,
-      };
-    });
+    return (await this.getMaterialLevels())
+      .filter((m) => m.isActive)
+      .map((m) => ({
+        id: m.id,
+        title: m.title,
+        unit: m.unit,
+        stock: Number(m.stock),
+        supplierName: m.supplierName,
+        dailyUsage: m.level.dailyUsage,
+        daysOfCover: m.level.daysOfCover,
+        leadTimeDays: m.level.leadTimeDays,
+        orderNowAt: m.level.orderNowAt,
+        watchAt: m.level.watchAt,
+        suggestedQty: m.suggestedQty,
+        status: m.level.key,
+      }));
   }
 
   // Cost of goods PRODUCED over a window: material cost actually consumed by batches,

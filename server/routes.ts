@@ -2192,6 +2192,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const supplier = await storage.updateSupplier(req.params.id, updates);
       if (!supplier) return res.status(404).json({ message: "Supplier not found" });
       res.json(supplier);
+      void checkMaterialStockAlerts(); // a lead-time change moves its materials' levels
     } catch (error: any) {
       if (error.name === 'ZodError') {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
@@ -2204,6 +2205,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteSupplier(req.params.id);
       res.json({ message: "Supplier deleted successfully" });
+      void checkMaterialStockAlerts(); // its materials fall back to the default lead time
     } catch (error: any) {
       res.status(500).json({ message: "Error deleting supplier: " + error.message });
     }
@@ -2212,7 +2214,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Materials
   app.get("/api/materials", isAuthenticated, isStaffOrAdmin, async (_req, res) => {
     try {
-      res.json(await storage.getMaterials());
+      // Each row carries its stock level (Order now / Watch / Healthy / No recent
+      // use), computed exactly as the dashboard and the stock emails compute it.
+      res.json(await storage.getMaterialLevels());
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching materials: " + error.message });
     }
@@ -2350,6 +2354,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       const { materialId, units } = schema.parse(req.body);
       res.json(await storage.addProcessMaterial({ processId: req.params.id, materialId, units }));
+      // Batches logged before usage was recorded per batch count by today's recipe,
+      // so recipe edits move usage — and levels.
+      void checkMaterialStockAlerts();
     } catch (error: any) {
       if (error.name === 'ZodError') {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
@@ -2366,6 +2373,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const line = await storage.updateProcessMaterial(req.params.lineId, units);
       if (!line) return res.status(404).json({ message: "Ingredient not found" });
       res.json(line);
+      void checkMaterialStockAlerts();
     } catch (error: any) {
       if (error.name === 'ZodError') {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
@@ -2378,6 +2386,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteProcessMaterial(req.params.lineId);
       res.json({ message: "Ingredient removed" });
+      void checkMaterialStockAlerts();
     } catch (error: any) {
       res.status(500).json({ message: "Error removing recipe ingredient: " + error.message });
     }
@@ -2512,8 +2521,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Inventory analytics
   app.get("/api/inventory/reorder-report", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const windowDays = req.query.windowDays ? parseInt(req.query.windowDays as string, 10) : 90;
-      res.json(await storage.getReorderReport(windowDays));
+      // Same levels as the Materials table and the stock emails (shared/material-health.ts);
+      // the usage window is fixed there so the three can't disagree.
+      res.json(await storage.getReorderReport());
     } catch (error: any) {
       res.status(500).json({ message: "Error building reorder report: " + error.message });
     }

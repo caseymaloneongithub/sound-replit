@@ -6,6 +6,7 @@ import { startBillingCron } from "./billing-cron";
 import { scheduleDataRetentionJobs } from "./data-retention-cron";
 import { resumeUnfinishedCampaigns, startCampaignScheduler } from "./campaigns";
 import { startOpsDigestCron } from "./ops-events";
+import { startMaterialStockAlertCron } from "./material-alerts";
 
 const app = express();
 
@@ -67,6 +68,8 @@ app.use((req, res, next) => {
     startCampaignScheduler();
     // Super admins' morning digest of operational events (alerts go out at once).
     startOpsDigestCron();
+    // Daily materials stock-level check (Watch / Order now emails), before the digest.
+    startMaterialStockAlertCron();
   }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

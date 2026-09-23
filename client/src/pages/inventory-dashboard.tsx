@@ -14,6 +14,13 @@ import {
 } from "recharts";
 import { Loader2 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  MATERIAL_LEVEL_LABELS,
+  SAFETY_BUFFER,
+  WATCH_MULTIPLIER,
+  USAGE_WINDOW_DAYS,
+  type MaterialLevelKey,
+} from "@shared/material-health";
 
 type Dashboard = {
   inventoryValue: number; totalMaterials: number; batchesLast30: number; casesLast30: number;
@@ -43,10 +50,12 @@ type LimitRow = {
   maxUnits: number | null;
   limiting: { materialId: string; title: string; unit: string; stock: number; perUnit: number } | null;
 };
+// Levels by the shared rule (shared/material-health.ts) — the same numbers the
+// Materials table and the stock emails use.
 type ReorderRow = {
   id: string; title: string; unit: string; stock: number; supplierName: string | null;
   dailyUsage: number; daysOfCover: number | null; leadTimeDays: number;
-  reorderPoint: number; suggestedQty: number; status: "order-now" | "watch" | "ok";
+  orderNowAt: number | null; watchAt: number | null; suggestedQty: number; status: MaterialLevelKey;
 };
 
 const money = (v: number) =>
@@ -118,9 +127,9 @@ export default function InventoryDashboard() {
   const alerts = useMemo(
     () =>
       reorder
-        .filter((r) => r.status !== "ok")
+        .filter((r) => r.status === "order-now" || r.status === "watch")
         .sort((a, b) => {
-          const rank = { "order-now": 0, watch: 1, ok: 2 } as const;
+          const rank: Record<MaterialLevelKey, number> = { "order-now": 0, watch: 1, healthy: 2, "no-usage": 3 };
           if (rank[a.status] !== rank[b.status]) return rank[a.status] - rank[b.status];
           return (a.daysOfCover ?? Infinity) - (b.daysOfCover ?? Infinity);
         }),
@@ -216,8 +225,9 @@ export default function InventoryDashboard() {
             <CardTitle className="flex items-center gap-2 text-lg">
               Reorder alerts
             </CardTitle>
-            <CardDescription>
-              Based on usage over the last 90 days vs. supplier lead time
+            <CardDescription data-testid="text-reorder-rule">
+              Order now when stock won't last through the supplier's lead time plus {Math.round((SAFETY_BUFFER - 1) * 100)}%.
+              Watch within {WATCH_MULTIPLIER} times that. Usage from the last {USAGE_WINDOW_DAYS} days.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -257,9 +267,9 @@ export default function InventoryDashboard() {
                       </TableCell>
                       <TableCell>
                         {r.status === "order-now" ? (
-                          <Badge className="bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300 border-0">Order now</Badge>
+                          <Badge className="bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300 border-0">{MATERIAL_LEVEL_LABELS["order-now"]}</Badge>
                         ) : (
-                          <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-0">Watch</Badge>
+                          <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-0">{MATERIAL_LEVEL_LABELS.watch}</Badge>
                         )}
                       </TableCell>
                     </TableRow>

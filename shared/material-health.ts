@@ -1,24 +1,61 @@
 /**
- * Raw-material stock health: on-hand stock as a share of the material's reorder
- * size (owner, 2026-09-23: "watch at 50% and reorder at 25%"). One definition for
- * the Materials page badges and the server's stock emails, so the two can't
- * disagree about what "watch" or "reorder" means.
+ * Raw-material stock levels, from recent usage and the supplier's lead time
+ * (owner, 2026-09-23: "order now as stock at or below daily usage × lead time ×
+ * 1.25, a 25% safety buffer, and watch as that times 1.5. Be consistent
+ * throughout dashboard, table, and email notification").
  *
- *   above 50%          healthy
- *   25% up to 50%      watch    (admins emailed on the way down)
- *   25% or less        reorder  (admins emailed on the way down)
+ *   order-now level = daily usage × supplier lead time × 1.25
+ *   watch level     = order-now level × 1.5
  *
- * A material with no reorder size has no target, so it has no health.
+ *   stock at or below the order-now level    Order now
+ *   stock at or below the watch level        Watch
+ *   anything above                           Healthy
+ *   not used in the last 90 days             No recent use (nothing to measure against)
+ *
+ * This is the ONE definition: the inventory dashboard, the Materials table and
+ * the stock emails all get their levels from the server's getMaterialLevels(),
+ * which applies materialLevel() below. The reorder size is only how much to
+ * order; it plays no part in the status.
  */
-export const MATERIAL_WATCH_RATIO = 0.5;
-export const MATERIAL_REORDER_RATIO = 0.25;
+export const USAGE_WINDOW_DAYS = 90;
+export const SAFETY_BUFFER = 1.25;
+export const WATCH_MULTIPLIER = 1.5;
+/** Lead time for a material with no supplier on file. */
+export const DEFAULT_LEAD_TIME_DAYS = 14;
 
-export type MaterialHealthKey = "healthy" | "watch" | "reorder" | "na";
+export type MaterialLevelKey = "order-now" | "watch" | "healthy" | "no-usage";
 
-export function materialHealth(stock: number, orderSize: number): { key: MaterialHealthKey; ratio: number | null } {
-  if (!(orderSize > 0)) return { key: "na", ratio: null };
-  const ratio = stock / orderSize;
-  if (ratio <= MATERIAL_REORDER_RATIO) return { key: "reorder", ratio };
-  if (ratio <= MATERIAL_WATCH_RATIO) return { key: "watch", ratio };
-  return { key: "healthy", ratio };
+export const MATERIAL_LEVEL_LABELS: Record<MaterialLevelKey, string> = {
+  "order-now": "Order now",
+  watch: "Watch",
+  healthy: "Healthy",
+  "no-usage": "No recent use",
+};
+
+export type MaterialLevel = {
+  key: MaterialLevelKey;
+  /** Average units used per day over the usage window. */
+  dailyUsage: number;
+  leadTimeDays: number;
+  /** Stock at or below this is Order now; null when there's no usage. */
+  orderNowAt: number | null;
+  /** Stock at or below this is Watch; null when there's no usage. */
+  watchAt: number | null;
+  /** How many days the stock on hand lasts at the current rate; null with no usage. */
+  daysOfCover: number | null;
+};
+
+export function materialLevel(stock: number, dailyUsage: number, leadTimeDays: number): MaterialLevel {
+  if (!(dailyUsage > 0)) {
+    return { key: "no-usage", dailyUsage: 0, leadTimeDays, orderNowAt: null, watchAt: null, daysOfCover: null };
+  }
+  const orderNowAt = dailyUsage * leadTimeDays * SAFETY_BUFFER;
+  const watchAt = orderNowAt * WATCH_MULTIPLIER;
+  const key: MaterialLevelKey = stock <= orderNowAt ? "order-now" : stock <= watchAt ? "watch" : "healthy";
+  return { key, dailyUsage, leadTimeDays, orderNowAt, watchAt, daysOfCover: stock / dailyUsage };
+}
+
+/** How much to order: the material's reorder size, or 30 days of use when none is set. */
+export function suggestedOrderQty(orderSize: number, dailyUsage: number): number {
+  return orderSize > 0 ? orderSize : Math.ceil(dailyUsage * 30);
 }

@@ -19,11 +19,22 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Loader2, Search, Plus } from "lucide-react";
 import type { Material, Supplier } from "@shared/schema";
-import { materialHealth, MATERIAL_WATCH_RATIO, MATERIAL_REORDER_RATIO, type MaterialHealthKey } from "@shared/material-health";
+import {
+  MATERIAL_LEVEL_LABELS,
+  SAFETY_BUFFER,
+  WATCH_MULTIPLIER,
+  USAGE_WINDOW_DAYS,
+  type MaterialLevel,
+  type MaterialLevelKey,
+} from "@shared/material-health";
 
 type EnrichedMaterial = Material & {
   supplierName: string | null;
   supplierLeadTimeDays: number | null;
+  // Stock level, computed on the server exactly as the dashboard and the stock
+  // emails compute it (shared/material-health.ts).
+  level: MaterialLevel;
+  suggestedQty: number;
 };
 
 const n = (v: string | number | null | undefined) => {
@@ -33,31 +44,18 @@ const n = (v: string | number | null | undefined) => {
 const money = (v: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v);
 
-// Health: stock ÷ reorder size, by the shared rule (owner, 2026-09-23: watch at
-// 50%, reorder at 25%). The server's Watch and Reorder emails use the same definition.
-type Health = { key: MaterialHealthKey; label: string; ratio: number | null };
-const HEALTH_LABELS: Record<MaterialHealthKey, string> = {
-  healthy: "Healthy",
-  watch: "Watch",
-  reorder: "Reorder",
-  na: "No target",
-};
-function health(m: EnrichedMaterial): Health {
-  const { key, ratio } = materialHealth(n(m.stock), n(m.orderSize));
-  return { key, label: HEALTH_LABELS[key], ratio };
-}
-
-const HEALTH_STYLES: Record<Health["key"], string> = {
-  healthy: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
+// Stock level (owner, 2026-09-23): Order now when stock won't last through the
+// supplier's lead time plus 25%, Watch within 1.5 times that, from the last 90
+// days of usage. Computed on the server; the dashboard and emails use the same.
+const LEVEL_STYLES: Record<MaterialLevelKey, string> = {
+  "order-now": "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
   watch: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-  reorder: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
-  na: "bg-muted text-muted-foreground",
+  healthy: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
+  "no-usage": "bg-muted text-muted-foreground",
 };
-const BAR_COLORS: Record<Health["key"], string> = {
-  healthy: "bg-green-500",
-  watch: "bg-amber-500",
-  reorder: "bg-red-500",
-  na: "bg-muted-foreground/40",
+const daysLeft = (d: number) => {
+  const days = Math.max(0, Math.floor(d));
+  return days >= 365 ? "over a year" : `${days} ${days === 1 ? "day" : "days"}`;
 };
 
 // Titles are namespaced "Category:Name" (e.g. "Packaging:Bottles")
@@ -179,8 +177,9 @@ function MaterialForm({
           <Input type="number" step="0.0001" min="0" value={orderSize}
             onChange={(e) => setOrderSize(e.target.value)} data-testid="input-material-ordersize" />
           <p className="text-xs text-muted-foreground">
-            Shows Watch at {Math.round(MATERIAL_WATCH_RATIO * 100)}% of this and Reorder at {Math.round(MATERIAL_REORDER_RATIO * 100)}%.
-            Admins are emailed when it drops to each.
+            How much to order at a time. The stock level doesn't use this: it's Order now when stock won't last through
+            the supplier's lead time plus {Math.round((SAFETY_BUFFER - 1) * 100)}%, and Watch within {WATCH_MULTIPLIER} times
+            that, from the last {USAGE_WINDOW_DAYS} days of usage. Admins are emailed when it drops to each.
           </p>
         </div>
       </div>
@@ -339,16 +338,15 @@ export default function Materials() {
 
   // Stats cover active materials only — matches the dashboard's numbers.
   const stats = useMemo(() => {
-    let value = 0, reorder = 0, watch = 0, total = 0;
+    let value = 0, orderNow = 0, watch = 0, total = 0;
     for (const m of materials) {
       if (!m.isActive) continue;
       total++;
       value += n(m.stock) * n(m.cost);
-      const h = health(m).key;
-      if (h === "reorder") reorder++;
-      else if (h === "watch") watch++;
+      if (m.level?.key === "order-now") orderNow++;
+      else if (m.level?.key === "watch") watch++;
     }
-    return { value, reorder, watch, total };
+    return { value, orderNow, watch, total };
   }, [materials]);
 
   if (isLoading) {
@@ -379,8 +377,8 @@ export default function Materials() {
         {/* Insight summary */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <StatCard label="Materials tracked" value={String(stats.total)} />
-          <StatCard label="Need reordering" value={String(stats.reorder)} />
-          <StatCard label="Running low (watch)" value={String(stats.watch)} />
+          <StatCard label={MATERIAL_LEVEL_LABELS["order-now"]} value={String(stats.orderNow)} />
+          <StatCard label={MATERIAL_LEVEL_LABELS.watch} value={String(stats.watch)} />
           <StatCard label="Inventory value" value={money(stats.value)} />
         </div>
 
@@ -418,10 +416,10 @@ export default function Materials() {
                   <TableHead>Material</TableHead>
                   <TableHead>Supplier</TableHead>
                   <TableHead className="text-right">On hand</TableHead>
-                  <TableHead className="text-right">Reorder at size</TableHead>
+                  <TableHead className="text-right">Reorder size</TableHead>
                   <TableHead className="text-right">Cost / unit</TableHead>
                   <TableHead className="text-right">Value</TableHead>
-                  <TableHead className="w-44">Stock health</TableHead>
+                  <TableHead className="w-40">Stock level</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -435,8 +433,6 @@ export default function Materials() {
                 )}
                 {filtered.map((m) => {
                   const { category: cat, name } = splitTitle(m.title);
-                  const h = health(m);
-                  const pct = h.ratio === null ? 0 : Math.min(100, Math.round(h.ratio * 100));
                   return (
                     <TableRow key={m.id} className={m.isActive ? undefined : "opacity-50"} data-testid={`row-material-${m.id}`}>
                       <TableCell>
@@ -475,15 +471,20 @@ export default function Materials() {
                         {money(n(m.stock) * n(m.cost))}
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Badge className={`${HEALTH_STYLES[h.key]} border-0`}>{h.label}</Badge>
-                          {h.ratio !== null && (
-                            <span className="text-xs text-muted-foreground tabular-nums">{pct}%</span>
-                          )}
-                        </div>
-                        <div className="mt-1 h-1.5 w-full rounded bg-muted overflow-hidden">
-                          <div className={`h-full ${BAR_COLORS[h.key]}`} style={{ width: `${pct}%` }} />
-                        </div>
+                        {m.level ? (
+                          <>
+                            <Badge className={`${LEVEL_STYLES[m.level.key]} border-0`} data-testid={`badge-level-${m.id}`}>
+                              {MATERIAL_LEVEL_LABELS[m.level.key]}
+                            </Badge>
+                            {m.level.daysOfCover !== null && (
+                              <div className="text-xs text-muted-foreground tabular-nums mt-1" data-testid={`text-days-left-${m.id}`}>
+                                {daysLeft(m.level.daysOfCover)} left
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
                         <Button variant="ghost" size="sm" onClick={() => setCounting(m)}
