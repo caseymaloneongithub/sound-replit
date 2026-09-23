@@ -131,6 +131,16 @@ async function splitItemFields(
   return { selectedFlavorId: mixed?.id ?? selectedFlavorId, notes: `Split: 6 ${a} / 6 ${b}` };
 }
 
+/**
+ * The two flavor names in a split case's packing note, the reverse of
+ * splitItemFields: "Split: 6 Bonfire / 6 Mist" gives ["Bonfire", "Mist"]. Null
+ * when the note isn't a split.
+ */
+function parseSplitNote(note: string | null | undefined): [string, string] | null {
+  const m = /^Split:\s*(?:\d+\s+)?(.+?)\s*\/\s*(?:\d+\s+)?(.+?)\s*$/.exec(note ?? '');
+  return m ? [m[1], m[2]] : null;
+}
+
 // Paid-but-no-order alerts already sent this process, keyed by payment intent —
 // Stripe redelivers failing events many times; one email per incident is enough.
 const notifiedOrderFailures = new Set<string>();
@@ -3345,6 +3355,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   /**
+   * Whether a retail line may go in a cart: the checks POST /api/retail-cart has
+   * always made, in the same order, shared with reorders so the two can't drift.
+   * On a refusal, `status` and `message` are what the cart endpoint answers;
+   * `kind` says why — 'unavailable' (switched off), 'sold-out' (bottle
+   * sell-through) or 'invalid' (the flavor choice doesn't fit the product) — and
+   * `label` names the line for a customer.
+   */
+  type RetailProductForCart = NonNullable<Awaited<ReturnType<typeof storage.getRetailProduct>>>;
+  type CartLineCheck =
+    | { ok: true }
+    | { ok: false; status: number; message: string; kind: 'unavailable' | 'sold-out' | 'invalid'; label: string };
+
+  async function checkRetailCartLine(
+    product: RetailProductForCart,
+    selectedFlavorId: string | null | undefined,
+    splitFlavorId: string | null | undefined,
+  ): Promise<CartLineCheck> {
+    const p = product as any;
+    const name = p.productName ?? p.flavor?.name ?? 'An item';
+    const label = p.unitDescription ? `${name} (${p.unitDescription})` : name;
+    const invalid = (status: number, message: string): CartLineCheck => ({ ok: false, status, message, kind: 'invalid', label });
+
+    // Multi-flavor products need a selected flavor.
+    if (product.productType === 'multi-flavor' && !selectedFlavorId) {
+      return invalid(400, "Please select a flavor for this variety pack");
+    }
+
+    // Only what's on offer goes in a cart (owner, 2026-09-23): the product switched
+    // on, and every flavor involved — its own, the chosen one, the split — switched
+    // on too. The shop hides the rest; this covers direct calls and stale pages.
+    const [offLine] = await unavailableRetailCartLines([{ id: 'new', selectedFlavorId, splitFlavorId, retailProduct: product }]);
+    if (offLine) {
+      return { ok: false, status: 409, message: `${offLine.label} is no longer available`, kind: 'unavailable', label: offLine.label };
+    }
+
+    // Splitting is OPTIONAL on allowSplit products (owner, 2026-09-02): one flavor
+    // is a normal case; a second flavor makes it half of each.
+    if (splitFlavorId) {
+      if (!p.allowSplit) {
+        return invalid(400, "This product doesn't offer split cases");
+      }
+      if (!selectedFlavorId || selectedFlavorId === splitFlavorId) {
+        return invalid(400, "Pick two different flavors for your split case");
+      }
+    }
+
+    // Chosen flavors must actually BELONG to the product — an arbitrary flavor
+    // id used to sail through into the cart (and, on bottle products, could
+    // stand in for the real flavor in the sell-through check below).
+    if (product.productType === 'multi-flavor') {
+      const chosen = [selectedFlavorId, splitFlavorId].filter(Boolean) as string[];
+      if (chosen.length > 0) {
+        const memberRows = await db
+          .select({ flavorId: retailProductFlavors.flavorId })
+          .from(retailProductFlavors)
+          .where(and(eq(retailProductFlavors.retailProductId, product.id), inArray(retailProductFlavors.flavorId, chosen)));
+        const members = new Set(memberRows.map(r => r.flavorId));
+        if (chosen.some(id => !members.has(id))) {
+          return invalid(400, "That flavor isn't offered on this product");
+        }
+      }
+    }
+
+    // Bottle sell-through enforcement (cans launch): the shop hides sold-out
+    // bottle flavors, but the cart endpoint is reachable directly. Same scope
+    // and the SAME rule as the catalogue (/api/retail-products): bottle-case
+    // only, only flavors with a finished-goods row — and a plain Mixed case is
+    // judged by its components (at least two active flavors in stock), never
+    // by the zero-stock "Mixed" row, so the cart can't refuse what the shop
+    // offers (reviewer, 2026-09-15).
+    if (p.container === 'bottle-case') {
+      const productFlavors: Array<{ id: string; name: string; isActive?: boolean }> = p.flavors ?? [];
+      const mixedId = productFlavors.find((f) => f.name === 'Mixed')?.id;
+      const plainMixed = !!mixedId && selectedFlavorId === mixedId && !splitFlavorId;
+      // Single-flavor products ALWAYS check their own fixed flavor (a
+      // client-supplied selectedFlavorId must not stand in for it);
+      // multi-flavor products check the chosen and split flavors.
+      const flavorIdsToCheck = (product.productType === 'single-flavor'
+        ? [p.flavorId]
+        : plainMixed
+          ? productFlavors.filter((f) => f.id !== mixedId && f.isActive !== false).map((f) => f.id)
+          : [selectedFlavorId, splitFlavorId]
+      ).filter(Boolean) as string[];
+      // A plain Mixed case is judged even with NO components to check: zero
+      // active flavors means zero in stock, which is "fewer than two".
+      if (flavorIdsToCheck.length > 0 || plainMixed) {
+        const stockRows = flavorIdsToCheck.length > 0 ? await db
+          .select({ flavorId: products.flavorId, stock: products.stockQuantity, name: flavors.name })
+          .from(products)
+          .leftJoin(flavors, eq(flavors.id, products.flavorId))
+          .where(and(eq(products.container, 'bottle-case'), inArray(products.flavorId, flavorIdsToCheck))) : [];
+        if (plainMixed) {
+          const inStock = flavorIdsToCheck.filter((id) => { const row = stockRows.find((r) => r.flavorId === id); return !row || row.stock > 0; }).length;
+          if (inStock < 2) {
+            return { ok: false, status: 409, message: "Mixed cases are sold out in bottles.", kind: 'sold-out', label: 'Mixed' };
+          }
+        } else {
+          const soldOut = stockRows.find(r => r.stock <= 0);
+          if (soldOut) {
+            return { ok: false, status: 409, message: `${soldOut.name ?? 'That flavor'} is sold out in bottles.`, kind: 'sold-out', label: soldOut.name ?? label };
+          }
+        }
+      }
+    }
+
+    return { ok: true };
+  }
+
+  /**
    * Before any checkout prices a cart: drop the session's lines that can no longer
    * be bought. Legacy lines are never shown to the customer, so they go quietly. If
    * a line the customer could SEE went, the checkout is refused naming it, so they
@@ -5674,81 +5793,140 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Reorder (My Account): a past order's lines back in the cart as one-time
+  // purchases. Orders from the current shop keep their lines in
+  // retail_order_items_v2 (retail product + chosen flavor; a split case files
+  // under Mixed with a "Split: 6 A / 6 B" note, see splitItemFields); the
+  // legacy retail_order_items path stays for older orders. Every line goes
+  // through the same checks as adding it to the cart by hand
+  // (checkRetailCartLine), so nothing switched off or sold out goes back in, and
+  // the customer is told what was left out.
   app.post("/api/orders/:id/reorder", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
       const orderId = req.params.id;
       const sessionId = req.sessionID || "guest";
-      
-      const orderDetails = await storage.getRetailOrderWithDetails(orderId);
-      if (!orderDetails) {
+
+      const order = await storage.getRetailOrder(orderId);
+      if (!order) {
         return res.status(404).json({ message: "Order not found" });
       }
-      
-      if (orderDetails.order.userId !== userId) {
+      if (order.userId !== userId) {
         return res.status(403).json({ message: "Unauthorized" });
       }
-      
+
       let itemsAdded = 0;
-      // Names of past lines that can't be bought any more, for the customer's toast.
+      // Past lines that can't go back in, named for the customer's toast.
       const unavailable: string[] = [];
-      // ACTIVE flavors only: a flavor switched off on the Flavors page is not put
-      // back in anyone's cart by a reorder (owner, 2026-09-23).
-      const flavors = await storage.getFlavors();
-      const allProductTypes = await storage.getProductTypes();
-
-      for (const item of orderDetails.items) {
-        const product = await storage.getProduct(item.productId);
+      const soldOut: string[] = [];
+      const productCache = new Map<string, RetailProductForCart | undefined>();
+      const getProduct = async (id: string) => {
+        if (!productCache.has(id)) productCache.set(id, await storage.getRetailProduct(id));
+        return productCache.get(id);
+      };
+      // One line into the cart, if the shop would take it by hand. `name`, when
+      // given, is how a refused line is named (a split case by its two flavors).
+      const addLine = async (retailProductId: string, selectedFlavorId: string | null, splitFlavorId: string | null, quantity: number, name?: string) => {
+        const product = await getProduct(retailProductId);
         if (!product) {
-          console.warn(`[WARN] Product ${item.productId} not found, skipping reorder item`);
-          continue;
+          unavailable.push(name ?? 'An item');
+          return;
         }
-
-        const flavor = flavors.find(f => f.name === product.name);
-        if (!flavor) {
-          console.warn(`[WARN] Flavor '${product.name}' not on offer, skipping reorder item`);
-          unavailable.push(product.name);
-          continue;
+        const check = await checkRetailCartLine(product, selectedFlavorId, splitFlavorId);
+        if (!check.ok) {
+          if (check.kind === 'sold-out') soldOut.push(check.label);
+          else unavailable.push(name ?? check.label);
+          return;
         }
-        
-        const productType = allProductTypes.find(pt => pt.id === product.productTypeId);
-        if (!productType) {
-          console.warn(`[WARN] Product type ${product.productTypeId} not found, skipping item`);
-          continue;
-        }
-        
-        const retailProduct = await db.query.retailProducts.findFirst({
-          where: and(
-            eq(retailProducts.flavorId, flavor.id),
-            eq(retailProducts.unitType, productType.unitType),
-            eq(retailProducts.isActive, true)
-          )
-        });
-        
-        if (!retailProduct) {
-          console.warn(`[WARN] Retail product not found for flavor ${flavor.name} (${flavor.id}) and unit type ${productType.unitType}, skipping item`);
-          unavailable.push(product.name);
-          continue;
-        }
-
         await storage.addRetailProductToCart({
           sessionId,
-          retailProductId: retailProduct.id,
-          quantity: item.quantity,
+          retailProductId,
+          selectedFlavorId,
+          splitFlavorId,
+          quantity,
           isSubscription: false,
           subscriptionFrequency: null,
         });
-
         itemsAdded++;
+      };
+
+      // Orders from the current shop.
+      const lines = await db
+        .select({
+          retailProductId: retailOrderItemsV2.retailProductId,
+          selectedFlavorId: retailOrderItemsV2.selectedFlavorId,
+          quantity: retailOrderItemsV2.quantity,
+          notes: retailOrderItemsV2.notes,
+        })
+        .from(retailOrderItemsV2)
+        .where(eq(retailOrderItemsV2.orderId, orderId));
+      if (lines.length > 0) {
+        // Every flavor, switched-off ones included, so a split note's names resolve
+        // (and a switched-off one is refused by name rather than lost). If two
+        // flavors share a name, the active one wins.
+        const flavorByName = new Map<string, { id: string; isActive: boolean }>();
+        for (const f of await db.select({ id: flavors.id, name: flavors.name, isActive: flavors.isActive }).from(flavors)) {
+          const key = f.name.trim().toLowerCase();
+          const seen = flavorByName.get(key);
+          if (!seen || (!seen.isActive && f.isActive)) flavorByName.set(key, f);
+        }
+        for (const line of lines) {
+          const split = parseSplitNote(line.notes);
+          if (!split) {
+            await addLine(line.retailProductId, line.selectedFlavorId ?? null, null, line.quantity);
+            continue;
+          }
+          // A split case goes back in as its two flavors, the way the shop takes it.
+          const [a, b] = split.map((n) => flavorByName.get(n.trim().toLowerCase()));
+          const name = `${split[0]} / ${split[1]} split case`;
+          if (!a || !b) {
+            unavailable.push(name);
+            continue;
+          }
+          await addLine(line.retailProductId, a.id, b.id, line.quantity, name);
+        }
+      }
+
+      // Older orders: retail_order_items point at finished products; each maps to
+      // today's retail product for that flavor and unit.
+      const legacy = await storage.getRetailOrderWithDetails(orderId);
+      if (legacy && legacy.items.length > 0) {
+        // ACTIVE flavors only: a flavor switched off on the Flavors page is not put
+        // back in anyone's cart by a reorder (owner, 2026-09-23).
+        const activeFlavors = await storage.getFlavors();
+        const allProductTypes = await storage.getProductTypes();
+        for (const item of legacy.items) {
+          const product = item.product;
+          const flavor = activeFlavors.find(f => f.name === product.name);
+          const productType = allProductTypes.find(pt => pt.id === product.productTypeId);
+          const retailProduct = flavor && productType
+            ? await db.query.retailProducts.findFirst({
+                where: and(
+                  eq(retailProducts.flavorId, flavor.id),
+                  eq(retailProducts.unitType, productType.unitType),
+                  eq(retailProducts.isActive, true)
+                )
+              })
+            : undefined;
+          if (!retailProduct) {
+            console.warn(`[WARN] Reorder: no retail product on offer for '${product.name}', skipping`);
+            unavailable.push(product.name);
+            continue;
+          }
+          await addLine(retailProduct.id, null, null, item.quantity, product.name);
+        }
       }
 
       const gone = Array.from(new Set(unavailable));
-      const goneNote = gone.length > 0 ? ` No longer available: ${gone.join(', ')}.` : '';
+      const out = Array.from(new Set(soldOut));
+      const note = (gone.length > 0 ? ` No longer available: ${gone.join(', ')}.` : '')
+        + (out.length > 0 ? ` Sold out in bottles: ${out.join(', ')}.` : '');
+      const skipped = [...gone, ...out];
       if (itemsAdded === 0) {
-        return res.status(400).json({ message: `Unable to add items to cart.${goneNote || ' Products may no longer be available.'}` });
+        return res.status(400).json({ message: `Unable to add items to cart.${note || ' Products may no longer be available.'}`, unavailable: skipped });
       }
 
-      res.json({ success: true, message: `${itemsAdded} item(s) added to cart.${goneNote}`, itemsAdded, unavailable: gone });
+      res.json({ success: true, message: `${itemsAdded} item(s) added to cart.${note}`, itemsAdded, unavailable: skipped });
     } catch (error: any) {
       console.error('[ERROR] Failed to reorder:', error);
       res.status(500).json({ message: "Error reordering: " + error.message });
@@ -8931,90 +9109,17 @@ If you have any questions, please don't hesitate to reach out!`,
       const sessionId = req.sessionID || "guest";
       const { retailProductId, selectedFlavorId, splitFlavorId, quantity, isSubscription, subscriptionFrequency } = req.body;
 
-      // Validate that multi-flavor products have a selected flavor
       const product = await storage.getRetailProduct(retailProductId);
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
       }
 
-      if (product.productType === 'multi-flavor' && !selectedFlavorId) {
-        return res.status(400).json({ message: "Please select a flavor for this variety pack" });
-      }
-
-      // Only what's on offer goes in a cart (owner, 2026-09-23): the product switched
-      // on, and every flavor involved — its own, the chosen one, the split — switched
-      // on too. The shop hides the rest; this covers direct calls and stale pages.
-      const [offLine] = await unavailableRetailCartLines([{ id: 'new', selectedFlavorId, splitFlavorId, retailProduct: product }]);
-      if (offLine) {
-        return res.status(409).json({ message: `${offLine.label} is no longer available` });
-      }
-
-      // Splitting is OPTIONAL on allowSplit products (owner, 2026-09-02): one flavor
-      // is a normal case; a second flavor makes it half of each.
-      if (splitFlavorId) {
-        if (!(product as any).allowSplit) {
-          return res.status(400).json({ message: "This product doesn't offer split cases" });
-        }
-        if (!selectedFlavorId || selectedFlavorId === splitFlavorId) {
-          return res.status(400).json({ message: "Pick two different flavors for your split case" });
-        }
-      }
-
-      // Chosen flavors must actually BELONG to the product — an arbitrary flavor
-      // id used to sail through into the cart (and, on bottle products, could
-      // stand in for the real flavor in the sell-through check below).
-      if (product.productType === 'multi-flavor') {
-        const chosen = [selectedFlavorId, splitFlavorId].filter(Boolean) as string[];
-        if (chosen.length > 0) {
-          const memberRows = await db
-            .select({ flavorId: retailProductFlavors.flavorId })
-            .from(retailProductFlavors)
-            .where(and(eq(retailProductFlavors.retailProductId, retailProductId), inArray(retailProductFlavors.flavorId, chosen)));
-          const members = new Set(memberRows.map(r => r.flavorId));
-          if (chosen.some(id => !members.has(id))) {
-            return res.status(400).json({ message: "That flavor isn't offered on this product" });
-          }
-        }
-      }
-
-      // Bottle sell-through enforcement (cans launch): the shop hides sold-out
-      // bottle flavors, but the cart endpoint is reachable directly. Same scope
-      // and the SAME rule as the catalogue (/api/retail-products): bottle-case
-      // only, only flavors with a finished-goods row — and a plain Mixed case is
-      // judged by its components (at least two active flavors in stock), never
-      // by the zero-stock "Mixed" row, so the cart can't refuse what the shop
-      // offers (reviewer, 2026-09-15).
-      if ((product as any).container === 'bottle-case') {
-        const productFlavors: Array<{ id: string; name: string; isActive?: boolean }> = (product as any).flavors ?? [];
-        const mixedId = productFlavors.find((f) => f.name === 'Mixed')?.id;
-        const plainMixed = !!mixedId && selectedFlavorId === mixedId && !splitFlavorId;
-        // Single-flavor products ALWAYS check their own fixed flavor (a
-        // client-supplied selectedFlavorId must not stand in for it);
-        // multi-flavor products check the chosen and split flavors.
-        const flavorIdsToCheck = (product.productType === 'single-flavor'
-          ? [(product as any).flavorId]
-          : plainMixed
-            ? productFlavors.filter((f) => f.id !== mixedId && f.isActive !== false).map((f) => f.id)
-            : [selectedFlavorId, splitFlavorId]
-        ).filter(Boolean) as string[];
-        // A plain Mixed case is judged even with NO components to check: zero
-        // active flavors means zero in stock, which is "fewer than two".
-        if (flavorIdsToCheck.length > 0 || plainMixed) {
-          const stockRows = flavorIdsToCheck.length > 0 ? await db
-            .select({ flavorId: products.flavorId, stock: products.stockQuantity, name: flavors.name })
-            .from(products)
-            .leftJoin(flavors, eq(flavors.id, products.flavorId))
-            .where(and(eq(products.container, 'bottle-case'), inArray(products.flavorId, flavorIdsToCheck))) : [];
-          if (plainMixed) {
-            const inStock = flavorIdsToCheck.filter((id) => { const row = stockRows.find((r) => r.flavorId === id); return !row || row.stock > 0; }).length;
-            if (inStock < 2) return res.status(409).json({ message: "Mixed cases are sold out in bottles." });
-          } else {
-            const soldOut = stockRows.find(r => r.stock <= 0);
-            if (soldOut) {
-              return res.status(409).json({ message: `${soldOut.name ?? 'That flavor'} is sold out in bottles.` });
-            }
-          }
-        }
+      // A variety pack's flavor, only what's on offer, split rules, flavors that
+      // belong to the product, bottle sell-through: checkRetailCartLine, shared
+      // with reorders.
+      const check = await checkRetailCartLine(product, selectedFlavorId, splitFlavorId);
+      if (!check.ok) {
+        return res.status(check.status).json({ message: check.message });
       }
 
       // Wholesale accounts don't do subscriptions. Their login is a business identity with

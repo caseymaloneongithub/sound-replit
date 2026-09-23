@@ -7,6 +7,22 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+/**
+ * What to show a person for a failed apiRequest: its errors read
+ * "400: {"message":"…"}", so this returns the server's message when there is
+ * one, else the body text, else the fallback.
+ */
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  const body = String((error as any)?.message ?? '').replace(/^\d{3}: /, '');
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed.message === 'string' && parsed.message) return parsed.message;
+  } catch {
+    // Not JSON: the text itself is the message.
+  }
+  return body || fallback;
+}
+
 export async function apiRequest(
   method: string,
   url: string,

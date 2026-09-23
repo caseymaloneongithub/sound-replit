@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PaymentMethodsOnFile } from "@/pages/account";
 import { Package, Repeat, Plus, Trash2, X, CreditCard, ShoppingCart, Mail, SkipForward, PauseCircle, PlayCircle } from "lucide-react";
 import { format, startOfWeek } from "date-fns";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiErrorMessage, queryClient } from "@/lib/queryClient";
 import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
@@ -314,8 +314,11 @@ export default function MyAccount() {
     mutationFn: async (orderId: string) => {
       return await apiRequest("POST", `/api/orders/${orderId}/reorder`);
     },
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"] });
+    onSuccess: async (data: any) => {
+      // Reload the cart BEFORE going to checkout: checkout reads a cached cart as
+      // current, so a stale empty one sent the customer back to the shop with
+      // "Cart is empty". refetchType "all" covers a cart query nothing is showing.
+      await queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"], refetchType: "all" });
       // The server says what went in and names anything no longer available.
       toast({
         title: "Items added to cart",
@@ -325,8 +328,9 @@ export default function MyAccount() {
     },
     onError: (error: any) => {
       toast({
-        title: "Error",
-        description: error.message || "Failed to reorder items",
+        title: "Couldn't reorder",
+        // The server's own words, e.g. which items are no longer available.
+        description: apiErrorMessage(error, "Failed to reorder items"),
         variant: "destructive",
       });
     },
