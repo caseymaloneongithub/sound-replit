@@ -1034,6 +1034,12 @@ export const materials = pgTable("materials", {
   // Inactive = retired but kept: hidden from the list (behind a toggle), excluded from
   // reorder/dashboard numbers and pickers. Distinct from deletedAt, which means gone.
   isActive: boolean("is_active").notNull().default(true),
+  // When admins were emailed that this material reached Watch / Reorder (see
+  // shared/material-health.ts and server/material-alerts.ts). Each clears once
+  // stock climbs back above its level, so the next dip emails again.
+  // Server-managed; never set from a form.
+  watchAlertedAt: timestamp("watch_alerted_at"),
+  reorderAlertedAt: timestamp("reorder_alerted_at"),
   createdAt: timestamp("created_at").defaultNow(),
   deletedAt: timestamp("deleted_at"),
 });
@@ -1122,7 +1128,7 @@ export const orderMaterials = pgTable("order_materials", {
 
 // Insert schemas - MATERIALS INVENTORY MODULE
 export const insertSupplierSchema = createInsertSchema(suppliers).omit({ id: true, createdAt: true, deletedAt: true });
-export const insertMaterialSchema = createInsertSchema(materials).omit({ id: true, createdAt: true, deletedAt: true });
+export const insertMaterialSchema = createInsertSchema(materials).omit({ id: true, createdAt: true, deletedAt: true, watchAlertedAt: true, reorderAlertedAt: true });
 export const insertProcessSchema = createInsertSchema(processes).omit({ id: true, createdAt: true, deletedAt: true });
 export const insertProcessMaterialSchema = createInsertSchema(processMaterials).omit({ id: true });
 export const insertProductionSchema = createInsertSchema(productions).omit({ id: true, createdAt: true });

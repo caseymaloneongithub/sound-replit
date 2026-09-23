@@ -33,6 +33,7 @@ import { createStripeCustomer } from "./stripeCustomer";
 import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange, nextPickupDateFromScheduled } from "@shared/pickup-policy";
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
 import { geocodeForEdit, refreshLocationPin } from "./location-geocode";
+import { checkMaterialStockAlerts } from "./material-alerts";
 import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -2221,6 +2222,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const data = insertMaterialSchema.parse(req.body);
       res.json(await storage.createMaterial(data));
+      // Every route that changes a material's stock, reorder size or active state
+      // re-checks stock levels; admins are emailed when one drops to Watch or
+      // Reorder (material-alerts.ts).
+      void checkMaterialStockAlerts();
     } catch (error: any) {
       if (error.name === 'ZodError') {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
@@ -2246,6 +2251,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const adj = await storage.recordMaterialCount(req.params.id, parsed.data.counted, parsed.data.reason, parsed.data.note ?? null, req.user?.id ?? null);
       if (!adj) return res.status(404).json({ message: "Material not found" });
       res.json(adj);
+      void checkMaterialStockAlerts();
     } catch (error: any) {
       res.status(500).json({ message: "Error recording count: " + error.message });
     }
@@ -2272,6 +2278,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const material = await storage.updateMaterial(req.params.id, updates);
       if (!material) return res.status(404).json({ message: "Material not found" });
       res.json(material);
+      void checkMaterialStockAlerts();
     } catch (error: any) {
       if (error.name === 'ZodError') {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
@@ -2284,6 +2291,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteMaterial(req.params.id);
       res.json({ message: "Material deleted successfully" });
+      void checkMaterialStockAlerts();
     } catch (error: any) {
       res.status(500).json({ message: "Error deleting material: " + error.message });
     }
@@ -2391,6 +2399,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (typeof body.date === 'string') body.date = new Date(body.date);
       const data = insertProductionSchema.parse(body);
       res.json(await storage.createProduction(data));
+      void checkMaterialStockAlerts(); // a batch draws materials down
     } catch (error: any) {
       if (error.name === 'ZodError') {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
@@ -2403,6 +2412,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteProduction(req.params.id);
       res.json({ message: "Production deleted successfully" });
+      void checkMaterialStockAlerts(); // the batch's materials go back on the shelf
     } catch (error: any) {
       res.status(500).json({ message: "Error deleting production: " + error.message });
     }
@@ -2444,6 +2454,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const delivered = !!req.body?.delivered;
       await storage.setOrderMaterialDelivered(req.params.lineId, delivered);
       res.json({ message: "Updated" });
+      void checkMaterialStockAlerts(); // a delivery (or un-delivery) moves stock
     } catch (error: any) {
       res.status(500).json({ message: "Error updating delivery: " + error.message });
     }
@@ -2453,6 +2464,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteMaterialOrder(req.params.id);
       res.json({ message: "Purchase order deleted successfully" });
+      void checkMaterialStockAlerts(); // delivered lines come back off the shelf
     } catch (error: any) {
       res.status(500).json({ message: "Error deleting purchase order: " + error.message });
     }

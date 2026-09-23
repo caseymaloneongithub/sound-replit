@@ -19,6 +19,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Loader2, Search, Plus } from "lucide-react";
 import type { Material, Supplier } from "@shared/schema";
+import { materialHealth, MATERIAL_WATCH_RATIO, MATERIAL_REORDER_RATIO, type MaterialHealthKey } from "@shared/material-health";
 
 type EnrichedMaterial = Material & {
   supplierName: string | null;
@@ -32,16 +33,18 @@ const n = (v: string | number | null | undefined) => {
 const money = (v: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v);
 
-// Legacy health thresholds: stock ÷ order_size — >0.8 healthy, ≥0.5 watch, else reorder
-type Health = { key: "healthy" | "watch" | "reorder" | "na"; label: string; ratio: number | null };
+// Health: stock ÷ reorder size, by the shared rule (owner, 2026-09-23: watch at
+// 50%, reorder at 25%). The server's Watch and Reorder emails use the same definition.
+type Health = { key: MaterialHealthKey; label: string; ratio: number | null };
+const HEALTH_LABELS: Record<MaterialHealthKey, string> = {
+  healthy: "Healthy",
+  watch: "Watch",
+  reorder: "Reorder",
+  na: "No target",
+};
 function health(m: EnrichedMaterial): Health {
-  const stock = n(m.stock);
-  const size = n(m.orderSize);
-  if (size <= 0) return { key: "na", label: "No target", ratio: null };
-  const ratio = stock / size;
-  if (ratio > 0.8) return { key: "healthy", label: "Healthy", ratio };
-  if (ratio >= 0.5) return { key: "watch", label: "Watch", ratio };
-  return { key: "reorder", label: "Reorder", ratio };
+  const { key, ratio } = materialHealth(n(m.stock), n(m.orderSize));
+  return { key, label: HEALTH_LABELS[key], ratio };
 }
 
 const HEALTH_STYLES: Record<Health["key"], string> = {
@@ -175,6 +178,10 @@ function MaterialForm({
           <label className="text-sm font-medium">Reorder size</label>
           <Input type="number" step="0.0001" min="0" value={orderSize}
             onChange={(e) => setOrderSize(e.target.value)} data-testid="input-material-ordersize" />
+          <p className="text-xs text-muted-foreground">
+            Shows Watch at {Math.round(MATERIAL_WATCH_RATIO * 100)}% of this and Reorder at {Math.round(MATERIAL_REORDER_RATIO * 100)}%.
+            Admins are emailed when it drops to each.
+          </p>
         </div>
       </div>
       {isEdit && (
