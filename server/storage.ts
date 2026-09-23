@@ -1896,19 +1896,45 @@ export class PostgresStorage implements IStorage {
     await db.delete(wholesaleUnitTypes).where(eq(wholesaleUnitTypes.id, id));
   }
 
+  /**
+   * Set which flavors a unit type offers, for every flavor the editor can SEE.
+   *
+   * A flavor switched off on the Flavors page is hidden from every catalogue,
+   * the Wholesale Units editor included, so an editor's save never mentions it.
+   * Its link is kept rather than dropped, so switching the flavor back on
+   * returns it to the units it was on (review, 2026-09-23: a price-only edit
+   * deleted Evergreen's links). The submitted list is authoritative for every
+   * active flavor.
+   *
+   * One transaction; unchanged links keep their rows, only removed ones are
+   * deleted and only new ones inserted. A bad id rolls the whole change back
+   * instead of leaving the unit with no flavors.
+   */
   async setWholesaleUnitTypeFlavors(unitTypeId: string, flavorIds: string[]): Promise<void> {
-    // Delete existing flavor associations
-    await db.delete(wholesaleUnitTypeFlavors).where(eq(wholesaleUnitTypeFlavors.unitTypeId, unitTypeId));
-    
-    // Insert new associations
-    if (flavorIds.length > 0) {
-      await db.insert(wholesaleUnitTypeFlavors).values(
-        flavorIds.map(flavorId => ({
-          unitTypeId,
-          flavorId,
-        }))
-      );
-    }
+    await db.transaction(async (tx) => {
+      const existing = await tx
+        .select({ flavorId: wholesaleUnitTypeFlavors.flavorId, isActive: flavors.isActive })
+        .from(wholesaleUnitTypeFlavors)
+        .innerJoin(flavors, eq(wholesaleUnitTypeFlavors.flavorId, flavors.id))
+        .where(eq(wholesaleUnitTypeFlavors.unitTypeId, unitTypeId));
+
+      const keep = new Set<string>(flavorIds);
+      for (const link of existing) if (!link.isActive) keep.add(link.flavorId);
+      const have = new Set(existing.map((link) => link.flavorId));
+
+      const toRemove = existing.map((link) => link.flavorId).filter((id) => !keep.has(id));
+      const toAdd = Array.from(keep).filter((id) => !have.has(id));
+
+      if (toRemove.length > 0) {
+        await tx.delete(wholesaleUnitTypeFlavors).where(and(
+          eq(wholesaleUnitTypeFlavors.unitTypeId, unitTypeId),
+          inArray(wholesaleUnitTypeFlavors.flavorId, toRemove),
+        ));
+      }
+      if (toAdd.length > 0) {
+        await tx.insert(wholesaleUnitTypeFlavors).values(toAdd.map((flavorId) => ({ unitTypeId, flavorId })));
+      }
+    });
   }
 
   async getWholesaleCustomerPricing(customerId: string): Promise<WholesaleCustomerPricing[]> {
