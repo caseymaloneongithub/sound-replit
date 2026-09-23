@@ -51,6 +51,16 @@ export default function AdminRetailProducts() {
     queryKey: ['/api/retail-products', 'all'],
     queryFn: async () => apiRequest('GET', '/api/retail-products?includeInactive=true'),
   });
+  // Switched-off products are fetched (this is where one is switched back on) but
+  // kept OUT of the normal list (owner, 2026-09-23): a product that's inactive, or
+  // that IS a flavor switched off on the Flavors page, sits in a collapsed section
+  // below. Switched-off flavors are also left off every card's flavor options; the
+  // server keeps those links when a product is saved.
+  const isOnOffer = (p: RetailProductWithFlavors) =>
+    p.isActive && !(p.productType !== 'multi-flavor' && p.flavor && p.flavor.isActive === false);
+  const productsOnOffer = retailProducts.filter(isOnOffer);
+  const productsSwitchedOff = retailProducts.filter((p) => !isOnOffer(p));
+  const [showSwitchedOff, setShowSwitchedOff] = useState(false);
 
   const createRetailProductMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -437,8 +447,43 @@ export default function AdminRetailProducts() {
             <span className="text-muted-foreground">Loading retail products...</span>
           </div>
         ) : (
+          <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {retailProducts.map((product) => {
+            {productsOnOffer.map((product) => renderProductCard(product))}
+          </div>
+
+          {productsSwitchedOff.length > 0 && (
+            <section className="mt-10 border-t pt-6" data-testid="section-retail-products-switched-off">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold">Switched off ({productsSwitchedOff.length})</h2>
+                  <p className="text-sm text-muted-foreground max-w-2xl">
+                    Not offered anywhere: inactive products, and products whose flavor is switched off on the Flavors page.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowSwitchedOff((open) => !open)}
+                  data-testid="button-toggle-retail-products-switched-off"
+                >
+                  {showSwitchedOff ? "Hide" : "Show"}
+                </Button>
+              </div>
+              {showSwitchedOff && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                  {productsSwitchedOff.map((product) => renderProductCard(product))}
+                </div>
+              )}
+            </section>
+          )}
+          </>
+        )}
+      </div>
+    </StaffLayout>
+  );
+
+  function renderProductCard(product: RetailProductWithFlavors) {
               const isMultiFlavor = product.productType === 'multi-flavor';
               const imageUrl = isMultiFlavor ? product.productImageUrl : product.flavor?.primaryImageUrl;
               const displayName = isMultiFlavor ? product.productName : product.flavor?.name;
@@ -471,11 +516,11 @@ export default function AdminRetailProducts() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-2 text-sm">
-                      {isMultiFlavor && product.flavors.length > 0 && (
+                      {isMultiFlavor && product.flavors.some((f) => f.isActive) && (
                         <div className="mb-3">
                           <span className="text-muted-foreground text-xs">Flavor Options:</span>
                           <div className="flex flex-wrap gap-1 mt-1">
-                            {product.flavors.map((flavor) => (
+                            {product.flavors.filter((f) => f.isActive).map((flavor) => (
                               <Badge key={flavor.id} variant="secondary" className="text-xs">
                                 {flavor.name}
                               </Badge>
@@ -745,10 +790,5 @@ export default function AdminRetailProducts() {
                   </CardFooter>
                 </Card>
               );
-            })}
-          </div>
-        )}
-      </div>
-    </StaffLayout>
-  );
+  }
 }

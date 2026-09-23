@@ -22,6 +22,8 @@ type Recipe = {
   id: string; title: string; unit: string; flavorName: string | null;
   finishedProductName: string | null;
   isActive: boolean;
+  // Its flavor is switched off on the Flavors page (owner, 2026-09-23).
+  flavorRetired?: boolean;
   materials: { units: string; materialCost: string }[];
 };
 type Production = {
@@ -292,7 +294,8 @@ export default function Productions() {
             <DialogTitle>Log production</DialogTitle>
             <DialogDescription>Record a completed batch. Stock is drawn down via the recipe.</DialogDescription>
           </DialogHeader>
-          <LogProductionForm recipes={recipes.filter((r) => r.isActive)} onClose={() => setLogOpen(false)} />
+          {/* Only recipes that can be made: switched on, for a flavor that's switched on. */}
+          <LogProductionForm recipes={recipes.filter((r) => r.isActive && !r.flavorRetired)} onClose={() => setLogOpen(false)} />
         </DialogContent>
       </Dialog>
     </StaffLayout>

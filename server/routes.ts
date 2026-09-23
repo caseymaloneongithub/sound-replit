@@ -33,7 +33,7 @@ import { createStripeCustomer } from "./stripeCustomer";
 import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange, nextPickupDateFromScheduled } from "@shared/pickup-policy";
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
 import { geocodeForEdit, refreshLocationPin } from "./location-geocode";
-import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable } from "@shared/schema";
+import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -1655,7 +1655,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const allFlavors = await storage.getFlavors();
         const flavor = allFlavors.find(f => f.id === item.flavorId);
         if (!flavor) {
-          throw new OrderValidationError(400, { message: `Flavor ${item.flavorId} not found` });
+          // Active flavors only; a switched-off one is named, not shown as an id.
+          const retired = await storage.getFlavor(item.flavorId);
+          throw new OrderValidationError(400, { message: retired ? `${retired.name} is no longer available.` : `Flavor ${item.flavorId} not found` });
         }
 
         // Bottle sell-through (cans launch): bottles are being retired, so a
@@ -1963,10 +1965,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /** A finished product a customer can still buy: switched on, and its flavor too.
+   *  Old links (/product-subscribe/:id) must not bring back what's been taken off
+   *  (owner, 2026-09-23). */
+  async function productIsOnOffer(product: { isActive: boolean; flavorId: string | null }): Promise<boolean> {
+    if (!product.isActive) return false;
+    if (!product.flavorId) return true;
+    const flavor = await storage.getFlavor(product.flavorId);
+    return !!flavor && flavor.isActive;
+  }
+
   app.get("/api/products/:id", async (req, res) => {
     try {
       const product = await storage.getProduct(req.params.id);
-      if (!product) {
+      if (!product || !(await productIsOnOffer(product))) {
         return res.status(404).json({ message: "Product not found" });
       }
       
@@ -2096,10 +2108,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/flavors/:id", async (req, res) => {
+  app.get("/api/flavors/:id", async (req: any, res) => {
     try {
       const flavor = await storage.getFlavor(req.params.id);
-      if (!flavor) {
+      // A switched-off flavor is only visible to admins, as with the list's
+      // includeInactive — an old link must not show it to anyone else.
+      const elevated = !!req.user && (req.user.role === 'admin' || req.user.role === 'super_admin');
+      if (!flavor || (!flavor.isActive && !elevated)) {
         return res.status(404).json({ message: "Flavor not found" });
       }
       res.json(flavor);
@@ -2517,11 +2532,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Mixed cases are assembled from single-flavor stock, so their own count is
       // meaningless and untracked for now (owner, 2026-08-31) — hidden here; the
       // number can be reset if tracking ever starts.
+      // A flavor switched off on the Flavors page leaves this stock view too (owner,
+      // 2026-09-23); its rows and counts stay in the database for when it returns.
       const rows = await db.execute(sql`
         SELECT p.id, p.name, p.container, p.stock_quantity AS "stockQuantity", f.name AS flavor
         FROM products p
         LEFT JOIN flavors f ON f.id = p.flavor_id
         WHERE p.is_active AND p.container IS NOT NULL AND (f.name IS NULL OR f.name <> 'Mixed')
+          AND (f.id IS NULL OR f.is_active = true)
         ORDER BY p.container, f.name NULLS LAST`);
       res.json(rows.rows);
     } catch (error: any) {
@@ -3188,6 +3206,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
       }
+      if (!(await productIsOnOffer(product))) {
+        return res.status(409).json({ message: "This product is no longer available" });
+      }
 
       const pricing = await getProductPricing(productId);
       if (!pricing) {
@@ -3251,6 +3272,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create Stripe checkout session for cart purchases (one-time or subscription)
+  // ---- Cart lines that can no longer be bought (owner, 2026-09-23: a flavor
+  // switched off on the Flavors page is off every display, carts included). A
+  // retail line is off when its product is switched off, or the flavor it IS
+  // (single-flavor), or a flavor chosen for it (selected or split), is switched
+  // off. A legacy line is off when its finished product, or that product's
+  // flavor, is. ----
+  type CartLineIssue = { id: string; label: string };
+  type RetailCartLineLike = { id: string; selectedFlavorId?: string | null; splitFlavorId?: string | null; retailProduct?: any };
+  type LegacyCartLineLike = { id: string; productId: string };
+
+  async function unavailableRetailCartLines(items: RetailCartLineLike[]): Promise<CartLineIssue[]> {
+    if (items.length === 0) return [];
+    const ids = new Set<string>();
+    for (const it of items) {
+      for (const id of [it.retailProduct?.flavorId, it.selectedFlavorId, it.splitFlavorId]) if (id) ids.add(id);
+    }
+    const rows = ids.size
+      ? await db.select({ id: flavors.id, name: flavors.name, isActive: flavors.isActive }).from(flavors).where(inArray(flavors.id, Array.from(ids)))
+      : [];
+    const byId = new Map(rows.map((f) => [f.id, f]));
+    const issues: CartLineIssue[] = [];
+    for (const it of items) {
+      const rp = it.retailProduct;
+      const offFlavor = [rp?.flavorId, it.selectedFlavorId, it.splitFlavorId]
+        .map((id) => (id ? byId.get(id) : undefined))
+        .find((f) => !!f && !f.isActive);
+      if (!rp || rp.isActive === false || offFlavor) {
+        const name = offFlavor?.name ?? rp?.productName ?? rp?.flavor?.name ?? 'An item';
+        issues.push({ id: it.id, label: rp?.unitDescription ? `${name} (${rp.unitDescription})` : name });
+      }
+    }
+    return issues;
+  }
+
+  async function unavailableLegacyCartLines(items: LegacyCartLineLike[]): Promise<CartLineIssue[]> {
+    if (items.length === 0) return [];
+    const rows = await db
+      .select({ id: products.id, name: products.name, isActive: products.isActive, flavorActive: flavors.isActive })
+      .from(products)
+      .leftJoin(flavors, eq(flavors.id, products.flavorId))
+      .where(inArray(products.id, Array.from(new Set(items.map((it) => it.productId)))));
+    const byId = new Map(rows.map((p) => [p.id, p]));
+    return items
+      .filter((it) => {
+        const p = byId.get(it.productId);
+        return !p || !p.isActive || p.flavorActive === false;
+      })
+      .map((it) => ({ id: it.id, label: byId.get(it.productId)?.name ?? 'An item' }));
+  }
+
+  /**
+   * Before any checkout prices a cart: drop the session's lines that can no longer
+   * be bought. Legacy lines are never shown to the customer, so they go quietly. If
+   * a line the customer could SEE went, the checkout is refused naming it, so they
+   * review the new total before paying — nobody is charged for something retired.
+   */
+  async function pruneUnavailableCartLines<L extends LegacyCartLineLike, R extends RetailCartLineLike>(
+    sessionId: string,
+    legacyItems: L[],
+    retailItems: R[],
+  ): Promise<{ legacyItems: L[]; retailItems: R[]; refusal: string | null }> {
+    const legacyOff = await unavailableLegacyCartLines(legacyItems);
+    const retailOff = await unavailableRetailCartLines(retailItems);
+    if (legacyOff.length > 0) {
+      await db.delete(legacyCartItemsTable).where(and(
+        eq(legacyCartItemsTable.sessionId, sessionId),
+        inArray(legacyCartItemsTable.id, legacyOff.map((l) => l.id)),
+      ));
+    }
+    if (retailOff.length > 0) {
+      await db.delete(retailCartItems).where(and(
+        eq(retailCartItems.sessionId, sessionId),
+        inArray(retailCartItems.id, retailOff.map((l) => l.id)),
+      ));
+    }
+    const legacyOffIds = new Set(legacyOff.map((l) => l.id));
+    const retailOffIds = new Set(retailOff.map((l) => l.id));
+    const one = retailOff.length === 1;
+    return {
+      legacyItems: legacyItems.filter((it) => !legacyOffIds.has(it.id)),
+      retailItems: retailItems.filter((it) => !retailOffIds.has(it.id)),
+      refusal: retailOff.length > 0
+        ? `${retailOff.map((l) => l.label).join(', ')} ${one ? 'is' : 'are'} no longer available and ${one ? 'was' : 'were'} removed from your cart. Please review your cart and check out again.`
+        : null,
+    };
+  }
+
   app.post("/api/create-cart-checkout", async (req: any, res) => {
     try {
       if (!stripe) {
@@ -3258,8 +3366,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const sessionId = req.sessionID || "guest";
-      const legacyItems = await storage.getCartItems(sessionId);
-      const retailItems = await storage.getRetailCart(sessionId);
+      // Lines that can no longer be bought leave the cart before anything is priced;
+      // if the customer could see one of them, they review the new total first.
+      const cart = await pruneUnavailableCartLines(sessionId, await storage.getCartItems(sessionId), await storage.getRetailCart(sessionId));
+      if (cart.refusal) {
+        return res.status(409).json({ message: cart.refusal });
+      }
+      const legacyItems = cart.legacyItems;
+      const retailItems = cart.retailItems;
       
       if (legacyItems.length === 0 && retailItems.length === 0) {
         return res.status(400).json({ message: "Cart is empty" });
@@ -3827,8 +3941,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user?.id;
 
       // Get cart items
-      const legacyItems = await storage.getCartItems(sessionId);
-      const retailItems = await storage.getRetailCart(sessionId);
+      // Lines that can no longer be bought leave the cart before anything is priced;
+      // if the customer could see one of them, they review the new total first.
+      const cart = await pruneUnavailableCartLines(sessionId, await storage.getCartItems(sessionId), await storage.getRetailCart(sessionId));
+      if (cart.refusal) {
+        return res.status(409).json({ message: cart.refusal });
+      }
+      const legacyItems = cart.legacyItems;
+      const retailItems = cart.retailItems;
       
       if (legacyItems.length === 0 && retailItems.length === 0) {
         return res.status(400).json({ message: "Cart is empty" });
@@ -4438,8 +4558,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const sessionId = req.sessionID || "guest";
-      const legacyItems = await storage.getCartItems(sessionId);
-      const retailItems = await storage.getRetailCart(sessionId);
+      // Lines that can no longer be bought leave the cart before anything is priced;
+      // if the customer could see one of them, they review the new total first.
+      const cart = await pruneUnavailableCartLines(sessionId, await storage.getCartItems(sessionId), await storage.getRetailCart(sessionId));
+      if (cart.refusal) {
+        return res.status(409).json({ message: cart.refusal });
+      }
+      const legacyItems = cart.legacyItems;
+      const retailItems = cart.retailItems;
       
       if (legacyItems.length === 0 && retailItems.length === 0) {
         return res.status(400).json({ message: "Cart is empty" });
@@ -5542,19 +5668,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       let itemsAdded = 0;
-      const flavors = await storage.getFlavors(true);
+      // Names of past lines that can't be bought any more, for the customer's toast.
+      const unavailable: string[] = [];
+      // ACTIVE flavors only: a flavor switched off on the Flavors page is not put
+      // back in anyone's cart by a reorder (owner, 2026-09-23).
+      const flavors = await storage.getFlavors();
       const allProductTypes = await storage.getProductTypes();
-      
+
       for (const item of orderDetails.items) {
         const product = await storage.getProduct(item.productId);
         if (!product) {
           console.warn(`[WARN] Product ${item.productId} not found, skipping reorder item`);
           continue;
         }
-        
+
         const flavor = flavors.find(f => f.name === product.name);
         if (!flavor) {
-          console.warn(`[WARN] Flavor '${product.name}' not found in flavor library, skipping item`);
+          console.warn(`[WARN] Flavor '${product.name}' not on offer, skipping reorder item`);
+          unavailable.push(product.name);
           continue;
         }
         
@@ -5574,9 +5705,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         if (!retailProduct) {
           console.warn(`[WARN] Retail product not found for flavor ${flavor.name} (${flavor.id}) and unit type ${productType.unitType}, skipping item`);
+          unavailable.push(product.name);
           continue;
         }
-        
+
         await storage.addRetailProductToCart({
           sessionId,
           retailProductId: retailProduct.id,
@@ -5584,15 +5716,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           isSubscription: false,
           subscriptionFrequency: null,
         });
-        
+
         itemsAdded++;
       }
-      
+
+      const gone = Array.from(new Set(unavailable));
+      const goneNote = gone.length > 0 ? ` No longer available: ${gone.join(', ')}.` : '';
       if (itemsAdded === 0) {
-        return res.status(400).json({ message: "Unable to add items to cart. Products may no longer be available." });
+        return res.status(400).json({ message: `Unable to add items to cart.${goneNote || ' Products may no longer be available.'}` });
       }
-      
-      res.json({ success: true, message: `${itemsAdded} item(s) added to cart`, itemsAdded });
+
+      res.json({ success: true, message: `${itemsAdded} item(s) added to cart.${goneNote}`, itemsAdded, unavailable: gone });
     } catch (error: any) {
       console.error('[ERROR] Failed to reorder:', error);
       res.status(500).json({ message: "Error reordering: " + error.message });
@@ -7812,7 +7946,9 @@ If you have any questions, please don't hesitate to reach out!`,
         const allFlavors = await storage.getFlavors();
         const flavor = allFlavors.find(f => f.id === item.flavorId);
         if (!flavor) {
-          return res.status(400).json({ message: `Flavor ${item.flavorId} not found` });
+          // Active flavors only; a switched-off one is named, not shown as an id.
+          const retired = await storage.getFlavor(item.flavorId);
+          return res.status(400).json({ message: retired ? `${retired.name} is no longer available.` : `Flavor ${item.flavorId} not found` });
         }
         
         // Location override -> customer override -> list price.
@@ -8753,6 +8889,15 @@ If you have any questions, please don't hesitate to reach out!`,
     try {
       const sessionId = req.sessionID || "guest";
       const items = await storage.getRetailCart(sessionId);
+      // Lines that can no longer be bought leave the cart when it's read (owner,
+      // 2026-09-23: a switched-off flavor must not sit in anyone's cart). Checkout
+      // refuses carts holding one, so no line removed here was ever paid for.
+      const off = await unavailableRetailCartLines(items);
+      if (off.length > 0) {
+        const offIds = off.map((l) => l.id);
+        await db.delete(retailCartItems).where(and(eq(retailCartItems.sessionId, sessionId), inArray(retailCartItems.id, offIds)));
+        return res.json(items.filter((it) => !offIds.includes(it.id)));
+      }
       res.json(items);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching retail cart: " + error.message });
@@ -8772,6 +8917,14 @@ If you have any questions, please don't hesitate to reach out!`,
 
       if (product.productType === 'multi-flavor' && !selectedFlavorId) {
         return res.status(400).json({ message: "Please select a flavor for this variety pack" });
+      }
+
+      // Only what's on offer goes in a cart (owner, 2026-09-23): the product switched
+      // on, and every flavor involved — its own, the chosen one, the split — switched
+      // on too. The shop hides the rest; this covers direct calls and stale pages.
+      const [offLine] = await unavailableRetailCartLines([{ id: 'new', selectedFlavorId, splitFlavorId, retailProduct: product }]);
+      if (offLine) {
+        return res.status(409).json({ message: `${offLine.label} is no longer available` });
       }
 
       // Splitting is OPTIONAL on allowSplit products (owner, 2026-09-02): one flavor

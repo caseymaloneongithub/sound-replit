@@ -1002,10 +1002,22 @@ export class PostgresStorage implements IStorage {
   async getProcesses(): Promise<(Process & {
     flavorName: string | null;
     finishedProductName: string | null;
+    flavorRetired: boolean;
     materials: { id: string; materialId: string; units: string; materialTitle: string; materialUnit: string; materialCost: string }[];
   })[]> {
     const procRows = await db
-      .select({ process: processes, flavorName: flavors.name, finishedProductName: products.name })
+      .select({
+        process: processes,
+        flavorName: flavors.name,
+        finishedProductName: products.name,
+        // The recipe's flavor — or the flavor of the finished product it stocks —
+        // is switched off on the Flavors page (owner, 2026-09-23). Kept apart from
+        // the recipe's own isActive, so switching the flavor back on brings the
+        // recipe back without anyone editing it.
+        flavorRetired: sql<boolean>`(coalesce(${flavors.isActive}, true) = false OR EXISTS (
+          SELECT 1 FROM products fp JOIN flavors ff ON ff.id = fp.flavor_id
+          WHERE fp.id = ${processes.finishedProductId} AND ff.is_active = false))`,
+      })
       .from(processes)
       .leftJoin(flavors, eq(processes.flavorId, flavors.id))
       .leftJoin(products, eq(processes.finishedProductId, products.id))
@@ -1029,6 +1041,7 @@ export class PostgresStorage implements IStorage {
       ...p.process,
       flavorName: p.flavorName ?? null,
       finishedProductName: p.finishedProductName ?? null,
+      flavorRetired: !!p.flavorRetired,
       materials: bomRows
         .filter((b) => b.processId === p.process.id)
         .map((b) => ({
@@ -1493,8 +1506,16 @@ export class PostgresStorage implements IStorage {
       .from(processes)
       .leftJoin(processMaterials, eq(processMaterials.processId, processes.id))
       .leftJoin(materials, eq(materials.id, processMaterials.materialId))
-      // Retired recipes don't belong in "how many can we make".
-      .where(and(isNull(processes.deletedAt), eq(processes.isActive, true)));
+      // Retired recipes don't belong in "how many can we make" — nor do recipes for a
+      // flavor switched off on the Flavors page, directly or through the finished
+      // product they stock (owner, 2026-09-23).
+      .where(and(
+        isNull(processes.deletedAt),
+        eq(processes.isActive, true),
+        sql`NOT EXISTS (SELECT 1 FROM flavors rf WHERE rf.id = ${processes.flavorId} AND rf.is_active = false)`,
+        sql`NOT EXISTS (SELECT 1 FROM products fp JOIN flavors ff ON ff.id = fp.flavor_id
+          WHERE fp.id = ${processes.finishedProductId} AND ff.is_active = false)`,
+      ));
 
     const byProcess = new Map<string, typeof rows>();
     for (const r of rows) {
@@ -1807,19 +1828,39 @@ export class PostgresStorage implements IStorage {
     await db.delete(retailProducts).where(eq(retailProducts.id, id));
   }
 
+  /**
+   * Set which flavors a retail product offers, for every flavor the editor can SEE.
+   * Same rule as setWholesaleUnitTypeFlavors: a flavor switched off on the Flavors
+   * page is hidden from every list, the Retail Products editor included, so a save
+   * never mentions it — its link is kept, and switching the flavor back on returns
+   * it to this product. One transaction; only removed links are deleted and only
+   * new ones inserted.
+   */
   async setRetailProductFlavors(productId: string, flavorIds: string[]): Promise<void> {
-    // Delete existing flavor associations
-    await db.delete(retailProductFlavors).where(eq(retailProductFlavors.retailProductId, productId));
+    await db.transaction(async (tx) => {
+      const existing = await tx
+        .select({ flavorId: retailProductFlavors.flavorId, isActive: flavors.isActive })
+        .from(retailProductFlavors)
+        .innerJoin(flavors, eq(retailProductFlavors.flavorId, flavors.id))
+        .where(eq(retailProductFlavors.retailProductId, productId));
 
-    // Add new flavor associations
-    if (flavorIds.length > 0) {
-      await db.insert(retailProductFlavors).values(
-        flavorIds.map(flavorId => ({
-          retailProductId: productId,
-          flavorId,
-        }))
-      );
-    }
+      const keep = new Set<string>(flavorIds);
+      for (const link of existing) if (!link.isActive) keep.add(link.flavorId);
+      const have = new Set(existing.map((link) => link.flavorId));
+
+      const toRemove = existing.map((link) => link.flavorId).filter((id) => !keep.has(id));
+      const toAdd = Array.from(keep).filter((id) => !have.has(id));
+
+      if (toRemove.length > 0) {
+        await tx.delete(retailProductFlavors).where(and(
+          eq(retailProductFlavors.retailProductId, productId),
+          inArray(retailProductFlavors.flavorId, toRemove),
+        ));
+      }
+      if (toAdd.length > 0) {
+        await tx.insert(retailProductFlavors).values(toAdd.map((flavorId) => ({ retailProductId: productId, flavorId })));
+      }
+    });
   }
 
   // NEW SCHEMA - Wholesale Unit Type management implementation

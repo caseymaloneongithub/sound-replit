@@ -314,11 +314,12 @@ export default function MyAccount() {
     mutationFn: async (orderId: string) => {
       return await apiRequest("POST", `/api/orders/${orderId}/reorder`);
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/retail-cart"] });
+      // The server says what went in and names anything no longer available.
       toast({
         title: "Items added to cart",
-        description: "Your order items have been added to the cart",
+        description: data?.message || "Your order items have been added to the cart",
       });
       setLocation("/cart-checkout");
     },

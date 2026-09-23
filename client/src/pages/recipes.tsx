@@ -29,9 +29,12 @@ type Recipe = {
   flavorId: string | null; flavorName: string | null;
   finishedProductId: string | null; finishedProductName: string | null;
   isActive: boolean;
+  // Its flavor (or its finished product's) is switched off on the Flavors page —
+  // shown like an inactive recipe, without touching the recipe's own switch.
+  flavorRetired?: boolean;
   materials: BomLine[];
 };
-type ProductLite = { id: string; name: string };
+type ProductLite = { id: string; name: string; flavorId?: string | null };
 type MaterialLite = { id: string; title: string; unit: string; isActive: boolean };
 
 const n = (v: string | number | null | undefined) => {
@@ -124,9 +127,13 @@ function RecipeForm({ recipe, flavors, products, onClose }: {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="none">— None (intermediate step) —</SelectItem>
-            {products.map((p) => (
-              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-            ))}
+            {/* Finished products of a switched-off flavor aren't offered (owner,
+                2026-09-23) — except the one this recipe already stocks. */}
+            {products
+              .filter((p) => !p.flavorId || flavors.some((f) => f.id === p.flavorId) || p.id === finishedProductId)
+              .map((p) => (
+                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+              ))}
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
@@ -326,10 +333,12 @@ export default function Recipes() {
   const batchCost = (r: Recipe) =>
     r.materials.reduce((sum, m) => sum + n(m.units) * n(m.materialCost), 0);
 
-  const inactiveCount = useMemo(() => recipes.filter((r) => !r.isActive).length, [recipes]);
+  // A recipe for a switched-off flavor sits with the inactive ones (owner, 2026-09-23).
+  const isShown = (r: Recipe) => r.isActive && !r.flavorRetired;
+  const inactiveCount = useMemo(() => recipes.filter((r) => !isShown(r)).length, [recipes]);
   const sorted = useMemo(
     () => recipes
-      .filter((r) => r.isActive || showInactive)
+      .filter((r) => isShown(r) || showInactive)
       .sort((a, b) => a.title.localeCompare(b.title)),
     [recipes, showInactive]
   );
@@ -369,13 +378,16 @@ export default function Recipes() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {sorted.map((r) => (
-            <Card key={r.id} className={r.isActive ? undefined : "opacity-60"} data-testid={`card-recipe-${r.id}`}>
+            <Card key={r.id} className={isShown(r) ? undefined : "opacity-60"} data-testid={`card-recipe-${r.id}`}>
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <CardTitle className="flex items-center gap-2">
                       {r.title}
                       {!r.isActive && <Badge variant="outline" className="text-xs font-normal">Inactive</Badge>}
+                      {r.flavorRetired && (
+                        <Badge variant="outline" className="text-xs font-normal" data-testid={`badge-flavor-off-${r.id}`}>Flavor switched off</Badge>
+                      )}
                     </CardTitle>
                     <CardDescription className="mt-1">
                       Standard batch: {n(r.standardBatch).toLocaleString()} {r.unit}

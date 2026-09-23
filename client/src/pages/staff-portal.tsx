@@ -183,6 +183,11 @@ export default function StaffPortal() {
   const { data: flavors = [], isLoading: flavorsLoading } = useQuery<Flavor[]>({
     queryKey: ['/api/flavors'],
   });
+  // Finished products of a flavor switched off on the Flavors page stay out of this
+  // page's stock and product lists (owner, 2026-09-23). /api/flavors lists only
+  // active flavors, so "on offer" = no flavor, or a flavor in that list.
+  const productsOnOffer = products.filter((p) => !p.flavorId || flavors.some((f) => f.id === p.flavorId));
+  const productListLoading = productsLoading || flavorsLoading;
   
   const { data: retailProducts = [], isLoading: retailProductsLoading } = useQuery<RetailProduct[]>({
     queryKey: ['/api/retail-products'],
@@ -631,7 +636,7 @@ export default function StaffPortal() {
           </TabsContent>
 
           <TabsContent value="inventory" className="space-y-4">
-            <InventoryTab products={products} isLoading={productsLoading} />
+            <InventoryTab products={productsOnOffer} isLoading={productListLoading} />
           </TabsContent>
 
           <TabsContent value="crm" className="space-y-4">
@@ -640,14 +645,14 @@ export default function StaffPortal() {
 
           {user?.isAdmin && (
             <TabsContent value="products" className="space-y-4">
-            {productsLoading ? (
+            {productListLoading ? (
               <div className="flex items-center justify-center py-12 gap-2">
                 <Loader2 className="w-6 h-6 animate-spin" />
                 <span className="text-muted-foreground">Loading products...</span>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {products.map((product) => (
+                {productsOnOffer.map((product) => (
                   <Card key={product.id} data-testid={`card-product-${product.id}`}>
                     <CardHeader>
                       <div className="flex items-start justify-between gap-4">

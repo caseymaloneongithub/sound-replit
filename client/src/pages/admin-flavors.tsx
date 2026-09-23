@@ -475,14 +475,17 @@ export default function AdminFlavors() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editingFlavorId, setEditingFlavorId] = useState<string | null>(null);
 
-  // Inactive flavors included: this is the page that switches a flavor back on,
-  // so it must list what's off (owner, 2026-09-23: Evergreen off every display —
-  // and still findable here). The key keeps the '/api/flavors' prefix so the
-  // page's own edits invalidate it.
+  // Inactive flavors are fetched too, because this is where one is switched back
+  // on — but they're kept OUT of the normal list (owner, 2026-09-23: Evergreen off
+  // every display) and sit in a collapsed "Switched off" section below it. The key
+  // keeps the '/api/flavors' prefix so the page's own edits invalidate it.
   const { data: flavors = [], isLoading: flavorsLoading } = useQuery<Flavor[]>({
     queryKey: ['/api/flavors', 'all'],
     queryFn: async () => apiRequest('GET', '/api/flavors?includeInactive=true'),
   });
+  const activeFlavors = flavors.filter((f) => f.isActive);
+  const switchedOffFlavors = flavors.filter((f) => !f.isActive);
+  const [showSwitchedOff, setShowSwitchedOff] = useState(false);
 
   const deleteFlavorMutation = useMutation({
     mutationFn: async (id: string) => apiRequest('DELETE', `/api/flavors/${id}`),
@@ -548,9 +551,46 @@ export default function AdminFlavors() {
             <span className="text-muted-foreground">Loading flavors...</span>
           </div>
         ) : (
+          <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {flavors.map((flavor) => (
-              <Card key={flavor.id} data-testid={`card-flavor-${flavor.id}`} className="overflow-hidden">
+            {activeFlavors.map((flavor) => renderFlavorCard(flavor))}
+          </div>
+
+          {switchedOffFlavors.length > 0 && (
+            <section className="mt-10 border-t pt-6" data-testid="section-flavors-switched-off">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold">Switched off ({switchedOffFlavors.length})</h2>
+                  <p className="text-sm text-muted-foreground max-w-2xl">
+                    Hidden everywhere: the shop, carts, wholesale ordering, the orders board, recipes and production.
+                    Edit one and turn Active back on to bring it back, product links included.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowSwitchedOff((open) => !open)}
+                  data-testid="button-toggle-flavors-switched-off"
+                >
+                  {showSwitchedOff ? "Hide" : "Show"}
+                </Button>
+              </div>
+              {showSwitchedOff && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                  {switchedOffFlavors.map((flavor) => renderFlavorCard(flavor))}
+                </div>
+              )}
+            </section>
+          )}
+          </>
+        )}
+      </div>
+    </StaffLayout>
+  );
+
+  function renderFlavorCard(flavor: Flavor) {
+    return (
+              <Card key={flavor.id} data-testid={`card-flavor-${flavor.id}`} className={flavor.isActive ? "overflow-hidden" : "overflow-hidden opacity-75"}>
                 {/* Image Carousel - Full Width */}
                 <FlavorImageCarousel flavor={flavor} />
                 
@@ -612,10 +652,6 @@ export default function AdminFlavors() {
                   </Button>
                 </CardFooter>
               </Card>
-            ))}
-          </div>
-        )}
-      </div>
-    </StaffLayout>
-  );
+    );
+  }
 }
