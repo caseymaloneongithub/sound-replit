@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
+import { refreshStockViews } from "@/lib/stock-views";
 import { useToast } from "@/hooks/use-toast";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -106,7 +107,7 @@ function MaterialForm({
         : apiRequest("POST", "/api/materials", body);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/materials"] });
+      refreshStockViews(); // supplier, reorder size, cost and on/off all move levels or totals
       toast({ title: isEdit ? "Material updated" : "Material created" });
       onClose();
     },
@@ -230,10 +231,7 @@ function CountDialog({ material, onClose }: { material: EnrichedMaterial | null;
           ? `${material!.title} matched the system exactly.`
           : `${material!.title}: ${current.toLocaleString()} → ${countedNum!.toLocaleString()} ${material!.unit} (${delta! > 0 ? "+" : ""}${delta!.toLocaleString()}).`,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/materials"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/inventory/dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/inventory/reorder-report"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/inventory/limit-report"] });
+      refreshStockViews();
       setCounted(""); setNote(""); onClose();
     },
     onError: (e: any) => toast({ title: "Couldn't record count", description: e.message, variant: "destructive" }),
@@ -312,7 +310,7 @@ export default function Materials() {
   const del = useMutation({
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/materials/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/materials"] });
+      refreshStockViews();
       toast({ title: "Material deleted" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),

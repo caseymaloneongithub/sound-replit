@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { refreshStockViews } from "@/lib/stock-views";
 import { useToast } from "@/hooks/use-toast";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -39,6 +40,7 @@ function SupplierForm({ supplier, onClose }: { supplier?: Supplier; onClose: () 
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/suppliers"] });
+      refreshStockViews(); // a lead-time change moves its materials' levels
       toast({ title: isEdit ? "Supplier updated" : "Supplier created" });
       onClose();
     },
@@ -101,6 +103,7 @@ export default function Suppliers() {
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/suppliers/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/suppliers"] });
+      refreshStockViews();
       toast({ title: "Supplier deleted" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),

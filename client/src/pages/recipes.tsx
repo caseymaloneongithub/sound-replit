@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { refreshStockViews } from "@/lib/stock-views";
 import { useToast } from "@/hooks/use-toast";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -76,6 +77,7 @@ function RecipeForm({ recipe, flavors, products, onClose }: {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/processes"] });
+      refreshStockViews(); // production limits and costs list recipes
       toast({ title: isEdit ? "Recipe updated" : "Recipe created" });
       onClose();
     },
@@ -171,7 +173,12 @@ function BomEditor({ recipe, materials, onClose }: {
   const [newMaterialId, setNewMaterialId] = useState("");
   const [newUnits, setNewUnits] = useState("");
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/processes"] });
+  // Ingredients feed production limits, costs and (for batches logged before
+  // usage was recorded) usage, so the stock screens refresh too.
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/processes"] });
+    refreshStockViews();
+  };
   const fail = (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" });
 
   const addLine = useMutation({
@@ -325,6 +332,7 @@ export default function Recipes() {
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/processes/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/processes"] });
+      refreshStockViews();
       toast({ title: "Recipe deleted" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),

@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { refreshStockViews } from "@/lib/stock-views";
 import { useToast } from "@/hooks/use-toast";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -206,7 +207,7 @@ export default function PurchaseOrders() {
       apiRequest("PATCH", `/api/material-orders/lines/${lineId}`, { delivered }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/material-orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/materials"] }); // stock changed
+      refreshStockViews(); // stock changed
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -215,7 +216,7 @@ export default function PurchaseOrders() {
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/material-orders/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/material-orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/materials"] });
+      refreshStockViews();
       toast({ title: "Purchase order deleted" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),

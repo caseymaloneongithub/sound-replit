@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { refreshStockViews } from "@/lib/stock-views";
 import { useToast } from "@/hooks/use-toast";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -69,9 +70,8 @@ function LogProductionForm({ recipes, onClose }: { recipes: Recipe[]; onClose: (
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/productions"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/materials"] }); // raw stock changed
       queryClient.invalidateQueries({ queryKey: ["/api/products"] }); // finished stock may have changed
-      queryClient.invalidateQueries({ queryKey: ["/api/inventory/dashboard"] });
+      refreshStockViews(); // raw stock and usage changed: Materials and every dashboard panel
       toast({
         title: "Production logged",
         description: recipe?.finishedProductName
@@ -172,9 +172,8 @@ export default function Productions() {
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/productions/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/productions"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/materials"] });
       queryClient.invalidateQueries({ queryKey: ["/api/products"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/inventory/dashboard"] });
+      refreshStockViews();
       toast({ title: "Production deleted", description: "Material and finished stock reversed." });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
