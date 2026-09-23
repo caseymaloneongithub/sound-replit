@@ -44,8 +44,12 @@ export default function AdminRetailProducts() {
     queryKey: ['/api/flavors'],
   });
 
+  // Inactive products included: this is where one is switched back on, so it
+  // must list what's off. The key keeps the '/api/retail-products' prefix so the
+  // page's own edits invalidate it.
   const { data: retailProducts = [], isLoading: retailProductsLoading } = useQuery<RetailProductWithFlavors[]>({
-    queryKey: ['/api/retail-products'],
+    queryKey: ['/api/retail-products', 'all'],
+    queryFn: async () => apiRequest('GET', '/api/retail-products?includeInactive=true'),
   });
 
   const createRetailProductMutation = useMutation({

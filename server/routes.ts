@@ -1952,7 +1952,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const includeInactive = req.query.includeInactive === 'true';
       
-      if (includeInactive && (!req.user || req.user.role !== 'admin')) {
+      if (includeInactive && !(req.user && (req.user.role === 'admin' || req.user.role === 'super_admin'))) {
         return res.status(403).json({ message: "Only admins can view inactive products" });
       }
       
@@ -2085,7 +2085,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const includeInactive = req.query.includeInactive === 'true';
       
-      if (includeInactive && (!req.user || req.user.role !== 'admin')) {
+      if (includeInactive && !(req.user && (req.user.role === 'admin' || req.user.role === 'super_admin'))) {
         return res.status(403).json({ message: "Only admins can view inactive flavors" });
       }
       
@@ -2542,7 +2542,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const includeInactive = req.query.includeInactive === 'true';
       
-      if (includeInactive && (!req.user || req.user.role !== 'admin')) {
+      if (includeInactive && !(req.user && (req.user.role === 'admin' || req.user.role === 'super_admin'))) {
         return res.status(403).json({ message: "Only admins can view inactive products" });
       }
       

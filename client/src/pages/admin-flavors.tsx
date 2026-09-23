@@ -475,8 +475,13 @@ export default function AdminFlavors() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editingFlavorId, setEditingFlavorId] = useState<string | null>(null);
 
+  // Inactive flavors included: this is the page that switches a flavor back on,
+  // so it must list what's off (owner, 2026-09-23: Evergreen off every display —
+  // and still findable here). The key keeps the '/api/flavors' prefix so the
+  // page's own edits invalidate it.
   const { data: flavors = [], isLoading: flavorsLoading } = useQuery<Flavor[]>({
-    queryKey: ['/api/flavors'],
+    queryKey: ['/api/flavors', 'all'],
+    queryFn: async () => apiRequest('GET', '/api/flavors?includeInactive=true'),
   });
 
   const deleteFlavorMutation = useMutation({
