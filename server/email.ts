@@ -3,7 +3,14 @@ import { format } from 'date-fns';
 import PDFDocument from 'pdfkit';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { ORDER_NOW_SHARE_OF_REORDER, SAFETY_BUFFER } from '@shared/material-health';
+import {
+  ORDER_NOW_SHARE_OF_REORDER,
+  SAFETY_BUFFER,
+  ORDER_COVERAGE_LABELS,
+  onOrderDueText,
+  type OnOrder,
+  type OrderCoverageKey,
+} from '@shared/material-health';
 
 // Email branding - black, grey, and white color scheme
 const BRAND_COLORS = {
@@ -937,6 +944,9 @@ export type MaterialStockAlertItem = {
   supplierName: string | null;
   /** The supplier's website as typed on the Suppliers page, if any. */
   supplierWebsite: string | null;
+  /** Open purchase orders for it, and whether they cover the shortfall (shared/material-health.ts). */
+  onOrder: OnOrder | null;
+  coverage: OrderCoverageKey | null;
 };
 
 /**
@@ -1022,14 +1032,32 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
       ? `<a href="${escapeHtml(href)}" style="color: ${BRAND_COLORS.mediumGrey}; text-decoration: underline;">${name}</a>`
       : name;
   };
+  // Open purchase orders sit beside what's on hand, never added to it: a dashed
+  // tag says whether they cover the shortfall (owner, 2026-09-24; rule in
+  // shared/material-health.ts, orderCoverage).
+  const COVERAGE_COLORS: Record<OrderCoverageKey, string> = {
+    covered: '#047857',
+    'runs-out-first': '#b45309',
+    short: '#b91c1c',
+    'not-short': '#0369a1',
+  };
+  const onOrderSummary = (i: MaterialStockAlertItem) =>
+    (i.onOrder ? `${qty(i.onOrder.units)} ${i.unit} on order, ${onOrderDueText(i.onOrder)}` : '');
+  const onOrderHtml = (i: MaterialStockAlertItem) => {
+    if (!i.onOrder || !i.coverage) return '';
+    const color = COVERAGE_COLORS[i.coverage];
+    return `<div style="font-size: 12px; margin-top: 4px; color: ${color};"><span style="display: inline-block; border: 1px dashed ${color}; border-radius: 9999px; padding: 0 6px; font-size: 11px; font-weight: 600; white-space: nowrap;">${escapeHtml(ORDER_COVERAGE_LABELS[i.coverage])}</span> ${escapeHtml(onOrderSummary(i))}</div>`;
+  };
+  // Nothing more to order when what's already on order covers it.
+  const suggestion = (i: MaterialStockAlertItem) => (i.coverage === 'covered' ? '—' : `${qty(i.suggestedQty)} ${escapeHtml(i.unit)}`);
   const rows = params.items.map((i) => `
       <tr>
         <td style="${cell}">${badge(i.level)}${i.level === 'order-now' && i.orderNowReasons.length ? `<div style="font-size: 11px; color: ${BRAND_COLORS.mediumGrey}; margin-top: 4px;">${escapeHtml(reasonText(i))}</div>` : ''}</td>
-        <td style="${cell}">${escapeHtml(i.title)}${i.supplierName ? `<div style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">${supplierLine(i)}</div>` : ''}</td>
+        <td style="${cell}">${escapeHtml(i.title)}${i.supplierName ? `<div style="font-size: 12px; color: ${BRAND_COLORS.mediumGrey};">${supplierLine(i)}</div>` : ''}${onOrderHtml(i)}</td>
         <td style="${cell} text-align: right; white-space: nowrap;">${qty(i.stock)} ${escapeHtml(i.unit)}</td>
         <td style="${cell} text-align: right; white-space: nowrap; font-weight: 600;">${daysLeft(i)}</td>
         <td style="${cell} text-align: right; white-space: nowrap;">${i.leadTimeDays} days</td>
-        <td style="${cell} text-align: right; white-space: nowrap;">${qty(i.suggestedQty)} ${escapeHtml(i.unit)}</td>
+        <td style="${cell} text-align: right; white-space: nowrap;">${suggestion(i)}</td>
       </tr>`).join('');
 
   const html = `
@@ -1051,13 +1079,17 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
       <tbody>${rows}</tbody>
     </table>
     <p style="margin: 0 0 8px;"><a href="${appUrl}/inventory/purchase-orders" style="color: ${BRAND_COLORS.darkGrey};">Start a purchase order</a> · <a href="${appUrl}/inventory/dashboard" style="color: ${BRAND_COLORS.darkGrey};">Open the inventory dashboard</a></p>
-    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; margin-top: 24px;">Sent to admins once when a material drops to Watch and again when it drops to Order now. Order now = stock at or below daily usage × supplier lead time × ${SAFETY_BUFFER}, or, as a failsafe, at or below ${floorPct} of the reorder size. Watch = up to 1.5 times the lead-time level. Usage counts only the time since a material was first used, with the last 30 days weighted most.</p>
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 12px; margin-top: 24px;">Sent to admins once when a material drops to Watch and again when it drops to Order now. Order now = stock at or below daily usage × supplier lead time × ${SAFETY_BUFFER}, or, as a failsafe, at or below ${floorPct} of the reorder size. Watch = up to 1.5 times the lead-time level. Usage counts only the time since a material was first used, with the last 30 days weighted most. Open purchase orders show beside each material and don't count as stock until they're marked received; they're due on the order date plus the supplier's lead time.</p>
   </div>
 </div>`.trim();
 
   const line = (i: MaterialStockAlertItem) => {
     const href = i.supplierName ? supplierHref(i.supplierWebsite) : null;
-    return `- ${i.title}: ${qty(i.stock)} ${i.unit} on hand, ${i.daysOfCover === null ? 'no recent use' : `lasts ${daysLeft(i)}`}, lead time ${i.leadTimeDays} days, suggested order ${qty(i.suggestedQty)} ${i.unit}${i.supplierName ? ` from ${i.supplierName}` : ''}${i.level === 'order-now' && i.orderNowReasons.length ? ` (${reasonText(i)})` : ''}${href ? `\n  ${i.supplierName}: ${href}` : ''}`;
+    const toOrder = i.coverage === 'covered'
+      ? 'nothing more to order'
+      : `suggested order ${qty(i.suggestedQty)} ${i.unit}${i.supplierName ? ` from ${i.supplierName}` : ''}`;
+    const onOrder = i.onOrder && i.coverage ? `\n  ${ORDER_COVERAGE_LABELS[i.coverage]}: ${onOrderSummary(i)}` : '';
+    return `- ${i.title}: ${qty(i.stock)} ${i.unit} on hand, ${i.daysOfCover === null ? 'no recent use' : `lasts ${daysLeft(i)}`}, lead time ${i.leadTimeDays} days, ${toOrder}${i.level === 'order-now' && i.orderNowReasons.length ? ` (${reasonText(i)})` : ''}${onOrder}${href ? `\n  ${i.supplierName}: ${href}` : ''}`;
   };
   const text = [
     ...(orderNow.length ? [`ORDER NOW (won't last through lead time + ${bufferPct}, or, as a failsafe, down to ${floorPct} of reorder size):`, ...orderNow.map(line), ''] : []),

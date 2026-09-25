@@ -27,7 +27,10 @@ import {
   WATCH_MULTIPLIER,
   type MaterialLevel,
   type MaterialLevelKey,
+  type OnOrder,
+  type OrderCoverageKey,
 } from "@shared/material-health";
+import { CoverageTag, OnOrderLine } from "@/components/staff/on-order";
 
 type EnrichedMaterial = Material & {
   supplierName: string | null;
@@ -36,6 +39,10 @@ type EnrichedMaterial = Material & {
   // emails compute it (shared/material-health.ts).
   level: MaterialLevel;
   suggestedQty: number;
+  // Open purchase orders, beside the stock and never added to it, and whether
+  // they cover a shortfall.
+  onOrder: OnOrder | null;
+  coverage: OrderCoverageKey | null;
 };
 
 const n = (v: string | number | null | undefined) => {
@@ -276,8 +283,8 @@ function CountDialog({ material, onClose }: { material: EnrichedMaterial | null;
   );
 }
 
-function StatCard({ label, value }: {
-  label: string; value: string;
+function StatCard({ label, value, note }: {
+  label: string; value: string; note?: string;
 }) {
   return (
     <Card>
@@ -285,6 +292,7 @@ function StatCard({ label, value }: {
         <div>
           <div className="text-2xl font-bold leading-none">{value}</div>
           <div className="text-xs text-muted-foreground mt-1">{label}</div>
+          {note && <div className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">{note}</div>}
         </div>
       </CardContent>
     </Card>
@@ -337,16 +345,22 @@ export default function Materials() {
 
   // Stats cover active materials only — matches the dashboard's numbers.
   const stats = useMemo(() => {
-    let value = 0, orderNow = 0, watch = 0, total = 0;
+    let value = 0, orderNow = 0, watch = 0, total = 0, orderNowCovered = 0, watchCovered = 0;
     for (const m of materials) {
       if (!m.isActive) continue;
       total++;
       value += n(m.stock) * n(m.cost);
-      if (m.level?.key === "order-now") orderNow++;
-      else if (m.level?.key === "watch") watch++;
+      if (m.level?.key === "order-now") {
+        orderNow++;
+        if (m.coverage === "covered") orderNowCovered++;
+      } else if (m.level?.key === "watch") {
+        watch++;
+        if (m.coverage === "covered") watchCovered++;
+      }
     }
-    return { value, orderNow, watch, total };
+    return { value, orderNow, watch, total, orderNowCovered, watchCovered };
   }, [materials]);
+  const coveredNote = (k: number) => (k > 0 ? `${k} covered, pending delivery` : undefined);
 
   if (isLoading) {
     return (
@@ -376,8 +390,8 @@ export default function Materials() {
         {/* Insight summary */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <StatCard label="Materials tracked" value={String(stats.total)} />
-          <StatCard label={MATERIAL_LEVEL_LABELS["order-now"]} value={String(stats.orderNow)} />
-          <StatCard label={MATERIAL_LEVEL_LABELS.watch} value={String(stats.watch)} />
+          <StatCard label={MATERIAL_LEVEL_LABELS["order-now"]} value={String(stats.orderNow)} note={coveredNote(stats.orderNowCovered)} />
+          <StatCard label={MATERIAL_LEVEL_LABELS.watch} value={String(stats.watch)} note={coveredNote(stats.watchCovered)} />
           <StatCard label="Inventory value" value={money(stats.value)} />
         </div>
 
@@ -461,6 +475,7 @@ export default function Materials() {
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {n(m.stock).toLocaleString()} <span className="text-muted-foreground text-xs">{m.unit}</span>
+                        {m.onOrder && <OnOrderLine onOrder={m.onOrder} unit={m.unit} testId={`text-on-order-${m.id}`} />}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">
                         {n(m.orderSize).toLocaleString()}
@@ -485,6 +500,7 @@ export default function Materials() {
                                 {Math.round((100 * n(m.stock)) / n(m.orderSize))}% of reorder size
                               </div>
                             )}
+                            <CoverageTag coverage={m.coverage} testId={`badge-coverage-${m.id}`} />
                           </>
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>

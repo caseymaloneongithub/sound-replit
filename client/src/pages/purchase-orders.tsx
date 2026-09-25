@@ -95,6 +95,7 @@ function CreateOrderForm({ suppliers, materials, onClose }: {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/material-orders"] });
+      refreshStockViews(); // what's on order shows beside each material's stock
       toast({ title: "Purchase order created" });
       onClose();
     },

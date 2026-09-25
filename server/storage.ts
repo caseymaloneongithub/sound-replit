@@ -102,10 +102,13 @@ import {
   materialLevel,
   suggestedOrderQty,
   usageRate,
+  orderCoverage,
   DEFAULT_LEAD_TIME_DAYS,
   type MaterialLevel,
   type MaterialLevelKey,
   type OrderNowReason,
+  type OnOrder,
+  type OrderCoverageKey,
 } from "@shared/material-health";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
@@ -1397,22 +1400,54 @@ export class PostgresStorage implements IStorage {
   }
 
   /**
+   * Each material's open purchase orders (shared/material-health.ts, OnOrder):
+   * units on lines not yet marked received, and when they're due — the order
+   * date plus that PO supplier's lead time (the default without a supplier).
+   */
+  async getMaterialOnOrder(): Promise<Map<string, OnOrder>> {
+    const rows = (await db.execute(sql`
+      SELECT om.material_id AS "materialId",
+        sum(om.units)::float8 AS units,
+        min(mo.date_ordered + make_interval(days => coalesce(s.lead_time_days, ${DEFAULT_LEAD_TIME_DAYS}))) AS "firstDue",
+        max(mo.date_ordered + make_interval(days => coalesce(s.lead_time_days, ${DEFAULT_LEAD_TIME_DAYS}))) AS "lastDue"
+      FROM order_materials om
+      JOIN material_orders mo ON mo.id = om.order_id
+      LEFT JOIN suppliers s ON s.id = mo.supplier_id
+      WHERE NOT om.delivered
+      GROUP BY om.material_id
+      HAVING sum(om.units) > 0`)).rows as Array<{ materialId: string; units: number; firstDue: Date | string; lastDue: Date | string }>;
+    return new Map(rows.map((r) => [r.materialId, {
+      units: Number(r.units),
+      firstDue: new Date(r.firstDue).toISOString(),
+      lastDue: new Date(r.lastDue).toISOString(),
+    }]));
+  }
+
+  /**
    * Every material's stock level by the shared rule (shared/material-health.ts):
    * recency-weighted daily usage against the supplier's lead time, plus the
    * reorder-size check. The inventory dashboard, the Materials table and the
-   * stock emails all read this, so they can't disagree.
+   * stock emails all read this, so they can't disagree. Open purchase orders
+   * ride alongside (onOrder, and whether they cover a shortfall: coverage);
+   * they never change the level, which is what's actually on hand.
    */
   async getMaterialLevels(): Promise<Array<Material & {
     supplierName: string | null;
     supplierLeadTimeDays: number | null;
     level: MaterialLevel;
     suggestedQty: number;
+    onOrder: OnOrder | null;
+    coverage: OrderCoverageKey | null;
   }>> {
-    const [mats, rates] = await Promise.all([this.getMaterials(), this.getMaterialUsageRates()]);
+    const [mats, rates, onOrders] = await Promise.all([this.getMaterials(), this.getMaterialUsageRates(), this.getMaterialOnOrder()]);
+    const now = new Date();
     return mats.map((m) => {
       const dailyUsage = rates.get(m.id) ?? 0;
-      const level = materialLevel(Number(m.stock), dailyUsage, m.supplierLeadTimeDays ?? DEFAULT_LEAD_TIME_DAYS, Number(m.orderSize));
-      return { ...m, level, suggestedQty: suggestedOrderQty(Number(m.orderSize), dailyUsage) };
+      const leadTimeDays = m.supplierLeadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
+      const level = materialLevel(Number(m.stock), dailyUsage, leadTimeDays, Number(m.orderSize));
+      const onOrder = onOrders.get(m.id) ?? null;
+      const coverage = onOrder ? orderCoverage(Number(m.stock), dailyUsage, leadTimeDays, Number(m.orderSize), onOrder, now) : null;
+      return { ...m, level, suggestedQty: suggestedOrderQty(Number(m.orderSize), dailyUsage), onOrder, coverage };
     });
   }
 
@@ -1422,6 +1457,7 @@ export class PostgresStorage implements IStorage {
     dailyUsage: number; daysOfCover: number | null; leadTimeDays: number;
     orderNowAt: number | null; watchAt: number | null; suggestedQty: number; status: MaterialLevelKey;
     orderNowReasons: OrderNowReason[]; orderSize: number;
+    onOrder: OnOrder | null; coverage: OrderCoverageKey | null;
   }>> {
     // Inactive materials are retired — never suggest reordering them.
     return (await this.getMaterialLevels())
@@ -1441,6 +1477,8 @@ export class PostgresStorage implements IStorage {
         status: m.level.key,
         orderNowReasons: m.level.orderNowReasons,
         orderSize: Number(m.orderSize),
+        onOrder: m.onOrder,
+        coverage: m.coverage,
       }));
   }
 

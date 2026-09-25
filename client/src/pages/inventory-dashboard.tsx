@@ -22,7 +22,10 @@ import {
   WATCH_MULTIPLIER,
   type MaterialLevelKey,
   type OrderNowReason,
+  type OnOrder,
+  type OrderCoverageKey,
 } from "@shared/material-health";
+import { CoverageTag, OnOrderLine } from "@/components/staff/on-order";
 
 type Dashboard = {
   inventoryValue: number; totalMaterials: number; batchesLast30: number; casesLast30: number;
@@ -59,6 +62,8 @@ type ReorderRow = {
   dailyUsage: number; daysOfCover: number | null; leadTimeDays: number;
   orderNowAt: number | null; watchAt: number | null; suggestedQty: number; status: MaterialLevelKey;
   orderNowReasons: OrderNowReason[]; orderSize: number;
+  // Open purchase orders, never counted in stock, and whether they cover it.
+  onOrder: OnOrder | null; coverage: OrderCoverageKey | null;
 };
 
 const money = (v: number) =>
@@ -92,8 +97,8 @@ function MixPeriodSelect({ value, onChange }: { value: string; onChange: (v: str
   );
 }
 
-function StatCard({ label, value }: {
-  label: string; value: string;
+function StatCard({ label, value, note }: {
+  label: string; value: string; note?: string;
 }) {
   return (
     <Card>
@@ -101,6 +106,7 @@ function StatCard({ label, value }: {
         <div>
           <div className="text-2xl font-bold leading-none">{value}</div>
           <div className="text-xs text-muted-foreground mt-1">{label}</div>
+          {note && <div className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">{note}</div>}
         </div>
       </CardContent>
     </Card>
@@ -144,6 +150,7 @@ export default function InventoryDashboard() {
     [reorder]
   );
   const orderNowCount = reorder.filter((r) => r.status === "order-now").length;
+  const orderNowCovered = reorder.filter((r) => r.status === "order-now" && r.coverage === "covered").length;
 
   if (isLoading || !dash) {
     return (
@@ -166,7 +173,8 @@ export default function InventoryDashboard() {
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <StatCard label="Inventory value" value={money(dash.inventoryValue)} />
-          <StatCard label="Order now" value={String(orderNowCount)} />
+          <StatCard label="Order now" value={String(orderNowCount)}
+            note={orderNowCovered > 0 ? `${orderNowCovered} covered, pending delivery` : undefined} />
           <StatCard label="Batches — last 30d" value={dash.batchesLast30.toLocaleString()} />
           <StatCard label="Cases — last 30d" value={dash.casesLast30.toLocaleString()} />
         </div>
@@ -237,6 +245,9 @@ export default function InventoryDashboard() {
               Order now when stock won't last through the supplier's lead time plus {Math.round((SAFETY_BUFFER - 1) * 100)}%,
               or, as a failsafe, when it's down to {Math.round(ORDER_NOW_SHARE_OF_REORDER * 100)}% of its reorder size. Watch within {WATCH_MULTIPLIER} times
               the lead-time level. Usage counts only the time since a material was first used, with the last 30 days weighted most.
+              What's on open purchase orders shows in blue under On hand and never counts as stock until it's marked received.
+              The dashed tag says whether it covers the shortfall: "Covered, pending delivery" means it brings the material back
+              to healthy before it runs out.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -265,6 +276,7 @@ export default function InventoryDashboard() {
                       <TableCell className="text-sm text-muted-foreground">{r.supplierName ?? "—"}</TableCell>
                       <TableCell className="text-right tabular-nums text-sm">
                         {r.stock.toLocaleString()} <span className="text-muted-foreground text-xs">{r.unit}</span>
+                        {r.onOrder && <OnOrderLine onOrder={r.onOrder} unit={r.unit} testId={`text-on-order-${r.id}`} />}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-sm">{perDay(r.dailyUsage)}</TableCell>
                       <TableCell className="text-right tabular-nums text-sm">
@@ -272,7 +284,10 @@ export default function InventoryDashboard() {
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-sm text-muted-foreground">{r.leadTimeDays}d</TableCell>
                       <TableCell className="text-right tabular-nums text-sm font-medium">
-                        {r.suggestedQty.toLocaleString()} {r.unit}
+                        {/* Nothing more to order when what's on order covers it. */}
+                        {r.coverage === "covered"
+                          ? <span className="text-muted-foreground font-normal">—</span>
+                          : <>{r.suggestedQty.toLocaleString()} {r.unit}</>}
                       </TableCell>
                       <TableCell>
                         {r.status === "order-now" ? (
@@ -287,6 +302,7 @@ export default function InventoryDashboard() {
                         ) : (
                           <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-0">{MATERIAL_LEVEL_LABELS.watch}</Badge>
                         )}
+                        <CoverageTag coverage={r.coverage} testId={`badge-coverage-${r.id}`} />
                       </TableCell>
                     </TableRow>
                   ))}

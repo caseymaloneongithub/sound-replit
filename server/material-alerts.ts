@@ -38,7 +38,7 @@ import { storage } from "./storage";
 import { recordEvent } from "./ops-events";
 import { sendMaterialStockAlert, type MaterialStockAlertItem } from "./email";
 import { PICKUP_POLICY } from "@shared/pickup-policy";
-import { materialLevel } from "@shared/material-health";
+import { materialLevel, orderCoverage } from "@shared/material-health";
 
 type CheckResult = { orderNow: string[]; watch: string[] };
 type MaterialWithLevel = Awaited<ReturnType<typeof storage.getMaterialLevels>>[number];
@@ -229,6 +229,9 @@ function toItem(m: Marked, level: MaterialStockAlertItem["level"], byId: Map<str
     orderNowReasons: level === "order-now" ? now.orderNowReasons : [],
     supplierName: m.supplierName,
     supplierWebsite: m.supplierWebsite,
+    onOrder: lv.onOrder,
+    // Whether open purchase orders take care of it, from the same stock.
+    coverage: lv.onOrder ? orderCoverage(stock, lv.level.dailyUsage, lv.level.leadTimeDays, Number(lv.orderSize), lv.onOrder) : null,
   };
 }
 
