@@ -152,13 +152,20 @@ export function suggestedOrderQty(orderSize: number, dailyUsage: number): number
 
 /**
  * A material's open purchase orders: units on lines not yet marked received,
- * and when they're due — each order's date plus that PO supplier's lead time.
+ * and when each is due — its order's date plus that PO supplier's lead time.
+ *
+ * Dates are calendar dates ("2026-09-30"), the way a purchase order's date is
+ * entered: the day picked on the form, stored as midnight UTC. Read as an
+ * instant, that midnight is the afternoon before in Pacific time, and a due
+ * date showed (and went overdue) a day early (review, 2026-09-24).
  */
 export type OnOrder = {
   units: number;
-  /** ISO timestamps: when the soonest line is due, and the last. */
+  /** The soonest and the last due date, for display. */
   firstDue: string;
   lastDue: string;
+  /** Each open line: how much, and the calendar date it's due. */
+  deliveries: Array<{ units: number; due: string }>;
 };
 
 export type OrderCoverageKey = "covered" | "runs-out-first" | "short" | "not-short";
@@ -171,19 +178,36 @@ export const ORDER_COVERAGE_LABELS: Record<OrderCoverageKey, string> = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Today's calendar date at the brewery, "2026-09-24", whatever time zone the server runs in. */
+export function breweryToday(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: PICKUP_POLICY.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** Whole days from one calendar date to another. */
+function daysFrom(from: string, to: string): number {
+  const day = (d: string) => Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10))) / DAY_MS;
+  return day(to) - day(from);
+}
 
 /**
  * Whether a material's open purchase orders take care of its shortfall:
  *
  *   not-short       it's healthy (or has no recent use) already; the order is just noted
- *   covered         once everything on order has arrived it's healthy again, and
- *                   the stock on hand lasts until the first delivery is due
- *   runs-out-first  enough is coming, but the stock on hand runs out before the
- *                   first delivery is due
- *   short           still at Watch or Order now after everything has arrived
+ *   covered         once everything on order has arrived it's healthy, and it
+ *                   never runs dry waiting for a delivery
+ *   runs-out-first  it ends up healthy, but runs dry before a delivery arrives
+ *   short           still at Watch or Order now once everything has arrived
  *
- * "After everything has arrived" allows for what's used until the last
- * delivery is due. Overdue lines count as due now.
+ * Worked out as a running balance, delivery by delivery in due order: the
+ * stock is used at the daily rate until each delivery's due day (an overdue
+ * one, today), can't go below nothing, and then takes the delivery. Judging
+ * the total against the last due date alone let an early delivery that's used
+ * up before a small late one read as covered, and checking only the first
+ * delivery missed running dry between two (review, 2026-09-24).
  */
 export function orderCoverage(
   stock: number,
@@ -195,33 +219,44 @@ export function orderCoverage(
 ): OrderCoverageKey {
   const today = materialLevel(stock, dailyUsage, leadTimeDays, orderSize).key;
   if (today === "healthy" || today === "no-usage") return "not-short";
-  const daysUntil = (iso: string) => Math.max(0, (Date.parse(iso) - now.getTime()) / DAY_MS);
-  const onHandWhenLastArrives = Math.max(0, stock - dailyUsage * daysUntil(onOrder.lastDue));
-  const afterDelivery = materialLevel(onHandWhenLastArrives + onOrder.units, dailyUsage, leadTimeDays, orderSize).key;
-  if (afterDelivery === "order-now" || afterDelivery === "watch") return "short";
-  return dailyUsage > 0 && stock / dailyUsage < daysUntil(onOrder.firstDue) ? "runs-out-first" : "covered";
+  const todayDate = breweryToday(now);
+  const arrivals = onOrder.deliveries
+    .map((d) => ({ units: d.units, day: Math.max(0, daysFrom(todayDate, d.due)) }))
+    .sort((a, b) => a.day - b.day);
+  let onHand = stock;
+  let day = 0;
+  let runsDry = false;
+  for (const arrival of arrivals) {
+    onHand -= dailyUsage * (arrival.day - day);
+    if (onHand < 0) {
+      runsDry = true;
+      onHand = 0;
+    }
+    onHand += arrival.units;
+    day = arrival.day;
+  }
+  const afterDeliveries = materialLevel(onHand, dailyUsage, leadTimeDays, orderSize).key;
+  if (afterDeliveries === "order-now" || afterDeliveries === "watch") return "short";
+  return runsDry ? "runs-out-first" : "covered";
 }
 
 /**
- * When an order is due, in the brewery's time zone: "due Oct 3", "due Oct 3–10",
- * "due Sep 27–Oct 3", "due Sep 20, overdue", "due Sep 18, 2025–Oct 3, some
- * overdue". A year shows only when it isn't this one.
+ * When an order is due: "due Sep 30", "due Oct 3–10", "due Sep 27–Oct 3", "due
+ * Sep 20, overdue", "due Sep 18, 2025–Oct 3, some overdue". Calendar dates as
+ * entered, compared with today at the brewery; a year shows only when it isn't
+ * this one.
  */
 export function onOrderDueText(onOrder: OnOrder, now: Date = new Date()): string {
-  const parts = (at: Date) => {
-    const p = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: PICKUP_POLICY.timezone }).formatToParts(at);
-    const get = (type: string) => p.find((x) => x.type === type)?.value ?? "";
-    return { year: get("year"), month: get("month"), day: get("day") };
-  };
-  const thisYear = parts(now).year;
-  const first = parts(new Date(onOrder.firstDue));
-  const last = parts(new Date(onOrder.lastDue));
+  const today = breweryToday(now);
+  const thisYear = today.slice(0, 4);
+  const parts = (d: string) => ({ year: d.slice(0, 4), month: MONTHS[Number(d.slice(5, 7)) - 1], day: String(Number(d.slice(8, 10))) });
+  const first = parts(onOrder.firstDue);
+  const last = parts(onOrder.lastDue);
   const year = (d: { year: string }) => (d.year !== thisYear ? `, ${d.year}` : "");
   const full = (d: { year: string; month: string; day: string }) => `${d.month} ${d.day}${year(d)}`;
   const range = first.year === last.year && first.month === last.month
     ? (first.day === last.day ? full(first) : `${first.month} ${first.day}–${last.day}${year(first)}`)
     : `${full(first)}–${full(last)}`;
-  const overdue = Date.parse(onOrder.lastDue) < now.getTime() ? ", overdue"
-    : Date.parse(onOrder.firstDue) < now.getTime() ? ", some overdue" : "";
+  const overdue = onOrder.lastDue < today ? ", overdue" : onOrder.firstDue < today ? ", some overdue" : "";
   return `due ${range}${overdue}`;
 }

@@ -1401,26 +1401,35 @@ export class PostgresStorage implements IStorage {
 
   /**
    * Each material's open purchase orders (shared/material-health.ts, OnOrder):
-   * units on lines not yet marked received, and when they're due — the order
-   * date plus that PO supplier's lead time (the default without a supplier).
+   * every line not yet marked received, with its calendar due date — the day
+   * the order was placed (as picked on the form, stored as midnight UTC) plus
+   * that PO supplier's lead time, the default without a supplier. Computed and
+   * returned as dates, never instants, so the server's time zone can't move
+   * them a day (review, 2026-09-24).
    */
   async getMaterialOnOrder(): Promise<Map<string, OnOrder>> {
     const rows = (await db.execute(sql`
       SELECT om.material_id AS "materialId",
-        sum(om.units)::float8 AS units,
-        min(mo.date_ordered + make_interval(days => coalesce(s.lead_time_days, ${DEFAULT_LEAD_TIME_DAYS}))) AS "firstDue",
-        max(mo.date_ordered + make_interval(days => coalesce(s.lead_time_days, ${DEFAULT_LEAD_TIME_DAYS}))) AS "lastDue"
+        om.units::float8 AS units,
+        (mo.date_ordered::date + coalesce(s.lead_time_days, ${DEFAULT_LEAD_TIME_DAYS}))::text AS due
       FROM order_materials om
       JOIN material_orders mo ON mo.id = om.order_id
       LEFT JOIN suppliers s ON s.id = mo.supplier_id
-      WHERE NOT om.delivered
-      GROUP BY om.material_id
-      HAVING sum(om.units) > 0`)).rows as Array<{ materialId: string; units: number; firstDue: Date | string; lastDue: Date | string }>;
-    return new Map(rows.map((r) => [r.materialId, {
-      units: Number(r.units),
-      firstDue: new Date(r.firstDue).toISOString(),
-      lastDue: new Date(r.lastDue).toISOString(),
-    }]));
+      WHERE NOT om.delivered AND om.units > 0`)).rows as Array<{ materialId: string; units: number; due: string }>;
+    const byMaterial = new Map<string, OnOrder>();
+    for (const r of rows) {
+      const delivery = { units: Number(r.units), due: r.due };
+      const seen = byMaterial.get(r.materialId);
+      if (!seen) {
+        byMaterial.set(r.materialId, { units: delivery.units, firstDue: delivery.due, lastDue: delivery.due, deliveries: [delivery] });
+        continue;
+      }
+      seen.units += delivery.units;
+      seen.deliveries.push(delivery);
+      if (delivery.due < seen.firstDue) seen.firstDue = delivery.due;
+      if (delivery.due > seen.lastDue) seen.lastDue = delivery.due;
+    }
+    return byMaterial;
   }
 
   /**
