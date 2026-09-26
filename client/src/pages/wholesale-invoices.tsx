@@ -118,10 +118,10 @@ export default function WholesaleInvoices() {
   };
 
   // Sorting, from the Invoice # and Due Date column headers (owner, 2026-09-25:
-  // "sort the invoices by number ascending or descending. Continue to sort by
-  // due date as default."). Clicking the column already sorting flips its
-  // direction; clicking the other switches to it, lowest/oldest first.
-  const [sort, setSort] = useState<{ key: InvoiceSortKey; dir: 'asc' | 'desc' }>({ key: 'due', dir: 'asc' });
+  // "sort the invoices by number ascending or descending", then "Let's sort by
+  // invoice number ascending by default."). Clicking the column already sorting
+  // flips its direction; clicking the other switches to it, lowest/oldest first.
+  const [sort, setSort] = useState<{ key: InvoiceSortKey; dir: 'asc' | 'desc' }>({ key: 'number', dir: 'asc' });
   const sortBy = (key: InvoiceSortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
   // "INV-2026-0046": the digit runs compare as numbers, so INV-2026-10000 comes
