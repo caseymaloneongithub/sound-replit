@@ -124,6 +124,18 @@ export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const PostgresSessionStore = connectPg(session);
 
+/** One line of a customer's own order, from either item table, as My Account lists it. */
+export type CustomerOrderLine = {
+  id: string;
+  productName: string;
+  // The flavor chosen on a multi-flavor product; null when the name already says it.
+  flavorName: string | null;
+  // A split case's "Split: 6 A / 6 B" note; other packing notes stay with staff.
+  notes: string | null;
+  quantity: number;
+  unitPrice: string;
+};
+
 export interface IStorage {
   sessionStore: ReturnType<typeof connectPg>;
   
@@ -327,6 +339,7 @@ export interface IStorage {
   getRetailOrdersWithDetailsByUserId(userId: string): Promise<Array<{
     order: RetailOrder;
     items: Array<RetailOrderItem & { product: Product }>;
+    lines: CustomerOrderLine[];
   }>>;
   createRetailOrder(order: InsertRetailOrder): Promise<RetailOrder>;
   createRetailOrderItem(item: InsertRetailOrderItem): Promise<RetailOrderItem>;
@@ -968,8 +981,24 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async deleteSupplier(id: string): Promise<void> {
-    await db.update(suppliers).set({ deletedAt: new Date() }).where(eq(suppliers.id, id));
+  /**
+   * Delete a supplier — softly, so purchase-order history keeps its name — and
+   * detach its materials in the same transaction: they show no supplier and use
+   * the default lead time until someone reassigns them. A deleted supplier used
+   * to stay joined to its materials, name and lead time included, while the
+   * material form's supplier list no longer offered it. Returns how many ACTIVE
+   * materials lost their supplier, for the confirmation.
+   */
+  async deleteSupplier(id: string): Promise<number> {
+    return await db.transaction(async (tx) => {
+      await tx.update(suppliers).set({ deletedAt: new Date() }).where(eq(suppliers.id, id));
+      const detached = await tx
+        .update(materials)
+        .set({ supplierId: null })
+        .where(eq(materials.supplierId, id))
+        .returning({ isActive: materials.isActive, deletedAt: materials.deletedAt });
+      return detached.filter((m) => m.isActive && !m.deletedAt).length;
+    });
   }
 
   // Materials, enriched with supplier name + lead time for display
@@ -981,7 +1010,8 @@ export class PostgresStorage implements IStorage {
         supplierLeadTimeDays: suppliers.leadTimeDays,
       })
       .from(materials)
-      .leftJoin(suppliers, eq(materials.supplierId, suppliers.id))
+      // A deleted supplier is no supplier: no name, and the default lead time.
+      .leftJoin(suppliers, and(eq(materials.supplierId, suppliers.id), isNull(suppliers.deletedAt)))
       .where(isNull(materials.deletedAt))
       .orderBy(asc(materials.title));
     return rows.map((r) => ({
@@ -4323,9 +4353,12 @@ export class PostgresStorage implements IStorage {
     };
   }
 
+  // `items` is the legacy item table only, unchanged for older readers; `lines`
+  // is every line on the order, both tables, named for the customer.
   async getRetailOrdersWithDetailsByUserId(userId: string): Promise<Array<{
     order: RetailOrder;
     items: Array<RetailOrderItem & { product: Product }>;
+    lines: CustomerOrderLine[];
   }>> {
     const orders = await this.getRetailOrdersByUserId(userId);
     
@@ -4361,9 +4394,57 @@ export class PostgresStorage implements IStorage {
       return acc;
     }, {} as Record<string, Array<RetailOrderItem & { product: Product }>>);
 
+    // The current item table (everything the shop and subscriptions create). A
+    // line is called by its product's name, or by its flavor on a single-flavor
+    // product (those have no name), with the flavor chosen on a multi-flavor
+    // product beneath. A split case files under Mixed with the pair in its note.
+    const v2Lines = await db
+      .select({
+        id: retailOrderItemsV2.id,
+        orderId: retailOrderItemsV2.orderId,
+        quantity: retailOrderItemsV2.quantity,
+        unitPrice: retailOrderItemsV2.unitPrice,
+        notes: retailOrderItemsV2.notes,
+        productName: retailProducts.productName,
+        unitDescription: retailProducts.unitDescription,
+        flavorName: flavors.name,
+      })
+      .from(retailOrderItemsV2)
+      .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
+      .leftJoin(flavors, eq(flavors.id, sql`COALESCE(${retailOrderItemsV2.selectedFlavorId}, ${retailProducts.flavorId})`))
+      .where(inArray(retailOrderItemsV2.orderId, orderIds));
+
+    const linesByOrderId = new Map<string, CustomerOrderLine[]>();
+    const addLine = (orderId: string, line: CustomerOrderLine) => {
+      const lines = linesByOrderId.get(orderId);
+      if (lines) lines.push(line);
+      else linesByOrderId.set(orderId, [line]);
+    };
+    for (const item of allItems) {
+      addLine(item.orderId, {
+        id: item.id,
+        productName: item.product.name,
+        flavorName: null,
+        notes: null,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      });
+    }
+    for (const line of v2Lines) {
+      addLine(line.orderId, {
+        id: line.id,
+        productName: line.productName || line.flavorName || line.unitDescription,
+        flavorName: line.productName ? line.flavorName : null,
+        notes: /^Split:/.test(line.notes ?? '') ? line.notes : null,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+      });
+    }
+
     return orders.map(order => ({
       order,
       items: itemsByOrderId[order.id] || [],
+      lines: linesByOrderId.get(order.id) || [],
     }));
   }
 

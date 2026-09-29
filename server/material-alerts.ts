@@ -188,8 +188,8 @@ async function writeMarks(): Promise<{ marked: Marked[]; byId: Map<string, Mater
         WHERE m.id = lv.id
           AND (m.watch_alerted_at IS DISTINCT FROM ${nextWatch} OR m.reorder_alerted_at IS DISTINCT FROM ${nextReorder})
         RETURNING m.id, m.title, m.unit, m.stock,
-          (SELECT s.name FROM suppliers s WHERE s.id = m.supplier_id) AS "supplierName",
-          (SELECT s.website FROM suppliers s WHERE s.id = m.supplier_id) AS "supplierWebsite",
+          (SELECT s.name FROM suppliers s WHERE s.id = m.supplier_id AND s.deleted_at IS NULL) AS "supplierName",
+          (SELECT s.website FROM suppliers s WHERE s.id = m.supplier_id AND s.deleted_at IS NULL) AS "supplierWebsite",
           now()::timestamp::text AS "markedAt",
           coalesce(m.reorder_alerted_at = now()::timestamp, false) AS "orderNow",
           coalesce(m.watch_alerted_at = now()::timestamp AND m.reorder_alerted_at IS NULL, false) AS "watch"`)).rows as Marked[],

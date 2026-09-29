@@ -2222,9 +2222,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/suppliers/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      await storage.deleteSupplier(req.params.id);
-      res.json({ message: "Supplier deleted successfully" });
-      void checkMaterialStockAlerts(); // (a deleted supplier stays joined to its materials, lead time included)
+      const materialsDetached = await storage.deleteSupplier(req.params.id);
+      res.json({ message: "Supplier deleted successfully", materialsDetached });
+      void checkMaterialStockAlerts(); // its materials fall back to the default lead time
     } catch (error: any) {
       res.status(500).json({ message: "Error deleting supplier: " + error.message });
     }

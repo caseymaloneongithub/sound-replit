@@ -15,6 +15,11 @@ import {
 } from "@/components/ui/dialog";
 import { Loader2, Plus, Search } from "lucide-react";
 import type { Supplier } from "@shared/schema";
+import { DEFAULT_LEAD_TIME_DAYS } from "@shared/material-health";
+
+// What the delete warning needs from /api/materials.
+type SupplierMaterial = { id: string; title: string; supplierId: string | null; isActive: boolean };
+const shortTitle = (t: string) => (t.includes(":") ? t.slice(t.indexOf(":") + 1).trim() : t);
 
 function SupplierForm({ supplier, onClose }: { supplier?: Supplier; onClose: () => void }) {
   const { toast } = useToast();
@@ -99,15 +104,46 @@ export default function Suppliers() {
     queryKey: ["/api/suppliers"],
   });
 
+  const { data: materials = [] } = useQuery<SupplierMaterial[]>({
+    queryKey: ["/api/materials"],
+  });
+  const activeMaterialsBySupplier = useMemo(() => {
+    const bySupplier = new Map<string, string[]>();
+    for (const m of materials) {
+      if (!m.isActive || !m.supplierId) continue;
+      bySupplier.set(m.supplierId, [...(bySupplier.get(m.supplierId) ?? []), shortTitle(m.title)]);
+    }
+    return bySupplier;
+  }, [materials]);
+
   const del = useMutation({
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/suppliers/${id}`),
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/suppliers"] });
       refreshStockViews();
-      toast({ title: "Supplier deleted" });
+      const n = Number(data?.materialsDetached ?? 0);
+      toast({
+        title: "Supplier deleted",
+        description: n > 0
+          ? `${n} material${n === 1 ? " has" : "s have"} no supplier now. Reassign ${n === 1 ? "it" : "them"} on the Materials page.`
+          : undefined,
+      });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  // Deleting a supplier leaves its materials with none (storage.deleteSupplier),
+  // so the confirmation says which ones first.
+  const confirmDelete = (s: Supplier) => {
+    const using = activeMaterialsBySupplier.get(s.id) ?? [];
+    const names = using.slice(0, 5).join(", ") + (using.length > 5 ? `, and ${using.length - 5} more` : "");
+    const one = using.length === 1;
+    const warning = using.length === 0 ? "" :
+      `\n\n${using.length} active material${one ? " uses" : "s use"} it: ${names}. ` +
+      `${one ? "It" : "They"}'ll have no supplier and the default ${DEFAULT_LEAD_TIME_DAYS}-day lead time ` +
+      `until you reassign ${one ? "it" : "them"} on the Materials page.`;
+    if (confirm(`Delete supplier "${s.name}"?${warning}`)) del.mutate(s.id);
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -195,7 +231,7 @@ export default function Suppliers() {
                         data-testid={`button-edit-supplier-${s.id}`}>Edit</Button>
                       <Button variant="ghost" size="sm"
                         className="text-destructive hover:text-destructive"
-                        onClick={() => { if (confirm(`Delete supplier "${s.name}"?`)) del.mutate(s.id); }}
+                        onClick={() => confirmDelete(s)}
                         data-testid={`button-delete-supplier-${s.id}`}>Delete</Button>
                     </TableCell>
                   </TableRow>
