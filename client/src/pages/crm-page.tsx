@@ -1,11 +1,10 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
@@ -15,9 +14,17 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { format } from "date-fns";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { LinkifiedText } from "@/components/linkified-text";
-import { insertLeadSchema, insertLeadTouchPointSchema, type Lead, type LeadTouchPoint } from "@shared/schema";
+import { cn } from "@/lib/utils";
+import { LinkifiedText, firstWebAddress } from "@/components/linkified-text";
+import {
+  insertLeadSchema,
+  insertLeadTouchPointSchema,
+  LEAD_TYPES,
+  LEAD_TYPE_LABELS,
+  type Lead,
+  type LeadTouchPoint,
+  type LeadType,
+} from "@shared/schema";
 import { z } from "zod";
 
 const priorityColors: Record<string, string> = {
@@ -36,21 +43,40 @@ const statusColors: Record<string, string> = {
   lost: "bg-gray-500/10 text-gray-700 dark:text-gray-300",
 };
 
-// The leads table (owner, 2026-09-29: "more of a data table format with an easy
-// delete button"): these columns sort from their headers.
-type LeadSortKey = "business" | "status" | "priority" | "added";
-const STATUS_ORDER = ["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"];
-const PRIORITY_ORDER = ["high", "medium", "low"];
-const LEAD_SORT_NAMES: Record<LeadSortKey, string> = {
-  business: "business name",
-  status: "status",
-  priority: "priority",
-  added: "date added",
-};
+// The leads spreadsheet (owner, 2026-09-29: "more of a spreadsheet style sortable
+// data table. Sort by fields should be name and zip code. Also add a filter for
+// type"). Name is the business name.
+type LeadSortKey = "name" | "zip";
+const LEAD_SORT_NAMES: Record<LeadSortKey, string> = { name: "business name", zip: "zip code" };
+// The Type filter: every lead, one type, or the leads nobody has typed yet.
+type LeadTypeFilter = "all" | LeadType | "none";
+
+const leadTypeLabel = (type: string | null) => (type ? LEAD_TYPE_LABELS[type as LeadType] ?? type : null);
+
+// The edit form's values for a lead.
+const leadFormValues = (lead: Lead): z.infer<typeof insertLeadSchema> => ({
+  businessName: lead.businessName,
+  contactName: lead.contactName,
+  email: lead.email || "",
+  phone: lead.phone || "",
+  priorityLevel: lead.priorityLevel,
+  status: lead.status,
+  notes: lead.notes || "",
+  businessType: (lead.businessType as LeadType | null) ?? null,
+  zipCode: lead.zipCode ?? "",
+});
+
+// Spreadsheet cells: a gridline on every cell (border-separate keeps them on the
+// sticky header and the frozen columns), one line each, and an opaque ground so
+// the frozen Name and action columns cover the cells that scroll under them.
+const TH = "sticky top-0 z-20 h-8 px-2 text-left align-middle text-xs font-medium text-muted-foreground whitespace-nowrap bg-muted border-b border-r";
+const TD = "h-9 px-2 align-middle whitespace-nowrap bg-card group-hover:bg-muted border-b border-r";
+const FROZEN_RIGHT_EDGE = "border-r-0 shadow-[-1px_0_0_hsl(var(--border))]";
 
 export default function CRMPage() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<LeadTypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -62,13 +88,6 @@ export default function CRMPage() {
   const { data: allLeads = [], isLoading } = useQuery<Lead[]>({
     queryKey: ["/api/crm/leads"],
     enabled: searchQuery === "",
-  });
-
-  // Filter leads based on status and priority
-  const leads = allLeads.filter(lead => {
-    const matchesStatus = statusFilter === "all" || lead.status === statusFilter;
-    const matchesPriority = priorityFilter === "all" || lead.priorityLevel === priorityFilter;
-    return matchesStatus && matchesPriority;
   });
 
   // The default fetcher joins the query key into a URL path, so params must be sent
@@ -159,6 +178,8 @@ export default function CRMPage() {
       priorityLevel: "medium",
       status: "new",
       notes: "",
+      businessType: null,
+      zipCode: "",
     },
   });
 
@@ -173,6 +194,8 @@ export default function CRMPage() {
       priorityLevel: "medium",
       status: "new",
       notes: "",
+      businessType: null,
+      zipCode: "",
     },
   });
 
@@ -186,52 +209,49 @@ export default function CRMPage() {
     },
   });
 
-  const displayedLeads = searchQuery ? searchResults : leads.filter((lead) => {
+  // The filters narrow search results too.
+  const displayedLeads = (searchQuery ? searchResults : allLeads).filter((lead) => {
+    if (typeFilter !== "all" && (lead.businessType || "none") !== typeFilter) return false;
     if (statusFilter !== "all" && lead.status !== statusFilter) return false;
     if (priorityFilter !== "all" && lead.priorityLevel !== priorityFilter) return false;
     return true;
   });
 
-  // Newest first until a header says otherwise. Clicking the sorted column flips
-  // it; another column starts A–Z, pipeline order or highest priority first.
-  const [sort, setSort] = useState<{ key: LeadSortKey; dir: "asc" | "desc" }>({ key: "added", dir: "desc" });
+  // A–Z by name until a header says otherwise; clicking the sorted column flips
+  // it. Leads without a zip go last either way, and ties go A–Z by name.
+  const [sort, setSort] = useState<{ key: LeadSortKey; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const sortBy = (key: LeadSortKey) =>
-    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "added" ? "desc" : "asc" }));
-  const rank = (order: string[], value: string) => {
-    const i = order.indexOf(value);
-    return i < 0 ? order.length : i;
-  };
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
   const sortedLeads = [...displayedLeads].sort((a, b) => {
+    const byName = a.businessName.localeCompare(b.businessName, undefined, { sensitivity: "base", numeric: true });
     const sign = sort.dir === "asc" ? 1 : -1;
-    const byName = a.businessName.localeCompare(b.businessName, undefined, { sensitivity: "base" });
-    switch (sort.key) {
-      case "business":
-        return sign * byName;
-      case "status":
-        return sign * (rank(STATUS_ORDER, a.status) - rank(STATUS_ORDER, b.status)) || byName;
-      case "priority":
-        return sign * (rank(PRIORITY_ORDER, a.priorityLevel) - rank(PRIORITY_ORDER, b.priorityLevel)) || byName;
-      default:
-        return sign * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()) || byName;
-    }
+    if (sort.key === "name") return sign * byName;
+    if (!a.zipCode || !b.zipCode) return (a.zipCode ? -1 : 0) + (b.zipCode ? 1 : 0) || byName;
+    return sign * a.zipCode.localeCompare(b.zipCode) || byName;
   });
-  const sortHeader = (key: LeadSortKey, label: string) => {
+  const leadCount = sortedLeads.length === allLeads.length
+    ? `${allLeads.length} ${allLeads.length === 1 ? "lead" : "leads"}`
+    : `${sortedLeads.length} of ${allLeads.length} leads`;
+  const sortableHead = (key: LeadSortKey, label: string, className?: string) => {
     const active = sort.key === key;
     return (
-      <button
-        type="button"
-        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? "text-foreground" : ""}`}
-        onClick={() => sortBy(key)}
-        title={`Sort by ${LEAD_SORT_NAMES[key]}`}
-        data-testid={`button-sort-leads-${key}`}
-      >
-        {label}
-        {!active
-          ? <ArrowUpDown className="w-3 h-3 opacity-40" />
-          : sort.dir === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
-      </button>
+      <th className={cn(TH, className)} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}>
+        <button
+          type="button"
+          className={cn("inline-flex items-center gap-1 hover:text-foreground", active && "text-foreground")}
+          onClick={() => sortBy(key)}
+          title={`Sort by ${LEAD_SORT_NAMES[key]}`}
+          data-testid={`button-sort-leads-${key}`}
+        >
+          {label}
+          {!active
+            ? <ArrowUpDown className="w-3 h-3 opacity-40" />
+            : sort.dir === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+        </button>
+      </th>
     );
   };
+  const dash = <span className="text-muted-foreground">—</span>;
 
   // One click and a confirmation: the lead's touch-point history goes with it.
   const deleteLead = (lead: Lead) => {
@@ -257,29 +277,13 @@ export default function CRMPage() {
   // Sync edit form when selected lead changes
   useEffect(() => {
     if (selectedLead && isEditDialogOpen) {
-      editForm.reset({
-        businessName: selectedLead.businessName,
-        contactName: selectedLead.contactName,
-        email: selectedLead.email || "",
-        phone: selectedLead.phone || "",
-        priorityLevel: selectedLead.priorityLevel,
-        status: selectedLead.status,
-        notes: selectedLead.notes || "",
-      });
+      editForm.reset(leadFormValues(selectedLead));
     }
   }, [selectedLead, isEditDialogOpen]);
 
   const openEditDialog = (lead: Lead) => {
     setSelectedLead(lead);
-    editForm.reset({
-      businessName: lead.businessName,
-      contactName: lead.contactName,
-      email: lead.email || "",
-      phone: lead.phone || "",
-      priorityLevel: lead.priorityLevel,
-      status: lead.status,
-      notes: lead.notes || "",
-    });
+    editForm.reset(leadFormValues(lead));
     setIsEditDialogOpen(true);
   };
 
@@ -329,6 +333,44 @@ export default function CRMPage() {
                             <Input {...field} data-testid="input-contact-name" />
                           </FormControl>
                           <FormMessage data-testid="error-contact-name" />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={createForm.control}
+                      name="businessType"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Type</FormLabel>
+                          <Select onValueChange={(value) => field.onChange(value === "none" ? null : value)} value={field.value ?? "none"}>
+                            <FormControl>
+                              <SelectTrigger data-testid="select-type">
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {LEAD_TYPES.map((type) => (
+                                <SelectItem key={type} value={type} data-testid={`option-type-${type}`}>{LEAD_TYPE_LABELS[type]}</SelectItem>
+                              ))}
+                              <SelectItem value="none" data-testid="option-type-none">No type</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage data-testid="error-type" />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={createForm.control}
+                      name="zipCode"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Zip Code</FormLabel>
+                          <FormControl>
+                            <Input {...field} value={field.value ?? ""} inputMode="numeric" maxLength={10} placeholder="98107" data-testid="input-zip" />
+                          </FormControl>
+                          <FormMessage data-testid="error-zip" />
                         </FormItem>
                       )}
                     />
@@ -437,59 +479,57 @@ export default function CRMPage() {
         </Dialog>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle data-testid="title-filter-section">Filter & Search</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label data-testid="label-search">Search</Label>
-              <div className="relative">
-                <Input
-                  placeholder="Search by name, email, phone..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                  data-testid="input-search"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label data-testid="label-status-filter">Status</Label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger data-testid="select-status-filter">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all" data-testid="option-filter-status-all">All Statuses</SelectItem>
-                  <SelectItem value="new" data-testid="option-filter-status-new">New</SelectItem>
-                  <SelectItem value="contacted" data-testid="option-filter-status-contacted">Contacted</SelectItem>
-                  <SelectItem value="qualified" data-testid="option-filter-status-qualified">Qualified</SelectItem>
-                  <SelectItem value="proposal" data-testid="option-filter-status-proposal">Proposal</SelectItem>
-                  <SelectItem value="negotiation" data-testid="option-filter-status-negotiation">Negotiation</SelectItem>
-                  <SelectItem value="won" data-testid="option-filter-status-won">Won</SelectItem>
-                  <SelectItem value="lost" data-testid="option-filter-status-lost">Lost</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label data-testid="label-priority-filter">Priority</Label>
-              <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-                <SelectTrigger data-testid="select-priority-filter">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all" data-testid="option-filter-priority-all">All Priorities</SelectItem>
-                  <SelectItem value="low" data-testid="option-filter-priority-low">Low</SelectItem>
-                  <SelectItem value="medium" data-testid="option-filter-priority-medium">Medium</SelectItem>
-                  <SelectItem value="high" data-testid="option-filter-priority-high">High</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Filters: they narrow the sheet, searches included. */}
+      <div className="flex flex-wrap items-center gap-2" data-testid="toolbar-leads">
+        <Input
+          type="search"
+          placeholder="Search name, phone, email or zip"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="h-9 w-full sm:w-72"
+          aria-label="Search leads"
+          data-testid="input-search"
+        />
+        <Select value={typeFilter} onValueChange={(value) => setTypeFilter(value as LeadTypeFilter)}>
+          <SelectTrigger className="h-9 w-[9.5rem]" aria-label="Type" data-testid="select-type-filter">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" data-testid="option-filter-type-all">All types</SelectItem>
+            {LEAD_TYPES.map((type) => (
+              <SelectItem key={type} value={type} data-testid={`option-filter-type-${type}`}>{LEAD_TYPE_LABELS[type]}</SelectItem>
+            ))}
+            <SelectItem value="none" data-testid="option-filter-type-none">No type</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="h-9 w-[9.5rem]" aria-label="Status" data-testid="select-status-filter">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" data-testid="option-filter-status-all">All statuses</SelectItem>
+            <SelectItem value="new" data-testid="option-filter-status-new">New</SelectItem>
+            <SelectItem value="contacted" data-testid="option-filter-status-contacted">Contacted</SelectItem>
+            <SelectItem value="qualified" data-testid="option-filter-status-qualified">Qualified</SelectItem>
+            <SelectItem value="proposal" data-testid="option-filter-status-proposal">Proposal</SelectItem>
+            <SelectItem value="negotiation" data-testid="option-filter-status-negotiation">Negotiation</SelectItem>
+            <SelectItem value="won" data-testid="option-filter-status-won">Won</SelectItem>
+            <SelectItem value="lost" data-testid="option-filter-status-lost">Lost</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+          <SelectTrigger className="h-9 w-[9.5rem]" aria-label="Priority" data-testid="select-priority-filter">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" data-testid="option-filter-priority-all">All priorities</SelectItem>
+            <SelectItem value="low" data-testid="option-filter-priority-low">Low</SelectItem>
+            <SelectItem value="medium" data-testid="option-filter-priority-medium">Medium</SelectItem>
+            <SelectItem value="high" data-testid="option-filter-priority-high">High</SelectItem>
+          </SelectContent>
+        </Select>
+        <span className="ml-auto text-sm text-muted-foreground tabular-nums" data-testid="text-lead-count">{leadCount}</span>
+      </div>
 
       {(isLoading || isSearching) ? (
         <div className="flex items-center justify-center py-12 gap-2" data-testid="loading-leads">
@@ -503,89 +543,129 @@ export default function CRMPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{sortHeader("business", "Business")}</TableHead>
-                <TableHead>Contact</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>{sortHeader("status", "Status")}</TableHead>
-                <TableHead>{sortHeader("priority", "Priority")}</TableHead>
-                <TableHead className="min-w-[16rem]">Notes</TableHead>
-                <TableHead className="whitespace-nowrap">{sortHeader("added", "Added")}</TableHead>
-                <TableHead className="text-right"><span className="sr-only">Actions</span></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sortedLeads.map((lead) => (
-                <TableRow
-                  key={lead.id}
-                  className="cursor-pointer"
-                  onClick={() => setSelectedLead(lead)}
-                  data-testid={`row-lead-${lead.id}`}
-                >
-                  <TableCell className="font-medium" data-testid={`text-business-name-${lead.id}`}>
-                    <LinkifiedText text={lead.businessName} />
-                  </TableCell>
-                  <TableCell data-testid={`text-contact-${lead.id}`}>{lead.contactName}</TableCell>
-                  <TableCell data-testid={`text-email-${lead.id}`}>
-                    {lead.email ? (
-                      <a href={`mailto:${lead.email}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
-                        {lead.email}
-                      </a>
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap" data-testid={`text-phone-${lead.id}`}>
-                    {lead.phone ? (
-                      <a href={`tel:${lead.phone}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
-                        {lead.phone}
-                      </a>
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </TableCell>
-                  <TableCell>
-                    <Badge className={statusColors[lead.status]} data-testid={`badge-status-${lead.id}`}>{lead.status}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge className={priorityColors[lead.priorityLevel]} data-testid={`badge-priority-${lead.id}`}>{lead.priorityLevel}</Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground max-w-md" data-testid={`text-notes-preview-${lead.id}`}>
-                    {lead.notes ? <LinkifiedText text={lead.notes} className="line-clamp-2" /> : "—"}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap" data-testid={`text-created-${lead.id}`}>
-                    {format(new Date(lead.createdAt), "MMM d, yyyy")}
-                  </TableCell>
-                  <TableCell className="text-right whitespace-nowrap">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      title="Edit lead"
-                      aria-label={`Edit ${lead.businessName}`}
-                      onClick={(e) => { e.stopPropagation(); openEditDialog(lead); }}
-                      data-testid={`button-edit-lead-${lead.id}`}
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                      title="Delete lead"
-                      aria-label={`Delete ${lead.businessName}`}
-                      disabled={deleteLeadMutation.isPending && deleteLeadMutation.variables === lead.id}
-                      onClick={(e) => { e.stopPropagation(); deleteLead(lead); }}
-                      data-testid={`button-delete-lead-${lead.id}`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
+        // A spreadsheet: sticky header row, Name frozen on the left and (wider
+        // than a phone) the edit/delete buttons on the right while the columns
+        // between scroll.
+        <div className="max-h-[70vh] overflow-auto rounded-md border bg-card" data-testid="table-leads">
+          <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
+            <thead>
+              <tr>
+                {sortableHead("name", "Name", "left-0 z-30")}
+                <th className={TH}>Type</th>
+                {sortableHead("zip", "Zip")}
+                <th className={TH}>Phone</th>
+                <th className={TH}>Website</th>
+                <th className={TH}>Status</th>
+                <th className={TH}>Priority</th>
+                <th className={TH}>Contact</th>
+                <th className={TH}>Email</th>
+                <th className={TH}>Notes</th>
+                <th className={TH}>Added</th>
+                <th className={cn(TH, "z-30 sm:right-0", FROZEN_RIGHT_EDGE)}><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody className="[&>tr:last-child>td]:border-b-0">
+              {sortedLeads.map((lead) => {
+                const site = firstWebAddress(lead.notes);
+                return (
+                  <tr
+                    key={lead.id}
+                    className="group cursor-pointer"
+                    onClick={() => setSelectedLead(lead)}
+                    data-testid={`row-lead-${lead.id}`}
+                  >
+                    <td className={cn(TD, "sticky left-0 z-10 font-medium")} data-testid={`text-business-name-${lead.id}`}>
+                      <div className="max-w-[9rem] truncate sm:max-w-[16rem]" title={lead.businessName}>
+                        <LinkifiedText text={lead.businessName} />
+                      </div>
+                    </td>
+                    <td className={TD} data-testid={`text-type-${lead.id}`}>{leadTypeLabel(lead.businessType) ?? dash}</td>
+                    <td className={cn(TD, "tabular-nums")} data-testid={`text-zip-${lead.id}`}>{lead.zipCode ?? dash}</td>
+                    <td className={cn(TD, "tabular-nums")} data-testid={`text-phone-${lead.id}`}>
+                      {lead.phone ? (
+                        <a href={`tel:${lead.phone}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+                          {lead.phone}
+                        </a>
+                      ) : dash}
+                    </td>
+                    <td className={TD} data-testid={`text-website-${lead.id}`}>
+                      {site ? (
+                        <a
+                          href={site.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block max-w-[12rem] truncate text-primary hover:underline"
+                          title={site.href}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {site.host}
+                        </a>
+                      ) : dash}
+                    </td>
+                    <td className={TD}>
+                      <Badge className={statusColors[lead.status]} data-testid={`badge-status-${lead.id}`}>{lead.status}</Badge>
+                    </td>
+                    <td className={TD}>
+                      <Badge className={priorityColors[lead.priorityLevel]} data-testid={`badge-priority-${lead.id}`}>{lead.priorityLevel}</Badge>
+                    </td>
+                    <td className={TD} data-testid={`text-contact-${lead.id}`}>
+                      {lead.contactName ? <div className="max-w-[10rem] truncate" title={lead.contactName}>{lead.contactName}</div> : dash}
+                    </td>
+                    <td className={TD} data-testid={`text-email-${lead.id}`}>
+                      {lead.email ? (
+                        <a
+                          href={`mailto:${lead.email}`}
+                          className="block max-w-[14rem] truncate text-primary hover:underline"
+                          title={lead.email}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {lead.email}
+                        </a>
+                      ) : dash}
+                    </td>
+                    <td className={cn(TD, "text-muted-foreground")} data-testid={`text-notes-preview-${lead.id}`}>
+                      {lead.notes ? (
+                        <div className="max-w-[24rem] truncate" title={lead.notes}>
+                          <LinkifiedText text={lead.notes} />
+                        </div>
+                      ) : "—"}
+                    </td>
+                    <td className={cn(TD, "text-muted-foreground tabular-nums")} data-testid={`text-created-${lead.id}`}>
+                      {format(new Date(lead.createdAt), "MMM d, yyyy")}
+                    </td>
+                    <td className={cn(TD, "px-1 sm:sticky sm:right-0 sm:z-10", FROZEN_RIGHT_EDGE)}>
+                      <div className="flex justify-end">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          title="Edit lead"
+                          aria-label={`Edit ${lead.businessName}`}
+                          onClick={(e) => { e.stopPropagation(); openEditDialog(lead); }}
+                          data-testid={`button-edit-lead-${lead.id}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          title="Delete lead"
+                          aria-label={`Delete ${lead.businessName}`}
+                          disabled={deleteLeadMutation.isPending && deleteLeadMutation.variables === lead.id}
+                          onClick={(e) => { e.stopPropagation(); deleteLead(lead); }}
+                          data-testid={`button-delete-lead-${lead.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {/* Lead Detail Dialog */}
@@ -604,6 +684,12 @@ export default function CRMPage() {
                       <Badge className={statusColors[selectedLead.status]} data-testid="badge-detail-status">
                         {selectedLead.status}
                       </Badge>
+                      {selectedLead.businessType && (
+                        <Badge variant="outline" data-testid="badge-detail-type">{leadTypeLabel(selectedLead.businessType)}</Badge>
+                      )}
+                      {selectedLead.zipCode && (
+                        <span className="text-sm text-muted-foreground tabular-nums" data-testid="text-detail-zip">Zip {selectedLead.zipCode}</span>
+                      )}
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -746,6 +832,44 @@ export default function CRMPage() {
                             <Input {...field} data-testid="input-edit-contact-name" />
                           </FormControl>
                           <FormMessage data-testid="error-edit-contact-name" />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={editForm.control}
+                      name="businessType"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Type</FormLabel>
+                          <Select onValueChange={(value) => field.onChange(value === "none" ? null : value)} value={field.value ?? "none"}>
+                            <FormControl>
+                              <SelectTrigger data-testid="select-edit-type">
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {LEAD_TYPES.map((type) => (
+                                <SelectItem key={type} value={type} data-testid={`option-edit-type-${type}`}>{LEAD_TYPE_LABELS[type]}</SelectItem>
+                              ))}
+                              <SelectItem value="none" data-testid="option-edit-type-none">No type</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage data-testid="error-edit-type" />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={editForm.control}
+                      name="zipCode"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Zip Code</FormLabel>
+                          <FormControl>
+                            <Input {...field} value={field.value ?? ""} inputMode="numeric" maxLength={10} placeholder="98107" data-testid="input-edit-zip" />
+                          </FormControl>
+                          <FormMessage data-testid="error-edit-zip" />
                         </FormItem>
                       )}
                     />

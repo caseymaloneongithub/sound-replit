@@ -34,6 +34,7 @@ import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBill
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
 import { geocodeForEdit, refreshLocationPin } from "./location-geocode";
 import { checkMaterialStockAlerts } from "./material-alerts";
+import { LEAD_TYPES, LEAD_ZIP_RE, type LeadType } from "@shared/schema";
 import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -10930,15 +10931,39 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
+  // Type and zip on a lead (owner, 2026-09-29: sort by zip, filter by type): one
+  // of LEAD_TYPES or none, a 5-digit zip or none; a blank field is none. Only
+  // the fields the request carries, so an update can leave them alone.
+  const leadTypeAndZip = (body: any): { value: { businessType?: LeadType | null; zipCode?: string | null } } | { message: string } => {
+    const value: { businessType?: LeadType | null; zipCode?: string | null } = {};
+    if (body && "businessType" in body) {
+      const type = body.businessType || null;
+      if (type !== null && !(LEAD_TYPES as readonly string[]).includes(type)) {
+        return { message: `Type must be one of: ${LEAD_TYPES.join(", ")}` };
+      }
+      value.businessType = type as LeadType | null;
+    }
+    if (body && "zipCode" in body) {
+      const zip = typeof body.zipCode === "string" ? body.zipCode.trim() : "";
+      if (zip && !LEAD_ZIP_RE.test(zip)) return { message: "Zip code must be 5 digits, like 98107" };
+      value.zipCode = zip || null;
+    }
+    return { value };
+  };
+
   // Create new lead
   app.post("/api/crm/leads", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
     try {
       const { businessName, contactName, email, phone, priorityLevel, status, notes, assignedToUserId } = req.body;
-      
+
       if (!businessName || !contactName) {
         return res.status(400).json({ message: "Business name and contact name are required" });
       }
-      
+      const extra = leadTypeAndZip(req.body);
+      if ("message" in extra) {
+        return res.status(400).json({ message: extra.message });
+      }
+
       const lead = await storage.createLead({
         businessName,
         contactName,
@@ -10948,6 +10973,8 @@ If you have any questions, please don't hesitate to reach out!`,
         status: status || 'new',
         notes,
         assignedToUserId,
+        businessType: extra.value.businessType ?? null,
+        zipCode: extra.value.zipCode ?? null,
       });
       
       res.status(201).json(lead);
@@ -10961,8 +10988,12 @@ If you have any questions, please don't hesitate to reach out!`,
   app.patch("/api/crm/leads/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { id } = req.params;
-      const updates = req.body;
-      
+      const extra = leadTypeAndZip(req.body);
+      if ("message" in extra) {
+        return res.status(400).json({ message: extra.message });
+      }
+      const updates = { ...req.body, ...extra.value };
+
       const lead = await storage.updateLead(id, updates);
       if (!lead) {
         return res.status(404).json({ message: "Lead not found" });

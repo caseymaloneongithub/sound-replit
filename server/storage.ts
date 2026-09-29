@@ -5100,7 +5100,8 @@ export class PostgresStorage implements IStorage {
           sql`LOWER(${leads.businessName}) LIKE LOWER(${'%' + query + '%'})`,
           sql`LOWER(${leads.contactName}) LIKE LOWER(${'%' + query + '%'})`,
           sql`LOWER(${leads.email}) LIKE LOWER(${'%' + query + '%'})`,
-          sql`LOWER(${leads.phone}) LIKE LOWER(${'%' + query + '%'})`
+          sql`LOWER(${leads.phone}) LIKE LOWER(${'%' + query + '%'})`,
+          sql`${leads.zipCode} LIKE ${'%' + query + '%'}`
         )
       )
       .orderBy(desc(leads.createdAt));

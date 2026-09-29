@@ -661,9 +661,24 @@ export const leads = pgTable("leads", {
   status: text("status").notNull().default('new'), // 'new', 'contacted', 'qualified', 'proposal', 'negotiation', 'won', 'lost'
   notes: text("notes"),
   assignedToUserId: varchar("assigned_to_user_id").references(() => users.id),
+  // Owner, 2026-09-29: "Sort by fields should be name and zip code. Also add a
+  // filter for type (gym, coffee, restaurant, grocery)." One of LEAD_TYPES, or
+  // none; a 5-digit zip (LEAD_ZIP_RE), or none.
+  businessType: text("business_type"),
+  zipCode: varchar("zip_code", { length: 10 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+export const LEAD_TYPES = ["gym", "coffee", "restaurant", "grocery"] as const;
+export type LeadType = (typeof LEAD_TYPES)[number];
+export const LEAD_TYPE_LABELS: Record<LeadType, string> = {
+  gym: "Gym",
+  coffee: "Coffee",
+  restaurant: "Restaurant",
+  grocery: "Grocery",
+};
+export const LEAD_ZIP_RE = /^\d{5}(-\d{4})?$/;
 
 // CRM - Lead touch points (interaction history)
 export const leadTouchPoints = pgTable("lead_touch_points", {
@@ -869,7 +884,11 @@ export const insertWholesaleOrderItemSchema = createInsertSchema(wholesaleOrderI
 export const insertVerificationCodeSchema = createInsertSchema(verificationCodes).omit({ id: true, createdAt: true });
 export const insertEmailVerificationCodeSchema = createInsertSchema(emailVerificationCodes).omit({ id: true, createdAt: true, consumedAt: true });
 export const insertImpersonationLogSchema = createInsertSchema(impersonationLogs).omit({ id: true, startedAt: true });
-export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, createdAt: true, updatedAt: true }).extend({
+  businessType: z.enum(LEAD_TYPES).nullable().optional(),
+  // "" is a blank form field: no zip.
+  zipCode: z.string().trim().refine((zip) => zip === "" || LEAD_ZIP_RE.test(zip), "Enter a 5-digit zip code").nullable().optional(),
+});
 export const insertLeadTouchPointSchema = createInsertSchema(leadTouchPoints).omit({ id: true, createdAt: true });
 
 // Insert schemas - ACCOUNTING MODULE
