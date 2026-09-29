@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Subscription, Product, RetailOrder, RetailOrderItem } from "@shared/schema";
+import { Subscription, Product, RetailOrder } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,9 +31,19 @@ type SubscriptionWithItems = Subscription & {
   items: SubscriptionItem[];
 };
 
+// One line of a past order, from either item table (see /api/my-orders).
+type OrderLine = {
+  id: string;
+  productName: string;
+  flavorName: string | null; // chosen on a multi-flavor product
+  notes: string | null; // a split case's "Split: 6 A / 6 B"
+  quantity: number;
+  unitPrice: string;
+};
+
 type OrderWithDetails = {
   order: RetailOrder;
-  items: Array<RetailOrderItem & { product: Product }>;
+  lines: OrderLine[];
 };
 
 export default function MyAccount() {
@@ -1038,7 +1048,7 @@ export default function MyAccount() {
               </div>
             ) : orders && orders.length > 0 ? (
               <div className="space-y-4">
-                {orders.map(({ order, items }) => (
+                {orders.map(({ order, lines }) => (
                   <Card key={order.id} data-testid={`card-order-${order.id}`}>
                     <CardHeader>
                       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -1083,27 +1093,39 @@ export default function MyAccount() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="space-y-2">
-                        {items.map((item) => (
-                          <div 
-                            key={item.id} 
-                            className="flex items-center justify-between py-2 border-b last:border-b-0"
-                            data-testid={`item-${item.id}`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <div>
-                                <p className="font-medium" data-testid={`text-product-name-${item.id}`}>
-                                  {item.product?.name || 'Product'}
-                                </p>
-                                <p className="text-sm text-muted-foreground">
-                                  Quantity: {item.quantity}
-                                </p>
+                        {lines.map((line) => {
+                          // A split case shows its two flavors, worded as on the
+                          // subscription card; another multi-flavor line, its flavor.
+                          const detail = line.notes
+                            ? line.notes.replace(/^Split: /, '').replace(/6 /g, '6 × ')
+                            : line.flavorName;
+                          return (
+                            <div
+                              key={line.id}
+                              className="flex items-center justify-between py-2 border-b last:border-b-0"
+                              data-testid={`item-${line.id}`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div>
+                                  <p className="font-medium" data-testid={`text-product-name-${line.id}`}>
+                                    {line.productName}
+                                  </p>
+                                  {detail && (
+                                    <p className="text-sm text-muted-foreground" data-testid={`text-item-flavor-${line.id}`}>
+                                      {detail}
+                                    </p>
+                                  )}
+                                  <p className="text-sm text-muted-foreground">
+                                    Quantity: {line.quantity}
+                                  </p>
+                                </div>
                               </div>
+                              <p className="font-medium" data-testid={`text-item-price-${line.id}`}>
+                                ${(Number(line.unitPrice) * line.quantity).toFixed(2)}
+                              </p>
                             </div>
-                            <p className="font-medium" data-testid={`text-item-price-${item.id}`}>
-                              ${(Number(item.unitPrice) * item.quantity).toFixed(2)}
-                            </p>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
 
                       <div className="border-t pt-4 space-y-2">
