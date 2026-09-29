@@ -150,6 +150,54 @@ function parseMixNote(note: string | null | undefined): Array<{ count: number; f
   return counts;
 }
 
+/**
+ * A retail order's lines as its receipt lists them, for sending the receipt again
+ * (customer or staff). Legacy item-table lines go by their product's name. Current
+ * lines go by flavor and unit: the flavor chosen, else the product's own (a
+ * multi-flavor product has none, so joining on that alone dropped every case and
+ * keg line); a split case by the pair in its note, "6 Bonfire / 6 Mist"; a line
+ * with no flavor at all by its product's name.
+ */
+async function retailReceiptLines(orderId: string): Promise<Array<{ productName: string; quantity: number; unitPrice: string }>> {
+  const legacy = await db
+    .select({
+      productName: products.name,
+      quantity: retailOrderItems.quantity,
+      unitPrice: retailOrderItems.unitPrice,
+    })
+    .from(retailOrderItems)
+    .innerJoin(products, eq(products.id, retailOrderItems.productId))
+    .where(eq(retailOrderItems.orderId, orderId));
+
+  const current = await db
+    .select({
+      quantity: retailOrderItemsV2.quantity,
+      unitPrice: retailOrderItemsV2.unitPrice,
+      notes: retailOrderItemsV2.notes,
+      productName: retailProducts.productName,
+      unitDescription: retailProducts.unitDescription,
+      flavorName: flavors.name,
+    })
+    .from(retailOrderItemsV2)
+    .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
+    .leftJoin(flavors, eq(flavors.id, sql`COALESCE(${retailOrderItemsV2.selectedFlavorId}, ${retailProducts.flavorId})`))
+    .where(eq(retailOrderItemsV2.orderId, orderId));
+
+  return [
+    ...legacy,
+    ...current.map((i) => {
+      const flavorLabel = /^Split: /.test(i.notes ?? '')
+        ? i.notes!.replace(/^Split: /, '')
+        : (i.flavorName ?? i.productName);
+      return {
+        productName: flavorLabel ? `${flavorLabel} - ${i.unitDescription}` : i.unitDescription,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+      };
+    }),
+  ];
+}
+
 // Paid-but-no-order alerts already sent this process, keyed by payment intent —
 // Stripe redelivers failing events many times; one email per incident is enough.
 const notifiedOrderFailures = new Set<string>();
@@ -9344,21 +9392,6 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
-  // Customer-facing order history endpoint
-  app.get("/api/my-orders", isAuthenticated, async (req: any, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ message: "Not authenticated" });
-      }
-      
-      const orders = await storage.getRetailOrdersByUserId(req.user.id);
-      res.json(orders);
-    } catch (error: any) {
-      console.error("Error fetching user orders:", error);
-      res.status(500).json({ message: "Failed to fetch orders" });
-    }
-  });
-
   // Resend order confirmation email
   app.post("/api/orders/:orderId/resend-email", isAuthenticated, async (req: any, res) => {
     try {
@@ -9377,58 +9410,7 @@ If you have any questions, please don't hesitate to reach out!`,
 
       // Collect order items for email
       const { sendOrderReceiptEmail } = await import('./email');
-      const orderItems = [];
-      
-      // Get legacy order items
-      const legacyItems = await db
-        .select({
-          id: retailOrderItems.id,
-          orderId: retailOrderItems.orderId,
-          productId: retailOrderItems.productId,
-          quantity: retailOrderItems.quantity,
-          unitPrice: retailOrderItems.unitPrice,
-          product: products,
-        })
-        .from(retailOrderItems)
-        .innerJoin(products, eq(products.id, retailOrderItems.productId))
-        .where(eq(retailOrderItems.orderId, orderId));
-        
-      for (const item of legacyItems) {
-        if (item.product) {
-          orderItems.push({
-            productName: item.product.name,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-          });
-        }
-      }
-      
-      // Get retail v2 items
-      const v2Items = await db
-        .select({
-          id: retailOrderItemsV2.id,
-          orderId: retailOrderItemsV2.orderId,
-          retailProductId: retailOrderItemsV2.retailProductId,
-          quantity: retailOrderItemsV2.quantity,
-          unitPrice: retailOrderItemsV2.unitPrice,
-          retailProduct: retailProducts,
-          flavor: flavors,
-        })
-        .from(retailOrderItemsV2)
-        .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
-        .innerJoin(flavors, eq(flavors.id, retailProducts.flavorId))
-        .where(eq(retailOrderItemsV2.orderId, orderId));
-      
-      for (const item of v2Items) {
-        if (item.retailProduct && item.flavor) {
-          const productName = `${item.flavor.name} - ${item.retailProduct.unitDescription}`;
-          orderItems.push({
-            productName,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-          });
-        }
-      }
+      const orderItems = await retailReceiptLines(orderId);
 
       if (orderItems.length === 0) {
         return res.status(400).json({ message: "No order items found to send in email" });
@@ -9753,29 +9735,8 @@ If you have any questions, please don't hesitate to reach out!`,
       if (!order || (order as any).deletedAt) return res.status(404).json({ message: "Order not found" });
       if (!order.customerEmail) return res.status(400).json({ message: "Order has no customer email" });
 
-      const items = await db
-        .select({
-          quantity: retailOrderItemsV2.quantity,
-          unitPrice: retailOrderItemsV2.unitPrice,
-          notes: retailOrderItemsV2.notes,
-          unitDescription: retailProducts.unitDescription,
-          flavorName: flavors.name,
-        })
-        .from(retailOrderItemsV2)
-        .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
-        .leftJoin(flavors, eq(flavors.id, sql`COALESCE(${retailOrderItemsV2.selectedFlavorId}, ${retailProducts.flavorId})`))
-        .where(eq(retailOrderItemsV2.orderId, order.id));
-      if (items.length === 0) return res.status(400).json({ message: "Order has no items" });
-
-      const orderItems = items.map(i => {
-        const split = /^Split: /.test(i.notes ?? '');
-        const flavorLabel = split ? i.notes!.replace(/^Split: /, '') : (i.flavorName ?? '');
-        return {
-          productName: flavorLabel ? `${flavorLabel} - ${i.unitDescription}` : i.unitDescription,
-          quantity: i.quantity,
-          unitPrice: i.unitPrice,
-        };
-      });
+      const orderItems = await retailReceiptLines(order.id);
+      if (orderItems.length === 0) return res.status(400).json({ message: "Order has no items" });
 
       const { sendOrderReceiptEmail } = await import('./email');
       await sendOrderReceiptEmail({

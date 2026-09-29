@@ -559,16 +559,20 @@ interface OrderReceiptEmailParams {
 export async function sendOrderReceiptEmail(params: OrderReceiptEmailParams): Promise<void> {
   const transporter = createTransporter();
   
-  if (!transporter) {
-    console.log('[EMAIL] Would send order receipt email to:', params.customerEmail);
-    console.log('[EMAIL] Order number:', params.orderNumber);
-    console.log('[EMAIL] Total:', params.total);
-    return;
-  }
-
   const itemsList = params.orderItems
     .map(item => `- ${item.productName} - ${item.quantity} case${item.quantity > 1 ? 's' : ''} @ $${item.unitPrice} each`)
     .join('\n');
+
+  if (!transporter) {
+    // Log-only (no mail provider, e.g. staging): the receipt's lines too, so what
+    // the customer would get can be checked.
+    console.log('[EMAIL] Would send order receipt email to:', params.customerEmail);
+    console.log('[EMAIL] Order number:', params.orderNumber);
+    console.log(`[EMAIL] Items:\n${itemsList}`);
+    if (params.depositAmount) console.log('[EMAIL] Keg deposit:', params.depositAmount);
+    console.log('[EMAIL] Total:', params.total);
+    return;
+  }
 
   const taxLine = params.taxAmount ? `\nSales Tax: $${params.taxAmount.toFixed(2)}` : '';
   const depositLine = params.depositAmount ? `\nRefundable keg deposit: $${params.depositAmount.toFixed(2)} (no tax — refunded when the keg comes back)` : '';
