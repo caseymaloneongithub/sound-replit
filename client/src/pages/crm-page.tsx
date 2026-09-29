@@ -13,8 +13,10 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Plus, Pencil, Trash2 } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { format } from "date-fns";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { LinkifiedText } from "@/components/linkified-text";
 import { insertLeadSchema, insertLeadTouchPointSchema, type Lead, type LeadTouchPoint } from "@shared/schema";
 import { z } from "zod";
 
@@ -32,6 +34,18 @@ const statusColors: Record<string, string> = {
   negotiation: "bg-orange-500/10 text-orange-700 dark:text-orange-300",
   won: "bg-green-600/10 text-green-700 dark:text-green-300",
   lost: "bg-gray-500/10 text-gray-700 dark:text-gray-300",
+};
+
+// The leads table (owner, 2026-09-29: "more of a data table format with an easy
+// delete button"): these columns sort from their headers.
+type LeadSortKey = "business" | "status" | "priority" | "added";
+const STATUS_ORDER = ["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost"];
+const PRIORITY_ORDER = ["high", "medium", "low"];
+const LEAD_SORT_NAMES: Record<LeadSortKey, string> = {
+  business: "business name",
+  status: "status",
+  priority: "priority",
+  added: "date added",
 };
 
 export default function CRMPage() {
@@ -124,7 +138,9 @@ export default function CRMPage() {
     mutationFn: async (id: string) => await apiRequest("DELETE", `/api/crm/leads/${id}`, undefined),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/leads"] });
-      toast({ title: "Success", description: "Lead deleted successfully" });
+      // Search results are their own query; a deleted lead leaves them too.
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/leads/search"] });
+      toast({ title: "Lead deleted" });
       setSelectedLead(null);
     },
     onError: (error: any) => {
@@ -175,6 +191,54 @@ export default function CRMPage() {
     if (priorityFilter !== "all" && lead.priorityLevel !== priorityFilter) return false;
     return true;
   });
+
+  // Newest first until a header says otherwise. Clicking the sorted column flips
+  // it; another column starts A–Z, pipeline order or highest priority first.
+  const [sort, setSort] = useState<{ key: LeadSortKey; dir: "asc" | "desc" }>({ key: "added", dir: "desc" });
+  const sortBy = (key: LeadSortKey) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "added" ? "desc" : "asc" }));
+  const rank = (order: string[], value: string) => {
+    const i = order.indexOf(value);
+    return i < 0 ? order.length : i;
+  };
+  const sortedLeads = [...displayedLeads].sort((a, b) => {
+    const sign = sort.dir === "asc" ? 1 : -1;
+    const byName = a.businessName.localeCompare(b.businessName, undefined, { sensitivity: "base" });
+    switch (sort.key) {
+      case "business":
+        return sign * byName;
+      case "status":
+        return sign * (rank(STATUS_ORDER, a.status) - rank(STATUS_ORDER, b.status)) || byName;
+      case "priority":
+        return sign * (rank(PRIORITY_ORDER, a.priorityLevel) - rank(PRIORITY_ORDER, b.priorityLevel)) || byName;
+      default:
+        return sign * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()) || byName;
+    }
+  });
+  const sortHeader = (key: LeadSortKey, label: string) => {
+    const active = sort.key === key;
+    return (
+      <button
+        type="button"
+        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? "text-foreground" : ""}`}
+        onClick={() => sortBy(key)}
+        title={`Sort by ${LEAD_SORT_NAMES[key]}`}
+        data-testid={`button-sort-leads-${key}`}
+      >
+        {label}
+        {!active
+          ? <ArrowUpDown className="w-3 h-3 opacity-40" />
+          : sort.dir === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+      </button>
+    );
+  };
+
+  // One click and a confirmation: the lead's touch-point history goes with it.
+  const deleteLead = (lead: Lead) => {
+    if (confirm(`Delete "${lead.businessName}"? Its touch-point history is deleted too.`)) {
+      deleteLeadMutation.mutate(lead.id);
+    }
+  };
 
   const handleCreateLead = (values: z.infer<typeof insertLeadSchema>) => {
     createLeadMutation.mutate(values);
@@ -439,55 +503,89 @@ export default function CRMPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4">
-          {displayedLeads.map((lead) => (
-            <Card
-              key={lead.id}
-              className="hover-elevate cursor-pointer"
-              onClick={() => setSelectedLead(lead)}
-              data-testid={`card-lead-${lead.id}`}
-            >
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 space-y-3">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <h3 className="text-lg font-semibold" data-testid={`text-business-name-${lead.id}`}>
-                        {lead.businessName}
-                      </h3>
-                      <Badge className={priorityColors[lead.priorityLevel]} data-testid={`badge-priority-${lead.id}`}>
-                        {lead.priorityLevel}
-                      </Badge>
-                      <Badge className={statusColors[lead.status]} data-testid={`badge-status-${lead.id}`}>
-                        {lead.status}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-6 text-sm text-muted-foreground flex-wrap">
-                      <div className="flex items-center gap-2" data-testid={`text-contact-${lead.id}`}>
-                        <span>{lead.contactName}</span>
-                      </div>
-                      {lead.email && (
-                        <div className="flex items-center gap-2" data-testid={`text-email-${lead.id}`}>
-                          <span>{lead.email}</span>
-                        </div>
-                      )}
-                      {lead.phone && (
-                        <div className="flex items-center gap-2" data-testid={`text-phone-${lead.id}`}>
-                          <span>{lead.phone}</span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2" data-testid={`text-created-${lead.id}`}>
-                        <span>Created {format(new Date(lead.createdAt), "MMM d, yyyy")}</span>
-                      </div>
-                    </div>
-                    {lead.notes && (
-                      <p className="text-sm text-muted-foreground line-clamp-2" data-testid={`text-notes-preview-${lead.id}`}>{lead.notes}</p>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{sortHeader("business", "Business")}</TableHead>
+                <TableHead>Contact</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Phone</TableHead>
+                <TableHead>{sortHeader("status", "Status")}</TableHead>
+                <TableHead>{sortHeader("priority", "Priority")}</TableHead>
+                <TableHead className="min-w-[16rem]">Notes</TableHead>
+                <TableHead className="whitespace-nowrap">{sortHeader("added", "Added")}</TableHead>
+                <TableHead className="text-right"><span className="sr-only">Actions</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sortedLeads.map((lead) => (
+                <TableRow
+                  key={lead.id}
+                  className="cursor-pointer"
+                  onClick={() => setSelectedLead(lead)}
+                  data-testid={`row-lead-${lead.id}`}
+                >
+                  <TableCell className="font-medium" data-testid={`text-business-name-${lead.id}`}>
+                    <LinkifiedText text={lead.businessName} />
+                  </TableCell>
+                  <TableCell data-testid={`text-contact-${lead.id}`}>{lead.contactName}</TableCell>
+                  <TableCell data-testid={`text-email-${lead.id}`}>
+                    {lead.email ? (
+                      <a href={`mailto:${lead.email}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+                        {lead.email}
+                      </a>
+                    ) : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap" data-testid={`text-phone-${lead.id}`}>
+                    {lead.phone ? (
+                      <a href={`tel:${lead.phone}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+                        {lead.phone}
+                      </a>
+                    ) : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
+                  <TableCell>
+                    <Badge className={statusColors[lead.status]} data-testid={`badge-status-${lead.id}`}>{lead.status}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge className={priorityColors[lead.priorityLevel]} data-testid={`badge-priority-${lead.id}`}>{lead.priorityLevel}</Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground max-w-md" data-testid={`text-notes-preview-${lead.id}`}>
+                    {lead.notes ? <LinkifiedText text={lead.notes} className="line-clamp-2" /> : "—"}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap" data-testid={`text-created-${lead.id}`}>
+                    {format(new Date(lead.createdAt), "MMM d, yyyy")}
+                  </TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      title="Edit lead"
+                      aria-label={`Edit ${lead.businessName}`}
+                      onClick={(e) => { e.stopPropagation(); openEditDialog(lead); }}
+                      data-testid={`button-edit-lead-${lead.id}`}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      title="Delete lead"
+                      aria-label={`Delete ${lead.businessName}`}
+                      disabled={deleteLeadMutation.isPending && deleteLeadMutation.variables === lead.id}
+                      onClick={(e) => { e.stopPropagation(); deleteLead(lead); }}
+                      data-testid={`button-delete-lead-${lead.id}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
       )}
 
       {/* Lead Detail Dialog */}
@@ -559,7 +657,9 @@ export default function CRMPage() {
                   {selectedLead.notes && (
                     <div>
                       <h4 className="text-sm font-semibold mb-2" data-testid="heading-notes">Notes</h4>
-                      <p className="text-sm text-muted-foreground" data-testid="text-detail-notes">{selectedLead.notes}</p>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap" data-testid="text-detail-notes">
+                        <LinkifiedText text={selectedLead.notes} />
+                      </p>
                     </div>
                   )}
                 </div>
@@ -592,7 +692,11 @@ export default function CRMPage() {
                                     {format(new Date(tp.createdAt), "MMM d, yyyy h:mm a")}
                                   </span>
                                 </div>
-                                {tp.notes && <p className="text-sm text-muted-foreground" data-testid={`text-touchpoint-notes-${tp.id}`}>{tp.notes}</p>}
+                                {tp.notes && (
+                                  <p className="text-sm text-muted-foreground whitespace-pre-wrap" data-testid={`text-touchpoint-notes-${tp.id}`}>
+                                    <LinkifiedText text={tp.notes} />
+                                  </p>
+                                )}
                               </div>
                             </div>
                           </CardContent>
