@@ -667,6 +667,10 @@ interface RetailOrderAdminNotificationParams {
   orderItems: Array<{ productName: string; quantity: number; unitPrice: string }>;
   subtotal: number;
   taxAmount?: number;
+  // Refundable keg deposit included in the total (not taxed; returned with the
+  // keg). Left out, the total didn't add up (owner, 2026-09-28: "This email
+  // doesn't show the keg deposits").
+  depositAmount?: number;
   total: number;
   // 'renewal' = a subscription's card was charged for its next pickup (owner,
   // 2026-09-21: "add the renewal email to admins").
@@ -729,6 +733,7 @@ ${itemsText}
 
 Subtotal: $${params.subtotal.toFixed(2)}
 ${params.taxAmount ? `Sales Tax: $${params.taxAmount.toFixed(2)}` : ''}
+${params.depositAmount ? `Refundable keg deposit: $${params.depositAmount.toFixed(2)} (no tax — refunded when the keg comes back)` : ''}
 Total: $${params.total.toFixed(2)}
 
 ---
@@ -786,9 +791,11 @@ Puget Sound Kombucha Co.
     <div style="text-align: right; padding: 16px; background-color: ${BRAND_COLORS.backgroundGrey}; border-radius: 4px;">
       <p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Subtotal: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.subtotal.toFixed(2)}</strong></p>
       ${params.taxAmount ? `<p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Sales Tax: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.taxAmount.toFixed(2)}</strong></p>` : ''}
+      ${params.depositAmount ? `<p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Refundable keg deposit: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.depositAmount.toFixed(2)}</strong></p>` : ''}
       <p style="margin: 8px 0 0 0; font-size: 18px; color: ${BRAND_COLORS.black}; padding-top: 8px; border-top: 2px solid ${BRAND_COLORS.borderGrey};">Total: <strong>$${params.total.toFixed(2)}</strong></p>
     </div>
-    
+    ${params.depositAmount ? `<p style="margin: 8px 0 0 0; font-size: 13px; color: ${BRAND_COLORS.mediumGrey}; text-align: right;">The keg deposit isn't taxed and is refunded to the customer's card when the keg comes back.</p>` : ''}
+
     ${getEmailFooter()}
   </div>
 </div>

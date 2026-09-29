@@ -5501,6 +5501,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                       orderItems,
                       subtotal: recomputedSubtotalCents / 100,
                       taxAmount: recomputedTaxCents > 0 ? recomputedTaxCents / 100 : undefined,
+                      depositAmount: recomputedDepositCents > 0 ? recomputedDepositCents / 100 : undefined,
                       total: recomputedTotalCents / 100,
                       orderType: isSubscriptionOrder ? 'subscription' : 'one-time',
                     });
@@ -9441,6 +9442,8 @@ If you have any questions, please don't hesitate to reach out!`,
         orderItems,
         subtotal: parseFloat(order.subtotal),
         taxAmount: order.taxAmount ? parseFloat(order.taxAmount) : undefined,
+        // The keg deposit is part of the total; the original receipt showed it too.
+        depositAmount: Number(order.depositAmount ?? 0) > 0 ? Number(order.depositAmount) : undefined,
         total: parseFloat(order.totalAmount),
         orderType: order.isSubscriptionOrder ? 'subscription' : 'one-time',
       });
