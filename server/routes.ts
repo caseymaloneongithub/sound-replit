@@ -34,7 +34,7 @@ import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBill
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
 import { geocodeForEdit, refreshLocationPin } from "./location-geocode";
 import { checkMaterialStockAlerts } from "./material-alerts";
-import { LEAD_TYPES, LEAD_ZIP_RE, type LeadType } from "@shared/schema";
+import { LEAD_TYPES, LEAD_ZIP_RE, leadZipFrom, type LeadType } from "@shared/schema";
 import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -399,8 +399,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const verdict = spamScore(data.deliveryInstructions ?? '', { name: data.contactName, email: data.email, company: data.businessName });
       if (verdict.score >= SPAM_THRESHOLD) return pretendReceived(`score ${verdict.score}: ${verdict.reasons.join(', ')}`);
 
-      // The leads table has no columns for the application specifics, so they're kept as
-      // readable notes rather than being dropped on the floor.
+      // The leads table has no columns for most of the application specifics, so they're
+      // kept as readable notes rather than being dropped on the floor.
       const notes = [
         "— Wholesale application from the website —",
         `Address: ${data.address}, ${data.city}, ${data.state} ${data.zipCode}`,
@@ -418,6 +418,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         priorityLevel: "medium",
         status: "new",
         notes,
+        // The ZIP has its own field too, so the leads sheet sorts and searches by it
+        // (review, 2026-09-29). One that doesn't read as a ZIP stays in the notes only.
+        zipCode: leadZipFrom(data.zipCode),
       });
 
       // Notify staff, but never fail the applicant's submission because email is down —

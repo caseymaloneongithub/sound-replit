@@ -679,6 +679,10 @@ export const LEAD_TYPE_LABELS: Record<LeadType, string> = {
   grocery: "Grocery",
 };
 export const LEAD_ZIP_RE = /^\d{5}(-\d{4})?$/;
+// The ZIP in what someone typed on a public form ("98107", " 98107-1234",
+// "WA 98107"), or null when there isn't one.
+export const leadZipFrom = (typed: string | null | undefined): string | null =>
+  typed?.match(/\b\d{5}(?:-\d{4})?\b/)?.[0] ?? null;
 
 // CRM - Lead touch points (interaction history)
 export const leadTouchPoints = pgTable("lead_touch_points", {

@@ -13,6 +13,14 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS zip_code varchar(10);
 UPDATE leads SET zip_code = substring(notes from ',[[:space:]]*([0-9]{5})[[:space:]]*(—|$)')
 WHERE zip_code IS NULL AND notes ~ ',[[:space:]]*[0-9]{5}[[:space:]]*(—|$)';
 
+-- Website applications keep the address on a line of their own (review,
+-- 2026-09-29: the pattern above missed them):
+--   "Address: 12502 4th Avenue Northwest, Seattle, WA 98177"
+-- Zip: the ZIP (or ZIP+4) ending that line. (?n) makes ^ and $ match at line
+-- ends and keeps . on the one line.
+UPDATE leads SET zip_code = substring(notes from '(?n)^Address: .* +([0-9]{5}(-[0-9]{4})?) *$')
+WHERE zip_code IS NULL AND notes ~ '(?n)^Address: .* +[0-9]{5}(-[0-9]{4})? *$';
+
 -- Type: the category before " · <area> route". cafe is coffee; restaurant, grocery
 -- and gym are themselves; anything else (brewery) stays empty for staff to set.
 UPDATE leads SET business_type = CASE lower(substring(notes from '—[[:space:]]*([A-Za-z]+)[[:space:]]*·[^—]*route'))
