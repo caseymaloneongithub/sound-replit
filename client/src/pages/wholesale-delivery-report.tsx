@@ -261,12 +261,16 @@ export default function WholesaleDeliveryReport() {
                                   )}
                                 </div>
                               </div>
-                              <div className="text-right">
-                                <p className="text-sm text-muted-foreground">Order Total</p>
-                                <p className="text-2xl font-bold">
-                                  ${Number(order.totalAmount).toFixed(2)}
-                                </p>
-                              </div>
+                              {/* Order and line amounts are admin-and-up like the Total Value
+                                  card (owner, 2026-09-30): staff and drivers get the items. */}
+                              {isAdmin && (
+                                <div className="text-right">
+                                  <p className="text-sm text-muted-foreground">Order Total</p>
+                                  <p className="text-2xl font-bold">
+                                    ${Number(order.totalAmount).toFixed(2)}
+                                  </p>
+                                </div>
+                              )}
                             </div>
 
                             {orderItems.length > 0 && (
@@ -304,9 +308,11 @@ export default function WholesaleDeliveryReport() {
                                         <span>
                                           {productName} × {item.quantity}
                                         </span>
-                                        <span className="font-medium">
-                                          ${(Number(item.unitPrice) * item.quantity).toFixed(2)}
-                                        </span>
+                                        {isAdmin && (
+                                          <span className="font-medium">
+                                            ${(Number(item.unitPrice) * item.quantity).toFixed(2)}
+                                          </span>
+                                        )}
                                       </div>
                                     );
                                   })}

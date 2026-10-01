@@ -20,6 +20,7 @@ import { Eye, CalendarIcon, FileText, ArrowUpDown, Loader2, ChevronRight, Chevro
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { format } from "date-fns";
 
 function getStatusColor(status: string): string {
@@ -81,6 +82,10 @@ export default function WholesaleOrders() {
   const [editFulfillment, setEditFulfillment] = useState<'delivery' | 'pickup'>('delivery');
   const [editLocationId, setEditLocationId] = useState('');
   const { toast } = useToast();
+  // Each tab's dollar total is revenue, which is admin-and-up (owner, 2026-09-30:
+  // "Hide 1 and 2 for staff"); staff keep the order count and each order's own total.
+  const { user } = useAuth();
+  const showsRevenue = user?.role === 'admin' || user?.role === 'super_admin';
 
   const { data: ordersData, isLoading } = useQuery<{ orders: (WholesaleOrder & { locationName?: string | null; locationEmail?: string | null; locationContactName?: string | null; locationContactPhone?: string | null })[]; total: number }>({
     queryKey: ["/api/wholesale/orders"],
@@ -576,7 +581,7 @@ export default function WholesaleOrders() {
                   Total {getStatusLabel(status)} Orders
                 </TableCell>
                 <TableCell className="text-right" data-testid={`text-total-amount-${status}`}>
-                  ${totalAmount.toFixed(2)}
+                  {showsRevenue ? `$${totalAmount.toFixed(2)}` : null}
                 </TableCell>
                 <TableCell className="text-muted-foreground" data-testid={`text-total-orders-${status}`}>
                   {totalOrders} {totalOrders === 1 ? 'order' : 'orders'}
