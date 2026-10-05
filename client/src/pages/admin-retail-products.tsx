@@ -37,7 +37,11 @@ export default function AdminRetailProducts() {
     subscriptionDiscount: 10,
     productImageUrl: '',
     isActive: true,
-    displayOrder: 0
+    displayOrder: 0,
+    // Shipping (owner, 2026-10-05): cans per unit (blank = not shippable, e.g. kegs)
+    // and the weight of one full can.
+    cansPerUnit: '' as string,
+    canWeightOz: '' as string,
   });
 
   const { data: flavors = [], isLoading: flavorsLoading } = useQuery<Flavor[]>({
@@ -78,6 +82,8 @@ export default function AdminRetailProducts() {
         unitType: data.unitType,
         unitDescription: data.unitDescription,
         container: data.container?.trim() || null,
+        cansPerUnit: data.cansPerUnit !== '' && Number.isFinite(parseInt(data.cansPerUnit)) ? parseInt(data.cansPerUnit) : null,
+        canWeightOz: data.canWeightOz !== '' && Number.isFinite(parseFloat(data.canWeightOz)) ? parseFloat(data.canWeightOz).toFixed(2) : null,
         price: price.toFixed(2),
         deposit: deposit.toFixed(2),
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
@@ -117,7 +123,9 @@ export default function AdminRetailProducts() {
         subscriptionDiscount: 10,
         productImageUrl: '',
         isActive: true,
-        displayOrder: 0
+        displayOrder: 0,
+        cansPerUnit: '',
+        canWeightOz: '',
       });
       toast({ title: "Retail product created", description: "Retail product has been created successfully" });
     },
@@ -142,6 +150,8 @@ export default function AdminRetailProducts() {
         unitType: data.unitType,
         unitDescription: data.unitDescription,
         container: data.container?.trim() || null,
+        cansPerUnit: data.cansPerUnit !== '' && Number.isFinite(parseInt(data.cansPerUnit)) ? parseInt(data.cansPerUnit) : null,
+        canWeightOz: data.canWeightOz !== '' && Number.isFinite(parseFloat(data.canWeightOz)) ? parseFloat(data.canWeightOz).toFixed(2) : null,
         price: price.toFixed(2),
         deposit: deposit.toFixed(2),
         subscriptionDiscount: subscriptionDiscount.toFixed(2),
@@ -395,6 +405,34 @@ export default function AdminRetailProducts() {
                     </p>
                   </div>
                   <div>
+                    <Label htmlFor="retail-cans">Cans per unit (shipping)</Label>
+                    <Input
+                      id="retail-cans"
+                      type="number"
+                      min="0"
+                      value={retailProductForm.cansPerUnit}
+                      onChange={(e) => setRetailProductForm({ ...retailProductForm, cansPerUnit: e.target.value })}
+                      placeholder="Blank = pickup only"
+                      data-testid="input-retail-cans"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      How many cans one unit holds. Leave blank for kegs — they never ship.
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="retail-can-weight">Weight per full can (oz)</Label>
+                    <Input
+                      id="retail-can-weight"
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={retailProductForm.canWeightOz}
+                      onChange={(e) => setRetailProductForm({ ...retailProductForm, canWeightOz: e.target.value })}
+                      placeholder="Default from Shipping settings"
+                      data-testid="input-retail-can-weight"
+                    />
+                  </div>
+                  <div>
                     <Label htmlFor="retail-subscription-discount">Subscription Discount (%)</Label>
                     <Input
                       id="retail-subscription-discount"
@@ -574,7 +612,9 @@ export default function AdminRetailProducts() {
                               subscriptionDiscount: product.subscriptionDiscount != null ? Number(product.subscriptionDiscount) : 10,
                               productImageUrl: product.productImageUrl || '',
                               isActive: product.isActive,
-                              displayOrder: product.displayOrder
+                              displayOrder: product.displayOrder,
+                              cansPerUnit: (product as any).cansPerUnit != null ? String((product as any).cansPerUnit) : '',
+                              canWeightOz: (product as any).canWeightOz != null ? String((product as any).canWeightOz) : '',
                             });
                           }}
                           data-testid={`button-edit-retail-product-${product.id}`}
@@ -722,6 +762,32 @@ export default function AdminRetailProducts() {
                             <p className="text-xs text-muted-foreground mt-1">
                               Refundable deposit (e.g., $75 for keg)
                             </p>
+                          </div>
+                          <div>
+                            <Label>Cans per unit (shipping)</Label>
+                            <Input
+                              type="number"
+                              min="0"
+                              value={retailProductForm.cansPerUnit}
+                              onChange={(e) => setRetailProductForm({ ...retailProductForm, cansPerUnit: e.target.value })}
+                              placeholder="Blank = pickup only"
+                              data-testid="input-edit-retail-cans"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Blank for kegs — they never ship.
+                            </p>
+                          </div>
+                          <div>
+                            <Label>Weight per full can (oz)</Label>
+                            <Input
+                              type="number"
+                              step="0.1"
+                              min="0"
+                              value={retailProductForm.canWeightOz}
+                              onChange={(e) => setRetailProductForm({ ...retailProductForm, canWeightOz: e.target.value })}
+                              placeholder="Default from Shipping settings"
+                              data-testid="input-edit-retail-can-weight"
+                            />
                           </div>
                           <div>
                             <Label>Subscription Discount (%)</Label>

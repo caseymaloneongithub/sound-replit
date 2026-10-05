@@ -554,6 +554,15 @@ interface OrderReceiptEmailParams {
   depositAmount?: number;
   total: number;
   orderType: 'one-time' | 'subscription';
+  // Shipped orders (owner, 2026-10-05): the shipping & handling line and where
+  // it's going. Absent on pickup orders.
+  shipping?: {
+    amount: number;
+    name: string;
+    addressLines: string[];
+    shipDate: string; // already formatted, e.g. "Monday, Oct 12"
+    service: string;
+  };
 }
 
 export async function sendOrderReceiptEmail(params: OrderReceiptEmailParams): Promise<void> {
@@ -576,6 +585,12 @@ export async function sendOrderReceiptEmail(params: OrderReceiptEmailParams): Pr
 
   const taxLine = params.taxAmount ? `\nSales Tax: $${params.taxAmount.toFixed(2)}` : '';
   const depositLine = params.depositAmount ? `\nRefundable keg deposit: $${params.depositAmount.toFixed(2)} (no tax — refunded when the keg comes back)` : '';
+  const shippingLine = params.shipping ? `\nShipping & handling: $${params.shipping.amount.toFixed(2)}` : '';
+  const nextStepText = params.shipping
+    ? `Your order ships ${params.shipping.shipDate} by ${params.shipping.service}, cold-packed with ice packs, to:\n${params.shipping.name}\n${params.shipping.addressLines.join('\n')}\n\nWe'll email tracking when it leaves. Please refrigerate on arrival.`
+    : params.orderType === 'subscription'
+      ? 'Your subscription is now active. You will receive your first pickup notification soon.'
+      : 'Your order will be ready for pickup soon. We will notify you when it\'s ready.';
 
   const mailOptions = {
     from: process.env.GMAIL_USER,
@@ -591,12 +606,10 @@ Order Number: ${params.orderNumber}
 Items:
 ${itemsList}
 
-Subtotal: $${params.subtotal.toFixed(2)}${taxLine}${depositLine}
+Subtotal: $${params.subtotal.toFixed(2)}${shippingLine}${taxLine}${depositLine}
 Total: $${params.total.toFixed(2)}
 
-${params.orderType === 'subscription' 
-  ? 'Your subscription is now active. You will receive your first pickup notification soon.'
-  : 'Your order will be ready for pickup soon. We will notify you when it\'s ready.'}
+${nextStepText}
 
 Thank you for choosing Puget Sound Kombucha Co.!
 
@@ -629,6 +642,7 @@ Puget Sound Kombucha Co.
     
     <div style="text-align: right; margin-top: 24px; padding: 16px; background-color: ${BRAND_COLORS.backgroundGrey}; border-radius: 4px;">
       <p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Subtotal: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.subtotal.toFixed(2)}</strong></p>
+      ${params.shipping ? `<p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Shipping &amp; handling: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.shipping.amount.toFixed(2)}</strong></p>` : ''}
       ${params.taxAmount ? `<p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Sales Tax: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.taxAmount.toFixed(2)}</strong></p>` : ''}
       ${params.depositAmount ? `<p style="margin: 4px 0; color: ${BRAND_COLORS.mediumGrey};">Refundable keg deposit: <strong style="color: ${BRAND_COLORS.darkGrey};">$${params.depositAmount.toFixed(2)}</strong></p>` : ''}
       <p style="margin: 8px 0 0 0; font-size: 20px; color: ${BRAND_COLORS.black}; padding-top: 8px; border-top: 2px solid ${BRAND_COLORS.borderGrey};">Total: <strong>$${params.total.toFixed(2)}</strong></p>
@@ -636,11 +650,7 @@ Puget Sound Kombucha Co.
     ${params.depositAmount ? `<p style="margin: 8px 0 0 0; font-size: 13px; color: ${BRAND_COLORS.mediumGrey}; text-align: right;">The keg deposit isn't taxed and is refunded to your card when the keg comes back.</p>` : ''}
     
     <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-left: 4px solid ${BRAND_COLORS.black}; margin-top: 24px; border-radius: 4px;">
-      <p style="margin: 0; color: ${BRAND_COLORS.darkGrey};">
-        ${params.orderType === 'subscription' 
-          ? 'Your subscription is now active. You will receive your first pickup notification soon.'
-          : 'Your order will be ready for pickup soon. We will notify you when it\'s ready.'}
-      </p>
+      <p style="margin: 0; color: ${BRAND_COLORS.darkGrey}; white-space: pre-line;">${nextStepText}</p>
     </div>
     
     <p style="color: ${BRAND_COLORS.darkGrey}; margin-top: 32px;">Thank you for choosing Puget Sound Kombucha Co.!</p>
@@ -659,6 +669,70 @@ Puget Sound Kombucha Co.
     console.error('[EMAIL] Failed to send order receipt email:', error);
     throw error;
   }
+}
+
+// Order shipped (owner, 2026-10-05): sent when the Monday labels are bought.
+export async function sendOrderShippedEmail(params: {
+  customerEmail: string;
+  customerName: string;
+  orderNumber: string;
+  addressLines: string[];
+  packages: Array<{ carrier: string; service: string; trackingNumber: string; trackingUrl: string | null; boxName: string }>;
+}): Promise<void> {
+  const transporter = createTransporter();
+  const trackingText = params.packages
+    .map((p, i) => `${params.packages.length > 1 ? `Box ${i + 1} (${p.boxName}): ` : ''}${p.carrier} ${p.service} — ${p.trackingNumber}${p.trackingUrl ? `\n  ${p.trackingUrl}` : ''}`)
+    .join('\n');
+  if (!transporter) {
+    console.log('[EMAIL] Would send shipped email to:', params.customerEmail, 'order', params.orderNumber);
+    console.log(`[EMAIL] Tracking:\n${trackingText}`);
+    return;
+  }
+  const mailOptions = {
+    from: process.env.GMAIL_USER,
+    to: params.customerEmail,
+    subject: `Your kombucha is on its way! #${params.orderNumber}`,
+    text: `
+Hi ${params.customerName},
+
+Your order #${params.orderNumber} shipped today, cold-packed with ice packs, to:
+${params.addressLines.join('\n')}
+
+Tracking:
+${trackingText}
+
+It's raw kombucha, so please refrigerate it as soon as it arrives. If a box shows up warm or damaged, reply to this email and we'll make it right.
+
+Thank you for choosing Puget Sound Kombucha Co.!
+
+Best regards,
+Puget Sound Kombucha Co.
+    `.trim(),
+    html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader('Your Kombucha Is On Its Way!')}
+  <div style="padding: 32px 24px;">
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 16px 0;">Hi ${params.customerName},</p>
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 24px 0;">Your order <strong>#${params.orderNumber}</strong> shipped today, cold-packed with ice packs, to:</p>
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin: 0 0 24px 0; border: 2px solid ${BRAND_COLORS.black}; color: ${BRAND_COLORS.darkGrey}; white-space: pre-line;">${params.addressLines.join('\n')}</div>
+    <h2 style="font-size: 18px; margin-top: 24px; color: ${BRAND_COLORS.darkGrey}; border-bottom: 2px solid ${BRAND_COLORS.black}; padding-bottom: 8px;">Tracking</h2>
+    ${params.packages.map((p, i) => `
+      <p style="margin: 12px 0; color: ${BRAND_COLORS.darkGrey};">
+        ${params.packages.length > 1 ? `<strong>Box ${i + 1}</strong> (${p.boxName}) · ` : ''}${p.carrier} ${p.service}<br/>
+        ${p.trackingUrl ? `<a href="${p.trackingUrl}" style="color: ${BRAND_COLORS.black};">${p.trackingNumber}</a>` : p.trackingNumber}
+      </p>`).join('')}
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-left: 4px solid ${BRAND_COLORS.black}; margin-top: 24px; border-radius: 4px;">
+      <p style="margin: 0; color: ${BRAND_COLORS.darkGrey};">It's raw kombucha, so please refrigerate it as soon as it arrives. If a box shows up warm or damaged, reply to this email and we'll make it right.</p>
+    </div>
+    <p style="color: ${BRAND_COLORS.darkGrey}; margin-top: 32px;">Thank you for choosing Puget Sound Kombucha Co.!</p>
+    ${getEmailFooter()}
+  </div>
+</div>
+    `.trim(),
+    attachments: getLogoAttachment(),
+  };
+  await transporter.sendMail(mailOptions);
+  console.log(`[EMAIL] ✅ Sent shipped notice to ${params.customerEmail} for order ${params.orderNumber}`);
 }
 
 // Retail Order Admin Notification - sent to admins when retail order is placed

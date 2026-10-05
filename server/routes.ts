@@ -6,7 +6,7 @@ import Stripe from "stripe";
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { storage } from "./storage";
 import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, insertMaterialSchema, insertSupplierSchema, insertProcessSchema, insertProductionSchema, insertMaterialOrderSchema, retailProducts, retailProductFlavors, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings, wholesaleOrderItems, wholesaleUnitTypes, deliveryRoutes, deliveryRouteStops } from "@shared/schema";
-import { eq, sql, and, desc, isNull, inArray, gte, lt, ne } from "drizzle-orm";
+import { eq, sql, and, or, asc, desc, isNull, inArray, gte, lt, ne } from "drizzle-orm";
 import { db } from "./db";
 import { Pool } from "@neondatabase/serverless";
 import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
@@ -19,6 +19,13 @@ import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { isS3Configured, buildObjectKey, getPublicUrl, putObject } from "./s3-storage";
 import { wholesaleOrderRecipients, splitEmails, sameRecipients } from "./wholesale-recipients";
 import { recordEvent, listEvents, countEvents, countOpenAlerts, acknowledgeEvent, buildDigest } from "./ops-events";
+import {
+  ShippingError, shippingProviderStatus, getShippingSettings, saveShippingSettings, getAllBoxes, getActiveBoxes,
+  summarizeCans, quoteShipping, validateShipTo, calculateShippedOrderTax, commitStripeTaxTransaction,
+  purchaseLabelsForOrder, contentsForOrders, buildLabelsPdf, buildStickersCsv, handleTrackingUpdate,
+} from "./shipping";
+import { nextShipDate, formatShipDate, type ShippingQuote, type ShippingLabel } from "@shared/shipping-policy";
+import { insertShippingBoxSchema, shippingBoxes } from "@shared/schema";
 import { registerClaimRoutes, getPendingClaim, holdPendingOrder, createLinkRequest } from "./claim-flow";
 import {
   frequencyToDays,
@@ -3883,12 +3890,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Store customer info for retail checkout (called before payment)
   // Requires active session to prevent abuse
+  const shipToSchema = z.object({
+    name: z.string().min(2),
+    address1: z.string().min(4),
+    address2: z.string().optional().nullable(),
+    city: z.string().min(2),
+    state: z.string().min(2),
+    zip: z.string().min(5),
+    phone: z.string().optional().nullable(),
+  });
+
   const customerInfoSchema = z.object({
     customerName: z.string().min(2),
     customerEmail: z.string().email(),
     customerPhone: z.string().min(10),
     paymentIntentId: z.string().optional(),
     flavorNotes: z.string().optional(),
+    // Shipping (owner, 2026-10-05): 'ship' needs an address; the server quotes
+    // and re-prices the payment intent here, so the client's figures never count.
+    fulfillmentMethod: z.enum(['pickup', 'ship']).optional(),
+    shipTo: shipToSchema.optional(),
+  });
+
+  /** Subtotal and deposit (cents) of the ONE-TIME lines in a session's cart — the
+   *  same arithmetic the payment-intent route uses, so a re-price agrees with it. */
+  async function oneTimeCartCents(sessionId: string): Promise<{ subtotalCents: number; depositCents: number; legacyItems: any[]; retailItems: any[] }> {
+    const legacyItems = await storage.getCartItems(sessionId);
+    const retailItems = await storage.getRetailCart(sessionId);
+    let subtotalCents = 0;
+    let depositCents = 0;
+    for (const item of legacyItems) {
+      const pricing = await getProductPricing(item.productId);
+      if (!pricing?.retailPrice) throw new Error(`Product ${item.productId} has no retail price`);
+      subtotalCents += Math.round(parseFloat(pricing.retailPrice) * 100) * item.quantity;
+    }
+    for (const item of retailItems) {
+      if (!item.retailProduct?.price) throw new Error(`Retail product ${item.retailProductId} has no price`);
+      let price = parseFloat(item.retailProduct.price);
+      if (item.isSubscription && item.retailProduct.subscriptionDiscount != null) {
+        const d = parseFloat(item.retailProduct.subscriptionDiscount.toString());
+        if (isFinite(d) && d > 0) price = price * (1 - d / 100);
+      }
+      subtotalCents += Math.round(price * 100) * item.quantity;
+      if (!item.isSubscription && item.retailProduct.deposit) {
+        const dep = parseFloat(item.retailProduct.deposit.toString());
+        if (isFinite(dep) && dep > 0) depositCents += Math.round(dep * 100) * item.quantity;
+      }
+    }
+    return { subtotalCents, depositCents, legacyItems, retailItems };
+  }
+
+  const shippingLinesOf = (retailItems: any[]) => retailItems.map((i: any) => ({
+    quantity: i.quantity,
+    retailProduct: { cansPerUnit: i.retailProduct?.cansPerUnit ?? null, canWeightOz: i.retailProduct?.canWeightOz ?? null, unitDescription: i.retailProduct?.unitDescription ?? null },
+  }));
+
+  const quoteSummary = (q: ShippingQuote) => ({
+    amount: q.totalCents / 100,
+    carrier: q.boxes[0]?.carrier ?? null,
+    service: q.boxes[0]?.service ?? null,
+    estimatedDays: q.estimatedDays,
+    shipDate: q.shipDate,
+    shipDateLabel: formatShipDate(q.shipDate),
+    boxes: q.boxes.map((b) => ({ name: b.boxName, cans: b.cans })),
+    stub: !!q.stub,
+  });
+
+  /** Can this session's cart ship at all? Drives the Pickup / Ship toggle at checkout. */
+  app.get("/api/checkout/shipping-options", async (req: any, res) => {
+    try {
+      const settings = await getShippingSettings();
+      const sessionId = req.sessionID || "guest";
+      const legacyItems = await storage.getCartItems(sessionId);
+      const retailItems = await storage.getRetailCart(sessionId);
+      const hasSubscription = legacyItems.some((i: any) => i.isSubscription) || retailItems.some((i: any) => i.isSubscription);
+      const summary = summarizeCans(shippingLinesOf(retailItems), legacyItems.length, settings);
+      const shipDate = nextShipDate(new Date(), settings.shipWeekday);
+      res.json({
+        enabled: settings.enabled,
+        shippable: settings.enabled && summary.shippable && !hasSubscription,
+        reason: !settings.enabled ? null : hasSubscription ? 'Subscriptions are pickup for now.' : summary.reason,
+        cans: summary.cans,
+        nextShipDate: shipDate.toISOString(),
+        nextShipDateLabel: formatShipDate(shipDate),
+        maxTransitDays: settings.maxTransitDays,
+        excludedStates: settings.excludedStates,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error checking shipping options: " + error.message });
+    }
+  });
+
+  /** Live preview while the address is typed. No side effects; cached with the real quote. */
+  app.post("/api/checkout/shipping-quote", async (req: any, res) => {
+    try {
+      // Preview only needs the address; the name is stand-in until the real submit.
+      const raw = shipToSchema.partial().extend({ name: z.string().optional() }).parse(req.body?.shipTo ?? req.body);
+      const to = validateShipTo({ ...raw, name: raw.name && raw.name.trim().length >= 2 ? raw.name : 'Customer' });
+      const sessionId = req.sessionID || "guest";
+      const settings = await getShippingSettings();
+      const { subtotalCents, legacyItems, retailItems } = await oneTimeCartCents(sessionId);
+      const quote = await quoteShipping({ retailLines: shippingLinesOf(retailItems), legacyLineCount: legacyItems.length, to, email: req.body?.email ?? null, settings });
+      const tax = await calculateShippedOrderTax(stripe, { subtotalCents, shippingCents: quote.totalCents, to, settings });
+      res.json({ shipping: quoteSummary(quote), taxAmount: tax.taxCents / 100, taxRateBps: tax.rateBps });
+    } catch (error: any) {
+      if (error instanceof ShippingError) return res.status(error.status).json({ message: error.message, code: error.code });
+      if (error.name === 'ZodError') return res.status(400).json({ message: "Please complete the shipping address.", code: 'address_incomplete' });
+      console.error("Shipping quote error:", error);
+      res.status(500).json({ message: "Couldn't get a shipping rate right now: " + error.message });
+    }
   });
 
   app.post("/api/checkout/customer-info", async (req: any, res) => {
@@ -3897,31 +4007,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.sessionID) {
         return res.status(401).json({ message: "Session required" });
       }
-      
+
       const validated = customerInfoSchema.parse(req.body);
       const sessionId = req.sessionID;
-      
+
       // Validate payment intent exists and belongs to this session if provided
       if (validated.paymentIntentId && !validated.paymentIntentId.startsWith('pi_')) {
         return res.status(400).json({ message: "Invalid payment intent ID" });
       }
-      
+
       // Fetch tax metadata from payment intent if available
       let taxMode = 'exclusive';
       let taxRateBps = 1035; // Default 10.35%
       let taxAmountCents = 0;
       let isTaxExempt = false;
-      
+      let paymentIntent: Stripe.PaymentIntent | null = null;
+
       if (validated.paymentIntentId && stripe) {
         try {
-          const paymentIntent = await stripe.paymentIntents.retrieve(validated.paymentIntentId);
-          
+          paymentIntent = await stripe.paymentIntents.retrieve(validated.paymentIntentId);
+
           // Extract tax information from metadata
           if (paymentIntent.metadata.taxRate) {
             const taxRate = parseFloat(paymentIntent.metadata.taxRate);
             taxRateBps = Math.round(taxRate * 10000); // Convert to basis points
           }
-          
+
           if (paymentIntent.metadata.taxAmount) {
             taxAmountCents = Math.round(parseFloat(paymentIntent.metadata.taxAmount) * 100);
           }
@@ -3930,7 +4041,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Continue with defaults if unable to fetch
         }
       }
-      
+
+      // --- Fulfillment (owner, 2026-10-05) ----------------------------------
+      // Ship: quote the boxes, tax by destination (Stripe Tax), and raise the
+      // intent to subtotal + deposit + shipping + tax. Pickup: make sure the
+      // intent is back at pickup pricing in case Ship was chosen then undone.
+      const fulfillmentMethod = validated.fulfillmentMethod === 'ship' ? 'ship' : 'pickup';
+      let shipTo: ReturnType<typeof validateShipTo> | null = null;
+      let shippingQuote: ShippingQuote | null = null;
+      let shippingCents = 0;
+      let shipDate: Date | null = null;
+      let taxCalculationId: string | null = null;
+      let totals: Record<string, unknown> | null = null;
+
+      if (paymentIntent && stripe && paymentIntent.status !== 'succeeded') {
+        const cart = await oneTimeCartCents(sessionId);
+        if (fulfillmentMethod === 'ship') {
+          if (!validated.shipTo) return res.status(400).json({ message: "Please enter a shipping address.", code: 'address_incomplete' });
+          shipTo = validateShipTo(validated.shipTo);
+          const settings = await getShippingSettings();
+          shippingQuote = await quoteShipping({ retailLines: shippingLinesOf(cart.retailItems), legacyLineCount: cart.legacyItems.length, to: shipTo, email: validated.customerEmail, settings });
+          shippingCents = shippingQuote.totalCents;
+          shipDate = new Date(shippingQuote.shipDate);
+          const tax = await calculateShippedOrderTax(stripe, { subtotalCents: cart.subtotalCents, shippingCents, to: shipTo, settings });
+          taxAmountCents = tax.taxCents;
+          taxRateBps = tax.rateBps;
+          taxCalculationId = tax.calculationId;
+          const amount = cart.subtotalCents + cart.depositCents + shippingCents + taxAmountCents;
+          paymentIntent = await stripe.paymentIntents.update(paymentIntent.id, {
+            amount,
+            metadata: {
+              ...paymentIntent.metadata,
+              fulfillment: 'ship',
+              shippingAmount: (shippingCents / 100).toFixed(2),
+              taxAmount: (taxAmountCents / 100).toFixed(2),
+              taxRate: (taxRateBps / 10000).toString(),
+              taxSource: tax.source,
+              shipTo: `${shipTo.city}, ${shipTo.state} ${shipTo.zip}`,
+            },
+          });
+          totals = {
+            subtotal: cart.subtotalCents / 100, depositAmount: cart.depositCents / 100,
+            shippingAmount: shippingCents / 100, taxAmount: taxAmountCents / 100, taxRateBps,
+            total: amount / 100, fulfillmentMethod, shipping: quoteSummary(shippingQuote),
+          };
+        } else {
+          const TAX_RATE = 0.1035;
+          const pickupTax = Math.round(cart.subtotalCents * TAX_RATE);
+          const amount = cart.subtotalCents + cart.depositCents + pickupTax;
+          taxAmountCents = pickupTax;
+          taxRateBps = Math.round(TAX_RATE * 10000);
+          if (paymentIntent.amount !== amount || paymentIntent.metadata.fulfillment === 'ship') {
+            paymentIntent = await stripe.paymentIntents.update(paymentIntent.id, {
+              amount,
+              metadata: { ...paymentIntent.metadata, fulfillment: 'pickup', shippingAmount: '0.00', taxAmount: (pickupTax / 100).toFixed(2), taxRate: TAX_RATE.toString(), taxSource: 'flat', shipTo: '' },
+            });
+          }
+          totals = {
+            subtotal: cart.subtotalCents / 100, depositAmount: cart.depositCents / 100,
+            shippingAmount: 0, taxAmount: pickupTax / 100, taxRateBps, total: amount / 100, fulfillmentMethod, shipping: null,
+          };
+        }
+      } else if (fulfillmentMethod === 'ship') {
+        return res.status(400).json({ message: "Shipping needs a live payment to price. Please reload the checkout." });
+      }
+
+      // One snapshot per intent: "Edit Information" re-submits, and the webhook
+      // must find the LATEST (a stale ship row under a pickup re-price would
+      // mis-verify the amount).
+      if (validated.paymentIntentId) {
+        await db.delete(retailCheckoutSessions).where(eq(retailCheckoutSessions.paymentIntentId, validated.paymentIntentId));
+      }
+
       await storage.createRetailCheckoutSession({
         sessionId,
         paymentIntentId: validated.paymentIntentId || null,
@@ -3943,10 +4125,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         taxAmountCents,
         isTaxExempt,
         notes: validated.flavorNotes || null,
+        fulfillmentMethod,
+        shipName: shipTo?.name ?? null,
+        shipAddress1: shipTo?.address1 ?? null,
+        shipAddress2: shipTo?.address2 ?? null,
+        shipCity: shipTo?.city ?? null,
+        shipState: shipTo?.state ?? null,
+        shipZip: shipTo?.zip ?? null,
+        shipPhone: shipTo?.phone ? formatPhoneNumber(shipTo.phone) : null,
+        shippingCents,
+        shippingQuote: shippingQuote as any,
+        shipDate,
+        stripeTaxCalculationId: taxCalculationId,
       });
-      
-      res.json({ success: true });
+
+      res.json({ success: true, totals });
     } catch (error: any) {
+      if (error instanceof ShippingError) return res.status(error.status).json({ message: error.message, code: error.code });
       console.error("Error storing customer info:", error);
       res.status(500).json({ message: "Error storing customer info: " + error.message });
     }
@@ -5380,15 +5575,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const storedTaxAmountCents = checkoutSession.tax_amount_cents || 0;
                 const storedTaxRateBps = checkoutSession.tax_rate_bps || 1035;
                 const isTaxExempt = checkoutSession.is_tax_exempt || false;
-                
+                const isShipped = checkoutSession.fulfillment_method === 'ship';
+                const shippingCents: number = isShipped ? (checkoutSession.shipping_cents || 0) : 0;
+
                 // Calculate expected tax from stored rate for verification (tax on subtotal ONLY, not deposits)
                 let recomputedTaxCents = 0;
-                if (!isTaxExempt && storedTaxRateBps > 0) {
+                if (isShipped) {
+                  // Shipped (owner, 2026-10-05): tax was computed server-side by
+                  // destination (Stripe Tax) in the step that raised the intent, and
+                  // stored on this row with the shipping charge — a flat rate would be
+                  // wrong anywhere but Seattle, so the stored figure IS the check.
+                  recomputedTaxCents = storedTaxAmountCents;
+                } else if (!isTaxExempt && storedTaxRateBps > 0) {
                   const taxRate = storedTaxRateBps / 10000; // Convert basis points to decimal
                   recomputedTaxCents = Math.round(recomputedSubtotalCents * taxRate);
                 }
-                
-                const recomputedTotalCents = recomputedSubtotalCents + recomputedTaxCents + recomputedDepositCents;
+
+                const recomputedTotalCents = recomputedSubtotalCents + recomputedTaxCents + recomputedDepositCents + shippingCents;
                 
                 // 🔒 SECURITY: Verify Stripe amount matches recomputed total (subtotal + tax + deposit)
                 if (Math.abs(paymentIntent.amount - recomputedTotalCents) > 1) {
@@ -5407,12 +5610,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const isSubscriptionOrder = cartItems.some(item => item.isSubscription) || 
                                             retailItems.some(item => item.isSubscription);
                 
-                // Create retail order using verified amounts
+                // Create retail order using verified amounts. A shipped order lands on
+                // its Monday ship day (pickup_date doubles as the scheduled day) with
+                // the destination and the frozen quote the labels will be bought from.
                 const orderResult = await client.query(
                   `INSERT INTO retail_orders (
                     order_number, user_id, customer_name, customer_email, customer_phone,
-                    status, subtotal, tax_amount, deposit_amount, total_amount, stripe_payment_intent_id, is_subscription_order, notes
-                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+                    status, subtotal, tax_amount, deposit_amount, total_amount, stripe_payment_intent_id, is_subscription_order, notes,
+                    fulfillment_method, ship_name, ship_address1, ship_address2, ship_city, ship_state, ship_zip, ship_phone,
+                    shipping_amount, shipping_quote, pickup_date, stripe_tax_calculation_id
+                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) RETURNING id`,
                   [
                     orderNumber,
                     checkoutSession.user_id,
@@ -5426,11 +5633,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     (recomputedTotalCents / 100).toFixed(2),
                     paymentIntent.id,
                     isSubscriptionOrder,
-                    checkoutSession.notes || null
+                    checkoutSession.notes || null,
+                    isShipped ? 'ship' : 'pickup',
+                    isShipped ? checkoutSession.ship_name : null,
+                    isShipped ? checkoutSession.ship_address1 : null,
+                    isShipped ? checkoutSession.ship_address2 : null,
+                    isShipped ? checkoutSession.ship_city : null,
+                    isShipped ? checkoutSession.ship_state : null,
+                    isShipped ? checkoutSession.ship_zip : null,
+                    isShipped ? checkoutSession.ship_phone : null,
+                    (shippingCents / 100).toFixed(2),
+                    isShipped && checkoutSession.shipping_quote ? JSON.stringify(checkoutSession.shipping_quote) : null,
+                    // The quote's ISO string, not the Date pg parsed from ship_date: this
+                    // table's timestamps are naive UTC (drizzle writes toISOString()), and a
+                    // Date param here would be serialised in server-local time — 7 hours
+                    // early, which filed the order under the PREVIOUS board week.
+                    isShipped ? ((checkoutSession.shipping_quote as ShippingQuote | null)?.shipDate ?? null) : null,
+                    isShipped ? (checkoutSession.stripe_tax_calculation_id ?? null) : null,
                   ]
                 );
-                
+
                 const orderId = orderResult.rows[0].id;
+
+                // Register the Stripe Tax calculation as a transaction so the sale
+                // shows in Stripe's tax reports (best effort, after the order exists).
+                if (isShipped && checkoutSession.stripe_tax_calculation_id) {
+                  commitStripeTaxTransaction(stripe, checkoutSession.stripe_tax_calculation_id, orderNumber)
+                    .then(async (txId) => { if (txId) await db.update(retailOrders).set({ stripeTaxTransactionId: txId }).where(eq(retailOrders.id, orderId)); })
+                    .catch((e) => console.warn(`[WEBHOOK] tax transaction for ${orderNumber}: ${e?.message ?? e}`));
+                }
+                const shippingForEmail = isShipped ? {
+                  amount: shippingCents / 100,
+                  name: checkoutSession.ship_name ?? checkoutSession.customer_name,
+                  addressLines: [
+                    [checkoutSession.ship_address1, checkoutSession.ship_address2].filter(Boolean).join(', '),
+                    `${checkoutSession.ship_city}, ${checkoutSession.ship_state} ${checkoutSession.ship_zip}`,
+                  ],
+                  shipDate: checkoutSession.ship_date ? formatShipDate(checkoutSession.ship_date) : 'Monday',
+                  service: (() => { const q = checkoutSession.shipping_quote as ShippingQuote | null; const b = q?.boxes?.[0]; return b ? `${b.carrier} ${b.service}` : 'carrier'; })(),
+                } : undefined;
                 
                 // Create legacy order items
                 for (const item of cartItems) {
@@ -5532,6 +5773,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   depositAmount: recomputedDepositCents > 0 ? recomputedDepositCents / 100 : undefined,
                   total: recomputedTotalCents / 100,
                   orderType: isSubscriptionOrder ? 'subscription' : 'one-time',
+                  shipping: shippingForEmail,
                 }).catch(emailError => {
                   console.error(`[WEBHOOK] Failed to send order receipt email for ${orderNumber}:`, emailError);
                   // Don't fail the webhook if email fails
@@ -8079,10 +8321,242 @@ If you have any questions, please don't hesitate to reach out!`,
       const [, year, month, day] = dateMatch;
       const pickupDate = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day)));
 
-      const orders = await storage.getRetailOrdersByPickupDate(pickupDate);
+      // Shipped orders share the date column (their ship day) but are not pickups.
+      const orders = (await storage.getRetailOrdersByPickupDate(pickupDate)).filter((o) => o.fulfillmentMethod !== 'ship');
       res.json(orders);
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching pickup report: " + error.message });
+    }
+  });
+
+  // ===========================================================================
+  // Retail shipping (owner, 2026-10-05) — settings, boxes, Monday labels, tracking
+  // ===========================================================================
+
+  app.get("/api/admin/shipping/settings", isAuthenticated, isAdmin, async (_req, res) => {
+    try {
+      const [settings, boxes] = await Promise.all([getShippingSettings(), getAllBoxes()]);
+      let stripeTax: { status: string; detail?: string } = { status: 'unknown' };
+      if (stripe) {
+        try {
+          const ts = await stripe.tax.settings.retrieve();
+          stripeTax = { status: ts.status, detail: ts.status === 'active' ? undefined : 'Finish Stripe Tax setup in the Stripe Dashboard (origin address + registrations). Until then shipped orders fall back to the WA flat rate.' };
+        } catch (e: any) {
+          stripeTax = { status: 'unavailable', detail: e?.message };
+        }
+      } else {
+        stripeTax = { status: 'no_stripe' };
+      }
+      res.json({ settings, boxes, provider: shippingProviderStatus(), stripeTax, nextShipDate: nextShipDate(new Date(), settings.shipWeekday).toISOString() });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error loading shipping settings: " + error.message });
+    }
+  });
+
+  app.put("/api/admin/shipping/settings", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const patch = z.object({
+        enabled: z.boolean().optional(),
+        shipFrom: z.object({ name: z.string(), company: z.string(), street1: z.string(), city: z.string(), state: z.string(), zip: z.string(), phone: z.string(), email: z.string() }).partial().optional(),
+        shipWeekday: z.number().int().min(0).max(6).optional(),
+        maxTransitDays: z.number().int().min(1).max(7).optional(),
+        flatFeeCents: z.number().int().min(0).optional(),
+        markupPercent: z.number().min(0).max(200).optional(),
+        excludedStates: z.array(z.string()).optional(),
+        stripeTaxCode: z.string().optional(),
+        defaultCanWeightOz: z.number().min(1).max(64).optional(),
+      }).parse(req.body);
+      const settings = await saveShippingSettings(patch as any);
+      res.json({ settings });
+    } catch (error: any) {
+      if (error.name === 'ZodError') return res.status(400).json({ message: "Validation error", errors: error.errors });
+      res.status(500).json({ message: "Error saving shipping settings: " + error.message });
+    }
+  });
+
+  const boxBodySchema = insertShippingBoxSchema.extend({
+    lengthIn: z.coerce.number().positive(), widthIn: z.coerce.number().positive(), heightIn: z.coerce.number().positive(),
+    tareWeightOz: z.coerce.number().min(0), icePackWeightOz: z.coerce.number().min(0),
+    canCapacity: z.coerce.number().int().positive(), icePackCount: z.coerce.number().int().min(0),
+    packagingFeeCents: z.coerce.number().int().min(0), displayOrder: z.coerce.number().int().optional(),
+  });
+  const boxRow = (b: z.infer<typeof boxBodySchema>) => ({
+    ...b,
+    lengthIn: b.lengthIn.toFixed(2), widthIn: b.widthIn.toFixed(2), heightIn: b.heightIn.toFixed(2),
+    tareWeightOz: b.tareWeightOz.toFixed(2), icePackWeightOz: b.icePackWeightOz.toFixed(2),
+  });
+
+  app.post("/api/admin/shipping/boxes", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const body = boxBodySchema.parse(req.body);
+      const [box] = await db.insert(shippingBoxes).values(boxRow(body)).returning();
+      await saveShippingSettings({}); // bump version: quotes cached against the old box set are stale
+      res.json(box);
+    } catch (error: any) {
+      if (error.name === 'ZodError') return res.status(400).json({ message: "Validation error", errors: error.errors });
+      res.status(500).json({ message: "Error adding box: " + error.message });
+    }
+  });
+
+  app.patch("/api/admin/shipping/boxes/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const body = boxBodySchema.partial().parse(req.body);
+      const set: Record<string, unknown> = { ...body };
+      for (const k of ['lengthIn', 'widthIn', 'heightIn', 'tareWeightOz', 'icePackWeightOz'] as const) {
+        if (body[k] !== undefined) set[k] = (body[k] as number).toFixed(2);
+      }
+      const [box] = await db.update(shippingBoxes).set(set as any).where(eq(shippingBoxes.id, req.params.id)).returning();
+      if (!box) return res.status(404).json({ message: "Box not found" });
+      await saveShippingSettings({});
+      res.json(box);
+    } catch (error: any) {
+      if (error.name === 'ZodError') return res.status(400).json({ message: "Validation error", errors: error.errors });
+      res.status(500).json({ message: "Error updating box: " + error.message });
+    }
+  });
+
+  // Retire rather than delete: paid orders' quotes name the box by id and labels
+  // may still be re-rated against it.
+  app.delete("/api/admin/shipping/boxes/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const [box] = await db.update(shippingBoxes).set({ isActive: false }).where(eq(shippingBoxes.id, req.params.id)).returning();
+      if (!box) return res.status(404).json({ message: "Box not found" });
+      await saveShippingSettings({});
+      res.json(box);
+    } catch (error: any) {
+      res.status(500).json({ message: "Error retiring box: " + error.message });
+    }
+  });
+
+  /** "What would N cans to this address cost?" — the owner's sanity check on the settings page. */
+  app.post("/api/admin/shipping/test-quote", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const body = z.object({ cans: z.coerce.number().int().positive(), shipTo: shipToSchema, subtotal: z.coerce.number().min(0).optional() }).parse(req.body);
+      const settings = await getShippingSettings();
+      const quote = await quoteShipping({
+        retailLines: [{ quantity: body.cans, retailProduct: { cansPerUnit: 1, canWeightOz: settings.defaultCanWeightOz } }],
+        legacyLineCount: 0,
+        to: validateShipTo(body.shipTo),
+        settings: { ...settings, enabled: true },
+      });
+      const tax = await calculateShippedOrderTax(stripe, { subtotalCents: Math.round((body.subtotal ?? 0) * 100), shippingCents: quote.totalCents, to: validateShipTo(body.shipTo), settings });
+      res.json({ quote, tax });
+    } catch (error: any) {
+      if (error instanceof ShippingError) return res.status(error.status).json({ message: error.message, code: error.code });
+      if (error.name === 'ZodError') return res.status(400).json({ message: "Please complete the address and can count." });
+      res.status(500).json({ message: "Test quote failed: " + error.message });
+    }
+  });
+
+  /** Buy labels for one shipped order and mark it shipped (fulfilled → stock deducts). */
+  async function shipOrder(orderId: string, userId: string | undefined): Promise<{ order: any; labels: ShippingLabel[]; alreadyHad: boolean }> {
+    const bought = await purchaseLabelsForOrder(orderId);
+    const order = await storage.updateRetailOrderStatus(orderId, 'fulfilled', userId);
+    if (!bought.alreadyHad && order) {
+      const { sendOrderShippedEmail } = await import('./email');
+      sendOrderShippedEmail({
+        customerEmail: order.customerEmail,
+        customerName: order.customerName,
+        orderNumber: order.orderNumber,
+        addressLines: [
+          order.shipName ?? order.customerName,
+          [order.shipAddress1, order.shipAddress2].filter(Boolean).join(', '),
+          `${order.shipCity}, ${order.shipState} ${order.shipZip}`,
+        ],
+        packages: bought.labels.map((l) => ({ carrier: l.carrier, service: l.service, trackingNumber: l.trackingNumber, trackingUrl: l.trackingUrl, boxName: l.boxName })),
+      }).catch((e) => console.error(`[SHIPPING] shipped email for ${order.orderNumber}:`, e));
+    }
+    return { order, labels: bought.labels, alreadyHad: bought.alreadyHad };
+  }
+
+  app.post("/api/staff/shipping/orders/:id/labels", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
+    try {
+      const result = await shipOrder(req.params.id, req.user?.id);
+      res.json(result);
+    } catch (error: any) {
+      if (error instanceof ShippingError) return res.status(error.status).json({ message: error.message, code: error.code });
+      console.error("Label purchase error:", error);
+      res.status(500).json({ message: "Couldn't buy the label: " + error.message });
+    }
+  });
+
+  /** The week's shipped orders: open ones due by the week's end (the batch to pack), and
+   *  ones already shipped within it (for the PDF/CSV after the fact). */
+  async function shipOrdersForWeek(weekOffset: number, which: 'open' | 'all') {
+    const { start, end } = getPacificWeekRange(weekOffset);
+    const openClause = and(inArray(retailOrders.status, ['pending', 'packed']), lt(retailOrders.pickupDate, end));
+    const where = and(
+      isNull(retailOrders.deletedAt),
+      eq(retailOrders.fulfillmentMethod, 'ship'),
+      ne(retailOrders.status, 'cancelled'),
+      which === 'open'
+        ? openClause
+        : or(openClause, and(gte(retailOrders.pickupDate, start), lt(retailOrders.pickupDate, end)), and(gte(retailOrders.shippedAt, start), lt(retailOrders.shippedAt, end))),
+    );
+    return db.select().from(retailOrders).where(where).orderBy(asc(retailOrders.customerName), asc(retailOrders.orderNumber));
+  }
+
+  /** Monday: buy every open label in the batch. Failures are reported per order, never hidden. */
+  app.post("/api/staff/shipping/batch/labels", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
+    try {
+      const weekOffset = Math.max(-4, Math.min(4, Number(req.body?.weekOffset) || 0));
+      const orders = await shipOrdersForWeek(weekOffset, 'open');
+      const bought: Array<{ orderNumber: string; labels: number }> = [];
+      const failed: Array<{ orderNumber: string; message: string }> = [];
+      for (const o of orders) {
+        try {
+          const r = await shipOrder(o.id, req.user?.id);
+          bought.push({ orderNumber: o.orderNumber, labels: r.labels.length });
+        } catch (e: any) {
+          failed.push({ orderNumber: o.orderNumber, message: e?.message ?? String(e) });
+        }
+      }
+      res.json({ bought, failed, total: orders.length });
+    } catch (error: any) {
+      res.status(500).json({ message: "Batch failed: " + error.message });
+    }
+  });
+
+  app.get("/api/staff/shipping/batch/labels.pdf", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const weekOffset = Math.max(-26, Math.min(26, Number(req.query.weekOffset) || 0));
+      const orders = (await shipOrdersForWeek(weekOffset, 'all')).filter((o) => ((o.shippingLabels as ShippingLabel[] | null) ?? []).length > 0);
+      const contents = await contentsForOrders(orders.map((o) => o.id));
+      const pdf = await buildLabelsPdf(orders, contents);
+      const { mondayISO } = getPacificWeekRange(weekOffset);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="shipping-labels-${mondayISO}.pdf"`);
+      res.send(pdf);
+    } catch (error: any) {
+      res.status(500).json({ message: "Couldn't build the labels PDF: " + error.message });
+    }
+  });
+
+  app.get("/api/staff/shipping/batch/stickers.csv", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const weekOffset = Math.max(-26, Math.min(26, Number(req.query.weekOffset) || 0));
+      const orders = await shipOrdersForWeek(weekOffset, 'all');
+      const contents = await contentsForOrders(orders.map((o) => o.id));
+      const { mondayISO } = getPacificWeekRange(weekOffset);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="shipping-stickers-${mondayISO}.csv"`);
+      res.send(buildStickersCsv(orders, contents));
+    } catch (error: any) {
+      res.status(500).json({ message: "Couldn't build the stickers CSV: " + error.message });
+    }
+  });
+
+  // Shippo tracking webhook. Shippo doesn't sign payloads; the shared token in the
+  // URL (SHIPPO_WEBHOOK_TOKEN) is the gate. Always 200 so Shippo doesn't retry forever.
+  app.post("/api/webhooks/shippo", async (req, res) => {
+    const expected = process.env.SHIPPO_WEBHOOK_TOKEN;
+    if (!expected || req.query.token !== expected) return res.status(403).json({ message: "Forbidden" });
+    try {
+      const result = await handleTrackingUpdate(req.body);
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      console.error('[SHIPPING] tracking webhook:', e);
+      res.json({ ok: false });
     }
   });
 
@@ -8140,7 +8614,23 @@ If you have any questions, please don't hesitate to reach out!`,
           kind: 'retail' as const,
           title: o.customerName,
           reference: o.orderNumber,
-          tag: o.isSubscriptionOrder ? 'Subscription' : null,
+          // Shipped orders (owner, 2026-10-05) say where they're going; the client
+          // keeps them in a Ship lane with their own status flow.
+          fulfillment: (o.fulfillmentMethod === 'ship' ? 'ship' : 'pickup') as 'ship' | 'pickup',
+          shipping: o.fulfillmentMethod === 'ship' ? (() => {
+            const q = o.shippingQuote as ShippingQuote | null;
+            const labels = (o.shippingLabels as ShippingLabel[] | null) ?? [];
+            return {
+              destination: [o.shipCity, o.shipState].filter(Boolean).join(', '),
+              boxes: q?.boxes.map((b) => ({ name: b.boxName, cans: b.cans })) ?? [],
+              service: q?.boxes[0] ? `${q.boxes[0].carrier} ${q.boxes[0].service}` : null,
+              labels: labels.map((l) => ({ trackingNumber: l.trackingNumber, trackingUrl: l.trackingUrl, boxName: l.boxName })),
+              shipDate: o.pickupDate ? o.pickupDate.toISOString() : null,
+            };
+          })() : null,
+          tag: o.fulfillmentMethod === 'ship'
+            ? `Ships ${o.pickupDate ? formatShipDate(o.pickupDate) : 'Monday'}`
+            : o.isSubscriptionOrder ? 'Subscription' : null,
           // An open order with no pickup date — or one whose date already slipped —
           // lands on TODAY, every day, until someone fulfils it (owner, 2026-08-30).
           // A future pickup date still files under its planned day.
@@ -8172,6 +8662,8 @@ If you have any questions, please don't hesitate to reach out!`,
         ...wholesale.map(o => ({
           id: o.id,
           kind: 'wholesale' as const,
+          fulfillment: (o.fulfillmentMethod === 'pickup' ? 'pickup' : 'delivery') as 'pickup' | 'delivery',
+          shipping: null,
           title: o.locationName && o.locationName !== 'Main Location' ? `${o.businessName} — ${o.locationName}` : o.businessName,
           reference: o.invoiceNumber,
           // Pickup is called out explicitly — staff must not stage it onto a delivery run.
@@ -9766,7 +10258,8 @@ If you have any questions, please don't hesitate to reach out!`,
   app.patch("/api/retail/orders/:id/status", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const statusSchema = z.object({
-        status: z.enum(['pending', 'ready_for_pickup', 'fulfilled', 'cancelled']),
+        // 'packed' is the shipped-order middle step (owner, 2026-10-05).
+        status: z.enum(['pending', 'ready_for_pickup', 'packed', 'fulfilled', 'cancelled']),
       });
       
       const parsed = statusSchema.safeParse(req.body);

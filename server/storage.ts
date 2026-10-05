@@ -260,7 +260,7 @@ export interface IStorage {
   getWholesaleOrdersByDeliveryDate(deliveryDate: Date): Promise<WholesaleOrder[]>;
   getWholesaleOrdersByDeliveryDateRange(startDate: Date, endDate: Date): Promise<WholesaleOrder[]>;
   getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean; completedOnly?: boolean }): Promise<{
-    retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; notes: string | null; items: Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }> }>;
+    retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; notes: string | null; fulfillmentMethod: string; shipCity: string | null; shipState: string | null; shippingQuote: unknown; shippingLabels: unknown; items: Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }> }>;
     wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; locationName: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; notes: string | null; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
   }>;
   getWholesaleOrdersByCustomerId(customerId: string): Promise<Array<WholesaleOrder & { items: Array<WholesaleOrderItem & { productName: string | null; unitTypeName: string | null; flavorName: string | null }> }>>;
@@ -3087,7 +3087,7 @@ export class PostgresStorage implements IStorage {
    * retail orders are excluded (nothing to prepare); soft-deleted rows are always excluded.
    */
   async getWeeklyBoardOrders(start: Date, end: Date, opts?: { retailBacklog?: boolean; completedOnly?: boolean }): Promise<{
-    retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; notes: string | null; items: Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }> }>;
+    retail: Array<{ id: string; orderNumber: string; customerName: string; pickupDate: Date | null; orderDate: Date; status: string; isSubscriptionOrder: boolean; totalAmount: string; notes: string | null; fulfillmentMethod: string; shipCity: string | null; shipState: string | null; shippingQuote: unknown; shippingLabels: unknown; items: Array<{ flavorName: string; unitDescription: string; quantity: number; notes: string | null }> }>;
     wholesale: Array<{ id: string; invoiceNumber: string; businessName: string; city: string | null; locationName: string | null; fulfillmentMethod: string; deliveryDate: Date | null; orderDate: Date; status: string; totalAmount: string; notes: string | null; items: Array<{ unitTypeName: string; flavorName: string; quantity: number }> }>;
   }> {
     // --- Retail (by pickupDate) ---
@@ -3165,6 +3165,13 @@ export class PostgresStorage implements IStorage {
       isSubscriptionOrder: o.isSubscriptionOrder,
       totalAmount: o.totalAmount,
       notes: o.notes,
+      // Shipped orders (owner, 2026-10-05) carry their destination and label state
+      // so the board can show the Ship lane and the Monday batch buttons.
+      fulfillmentMethod: o.fulfillmentMethod ?? 'pickup',
+      shipCity: o.shipCity ?? null,
+      shipState: o.shipState ?? null,
+      shippingQuote: o.shippingQuote ?? null,
+      shippingLabels: o.shippingLabels ?? null,
       items: retailItemsByOrder.get(o.id) || [],
     }));
 

@@ -10,8 +10,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Loader2, LogIn } from "lucide-react";
+import { ArrowLeft, Loader2, LogIn, Store, Truck } from "lucide-react";
 import { frequencyLabel } from "@shared/subscription-frequency";
+import { formatShipDate } from "@shared/shipping-policy";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -33,6 +34,10 @@ const customerSchema = z.object({
   city: z.string().min(2, "Please enter your city"),
   state: z.string().min(2, "Please enter your state"),
   zipCode: z.string().min(5, "Please enter a valid ZIP code"),
+  // Pickup at the brewery, or ship (owner, 2026-10-05: cans only, cold-packed,
+  // Mondays). When shipping, the address above is the shipping address.
+  fulfillmentMethod: z.enum(['pickup', 'ship']).default('pickup'),
+  address2: z.string().optional(),
   password: z.string().optional(),
   confirmPassword: z.string().optional(),
   flavorNotes: z.string().optional(),
@@ -79,6 +84,17 @@ interface CartItemWithProduct {
   };
 }
 
+interface ShippingSummary {
+  amount: number;
+  carrier: string | null;
+  service: string | null;
+  estimatedDays: number | null;
+  shipDate: string;
+  shipDateLabel: string;
+  boxes: Array<{ name: string; cans: number }>;
+  stub: boolean;
+}
+
 interface PaymentIntentResponse {
   clientSecret: string;
   subtotal: number;
@@ -86,9 +102,34 @@ interface PaymentIntentResponse {
   taxAmount: number;
   depositAmount: number;
   total: number;
+  // Shipping (owner, 2026-10-05). Pickup orders carry 0 / null.
+  shippingAmount?: number;
+  fulfillmentMethod?: 'pickup' | 'ship';
+  shipping?: ShippingSummary | null;
 }
 
-function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentIntentResponse; isSubscription: boolean }) {
+interface ShippingOptions {
+  enabled: boolean;
+  shippable: boolean;
+  reason: string | null;
+  cans: number;
+  nextShipDate: string;
+  nextShipDateLabel: string;
+  maxTransitDays: number;
+}
+
+type QuotePreview =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ok'; shipping: ShippingSummary; taxAmount: number }
+  | { status: 'error'; message: string };
+
+function CheckoutForm({ paymentInfo, isSubscription, shippingOptions, onTotals }: {
+  paymentInfo: PaymentIntentResponse;
+  isSubscription: boolean;
+  shippingOptions: ShippingOptions | undefined;
+  onTotals: (totals: Partial<PaymentIntentResponse>) => void;
+}) {
   // Flavor preferences only apply when a mixed/variety pack is in the order.
   const stripe = useStripe();
   const elements = useElements();
@@ -100,8 +141,10 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
   const [step, setStep] = useState<'info' | 'payment'>('info');
   const [emailExists, setEmailExists] = useState(false);
   const [checkingEmail, setCheckingEmail] = useState(false);
+  const [quote, setQuote] = useState<QuotePreview>({ status: 'idle' });
 
   const isLoggedIn = !!user;
+  const canShip = !isSubscription && !!shippingOptions?.shippable;
 
   const form = useForm<CustomerForm>({
     resolver: zodResolver(customerSchema),
@@ -113,13 +156,35 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
       city: "",
       state: "",
       zipCode: "",
+      fulfillmentMethod: "pickup",
+      address2: "",
       password: "",
       confirmPassword: "",
       flavorNotes: "",
     },
   });
-  
+
   const customerEmail = form.watch("customerEmail");
+  const fulfillment = form.watch("fulfillmentMethod");
+  const watchedAddress = form.watch(["customerName", "address", "address2", "city", "state", "zipCode"]);
+
+  // Live shipping preview: once the address is complete, ask the server what the
+  // boxes will cost to this address (debounced; the server caches the quote so the
+  // authoritative call at "Continue to Payment" agrees with what was shown).
+  useEffect(() => {
+    if (fulfillment !== 'ship' || !canShip) { setQuote({ status: 'idle' }); return; }
+    const [name, address1, address2, city, state, zip] = watchedAddress;
+    if (!address1 || address1.length < 4 || !city || !state || !/^\d{5}(-\d{4})?$/.test(zip ?? '')) { setQuote({ status: 'idle' }); return; }
+    let cancelled = false;
+    setQuote({ status: 'loading' });
+    const timer = setTimeout(() => {
+      apiRequest("POST", "/api/checkout/shipping-quote", { shipTo: { name: name || 'Customer', address1, address2, city, state, zip } })
+        .then((r) => { if (!cancelled) setQuote({ status: 'ok', shipping: r.shipping, taxAmount: r.taxAmount }); })
+        .catch((err) => { if (!cancelled) setQuote({ status: 'error', message: err?.message || "Couldn't get a shipping rate." }); });
+    }, 600);
+    return () => { cancelled = true; clearTimeout(timer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fulfillment, canShip, ...watchedAddress]);
 
   // Pre-fill form with user data if logged in
   useEffect(() => {
@@ -183,17 +248,35 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
         return;
       }
 
-      // For one-time purchases, store customer info with payment intent
+      // For one-time purchases, store customer info with payment intent. Shipping
+      // is quoted and the intent re-priced server-side here; the returned totals
+      // replace the pickup figures shown so far.
       const paymentIntentId = paymentInfo.clientSecret.split('_secret_')[0];
-      
-      await apiRequest("POST", "/api/checkout/customer-info", {
+      const shipping = data.fulfillmentMethod === 'ship' && canShip;
+
+      const result = await apiRequest("POST", "/api/checkout/customer-info", {
         customerName: data.customerName,
         customerEmail: data.customerEmail,
         customerPhone: data.customerPhone,
         paymentIntentId,
         flavorNotes: data.flavorNotes,
+        fulfillmentMethod: shipping ? 'ship' : 'pickup',
+        shipTo: shipping ? {
+          name: data.customerName,
+          address1: data.address,
+          address2: data.address2 || null,
+          city: data.city,
+          state: data.state,
+          zip: data.zipCode,
+          phone: data.customerPhone,
+        } : undefined,
       });
-      
+      if (result?.totals) {
+        onTotals(result.totals);
+        // The Payment Element was mounted against the old amount; wallets read it.
+        try { await elements?.fetchUpdates(); } catch { /* card fields don't need it */ }
+      }
+
       setCustomerInfo(data);
       setStep('payment');
     } catch (error: any) {
@@ -412,9 +495,40 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
             )}
           </div>
 
+          {!isSubscription && shippingOptions?.enabled && (
+            <div className="border-t pt-4 mt-4" data-testid="section-fulfillment">
+              <h3 className="font-medium mb-3">How would you like your order?</h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => form.setValue("fulfillmentMethod", "pickup", { shouldDirty: true })}
+                  className={`rounded-lg border p-4 text-left transition-colors ${fulfillment === 'pickup' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}
+                  data-testid="button-fulfillment-pickup"
+                >
+                  <div className="flex items-center gap-2 font-medium"><Store className="w-4 h-4" />Pick up in Ballard</div>
+                  <p className="text-sm text-muted-foreground mt-1">Free · Mon–Thu, 9am–3pm</p>
+                </button>
+                <button
+                  type="button"
+                  disabled={!canShip}
+                  onClick={() => form.setValue("fulfillmentMethod", "ship", { shouldDirty: true })}
+                  className={`rounded-lg border p-4 text-left transition-colors ${fulfillment === 'ship' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'} disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-transparent`}
+                  data-testid="button-fulfillment-ship"
+                >
+                  <div className="flex items-center gap-2 font-medium"><Truck className="w-4 h-4" />Ship to me</div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {canShip
+                      ? `Cold-packed with ice · ships ${shippingOptions.nextShipDateLabel}`
+                      : (shippingOptions.reason ?? 'Not available for this cart')}
+                  </p>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="border-t pt-4 mt-4">
-            {/* Billing only — retail is pickup, so there's no shipping address to collect. */}
-            <h3 className="font-medium mb-4">Billing Address</h3>
+            {/* Pickup orders collect the card's billing address; shipped orders ship to it. */}
+            <h3 className="font-medium mb-4">{fulfillment === 'ship' && canShip ? 'Shipping Address' : 'Billing Address'}</h3>
             <Form {...form}>
               <AddressAutofillFields
                 addressValue={form.watch("address") || ""}
@@ -439,6 +553,32 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
                 zipError={form.formState.errors.zipCode?.message}
               />
             </Form>
+            {fulfillment === 'ship' && canShip && (
+              <div className="mt-3 space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="address2">Apt, suite, etc. (optional)</Label>
+                  <Input id="address2" {...form.register("address2")} data-testid="input-address2" />
+                </div>
+                <div className="rounded-md border bg-muted/40 p-3 text-sm" data-testid="text-shipping-preview">
+                  {quote.status === 'idle' && <span className="text-muted-foreground">Enter your address to see the shipping cost.</span>}
+                  {quote.status === 'loading' && <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Getting a rate…</span>}
+                  {quote.status === 'error' && <span className="text-destructive">{quote.message}</span>}
+                  {quote.status === 'ok' && (
+                    <>
+                      <div className="flex justify-between font-medium">
+                        <span>Shipping &amp; handling</span>
+                        <span>${quote.shipping.amount.toFixed(2)}</span>
+                      </div>
+                      <p className="text-muted-foreground mt-1">
+                        {quote.shipping.boxes.map((b) => b.name).join(' + ')} · {quote.shipping.carrier} {quote.shipping.service}
+                        {quote.shipping.estimatedDays != null ? ` · ${quote.shipping.estimatedDays}-day transit` : ''} · ships {quote.shipping.shipDateLabel}
+                      </p>
+                      <p className="text-muted-foreground mt-1">Packed cold with ice packs. Please refrigerate on arrival.</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* No flavor-preference prompt (owner, 2026-09-02): a mixed case is a fixed
@@ -487,13 +627,13 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
             </div>
           )}
         </div>
-        <Button 
-          type="submit" 
-          className="w-full" 
-          disabled={emailExists || checkingEmail}
+        <Button
+          type="submit"
+          className="w-full"
+          disabled={emailExists || checkingEmail || (fulfillment === 'ship' && canShip && quote.status !== 'ok')}
           data-testid="button-continue-to-payment"
         >
-          {checkingEmail ? "Checking email..." : "Continue to Payment"}
+          {checkingEmail ? "Checking email..." : fulfillment === 'ship' && canShip && quote.status === 'loading' ? "Getting shipping rate..." : "Continue to Payment"}
         </Button>
       </form>
     );
@@ -506,6 +646,13 @@ function CheckoutForm({ paymentInfo, isSubscription }: { paymentInfo: PaymentInt
           <p className="text-sm font-medium mb-1">Customer Information</p>
           <p className="text-sm text-muted-foreground">{customerInfo?.customerName}</p>
           <p className="text-sm text-muted-foreground">{customerInfo?.customerEmail}</p>
+          {paymentInfo.fulfillmentMethod === 'ship' && customerInfo ? (
+            <p className="text-sm text-muted-foreground mt-1" data-testid="text-ship-to">
+              Ships {paymentInfo.shipping?.shipDateLabel ?? 'Monday'} to {customerInfo.address}{customerInfo.address2 ? `, ${customerInfo.address2}` : ''}, {customerInfo.city}, {customerInfo.state} {customerInfo.zipCode}
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground mt-1">Pickup at our Ballard facility</p>
+          )}
           <Button
             type="button"
             variant="ghost"
@@ -568,6 +715,12 @@ export default function CartCheckout() {
   const { user, isLoading: isAuthLoading } = useAuth();
 
   const { items: unifiedCart, isLoading, totalCount } = useUnifiedCart();
+  // Whether this cart can ship at all (feature on, no kegs, no subscription).
+  const { data: shippingOptions } = useQuery<ShippingOptions>({
+    queryKey: ["/api/checkout/shipping-options", totalCount],
+    queryFn: () => apiRequest("GET", "/api/checkout/shipping-options"),
+    enabled: totalCount > 0,
+  });
   
   // Check if cart contains subscription items
   const hasSubscriptions = unifiedCart.some(cartItem => {
@@ -650,6 +803,9 @@ export default function CartCheckout() {
           taxAmount: data.taxAmount,
           depositAmount: data.depositAmount || 0,
           total: data.total,
+          shippingAmount: 0,
+          fulfillmentMethod: 'pickup',
+          shipping: null,
         });
       })
       .catch((error) => {
@@ -891,8 +1047,14 @@ export default function CartCheckout() {
                     <span data-testid="text-summary-discount">-${paymentInfo.discountAmount.toFixed(2)}</span>
                   </div>
                 )}
+                {paymentInfo.fulfillmentMethod === 'ship' && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Shipping &amp; handling{paymentInfo.shipping ? ` · ships ${paymentInfo.shipping.shipDateLabel}` : ''}</span>
+                    <span data-testid="text-summary-shipping">${(paymentInfo.shippingAmount ?? 0).toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Sales Tax (10.35%)</span>
+                  <span className="text-muted-foreground">{paymentInfo.fulfillmentMethod === 'ship' ? 'Sales Tax' : 'Sales Tax (10.35%)'}</span>
                   <span data-testid="text-summary-tax">${paymentInfo.taxAmount.toFixed(2)}</span>
                 </div>
                 {paymentInfo.depositAmount > 0 && (
@@ -901,10 +1063,12 @@ export default function CartCheckout() {
                     <span data-testid="text-summary-deposit">${paymentInfo.depositAmount.toFixed(2)}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Pickup at our Ballard facility</span>
-                  <span>Free</span>
-                </div>
+                {paymentInfo.fulfillmentMethod !== 'ship' && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Pickup at our Ballard facility</span>
+                    <span>Free</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-lg font-bold pt-2 border-t">
                   <span>{hasSubscriptions ? "Total today" : "Total"}</span>
                   <span data-testid="text-summary-total">${paymentInfo.total.toFixed(2)}</span>
@@ -970,7 +1134,12 @@ export default function CartCheckout() {
                   }
                 }}
               >
-                <CheckoutForm paymentInfo={paymentInfo} isSubscription={hasSubscriptions} />
+                <CheckoutForm
+                  paymentInfo={paymentInfo}
+                  isSubscription={hasSubscriptions}
+                  shippingOptions={shippingOptions}
+                  onTotals={(t) => setPaymentInfo((prev) => (prev ? { ...prev, ...t } : prev))}
+                />
               </Elements>
             </CardContent>
           </Card>

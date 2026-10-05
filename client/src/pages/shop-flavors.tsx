@@ -20,6 +20,9 @@ import { Footer } from "@/components/layout/footer";
  * flavor greys out instead of vanishing.
  */
 export default function ShopFlavors() {
+  // Shipping is a per-site switch; only `enabled` matters here (the cart is empty on the shop page).
+  const { data: shippingOptions } = useQuery<{ enabled: boolean }>({ queryKey: ["/api/checkout/shipping-options"], staleTime: 5 * 60_000 });
+  const shippingOn = !!shippingOptions?.enabled;
   const { data: flavors, isLoading: flavorsLoading, isError: flavorsError, refetch: refetchFlavors } = useQuery<Flavor[]>({
     queryKey: ["/api/flavors"],
   });
@@ -71,11 +74,20 @@ export default function ShopFlavors() {
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cedar">Now in cans</p>
           <h2 className="text-2xl md:text-3xl font-bold mt-2 mb-2" data-testid="text-products-title">Pick Your Flavor</h2>
 
-          {/* Pickup Location Notice */}
-          <div className="bg-primary text-primary-foreground py-2 md:py-3 px-4 rounded-md mt-3 md:mt-4 inline-flex items-center gap-3 text-sm md:text-base">
+          {/* Fulfillment notice: pickup-only until shipping is switched on in /admin/shipping (owner, 2026-10-05). */}
+          <div className="bg-primary text-primary-foreground py-2 md:py-3 px-4 rounded-md mt-3 md:mt-4 inline-flex items-center gap-3 text-sm md:text-base" data-testid="text-fulfillment-notice">
             <div>
-              <span className="font-semibold">Pickup Only at Our Ballard Location:</span>{" "}
-              <span className="opacity-90">4501 Shilshole Ave NW, Seattle, WA 98107</span>
+              {shippingOn ? (
+                <>
+                  <span className="font-semibold">Pick up in Ballard or ship cold-packed to your door.</span>{" "}
+                  <span className="opacity-90">Orders ship Mondays · 4501 Shilshole Ave NW, Seattle</span>
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold">Pickup Only at Our Ballard Location:</span>{" "}
+                  <span className="opacity-90">4501 Shilshole Ave NW, Seattle, WA 98107</span>
+                </>
+              )}
             </div>
           </div>
         </div>

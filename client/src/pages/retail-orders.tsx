@@ -52,7 +52,7 @@ interface RetailOrderWithItems extends RetailOrder {
   lineCount: number;
 }
 
-const isOpenStatus = (s: string) => s === 'pending' || s === 'ready_for_pickup';
+const isOpenStatus = (s: string) => s === 'pending' || s === 'ready_for_pickup' || s === 'packed';
 const invalidateOrders = () => queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0]).startsWith('/api/retail/orders') });
 
 const PAGE_SIZE = 25;
@@ -63,6 +63,7 @@ function getStatusLabel(status: string): string {
   switch (status) {
     case 'pending': return 'Pending';
     case 'ready_for_pickup': return 'Ready for Pickup';
+    case 'packed': return 'Packed (ships Monday)';
     case 'fulfilled': return 'Fulfilled';
     case 'cancelled': return 'Cancelled';
     default: return status;
@@ -431,6 +432,16 @@ export default function RetailOrders() {
                             <div className="text-sm">
                               <div data-testid={`text-customer-email-${order.id}`}>{order.customerEmail}</div>
                               <div className="text-muted-foreground" data-testid={`text-customer-phone-${order.id}`}>{order.customerPhone}</div>
+                              {order.fulfillmentMethod === 'ship' && (
+                                <div className="mt-1 text-xs text-muted-foreground" data-testid={`text-ship-to-${order.id}`}>
+                                  <span className="font-medium text-foreground">Ships to</span> {[order.shipAddress1, order.shipAddress2].filter(Boolean).join(', ')}, {order.shipCity}, {order.shipState} {order.shipZip}
+                                  {Array.isArray(order.shippingLabels) && (order.shippingLabels as any[]).length > 0 && (
+                                    <span> · {(order.shippingLabels as any[]).map((l: any, i: number) => l.trackingUrl
+                                      ? <a key={i} href={l.trackingUrl} target="_blank" rel="noreferrer" className="underline">{l.trackingNumber}</a>
+                                      : <span key={i}>{l.trackingNumber}</span>).reduce((acc: any[], el: any, i: number) => i === 0 ? [el] : [...acc, ', ', el], [])}</span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell data-testid={`text-order-date-${order.id}`}>
@@ -462,8 +473,10 @@ export default function RetailOrders() {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="pending" data-testid="status-pending">Pending</SelectItem>
-                                <SelectItem value="ready_for_pickup" data-testid="status-ready-for-pickup">Ready for Pickup</SelectItem>
-                                <SelectItem value="fulfilled" data-testid="status-fulfilled">Fulfilled</SelectItem>
+                                {order.fulfillmentMethod === 'ship'
+                                  ? <SelectItem value="packed" data-testid="status-packed">Packed</SelectItem>
+                                  : <SelectItem value="ready_for_pickup" data-testid="status-ready-for-pickup">Ready for Pickup</SelectItem>}
+                                <SelectItem value="fulfilled" data-testid="status-fulfilled">{order.fulfillmentMethod === 'ship' ? 'Shipped' : 'Fulfilled'}</SelectItem>
                                 <SelectItem value="cancelled" data-testid="status-cancelled">Cancelled</SelectItem>
                               </SelectContent>
                             </Select>

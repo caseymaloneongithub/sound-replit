@@ -508,6 +508,7 @@ export default function MyAccount() {
       case 'fulfilled':
         return 'default';
       case 'ready_for_pickup':
+      case 'packed':
         return 'secondary';
       case 'pending':
         return 'outline';
@@ -524,6 +525,8 @@ export default function MyAccount() {
         return 'Completed';
       case 'ready_for_pickup':
         return 'Ready for Pickup';
+      case 'packed':
+        return 'Packed — ships Monday';
       case 'pending':
         return 'Processing';
       case 'cancelled':

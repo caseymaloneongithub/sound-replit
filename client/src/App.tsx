@@ -52,6 +52,7 @@ import Account from "@/pages/account";
 import StaffPortal from "@/pages/staff-portal";
 import AdminFlavors from "@/pages/admin-flavors";
 import AdminRetailProducts from "@/pages/admin-retail-products";
+import AdminShipping from "@/pages/admin-shipping";
 import AdminWholesaleUnits from "@/pages/admin-wholesale-units";
 import AccountingDashboard from "@/pages/accounting-dashboard";
 import FilingNumbers from "@/pages/admin-filing-numbers";
@@ -144,6 +145,7 @@ function Router() {
       <StaffProtectedRoute path="/admin/flavors" component={AdminFlavors} />
       <StaffProtectedRoute path="/admin/retail-products" component={AdminRetailProducts} />
       <StaffProtectedRoute path="/admin/wholesale-units" component={AdminWholesaleUnits} />
+      <AdminProtectedRoute path="/admin/shipping" component={AdminShipping} />
       {/* Money pages are admin-and-up (like their APIs): a staff deep-link bounces to
           the orders board instead of rendering a shell of 403s. */}
       <AdminProtectedRoute path="/admin/accounting" component={AccountingDashboard} />

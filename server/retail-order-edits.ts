@@ -109,7 +109,7 @@ export async function withOpenOrderLocked<T>(
       .where(and(eq(retailOrders.id, orderId), isNull(retailOrders.deletedAt)))
       .for("update");
     if (!order) throw new OrderEditError(404, "Order not found");
-    if (!["pending", "ready_for_pickup"].includes(order.status)) throw new OrderEditError(400, "Only open orders can be edited");
+    if (!["pending", "ready_for_pickup", "packed"].includes(order.status)) throw new OrderEditError(400, "Only open orders can be edited");
     // A refund recorded but not yet settled was sized from the order as it
     // was; an edit now (say, a deposit going from $30 to $60) would make the
     // settlement credit the wrong figure. Edits wait until it lands.
@@ -155,11 +155,19 @@ export async function recomputeRetailOrderTotals(tx: DbTx, order: OrderRow): Pro
   const subtotal = lines.reduce((s, l) => s + Number(l.unitPrice) * l.quantity, 0);
   const noCharge = lines.length > 0 && lines.every((l) => Number(l.unitPrice) === 0);
   const taxed = Number(order.taxAmount ?? 0) > 0;
-  const tax = taxed ? subtotal * RETAIL_TAX_RATE : 0;
+  // A shipped order was taxed at its destination's rate (Stripe Tax) on goods +
+  // shipping; reuse that effective rate so an edit doesn't re-tax it as Seattle.
+  const priorBase = Number(order.subtotal ?? 0) + Number(order.shippingAmount ?? 0);
+  const effectiveRate = order.fulfillmentMethod === 'ship' && priorBase > 0 ? Number(order.taxAmount ?? 0) / priorBase : RETAIL_TAX_RATE;
+  const tax = taxed ? (order.fulfillmentMethod === 'ship' ? (subtotal + Number(order.shippingAmount ?? 0)) * effectiveRate : subtotal * RETAIL_TAX_RATE) : 0;
   const deposit = order.isSubscriptionOrder || order.depositRefundedAt
     ? Number(order.depositAmount ?? 0)
     : noCharge ? 0 : v2.reduce((s, l) => s + Number(l.depositEach ?? l.catalogueDeposit ?? 0) * l.quantity, 0);
-  const total = subtotal + tax + deposit;
+  // Shipping & handling (owner, 2026-10-05) was quoted for the boxes at checkout
+  // and stays as charged; an item edit never re-rates it. Its tax (Stripe Tax,
+  // by destination) is folded into the stored tax rate implied by the order.
+  const shipping = Number(order.shippingAmount ?? 0);
+  const total = subtotal + tax + deposit + shipping;
 
   await tx
     .update(retailOrders)

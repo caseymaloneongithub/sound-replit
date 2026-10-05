@@ -41,7 +41,7 @@ export default function CheckoutSuccess() {
             <p className="text-sm text-muted-foreground" data-testid="text-success-message">
               {isSubscription 
                 ? "You'll receive a confirmation email shortly with details about your subscription. Your first pickup will be ready within the next week."
-                : "You'll receive a confirmation email shortly with your order details and pickup information."}
+                : "You'll receive a confirmation email shortly with your order details — pickup instructions, or your ship date and address if you chose shipping."}
             </p>
           </div>
           <div className="flex gap-3">

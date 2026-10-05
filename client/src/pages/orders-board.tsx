@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { usePendingLinkRequests } from "@/components/staff/contact-requests-panel";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { formatInTimeZone } from "date-fns-tz";
-import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Printer, FileSpreadsheet, Tags } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,9 +14,19 @@ import { PICKUP_POLICY } from "@shared/pickup-policy";
 const TZ = PICKUP_POLICY.timezone;
 
 type BoardItem = { label: string; quantity: number; note?: string | null };
+type BoardShipping = {
+  destination: string;
+  boxes: Array<{ name: string; cans: number }>;
+  service: string | null;
+  labels: Array<{ trackingNumber: string; trackingUrl: string | null; boxName: string }>;
+  shipDate: string | null;
+};
 type BoardOrder = {
   id: string;
   kind: "retail" | "wholesale";
+  // Retail: pickup at the brewery or ship (owner, 2026-10-05). Wholesale: delivery or pickup.
+  fulfillment: "pickup" | "ship" | "delivery";
+  shipping: BoardShipping | null;
   title: string;
   reference: string;
   tag: string | null;
@@ -41,10 +51,19 @@ type BoardData = {
 // no next is done. Wholesale taps go STRAIGHT to delivered (owner, 2026-09-01) — the
 // packaged middle step was one tap too many on the board; an order already sitting at
 // packaged still advances to delivered.
-const FLOW: Record<BoardOrder["kind"], { next: Record<string, string>; labels: Record<string, string>; endpoint: (id: string) => string }> = {
+// Shipped retail orders (owner, 2026-10-05) have their own lane: pending → packed →
+// shipped. The last tap buys the carrier label(s) and marks the order fulfilled
+// (stock deducts), the same terminal state as a pickup.
+type FlowKey = "retail" | "ship" | "wholesale";
+const FLOW: Record<FlowKey, { next: Record<string, string>; labels: Record<string, string>; endpoint: (id: string) => string }> = {
   retail: {
     next: { pending: "ready_for_pickup", ready_for_pickup: "fulfilled" },
     labels: { pending: "Pending", ready_for_pickup: "Ready", fulfilled: "Picked up" },
+    endpoint: (id) => `/api/retail/orders/${id}/status`,
+  },
+  ship: {
+    next: { pending: "packed", packed: "fulfilled" },
+    labels: { pending: "Pending", packed: "Packed", fulfilled: "Shipped" },
     endpoint: (id) => `/api/retail/orders/${id}/status`,
   },
   wholesale: {
@@ -54,12 +73,16 @@ const FLOW: Record<BoardOrder["kind"], { next: Record<string, string>; labels: R
   },
 };
 
+function flowKey(o: BoardOrder): FlowKey {
+  return o.kind === "retail" && o.fulfillment === "ship" ? "ship" : o.kind;
+}
+
 function nextStatus(o: BoardOrder): string | null {
-  return FLOW[o.kind].next[o.status] ?? null;
+  return FLOW[flowKey(o)].next[o.status] ?? null;
 }
 
 function statusLabel(o: BoardOrder): string {
-  return FLOW[o.kind].labels[o.status] ?? o.status;
+  return FLOW[flowKey(o)].labels[o.status] ?? o.status;
 }
 
 // Two-letter column codes so headers never collide; the full name lives in the
@@ -100,10 +123,17 @@ export default function OrdersBoard() {
     mutationFn: async (o: BoardOrder) => {
       const next = nextStatus(o);
       if (!next) return;
-      return apiRequest("PATCH", FLOW[o.kind].endpoint(o.id), { status: next });
+      // Shipping an order = buying its label(s); that route also marks it fulfilled.
+      if (flowKey(o) === "ship" && next === "fulfilled") {
+        return apiRequest("POST", `/api/staff/shipping/orders/${o.id}/labels`, {});
+      }
+      return apiRequest("PATCH", FLOW[flowKey(o)].endpoint(o.id), { status: next });
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/staff/orders-board", weekOffset] });
+      if (data?.labels?.length) {
+        toast({ title: "Label bought", description: `${data.labels.length} label${data.labels.length === 1 ? "" : "s"} — tracking ${data.labels.map((l: any) => l.trackingNumber).join(", ")}` });
+      }
       // Delivery moves finished-goods stock; if that drove anything below zero (or a
       // line had no product to draw from), say so — but never block the tap.
       if (data?.stockWarnings?.length) {
@@ -127,6 +157,25 @@ export default function OrdersBoard() {
       window.location.reload();
     }
   }, [data?.bootId]);
+
+  // Monday batch (owner, 2026-10-05): buy every open label on this week's board at
+  // once, then print them as one 4x6 PDF on the Dymo and import the sticker CSV.
+  const shipBatch = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/staff/shipping/batch/labels", { weekOffset }),
+    onSuccess: (r: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/staff/orders-board", weekOffset] });
+      const failed = (r?.failed ?? []) as Array<{ orderNumber: string; message: string }>;
+      toast({
+        title: failed.length ? `Labels bought for ${r.bought.length} of ${r.total}` : `Labels bought for ${r.bought.length} order${r.bought.length === 1 ? "" : "s"}`,
+        description: failed.length ? failed.map((f) => `#${f.orderNumber}: ${f.message}`).join(" · ") : "Download the PDF and print it on the label printer.",
+        variant: failed.length ? "destructive" : undefined,
+      });
+    },
+    onError: (e: any) => toast({ title: "Batch failed", description: e.message, variant: "destructive" }),
+  });
+  const shipOrders = (data?.orders ?? []).filter((o) => o.kind === "retail" && o.fulfillment === "ship");
+  const openShip = shipOrders.filter((o) => nextStatus(o) !== null).length;
+  const labelled = shipOrders.filter((o) => (o.shipping?.labels.length ?? 0) > 0).length;
 
   const week = data?.week;
   const weekLabel = week
@@ -157,6 +206,7 @@ export default function OrdersBoard() {
             </p>
             <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-sky-500" />Retail pickup</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-500" />Retail shipping</span>
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-violet-500" />Wholesale delivery</span>
               <span className="text-sm" data-testid="text-updated">
                 {dataUpdatedAt ? `Updated ${formatInTimeZone(new Date(dataUpdatedAt), TZ, "h:mm a")}` : ""}
@@ -178,6 +228,33 @@ export default function OrdersBoard() {
             </Button>
           </div>
         </div>
+
+        {/* Monday shipping batch — only when the week has shipped orders */}
+        {shipOrders.length > 0 && (
+          <Card data-testid="card-ship-batch">
+            <CardContent className="pt-5 flex flex-wrap items-center gap-3">
+              <div className="flex-1 min-w-[12rem]">
+                <h2 className="text-lg font-semibold">Shipping batch</h2>
+                <p className="text-sm text-muted-foreground">
+                  {shipOrders.length} order{shipOrders.length === 1 ? "" : "s"} ship{shipOrders.length === 1 ? "s" : ""} this week · {openShip} still to label · {labelled} labelled
+                </p>
+              </div>
+              <Button onClick={() => shipBatch.mutate()} disabled={openShip === 0 || shipBatch.isPending} className="gap-2" data-testid="button-buy-labels">
+                <Tags className="h-4 w-4" />{shipBatch.isPending ? "Buying labels…" : `Buy ${openShip} label${openShip === 1 ? "" : "s"}`}
+              </Button>
+              {labelled > 0 ? (
+                <Button asChild variant="outline" className="gap-2" data-testid="button-labels-pdf">
+                  <a href={`/api/staff/shipping/batch/labels.pdf?weekOffset=${weekOffset}`} target="_blank" rel="noreferrer"><Printer className="h-4 w-4" />Labels PDF (4×6)</a>
+                </Button>
+              ) : (
+                <Button variant="outline" className="gap-2" disabled data-testid="button-labels-pdf"><Printer className="h-4 w-4" />Labels PDF (4×6)</Button>
+              )}
+              <Button asChild variant="outline" className="gap-2" data-testid="button-stickers-csv">
+                <a href={`/api/staff/shipping/batch/stickers.csv?weekOffset=${weekOffset}`}><FileSpreadsheet className="h-4 w-4" />Stickers CSV</a>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Production summary — "what to make this week" */}
         <Card>
@@ -218,8 +295,9 @@ export default function OrdersBoard() {
 
 // Channel reads by colour on the order cell: a coloured left edge, same coding as the
 // legend (sky = retail pickup, violet = wholesale delivery).
-const CHANNEL_EDGE: Record<BoardOrder["kind"], string> = {
+const CHANNEL_EDGE: Record<FlowKey, string> = {
   retail: "border-l-4 border-l-sky-500",
+  ship: "border-l-4 border-l-emerald-500",
   wholesale: "border-l-4 border-l-violet-500",
 };
 
@@ -368,7 +446,7 @@ function BoardSheet({ orders, flavorOrder, stock, catalog, onAdvance, advancing 
             const done = next === null;
             return (
               <tr key={`${o.kind}-${o.id}`} className={done ? "opacity-50" : ""} data-testid={`order-${o.id}`}>
-                <td className={`py-1.5 pr-2 pl-2 border-b ${CHANNEL_EDGE[o.kind]}`}>
+                <td className={`py-1.5 pr-2 pl-2 border-b ${CHANNEL_EDGE[flowKey(o)]}`}>
                   {(() => {
                     const sep = o.title.indexOf(" — ");
                     const name = sep === -1 ? o.title : o.title.slice(0, sep);
@@ -380,6 +458,11 @@ function BoardSheet({ orders, flavorOrder, stock, catalog, onAdvance, advancing 
                         {/* City tags are noise here; keep only tags that change handling. */}
                         {o.tag && (o.kind === "retail" || o.tag === "Pickup at brewery") && (
                           <span className="block text-[11px] text-muted-foreground">{o.tag}</span>
+                        )}
+                        {o.shipping && (
+                          <span className="block text-[11px] text-muted-foreground" data-testid={`text-ship-${o.id}`}>
+                            → {o.shipping.destination} · {o.shipping.boxes.map((b) => b.name).join(" + ") || "boxes TBD"}
+                          </span>
                         )}
                       </>
                     );
@@ -394,10 +477,10 @@ function BoardSheet({ orders, flavorOrder, stock, catalog, onAdvance, advancing 
                       className={`h-7 px-2 text-[11px] ${advanceButtonClass(o.status)}`}
                       onClick={() => onAdvance(o)}
                       disabled={advancing}
-                      title={`${statusLabel(o)} → Mark ${FLOW[o.kind].labels[next!]}`}
+                      title={`${statusLabel(o)} → Mark ${FLOW[flowKey(o)].labels[next!]}`}
                       data-testid={`button-advance-${o.id}`}
                     >
-                      → {FLOW[o.kind].labels[next!]}
+                      → {FLOW[flowKey(o)].labels[next!]}
                     </Button>
                   )}
                 </td>
@@ -455,17 +538,24 @@ function BoardSheet({ orders, flavorOrder, stock, catalog, onAdvance, advancing 
             <>
               <tr>
                 <td colSpan={fullSpan} className="pt-4 pb-1 pl-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Delivered &amp; picked up ({doneRows.length})
+                  Delivered, shipped &amp; picked up ({doneRows.length})
                 </td>
               </tr>
               {doneRows.map((o) => (
                 <tr key={`${o.kind}-${o.id}`} className="opacity-50" data-testid={`order-${o.id}`}>
-                  <td className={`py-1.5 pr-2 pl-2 border-b ${CHANNEL_EDGE[o.kind]}`}>
+                  <td className={`py-1.5 pr-2 pl-2 border-b ${CHANNEL_EDGE[flowKey(o)]}`}>
                     <span className="text-xs font-medium">{o.title.split(" — ")[0]}</span>
                     {o.title.includes(" — ") && <span className="block text-[11px] text-muted-foreground">{o.title.slice(o.title.indexOf(" — ") + 3)}</span>}
                   </td>
                   <td className="py-1.5 pr-3 border-b whitespace-nowrap">
                     <span className="text-xs text-muted-foreground">{statusLabel(o)}</span>
+                    {o.shipping?.labels.length ? (
+                      <span className="block text-[11px] text-muted-foreground">
+                        {o.shipping.labels.map((l, i) => (
+                          <span key={l.trackingNumber}>{i > 0 ? ", " : ""}{l.trackingUrl ? <a href={l.trackingUrl} target="_blank" rel="noreferrer" className="underline">{l.trackingNumber}</a> : l.trackingNumber}</span>
+                        ))}
+                      </span>
+                    ) : null}
                   </td>
                   {sections.map((s) =>
                     s.flavors.map((f, i) => (

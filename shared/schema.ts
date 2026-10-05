@@ -179,6 +179,32 @@ export const retailProducts = pgTable("retail_products", {
   // 'keg-sixth', …). THE canonical link between retail and wholesale units: matching
   // containers share one prep-grid table, and stock resolves by (flavor, container).
   container: text("container"),
+  // Shipping (owner, 2026-10-05): cans per unit and the weight of one full can,
+  // so a cart packs into shipping_boxes and rates by weight. Null cans = not
+  // shippable (kegs), and a cart holding one is pickup-only.
+  cansPerUnit: integer("cans_per_unit"),
+  canWeightOz: decimal("can_weight_oz", { precision: 6, scale: 2 }),
+});
+
+// Shipping boxes (owner, 2026-10-05): the insulated shippers retail orders pack
+// into. Dimensions and tare drive the carrier rate; the packaging fee is the
+// owner's add-on for the box, liner and ice packs, charged per box on top of
+// the carrier rate. Edited on /admin/shipping, never hardcoded.
+export const shippingBoxes = pgTable("shipping_boxes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(), // e.g. "12-can shipper"
+  canCapacity: integer("can_capacity").notNull(),
+  lengthIn: decimal("length_in", { precision: 6, scale: 2 }).notNull(),
+  widthIn: decimal("width_in", { precision: 6, scale: 2 }).notNull(),
+  heightIn: decimal("height_in", { precision: 6, scale: 2 }).notNull(),
+  tareWeightOz: decimal("tare_weight_oz", { precision: 7, scale: 2 }).notNull().default('0'), // box + liner, empty
+  icePackCount: integer("ice_pack_count").notNull().default(0),
+  icePackWeightOz: decimal("ice_pack_weight_oz", { precision: 6, scale: 2 }).notNull().default('0'), // each
+  packagingFeeCents: integer("packaging_fee_cents").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  displayOrder: integer("display_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdateFn(() => new Date()),
 });
 
 // Retail Product Flavors - Junction table for multi-flavor products
@@ -520,6 +546,21 @@ export const retailCheckoutSessions = pgTable("retail_checkout_sessions", {
   taxAmountCents: integer("tax_amount_cents").notNull().default(0),
   isTaxExempt: boolean("is_tax_exempt").notNull().default(false),
   notes: text("notes"), // Customer flavor notes for mixed cases
+  // Shipping (owner, 2026-10-05). The quote is computed server-side when the
+  // customer submits their info, stored here, and the payment intent amount is
+  // raised to match — the webhook verifies against THESE figures, never the client's.
+  fulfillmentMethod: text("fulfillment_method").notNull().default('pickup'), // 'pickup' | 'ship'
+  shipName: text("ship_name"),
+  shipAddress1: text("ship_address1"),
+  shipAddress2: text("ship_address2"),
+  shipCity: text("ship_city"),
+  shipState: text("ship_state"),
+  shipZip: text("ship_zip"),
+  shipPhone: text("ship_phone"),
+  shippingCents: integer("shipping_cents").notNull().default(0), // carrier + packaging, as charged
+  shippingQuote: jsonb("shipping_quote"), // ShippingQuote: boxes, rate ids, breakdown
+  shipDate: timestamp("ship_date"),
+  stripeTaxCalculationId: text("stripe_tax_calculation_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -531,12 +572,33 @@ export const retailOrders = pgTable("retail_orders", {
   customerEmail: text("customer_email").notNull(),
   customerPhone: text("customer_phone").notNull(),
   orderDate: timestamp("order_date").notNull().defaultNow(),
+  // The scheduled day: the pickup day, or for a shipped order the Monday it
+  // ships. One column so the board, backlog and week bucketing treat both alike.
   pickupDate: timestamp("pickup_date"),
-  status: text("status").notNull().default('pending'), // 'pending', 'ready_for_pickup', 'fulfilled', 'cancelled'
+  // 'pending' | 'ready_for_pickup' | 'fulfilled' | 'cancelled' for pickups;
+  // shipped orders go 'pending' | 'packed' | 'fulfilled' (= label bought, shipped).
+  // 'fulfilled' is the one terminal state that deducts stock, for both.
+  status: text("status").notNull().default('pending'),
   subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull(),
   taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).notNull().default('0'),
   depositAmount: decimal("deposit_amount", { precision: 10, scale: 2 }).notNull().default('0'), // Refundable deposit (not subject to tax)
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  // Shipping (owner, 2026-10-05): cans only, insulated shippers, ships Mondays.
+  fulfillmentMethod: text("fulfillment_method").notNull().default('pickup'), // 'pickup' | 'ship'
+  shipName: text("ship_name"),
+  shipAddress1: text("ship_address1"),
+  shipAddress2: text("ship_address2"),
+  shipCity: text("ship_city"),
+  shipState: text("ship_state"),
+  shipZip: text("ship_zip"),
+  shipPhone: text("ship_phone"),
+  shippingAmount: decimal("shipping_amount", { precision: 10, scale: 2 }).notNull().default('0'), // carrier + packaging, as charged
+  shippingQuote: jsonb("shipping_quote"), // ShippingQuote frozen at checkout
+  shippingLabels: jsonb("shipping_labels"), // ShippingLabel[] once bought: one per box
+  shippedAt: timestamp("shipped_at"),
+  deliveredAt: timestamp("delivered_at"),
+  stripeTaxCalculationId: text("stripe_tax_calculation_id"),
+  stripeTaxTransactionId: text("stripe_tax_transaction_id"),
   // What the customer has actually paid, net of refunds (owner, 2026-09-14:
   // editable orders). Null = never materialized: read it through
   // effectiveAmountPaid(), which infers "paid in full at the current total"
@@ -892,6 +954,7 @@ export const insertCartItemSchema = createInsertSchema(cartItems).omit({ id: tru
 export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({ id: true, startDate: true, cancelledAt: true });
 export const insertSubscriptionItemSchema = createInsertSchema(subscriptionItems).omit({ id: true });
 export const insertRetailCheckoutSessionSchema = createInsertSchema(retailCheckoutSessions).omit({ id: true, createdAt: true });
+export const insertShippingBoxSchema = createInsertSchema(shippingBoxes).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertRetailOrderSchema = createInsertSchema(retailOrders).omit({ id: true, orderDate: true, fulfilledAt: true, updatedAt: true, deletedAt: true });
 export const insertRetailOrderItemSchema = createInsertSchema(retailOrderItems).omit({ id: true });
 export const insertWholesaleCustomerSchema = createInsertSchema(wholesaleCustomers).omit({ id: true });
@@ -996,6 +1059,8 @@ export type WholesalePricing = typeof wholesalePricing.$inferSelect;
 // Select types - NEW SCHEMA
 export type Flavor = typeof flavors.$inferSelect;
 export type RetailProduct = typeof retailProducts.$inferSelect;
+export type ShippingBox = typeof shippingBoxes.$inferSelect;
+export type InsertShippingBox = z.infer<typeof insertShippingBoxSchema>;
 export type WholesaleUnitType = typeof wholesaleUnitTypes.$inferSelect;
 export type WholesaleUnitTypeFlavor = typeof wholesaleUnitTypeFlavors.$inferSelect;
 export type WholesaleCustomerPricing = typeof wholesaleCustomerPricing.$inferSelect;
