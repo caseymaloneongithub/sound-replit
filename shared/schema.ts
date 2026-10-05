@@ -684,13 +684,15 @@ export const leads = pgTable("leads", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-export const LEAD_TYPES = ["gym", "coffee", "restaurant", "grocery"] as const;
+// Distributor added 2026-10-05 (owner: "Need a lead type for Distributor").
+export const LEAD_TYPES = ["gym", "coffee", "restaurant", "grocery", "distributor"] as const;
 export type LeadType = (typeof LEAD_TYPES)[number];
 export const LEAD_TYPE_LABELS: Record<LeadType, string> = {
   gym: "Gym",
   coffee: "Coffee",
   restaurant: "Restaurant",
   grocery: "Grocery",
+  distributor: "Distributor",
 };
 export const LEAD_ZIP_RE = /^\d{5}(-\d{4})?$/;
 // The ZIP in what someone typed on a public form ("98107", " 98107-1234",
