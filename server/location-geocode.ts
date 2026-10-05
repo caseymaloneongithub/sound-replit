@@ -7,19 +7,28 @@
  * matched to Wisconsin, Ohio, New Jersey… and nothing could fix them: editing the
  * address kept the old coordinates, and Geocode All only visited rows with none.
  */
-import type { InsertWholesaleLocation, WholesaleLocation } from "@shared/schema";
+import type { Lead, WholesaleLocation } from "@shared/schema";
 import { geocodeAddress } from "./mapbox-service";
 import { storage } from "./storage";
 
 const ADDRESS_PARTS = ["address", "city", "state", "zipCode"] as const;
 type AddressPart = (typeof ADDRESS_PARTS)[number];
+/** The address columns as a location carries them — and, since 2026-10-05, a lead. */
+export type AddressParts = { [P in AddressPart]?: string | null };
 
-export type GeocodeWrite = Partial<InsertWholesaleLocation> & { geocodedAt?: Date | null };
+export type GeocodeWrite = {
+  latitude?: string | null;
+  longitude?: string | null;
+  geocodedAt?: Date | null;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+};
 
 const trimmed = (v: string | null | undefined) => (v ?? "").trim();
 
 /** A pin computed from a street alone was a guess; it gets recomputed with the rest. */
-export function addressIncomplete(loc: Pick<WholesaleLocation, "city" | "zipCode">): boolean {
+export function addressIncomplete(loc: Pick<AddressParts, "city" | "zipCode">): boolean {
   return !trimmed(loc.city) || !trimmed(loc.zipCode);
 }
 
@@ -31,7 +40,7 @@ export function addressIncomplete(loc: Pick<WholesaleLocation, "city" | "zipCode
  * stale one can't route a driver to the old address.
  */
 export async function geocodeWriteFor(
-  loc: Pick<WholesaleLocation, AddressPart>,
+  loc: AddressParts,
 ): Promise<GeocodeWrite | null> {
   const geo = await geocodeAddress(trimmed(loc.address), trimmed(loc.city), trimmed(loc.state), trimmed(loc.zipCode));
   if (!geo) return null;
@@ -53,8 +62,8 @@ export const CLEARED_PIN: GeocodeWrite = { latitude: null, longitude: null, geoc
  * no address part changed; the cleared pin when the new address can't be placed.
  */
 export async function geocodeForEdit(
-  existing: WholesaleLocation,
-  updates: Partial<InsertWholesaleLocation>,
+  existing: AddressParts,
+  updates: AddressParts,
 ): Promise<GeocodeWrite> {
   const changed = ADDRESS_PARTS.some(
     (p) => updates[p] !== undefined && trimmed(updates[p]) !== trimmed(existing[p]),
@@ -62,8 +71,18 @@ export async function geocodeForEdit(
   if (!changed) return {};
   const next = Object.fromEntries(
     ADDRESS_PARTS.map((p) => [p, updates[p] !== undefined ? updates[p] : existing[p]]),
-  ) as Record<AddressPart, string>;
+  ) as AddressParts;
   return (await geocodeWriteFor(next)) ?? CLEARED_PIN;
+}
+
+/**
+ * The same for a lead, whose street is optional: with no street there is nothing
+ * to place, so an edit that removes it clears the pin rather than pinning the city.
+ */
+export async function geocodeLeadForEdit(existing: Lead, updates: AddressParts): Promise<GeocodeWrite> {
+  const street = updates.address !== undefined ? updates.address : existing.address;
+  if (trimmed(street)) return geocodeForEdit(existing, updates);
+  return existing.latitude != null || existing.longitude != null ? CLEARED_PIN : {};
 }
 
 /**
@@ -78,6 +97,18 @@ export async function refreshLocationPin(loc: WholesaleLocation): Promise<Geocod
     await storage.updateWholesaleLocation(loc.id, write);
   } else if (loc.latitude != null || loc.longitude != null) {
     await storage.updateWholesaleLocation(loc.id, CLEARED_PIN);
+  }
+  return write;
+}
+
+/** A lead's pin follows its street address the same way (owner, 2026-10-05:
+ *  a tagged lead is a route stop). No street, no pin. */
+export async function refreshLeadPin(lead: Lead): Promise<GeocodeWrite | null> {
+  const write = trimmed(lead.address) ? await geocodeWriteFor(lead) : null;
+  if (write) {
+    await storage.updateLead(lead.id, write);
+  } else if (lead.latitude != null || lead.longitude != null) {
+    await storage.updateLead(lead.id, CLEARED_PIN);
   }
   return write;
 }

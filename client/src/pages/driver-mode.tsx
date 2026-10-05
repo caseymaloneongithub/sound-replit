@@ -29,7 +29,8 @@ interface DriverLine { label: string; quantity: number }
 
 interface DriverStop {
   key: string;
-  type: "order" | "custom";
+  // A visit (owner, 2026-10-05) is a sales call on a lead tagged for this week.
+  type: "order" | "custom" | "visit";
   id: string;
   name: string;
   address: string | null;
@@ -55,8 +56,10 @@ interface DriverStop {
   total?: number;
   lines?: DriverLine[];
   cases?: number;
-  // custom stops
+  // custom stops and visits
   notes?: string | null;
+  // visits
+  visited?: boolean;
 }
 
 interface DriverDay {
@@ -71,7 +74,7 @@ interface DriverDay {
     generatedBy: string | null;
   } | null;
   stops: DriverStop[];
-  summary: { deliveries: number; delivered: number; cases: number };
+  summary: { deliveries: number; delivered: number; cases: number; visits: number; visited: number };
 }
 
 const miles = (m: number) => `${(m / 1609.34).toFixed(1)} mi`;
@@ -136,7 +139,7 @@ export default function DriverMode() {
   const { done: localDone, toggle: toggleLocalDone } = useLocalDone(dateKey);
   // Both directions ask first (owner, 2026-09-22: "add a confirmation to undo
   // a delivery") — a stray tap must not move stock either way.
-  const [confirming, setConfirming] = useState<{ stop: DriverStop; action: "delivered" | "undo" } | null>(null);
+  const [confirming, setConfirming] = useState<{ stop: DriverStop; action: "delivered" | "undo" | "visited" | "unvisit" } | null>(null);
 
   const { data: day, isLoading, isError, error } = useQuery<DriverDay>({
     queryKey: ["/api/driver/day", dateKey],
@@ -187,11 +190,46 @@ export default function DriverMode() {
     },
   });
 
+  // A visit's Visited and Undo (owner, 2026-10-05) are recorded on the lead:
+  // when it happened, and a touch point in its history. Same optimistic
+  // pattern as deliveries, with the Leads page reloaded as well.
+  type VisitVars = { leadId: string; visited: boolean; day: string };
+  const setVisited = useMutation({
+    mutationFn: async ({ leadId, visited, day }: VisitVars) =>
+      visited
+        ? apiRequest("POST", `/api/crm/leads/${leadId}/visited`, { date: day })
+        : apiRequest("DELETE", `/api/crm/leads/${leadId}/visited`),
+    onMutate: async ({ leadId, visited, day }) => {
+      const queryKey = ["/api/driver/day", day];
+      await queryClient.cancelQueries({ queryKey });
+      const before = queryClient.getQueryData<DriverDay>(queryKey);
+      if (before) {
+        const stops = before.stops.map((s) => (s.type === "visit" && s.id === leadId ? { ...s, visited } : s));
+        queryClient.setQueryData<DriverDay>(queryKey, {
+          ...before,
+          stops,
+          summary: { ...before.summary, visited: stops.filter((s) => s.type === "visit" && s.visited).length },
+        });
+      }
+      return { queryKey, before };
+    },
+    onError: (e: any, _vars, context) => {
+      if (context?.before) queryClient.setQueryData(context.queryKey, context.before);
+      toast({ title: "Couldn't update the visit", description: e.message, variant: "destructive" });
+    },
+    onSuccess: (_data, { visited }) => {
+      toast({ title: visited ? "Visited" : "Visit undone" });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/day"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/leads"] });
+    },
+  });
+
   const stops = day?.stops ?? [];
-  const remaining = useMemo(
-    () => stops.filter((s) => (s.type === "order" ? s.status !== "delivered" : !localDone[s.id])),
-    [stops, localDone],
-  );
+  const stopDone = (s: DriverStop) =>
+    s.type === "order" ? s.status === "delivered" : s.type === "visit" ? !!s.visited : !!localDone[s.id];
+  const remaining = useMemo(() => stops.filter((s) => !stopDone(s)), [stops, localDone]);
   const trip = useMemo(() => remainingTrip(remaining), [remaining]);
   const isToday = dateKey === format(new Date(), "yyyy-MM-dd");
 
@@ -210,6 +248,7 @@ export default function DriverMode() {
             {day && (
               <div className="text-xs text-muted-foreground" data-testid="text-driver-progress">
                 {day.summary.delivered} of {day.summary.deliveries} delivered · {day.summary.cases} cases
+                {day.summary.visits ? ` · ${day.summary.visited} of ${day.summary.visits} visited` : ""}
               </div>
             )}
           </div>
@@ -262,7 +301,7 @@ export default function DriverMode() {
 
             <ol className="space-y-3">
               {stops.map((stop, index) => {
-                const isDone = stop.type === "order" ? stop.status === "delivered" : !!localDone[stop.id];
+                const isDone = stopDone(stop);
                 const nav = navigateLink(stop);
                 return (
                   <li key={stop.key} className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDone ? "opacity-70" : ""}`} data-testid={`stop-${stop.key}`}>
@@ -295,7 +334,15 @@ export default function DriverMode() {
                             )}
                             {stop.poNumber && <Badge variant="outline" className="font-normal">PO {stop.poNumber}</Badge>}
                             {stop.type === "custom" && <Badge variant="secondary" className="font-normal">Stop</Badge>}
+                            {stop.type === "visit" && <Badge className="font-normal bg-cedar text-white hover:bg-cedar">Visit</Badge>}
                           </div>
+                          {stop.type === "visit" && (stop.contactName || stop.contactPhone) && (
+                            <div className="text-sm mt-1" data-testid={`text-visit-contact-${stop.key}`}>
+                              {stop.contactName ? `Ask for ${stop.contactName}` : ""}
+                              {stop.contactName && stop.contactPhone ? " · " : ""}
+                              {stop.contactPhone ? <a href={`tel:${stop.contactPhone}`} className="underline">{stop.contactPhone}</a> : null}
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -351,6 +398,18 @@ export default function DriverMode() {
                               <Check className="w-4 h-4 mr-1.5" /> Delivered
                             </Button>
                           )
+                        ) : stop.type === "visit" ? (
+                          isDone ? (
+                            <Button variant="outline" className="h-12" disabled={setVisited.isPending}
+                              onClick={() => setConfirming({ stop, action: "unvisit" })} data-testid={`button-unvisit-${stop.key}`}>
+                              <Undo2 className="w-4 h-4 mr-1.5" /> Undo
+                            </Button>
+                          ) : (
+                            <Button className="h-12 bg-green-700 hover:bg-green-800 text-white" disabled={setVisited.isPending}
+                              onClick={() => setConfirming({ stop, action: "visited" })} data-testid={`button-visited-${stop.key}`}>
+                              <Check className="w-4 h-4 mr-1.5" /> Visited
+                            </Button>
+                          )
                         ) : (
                           <Button variant={isDone ? "outline" : "secondary"} className="h-12" onClick={() => toggleLocalDone(stop.id)} data-testid={`button-done-${stop.key}`}>
                             <Check className="w-4 h-4 mr-1.5" /> {isDone ? "Undo" : "Done"}
@@ -379,27 +438,44 @@ export default function DriverMode() {
       <AlertDialog open={!!confirming} onOpenChange={(open) => !open && setConfirming(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{confirming?.action === "undo" ? "Undo this delivery?" : "Mark delivered?"}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {confirming?.action === "undo" ? "Undo this delivery?"
+                : confirming?.action === "visited" ? "Mark visited?"
+                : confirming?.action === "unvisit" ? "Undo this visit?"
+                : "Mark delivered?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {confirming?.stop.name}{confirming?.stop.cases ? ` — ${confirming.stop.cases} case${confirming.stop.cases === 1 ? "" : "s"}` : ""}.{" "}
               {confirming?.action === "undo"
                 ? "The order goes back to packaged and its stock returns to the shelf."
-                : "The order is marked delivered and its stock comes off the shelf."}
+                : confirming?.action === "visited"
+                  ? "The visit goes into the lead's history on the Leads page."
+                  : confirming?.action === "unvisit"
+                    ? "The visit comes back out of the lead's history."
+                    : "The order is marked delivered and its stock comes off the shelf."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="h-11" data-testid="button-cancel-confirm">Keep as is</AlertDialogCancel>
             <AlertDialogAction
-              className={confirming?.action === "undo" ? "h-11" : "h-11 bg-green-700 hover:bg-green-800"}
+              className={confirming?.action === "undo" || confirming?.action === "unvisit" ? "h-11" : "h-11 bg-green-700 hover:bg-green-800"}
               onClick={() => {
-                if (confirming) {
+                if (confirming?.action === "visited" || confirming?.action === "unvisit") {
+                  setVisited.mutate({ leadId: confirming.stop.id, visited: confirming.action === "visited", day: dateKey });
+                } else if (confirming) {
                   setStatus.mutate({ orderId: confirming.stop.id, status: confirming.action === "undo" ? "packaged" : "delivered", day: dateKey });
                 }
                 setConfirming(null);
               }}
-              data-testid={confirming?.action === "undo" ? "button-confirm-undo" : "button-confirm-delivered"}
+              data-testid={confirming?.action === "undo" ? "button-confirm-undo"
+                : confirming?.action === "visited" ? "button-confirm-visited"
+                : confirming?.action === "unvisit" ? "button-confirm-unvisit"
+                : "button-confirm-delivered"}
             >
-              {confirming?.action === "undo" ? "Undo delivery" : "Delivered"}
+              {confirming?.action === "undo" ? "Undo delivery"
+                : confirming?.action === "visited" ? "Visited"
+                : confirming?.action === "unvisit" ? "Undo visit"
+                : "Delivered"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

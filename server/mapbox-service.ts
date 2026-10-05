@@ -108,7 +108,7 @@ export async function optimizeDeliveryRoute(
     longitude: number;
     name: string;
     address: string;
-    type: "order" | "custom";
+    type: "order" | "custom" | "visit";
   }>,
   // Route endpoints — default to the brewery on both ends.
   endpoints?: { start?: { latitude: number; longitude: number }; end?: { latitude: number; longitude: number } }

@@ -12,10 +12,11 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, CalendarPlus, CalendarCheck } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { LinkifiedText, firstWebAddress } from "@/components/linkified-text";
+import { weekMondayOf, visitWeekLabel } from "@shared/lead-visits";
 import {
   insertLeadSchema,
   insertLeadTouchPointSchema,
@@ -64,6 +65,8 @@ const leadFormValues = (lead: Lead): z.infer<typeof insertLeadSchema> => ({
   notes: lead.notes || "",
   businessType: (lead.businessType as LeadType | null) ?? null,
   zipCode: lead.zipCode ?? "",
+  address: lead.address ?? "",
+  city: lead.city ?? "",
 });
 
 // Spreadsheet cells: a gridline on every cell (border-separate keeps them on the
@@ -79,6 +82,10 @@ export default function CRMPage() {
   const [typeFilter, setTypeFilter] = useState<LeadTypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
+  // Visit this week (owner, 2026-10-05): a lead tagged for the current week is
+  // offered as a stop on the Routes page. The week is named by its Monday.
+  const [visitFilter, setVisitFilter] = useState(false);
+  const thisWeek = weekMondayOf(format(new Date(), "yyyy-MM-dd"));
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -180,6 +187,8 @@ export default function CRMPage() {
       notes: "",
       businessType: null,
       zipCode: "",
+      address: "",
+      city: "",
     },
   });
 
@@ -196,6 +205,8 @@ export default function CRMPage() {
       notes: "",
       businessType: null,
       zipCode: "",
+      address: "",
+      city: "",
     },
   });
 
@@ -211,6 +222,7 @@ export default function CRMPage() {
 
   // The filters narrow search results too.
   const displayedLeads = (searchQuery ? searchResults : allLeads).filter((lead) => {
+    if (visitFilter && lead.visitWeek !== thisWeek) return false;
     if (typeFilter !== "all" && (lead.businessType || "none") !== typeFilter) return false;
     if (statusFilter !== "all" && lead.status !== statusFilter) return false;
     if (priorityFilter !== "all" && lead.priorityLevel !== priorityFilter) return false;
@@ -252,6 +264,30 @@ export default function CRMPage() {
     );
   };
   const dash = <span className="text-muted-foreground">—</span>;
+
+  // Tag a lead for a visit this week, or take the tag off.
+  const visitMutation = useMutation({
+    mutationFn: async ({ id, week }: { id: string; week: string | null }) =>
+      await apiRequest("PUT", `/api/crm/leads/${id}/visit`, { week }),
+    onSuccess: (lead: Lead, { week }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/leads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/leads/search"] });
+      setSelectedLead((current) => (current && current.id === lead.id ? lead : current));
+      toast({ title: week ? `Tagged for a visit the week of ${visitWeekLabel(week)}` : "Visit tag removed" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+  const toggleVisit = (lead: Lead) =>
+    visitMutation.mutate({ id: lead.id, week: lead.visitWeek === thisWeek ? null : thisWeek });
+  // How a lead's tag reads: this week, visited, or a week still to come. A past
+  // week is no tag any more.
+  const visitState = (lead: Lead): { label: string; done: boolean } | null => {
+    if (!lead.visitWeek || lead.visitWeek < thisWeek) return null;
+    if (lead.visitedAt) return { label: `Visited ${format(new Date(lead.visitedAt), "MMM d")}`, done: true };
+    return { label: lead.visitWeek === thisWeek ? "This week" : `Week of ${visitWeekLabel(lead.visitWeek)}`, done: false };
+  };
 
   // One click and a confirmation: the lead's touch-point history goes with it.
   const deleteLead = (lead: Lead) => {
@@ -371,6 +407,34 @@ export default function CRMPage() {
                             <Input {...field} value={field.value ?? ""} inputMode="numeric" maxLength={10} placeholder="98107" data-testid="input-zip" />
                           </FormControl>
                           <FormMessage data-testid="error-zip" />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={createForm.control}
+                      name="address"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Street</FormLabel>
+                          <FormControl>
+                            <Input {...field} value={field.value ?? ""} placeholder="1417 NW 54th St" data-testid="input-address" />
+                          </FormControl>
+                          <FormMessage data-testid="error-address" />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={createForm.control}
+                      name="city"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>City</FormLabel>
+                          <FormControl>
+                            <Input {...field} value={field.value ?? ""} placeholder="Seattle" data-testid="input-city" />
+                          </FormControl>
+                          <FormMessage data-testid="error-city" />
                         </FormItem>
                       )}
                     />
@@ -528,6 +592,19 @@ export default function CRMPage() {
             <SelectItem value="high" data-testid="option-filter-priority-high">High</SelectItem>
           </SelectContent>
         </Select>
+        <Button
+          type="button"
+          variant={visitFilter ? "secondary" : "outline"}
+          size="sm"
+          className="h-9"
+          aria-pressed={visitFilter}
+          title={`Leads tagged for the week of ${visitWeekLabel(thisWeek)}`}
+          onClick={() => setVisitFilter((on) => !on)}
+          data-testid="button-filter-visits"
+        >
+          <CalendarCheck className="w-4 h-4 mr-1.5" />
+          Visits this week
+        </Button>
         <span className="ml-auto text-sm text-muted-foreground tabular-nums" data-testid="text-lead-count">{leadCount}</span>
       </div>
 
@@ -551,8 +628,10 @@ export default function CRMPage() {
             <thead>
               <tr>
                 {sortableHead("name", "Name", "left-0 z-30")}
+                <th className={TH}>Visit</th>
                 <th className={TH}>Type</th>
                 {sortableHead("zip", "Zip")}
+                <th className={TH}>Address</th>
                 <th className={TH}>Phone</th>
                 <th className={TH}>Website</th>
                 <th className={TH}>Status</th>
@@ -579,8 +658,35 @@ export default function CRMPage() {
                         <LinkifiedText text={lead.businessName} />
                       </div>
                     </td>
+                    <td className={cn(TD, "px-1")} data-testid={`cell-visit-${lead.id}`}>
+                      {(() => {
+                        const visit = visitState(lead);
+                        const tagged = lead.visitWeek === thisWeek;
+                        return (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={cn("h-7 px-2 font-normal", visit?.done ? "text-green-700 dark:text-green-400" : tagged ? "text-primary" : "text-muted-foreground")}
+                            title={tagged ? "Take the visit tag off" : `Visit this week (${visitWeekLabel(thisWeek)})`}
+                            disabled={visitMutation.isPending && visitMutation.variables?.id === lead.id}
+                            onClick={(e) => { e.stopPropagation(); toggleVisit(lead); }}
+                            data-testid={`button-visit-${lead.id}`}
+                          >
+                            {visit?.done ? <CalendarCheck className="w-3.5 h-3.5 mr-1" /> : <CalendarPlus className="w-3.5 h-3.5 mr-1" />}
+                            {visit ? visit.label : "Visit this week"}
+                          </Button>
+                        );
+                      })()}
+                    </td>
                     <td className={TD} data-testid={`text-type-${lead.id}`}>{leadTypeLabel(lead.businessType) ?? dash}</td>
                     <td className={cn(TD, "tabular-nums")} data-testid={`text-zip-${lead.id}`}>{lead.zipCode ?? dash}</td>
+                    <td className={TD} data-testid={`text-address-${lead.id}`}>
+                      {lead.address ? (
+                        <div className="max-w-[16rem] truncate" title={[lead.address, lead.city].filter(Boolean).join(", ")}>
+                          {[lead.address, lead.city].filter(Boolean).join(", ")}
+                        </div>
+                      ) : dash}
+                    </td>
                     <td className={cn(TD, "tabular-nums")} data-testid={`text-phone-${lead.id}`}>
                       {lead.phone ? (
                         <a href={`tel:${lead.phone}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
@@ -694,6 +800,15 @@ export default function CRMPage() {
                   </div>
                   <div className="flex gap-2">
                     <Button
+                      variant={selectedLead.visitWeek === thisWeek ? "secondary" : "outline"}
+                      disabled={visitMutation.isPending}
+                      onClick={() => toggleVisit(selectedLead)}
+                      data-testid="button-detail-visit"
+                    >
+                      {visitState(selectedLead)?.done ? <CalendarCheck className="w-4 h-4 mr-1.5" /> : <CalendarPlus className="w-4 h-4 mr-1.5" />}
+                      {visitState(selectedLead)?.label ?? "Visit this week"}
+                    </Button>
+                    <Button
                       variant="outline"
                       size="icon"
                       onClick={() => openEditDialog(selectedLead)}
@@ -736,6 +851,12 @@ export default function CRMPage() {
                           <a href={`tel:${selectedLead.phone}`} className="text-primary hover:underline">
                             {selectedLead.phone}
                           </a>
+                        </div>
+                      )}
+                      {selectedLead.address && (
+                        <div data-testid="text-detail-address">
+                          {[selectedLead.address, selectedLead.city, selectedLead.state, selectedLead.zipCode].filter(Boolean).join(", ")}
+                          {!selectedLead.latitude && <span className="text-muted-foreground"> — not on the map yet (Geocode All on the Routes page)</span>}
                         </div>
                       )}
                     </div>
@@ -870,6 +991,34 @@ export default function CRMPage() {
                             <Input {...field} value={field.value ?? ""} inputMode="numeric" maxLength={10} placeholder="98107" data-testid="input-edit-zip" />
                           </FormControl>
                           <FormMessage data-testid="error-edit-zip" />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={editForm.control}
+                      name="address"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Street</FormLabel>
+                          <FormControl>
+                            <Input {...field} value={field.value ?? ""} placeholder="1417 NW 54th St" data-testid="input-edit-address" />
+                          </FormControl>
+                          <FormMessage data-testid="error-edit-address" />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={editForm.control}
+                      name="city"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>City</FormLabel>
+                          <FormControl>
+                            <Input {...field} value={field.value ?? ""} placeholder="Seattle" data-testid="input-edit-city" />
+                          </FormControl>
+                          <FormMessage data-testid="error-edit-city" />
                         </FormItem>
                       )}
                     />

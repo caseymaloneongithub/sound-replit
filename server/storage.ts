@@ -362,10 +362,13 @@ export interface IStorage {
   updateLead(id: string, updates: Partial<InsertLead>): Promise<Lead | undefined>;
   deleteLead(id: string): Promise<void>;
   searchLeads(query: string): Promise<Lead[]>;
-  
+  getLeadsNeedingGeocode(): Promise<Lead[]>;
+  getLeadsForVisitWeek(monday: string): Promise<Lead[]>;
+
   // CRM - Touch point management
   getLeadTouchPoints(leadId: string): Promise<LeadTouchPoint[]>;
   createLeadTouchPoint(touchPoint: InsertLeadTouchPoint): Promise<LeadTouchPoint>;
+  deleteLatestLeadTouchPoint(leadId: string, subject: string): Promise<void>;
   getRecentTouchPoints(limit?: number): Promise<Array<LeadTouchPoint & { leadBusinessName: string; createdByName: string }>>;
   
   // ACCOUNTING MODULE - Plaid Items
@@ -5108,6 +5111,22 @@ export class PostgresStorage implements IStorage {
     return result;
   }
 
+  // A lead with a street but no pin (or a pin from before its city was known)
+  // gets placed by Geocode All, the same as a store location (owner, 2026-10-05:
+  // a lead tagged for a visit is a route stop).
+  async getLeadsNeedingGeocode(): Promise<Lead[]> {
+    return db
+      .select()
+      .from(leads)
+      .where(sql`coalesce(${leads.address}, '') <> ''
+        AND (${leads.latitude} IS NULL OR ${leads.longitude} IS NULL OR coalesce(${leads.city}, '') = '')`);
+  }
+
+  /** The leads tagged for the week that starts on `monday` ("YYYY-MM-DD"). */
+  async getLeadsForVisitWeek(monday: string): Promise<Lead[]> {
+    return db.select().from(leads).where(eq(leads.visitWeek, monday)).orderBy(leads.businessName);
+  }
+
   // CRM - Touch point management methods
   async getLeadTouchPoints(leadId: string): Promise<LeadTouchPoint[]> {
     const result = await db
@@ -5126,8 +5145,19 @@ export class PostgresStorage implements IStorage {
       .update(leads)
       .set({ updatedAt: new Date() })
       .where(eq(leads.id, touchPoint.leadId));
-    
+
     return result[0];
+  }
+
+  /** Undoing a visit takes its touch point back: the latest one with that subject. */
+  async deleteLatestLeadTouchPoint(leadId: string, subject: string): Promise<void> {
+    const [latest] = await db
+      .select({ id: leadTouchPoints.id })
+      .from(leadTouchPoints)
+      .where(and(eq(leadTouchPoints.leadId, leadId), eq(leadTouchPoints.subject, subject)))
+      .orderBy(desc(leadTouchPoints.createdAt))
+      .limit(1);
+    if (latest) await db.delete(leadTouchPoints).where(eq(leadTouchPoints.id, latest.id));
   }
 
   async getRecentTouchPoints(limit: number = 10): Promise<Array<LeadTouchPoint & { leadBusinessName: string; createdByName: string }>> {

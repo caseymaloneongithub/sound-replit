@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, decimal, timestamp, boolean, index, jsonb, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, decimal, timestamp, date, boolean, index, jsonb, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -498,9 +498,10 @@ export const deliveryRouteStops = pgTable("delivery_route_stops", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   routeId: varchar("route_id").notNull().references(() => deliveryRoutes.id, { onDelete: 'cascade' }),
   stopOrder: integer("stop_order").notNull(), // Order in the route (1-indexed)
-  stopType: text("stop_type").notNull(), // 'order' or 'custom'
+  stopType: text("stop_type").notNull(), // 'order', 'custom' or 'visit' (a sales call on a lead)
   wholesaleOrderId: varchar("wholesale_order_id").references(() => wholesaleOrders.id),
   deliveryStopId: varchar("delivery_stop_id").references(() => deliveryStops.id),
+  leadId: varchar("lead_id").references(() => leads.id, { onDelete: 'cascade' }),
   arrivalEstimate: timestamp("arrival_estimate"),
   distanceFromPrevious: integer("distance_from_previous"), // meters
   durationFromPrevious: integer("duration_from_previous"), // seconds
@@ -666,6 +667,19 @@ export const leads = pgTable("leads", {
   // none; a 5-digit zip (LEAD_ZIP_RE), or none.
   businessType: text("business_type"),
   zipCode: varchar("zip_code", { length: 10 }),
+  // Street address and pin (owner, 2026-10-05: "tag it for a visit this week.
+  // Then it flows as an option to add to the delivery route"): a visit is a
+  // route stop, so a lead carries what a store location does.
+  address: text("address"),
+  city: text("city"),
+  state: text("state").default('WA'),
+  latitude: decimal("latitude", { precision: 10, scale: 7 }),
+  longitude: decimal("longitude", { precision: 10, scale: 7 }),
+  geocodedAt: timestamp("geocoded_at"),
+  // The Monday of the week staff want this lead visited (shared/lead-visits.ts),
+  // and when the driver marked it visited. A past week is simply no longer a tag.
+  visitWeek: date("visit_week"),
+  visitedAt: timestamp("visited_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

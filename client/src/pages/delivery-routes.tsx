@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CalendarIcon, Route, Plus, X, RefreshCw, ArrowLeftRight, Loader2, GripVertical } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { DeliveriesTabs, useSharedDeliveryDate } from "@/components/staff/deliveries-tabs";
+import { visitWeekLabel } from "@shared/lead-visits";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -53,13 +54,24 @@ interface EnrichedOrder {
   };
 }
 
+// A lead tagged for a visit this week (owner, 2026-10-05), on offer as a stop.
+interface VisitOption {
+  id: string;
+  businessName: string;
+  contactName: string | null;
+  phone: string | null;
+  address: string | null;
+  geocoded: boolean;
+  visitedAt: string | null;
+}
+
 interface OptimizedStop {
   id: string;
   latitude: number;
   longitude: number;
   name: string;
   address: string;
-  type: "order" | "custom";
+  type: "order" | "custom" | "visit";
   stopOrder: number;
   distanceFromPrevious?: number;
   durationFromPrevious?: number;
@@ -121,6 +133,9 @@ function formatDistance(meters: number): string {
 export default function DeliveryRoutes() {
   const [selectedDate, setSelectedDate] = useSharedDeliveryDate();
   const [selectedCustomStops, setSelectedCustomStops] = useState<string[]>([]);
+  // Visits (owner, 2026-10-05): the week's tagged leads, picked onto this day's
+  // route the way custom stops are.
+  const [selectedVisits, setSelectedVisits] = useState<string[]>([]);
   const [isAddStopOpen, setIsAddStopOpen] = useState(false);
   // Blank = brewery; anything typed here is geocoded server-side on Optimize.
   const [startAddress, setStartAddress] = useState("");
@@ -142,6 +157,13 @@ export default function DeliveryRoutes() {
   // on screen, so Reverse and drag can't act on the previous day's route and
   // file the result under the new one (review, 2026-09-22).
   const optimizedRoute: OptimizedRouteResponse | null = savedRoute?.route ? savedRoute : null;
+  // A saved route's picked visits and custom stops come back ticked, so a
+  // Re-optimize keeps them; a day with no route starts with nothing ticked.
+  useEffect(() => {
+    const stops = savedRoute?.route ? savedRoute.stops : [];
+    setSelectedVisits(stops.filter((s) => s.type === "visit").map((s) => String(s.id)));
+    setSelectedCustomStops(stops.filter((s) => s.type === "custom").map((s) => String(s.id)));
+  }, [savedRoute?.route?.id, dateKey]);
   // A mutation's result is filed under the day it was REQUESTED for (not the
   // day selected when it finishes), after any fetch for that day still in
   // flight is cancelled — otherwise a reverse started for Tuesday showed up
@@ -220,6 +242,19 @@ export default function DeliveryRoutes() {
     queryKey: ["/api/delivery/stops"],
   });
 
+  // The leads tagged for this day's week, on offer as stops.
+  const { data: visitsData } = useQuery<{ week: string; visits: VisitOption[] }>({
+    queryKey: ["/api/delivery/visits", dateKey],
+    queryFn: async () => {
+      const response = await fetch(`/api/delivery/visits/${dateKey}`);
+      if (!response.ok) throw new Error("Failed to fetch the week's visits");
+      return response.json();
+    },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
+  const visits = visitsData?.visits ?? [];
+
   const { data: facility } = useQuery<{
     address: string;
     city: string;
@@ -281,7 +316,7 @@ export default function DeliveryRoutes() {
       const response = await apiRequest(
         "POST",
         `/api/delivery/optimize/${day}`,
-        { customStopIds: selectedCustomStops, startAddress, endAddress }
+        { customStopIds: selectedCustomStops, visitLeadIds: selectedVisits, startAddress, endAddress }
       );
       return response as OptimizedRouteResponse;
     },
@@ -389,6 +424,9 @@ export default function DeliveryRoutes() {
         : [...prev, stopId]
     );
   };
+  const toggleVisit = (leadId: string) => {
+    setSelectedVisits((prev) => (prev.includes(leadId) ? prev.filter((id) => id !== leadId) : [...prev, leadId]));
+  };
 
   return (
     <StaffLayout>
@@ -430,7 +468,7 @@ export default function DeliveryRoutes() {
 
             <Button
               onClick={() => optimizeRouteMutation.mutate({ day: dateKey })}
-              disabled={optimizeRouteMutation.isPending || ordersWithGeocode.length === 0}
+              disabled={optimizeRouteMutation.isPending || (ordersWithGeocode.length === 0 && selectedVisits.length === 0 && selectedCustomStops.length === 0)}
               data-testid="button-optimize-route"
             >
               <Route className="mr-2 h-4 w-4" />
@@ -726,7 +764,7 @@ export default function DeliveryRoutes() {
                           )}
                         </div>
                         <Badge variant={stop.type === "order" ? "default" : "outline"}>
-                          {stop.type === "order" ? "Delivery" : "Custom"}
+                          {stop.type === "order" ? "Delivery" : stop.type === "visit" ? "Visit" : "Custom"}
                         </Badge>
                       </div>
                     ))}
@@ -783,6 +821,58 @@ export default function DeliveryRoutes() {
                 </CardContent>
               </Card>
             )}
+            <Card data-testid="card-visits">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  Visits this week
+                </CardTitle>
+                <CardDescription>
+                  Leads tagged for the week of {visitsData ? visitWeekLabel(visitsData.week) : "…"} — tick one to make it a stop
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {visits.length === 0 ? (
+                  <div className="text-center py-4 text-muted-foreground text-sm">
+                    No leads tagged for this week. Tag one from the Leads page.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {visits.map((visit) => (
+                      <div
+                        key={visit.id}
+                        className="flex items-start gap-2 p-2 border rounded-md"
+                        data-testid={`visit-${visit.id}`}
+                      >
+                        <Checkbox
+                          id={`visit-${visit.id}`}
+                          checked={selectedVisits.includes(visit.id)}
+                          disabled={!visit.geocoded}
+                          onCheckedChange={() => toggleVisit(visit.id)}
+                          data-testid={`checkbox-visit-${visit.id}`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <label htmlFor={`visit-${visit.id}`} className="font-medium text-sm cursor-pointer">
+                            {visit.businessName}
+                          </label>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {visit.address ?? "No address on the lead"}
+                            {visit.contactName ? ` · ${visit.contactName}` : ""}
+                          </p>
+                        </div>
+                        {visit.visitedAt ? (
+                          <Badge variant="secondary" className="font-normal">Visited</Badge>
+                        ) : !visit.address ? (
+                          <Badge variant="secondary" className="font-normal">Needs address</Badge>
+                        ) : !visit.geocoded ? (
+                          <Badge variant="secondary" className="font-normal">Needs geocoding</Badge>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">

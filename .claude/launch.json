@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "staging"],
       "port": 5000
+    },
+    {
+      "name": "sound-staging-mapstub",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "staging:mapstub"],
+      "port": 5000
     }
   ]
 }

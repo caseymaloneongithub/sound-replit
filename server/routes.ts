@@ -32,9 +32,10 @@ import { createStripeCustomer } from "./stripeCustomer";
 // truth for frequency conversion is @shared/subscription-frequency (imported above).
 import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange, nextPickupDateFromScheduled } from "@shared/pickup-policy";
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
-import { geocodeForEdit, refreshLocationPin } from "./location-geocode";
+import { geocodeForEdit, geocodeLeadForEdit, refreshLeadPin, refreshLocationPin } from "./location-geocode";
 import { checkMaterialStockAlerts } from "./material-alerts";
 import { LEAD_TYPES, LEAD_ZIP_RE, leadZipFrom, type LeadType } from "@shared/schema";
+import { weekMondayOf, VISIT_TOUCH_POINT_SUBJECT } from "@shared/lead-visits";
 import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -10934,11 +10935,19 @@ If you have any questions, please don't hesitate to reach out!`,
     }
   });
 
-  // Type and zip on a lead (owner, 2026-09-29: sort by zip, filter by type): one
-  // of LEAD_TYPES or none, a 5-digit zip or none; a blank field is none. Only
-  // the fields the request carries, so an update can leave them alone.
-  const leadTypeAndZip = (body: any): { value: { businessType?: LeadType | null; zipCode?: string | null } } | { message: string } => {
-    const value: { businessType?: LeadType | null; zipCode?: string | null } = {};
+  // Type, zip and street address on a lead (owner, 2026-09-29: sort by zip, filter
+  // by type; 2026-10-05: a visit needs an address): one of LEAD_TYPES or none, a
+  // 5-digit zip or none, trimmed address parts; a blank field is none. Only the
+  // fields the request carries, so an update can leave the rest alone.
+  type LeadFields = { businessType?: LeadType | null; zipCode?: string | null; address?: string | null; city?: string | null; state?: string | null };
+  const leadFieldsFrom = (body: any): { value: LeadFields } | { message: string } => {
+    const value: LeadFields = {};
+    for (const part of ["address", "city", "state"] as const) {
+      if (body && part in body) {
+        const text = typeof body[part] === "string" ? body[part].trim() : "";
+        value[part] = text || (part === "state" ? "WA" : null);
+      }
+    }
     if (body && "businessType" in body) {
       const type = body.businessType || null;
       if (type !== null && !(LEAD_TYPES as readonly string[]).includes(type)) {
@@ -10962,7 +10971,7 @@ If you have any questions, please don't hesitate to reach out!`,
       if (!businessName || !contactName) {
         return res.status(400).json({ message: "Business name and contact name are required" });
       }
-      const extra = leadTypeAndZip(req.body);
+      const extra = leadFieldsFrom(req.body);
       if ("message" in extra) {
         return res.status(400).json({ message: extra.message });
       }
@@ -10978,9 +10987,14 @@ If you have any questions, please don't hesitate to reach out!`,
         assignedToUserId,
         businessType: extra.value.businessType ?? null,
         zipCode: extra.value.zipCode ?? null,
+        address: extra.value.address ?? null,
+        city: extra.value.city ?? null,
+        state: extra.value.state ?? 'WA',
       });
-      
-      res.status(201).json(lead);
+      // A lead with a street gets its pin now, so it can go on a route.
+      const placed = await refreshLeadPin(lead);
+
+      res.status(201).json(placed ? { ...lead, ...placed } : lead);
     } catch (error: any) {
       console.error("Error creating lead:", error);
       res.status(500).json({ message: "Error creating lead: " + error.message });
@@ -10991,21 +11005,86 @@ If you have any questions, please don't hesitate to reach out!`,
   app.patch("/api/crm/leads/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { id } = req.params;
-      const extra = leadTypeAndZip(req.body);
+      const extra = leadFieldsFrom(req.body);
       if ("message" in extra) {
         return res.status(400).json({ message: extra.message });
       }
-      const updates = { ...req.body, ...extra.value };
+      const existing = await storage.getLead(id);
+      if (!existing) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      // The pin and the visit tag have their own endpoints; an edit can't set them.
+      const { latitude, longitude, geocodedAt, visitWeek, visitedAt, ...fields } = req.body ?? {};
+      // The pin follows the address, as a store location's does.
+      const pin = await geocodeLeadForEdit(existing, extra.value);
+      const updates = { ...fields, ...extra.value, ...pin };
 
       const lead = await storage.updateLead(id, updates);
       if (!lead) {
         return res.status(404).json({ message: "Lead not found" });
       }
-      
+
       res.json(lead);
     } catch (error: any) {
       console.error("Error updating lead:", error);
       res.status(500).json({ message: "Error updating lead: " + error.message });
+    }
+  });
+
+  // Tag a lead for a visit (owner, 2026-10-05: "tag it for a visit this week"), or
+  // clear the tag. { week } is any date of the week wanted; null clears it. The
+  // Routes page offers the week's tagged leads as stops on any day of that week.
+  app.put("/api/crm/leads/:id/visit", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const week = req.body?.week ?? null;
+      if (week !== null && !(typeof week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(week))) {
+        return res.status(400).json({ message: "week must be a date (YYYY-MM-DD) or null" });
+      }
+      const lead = await storage.updateLead(req.params.id, { visitWeek: week ? weekMondayOf(week) : null, visitedAt: null });
+      if (!lead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      res.json(lead);
+    } catch (error: any) {
+      console.error("Error tagging lead for a visit:", error);
+      res.status(500).json({ message: "Error tagging lead for a visit: " + error.message });
+    }
+  });
+
+  // The driver's Visited button: when it happened, and a touch point on the lead
+  // so the visit is in its history. DELETE undoes both.
+  app.post("/api/crm/leads/:id/visited", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
+    try {
+      const date = typeof req.body?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.date) ? req.body.date : null;
+      const lead = await storage.updateLead(req.params.id, { visitedAt: new Date() });
+      if (!lead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      await storage.createLeadTouchPoint({
+        leadId: lead.id,
+        type: "meeting",
+        subject: VISIT_TOUCH_POINT_SUBJECT,
+        notes: date ? `Delivery route of ${date}` : null,
+        createdByUserId: req.user.id,
+      });
+      res.json(lead);
+    } catch (error: any) {
+      console.error("Error marking lead visited:", error);
+      res.status(500).json({ message: "Error marking lead visited: " + error.message });
+    }
+  });
+
+  app.delete("/api/crm/leads/:id/visited", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const lead = await storage.updateLead(req.params.id, { visitedAt: null });
+      if (!lead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      await storage.deleteLatestLeadTouchPoint(lead.id, VISIT_TOUCH_POINT_SUBJECT);
+      res.json(lead);
+    } catch (error: any) {
+      console.error("Error undoing a lead visit:", error);
+      res.status(500).json({ message: "Error undoing a lead visit: " + error.message });
     }
   });
 
@@ -11779,11 +11858,23 @@ If you have any questions, please don't hesitate to reach out!`,
         await new Promise(resolve => setTimeout(resolve, 100));
       }
 
+      // Leads with a street but no pin, too (owner, 2026-10-05: a lead tagged for
+      // a visit is a route stop).
+      const leadsToPlace = await storage.getLeadsNeedingGeocode();
+      for (const lead of leadsToPlace) {
+        if (await refreshLeadPin(lead)) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
       res.json({
         success: true,
         geocoded: successCount,
         failed: failCount,
-        total: unGeocodedLocations.length,
+        total: unGeocodedLocations.length + leadsToPlace.length,
       });
     } catch (error: any) {
       console.error("Error geocoding all locations:", error);
@@ -11892,10 +11983,38 @@ If you have any questions, please don't hesitate to reach out!`,
   });
 
   // Generate optimized route for a date
+  // The week's tagged leads, for the Routes page to offer as stops on any day of
+  // that week (owner, 2026-10-05). Each says whether it can be driven to yet (it
+  // has a pin) and whether it has been visited already.
+  app.get("/api/delivery/visits/:date", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const { date } = req.params;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ message: "Date must be YYYY-MM-DD" });
+      const week = weekMondayOf(date);
+      const tagged = await storage.getLeadsForVisitWeek(week);
+      res.json({
+        week,
+        visits: tagged.map((lead) => ({
+          id: lead.id,
+          businessName: lead.businessName,
+          contactName: lead.contactName || null,
+          phone: lead.phone || null,
+          address: [lead.address, lead.city].filter(Boolean).join(', ') || null,
+          geocoded: !!(lead.latitude && lead.longitude),
+          visitedAt: lead.visitedAt,
+        })),
+      });
+    } catch (error: any) {
+      console.error("Error fetching the week's visits:", error);
+      res.status(500).json({ message: "Error fetching the week's visits: " + error.message });
+    }
+  });
+
   app.post("/api/delivery/optimize/:date", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const { date } = req.params;
-      const { customStopIds = [] } = req.body;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ message: "Date must be YYYY-MM-DD" });
+      const { customStopIds = [], visitLeadIds = [] } = req.body;
       const targetDate = new Date(date);
 
       // Editable route endpoints (owner, 2026-09-03): blank = the brewery.
@@ -11933,9 +12052,10 @@ If you have any questions, please don't hesitate to reach out!`,
         longitude: number;
         name: string;
         address: string;
-        type: "order" | "custom";
+        type: "order" | "custom" | "visit";
         orderId?: string;
         customerId?: string;
+        leadId?: string;
       }> = [];
 
       for (const order of scheduledOrders) {
@@ -11982,6 +12102,24 @@ If you have any questions, please don't hesitate to reach out!`,
           name: stop.name,
           address: `${stop.address}, ${stop.city}`,
           type: 'custom',
+        });
+      }
+
+      // Visits (owner, 2026-10-05): the week's tagged leads picked for this day.
+      // Only a placed lead can be driven to; one without a pin stays on offer
+      // until Geocode All places it.
+      const pickedLeadIds = new Set(Array.isArray(visitLeadIds) ? visitLeadIds.map(String) : []);
+      const visitLeads = (await storage.getLeadsForVisitWeek(weekMondayOf(date)))
+        .filter((lead) => pickedLeadIds.has(lead.id) && lead.latitude && lead.longitude);
+      for (const lead of visitLeads) {
+        orderStops.push({
+          id: lead.id,
+          latitude: parseFloat(lead.latitude!),
+          longitude: parseFloat(lead.longitude!),
+          name: lead.businessName,
+          address: [lead.address, lead.city].filter(Boolean).join(', '),
+          type: 'visit',
+          leadId: lead.id,
         });
       }
 
@@ -12047,6 +12185,7 @@ If you have any questions, please don't hesitate to reach out!`,
             stopType: stop.type,
             wholesaleOrderId: stop.type === 'order' ? stop.id : null,
             deliveryStopId: stop.type === 'custom' ? stop.id : null,
+            leadId: stop.type === 'visit' ? stop.id : null,
             distanceFromPrevious: stop.distanceFromPrevious != null ? Math.round(stop.distanceFromPrevious) : null,
             durationFromPrevious: stop.durationFromPrevious != null ? Math.round(stop.durationFromPrevious) : null,
           })));
@@ -12166,12 +12305,12 @@ If you have any questions, please don't hesitate to reach out!`,
         .filter((o) => o.status !== 'cancelled');
       const dayOrderIds = new Set(dayOrders.map((o) => o.id));
 
-      type Skeleton = { type: 'order' | 'custom'; id: string; latitude: number | null; longitude: number | null; distanceFromPrevious: number | null; durationFromPrevious: number | null; routed: boolean };
+      type Skeleton = { type: 'order' | 'custom' | 'visit'; id: string; latitude: number | null; longitude: number | null; distanceFromPrevious: number | null; durationFromPrevious: number | null; routed: boolean };
       const skeleton: Skeleton[] = [];
       if (route) {
         const saved: any[] = JSON.parse(route.optimizedStops ?? '[]');
         for (const s of saved) {
-          skeleton.push({ type: s.type === 'custom' ? 'custom' : 'order', id: String(s.id), latitude: s.latitude ?? null, longitude: s.longitude ?? null, distanceFromPrevious: s.distanceFromPrevious ?? null, durationFromPrevious: s.durationFromPrevious ?? null, routed: true });
+          skeleton.push({ type: s.type === 'custom' || s.type === 'visit' ? s.type : 'order', id: String(s.id), latitude: s.latitude ?? null, longitude: s.longitude ?? null, distanceFromPrevious: s.distanceFromPrevious ?? null, durationFromPrevious: s.durationFromPrevious ?? null, routed: true });
         }
       }
       // Deliveries scheduled since the route was built (or with no route at
@@ -12208,6 +12347,32 @@ If you have any questions, please don't hesitate to reach out!`,
             latitude: lat,
             longitude: lng,
             notes: custom.notes ?? null,
+            distanceFromPrevious: s.distanceFromPrevious,
+            durationFromPrevious: s.durationFromPrevious,
+            routed: s.routed,
+            addressChanged: pinMoved(s, lat, lng),
+          };
+        }
+        // A visit (owner, 2026-10-05): the lead's current address, who to ask
+        // for, and its notes. A lead untagged (or deleted) since the route was
+        // built is no visit to make.
+        if (s.type === 'visit') {
+          const lead = await storage.getLead(s.id);
+          if (!lead || lead.visitWeek !== weekMondayOf(date)) return null;
+          const lat = lead.latitude ? Number(lead.latitude) : null;
+          const lng = lead.longitude ? Number(lead.longitude) : null;
+          return {
+            key: `visit:${lead.id}`,
+            type: 'visit',
+            id: lead.id,
+            name: lead.businessName,
+            address: [lead.address, lead.city].filter(Boolean).join(', ') || null,
+            latitude: lat,
+            longitude: lng,
+            contactName: lead.contactName || null,
+            contactPhone: lead.phone || null,
+            notes: lead.notes ?? null,
+            visited: !!lead.visitedAt,
             distanceFromPrevious: s.distanceFromPrevious,
             durationFromPrevious: s.durationFromPrevious,
             routed: s.routed,
@@ -12258,6 +12423,7 @@ If you have any questions, please don't hesitate to reach out!`,
       const stops: any[] = (await Promise.all(skeleton.map(buildStop))).filter((s) => s !== null);
 
       const deliveries = stops.filter((s) => s.type === 'order');
+      const visits = stops.filter((s) => s.type === 'visit');
       res.json({
         date,
         route: route
@@ -12274,6 +12440,8 @@ If you have any questions, please don't hesitate to reach out!`,
           deliveries: deliveries.length,
           delivered: deliveries.filter((s) => s.status === 'delivered').length,
           cases: deliveries.reduce((n, s) => n + s.cases, 0),
+          visits: visits.length,
+          visited: visits.filter((s) => s.visited).length,
         },
       });
     } catch (error: any) {
@@ -12326,6 +12494,7 @@ If you have any questions, please don't hesitate to reach out!`,
           stopType: stop.type,
           wholesaleOrderId: stop.type === 'order' ? stop.id : null,
           deliveryStopId: stop.type === 'custom' ? stop.id : null,
+          leadId: stop.type === 'visit' ? stop.id : null,
           distanceFromPrevious: Math.round(stop.distanceFromPrevious),
           durationFromPrevious: Math.round(stop.durationFromPrevious),
         });
@@ -12460,6 +12629,17 @@ If you have any questions, please don't hesitate to reach out!`,
             address: c ? [c.address, c.city, c.state, c.zipCode].filter(Boolean).join(', ') : '',
             arrival: stop.arrivalEstimate ? new Date(stop.arrivalEstimate) : null,
             notes: c?.notes ?? null,
+          });
+        } else if (stop.stopType === 'visit' && stop.leadId) {
+          // A sales visit (owner, 2026-10-05): the lead and who to ask for.
+          const lead = await storage.getLead(stop.leadId);
+          if (!lead) continue;
+          stopLines.push({
+            order: stop.stopOrder + 1,
+            label: `Visit: ${lead.businessName}`,
+            address: [lead.address, lead.city, lead.state, lead.zipCode].filter(Boolean).join(', '),
+            arrival: stop.arrivalEstimate ? new Date(stop.arrivalEstimate) : null,
+            notes: [lead.contactName ? `Ask for ${lead.contactName}` : null, lead.phone].filter(Boolean).join(' · ') || null,
           });
         }
       }
