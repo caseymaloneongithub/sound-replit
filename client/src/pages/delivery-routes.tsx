@@ -304,6 +304,8 @@ export default function DeliveryRoutes() {
     },
     onSuccess: (data: { geocoded: number; failed: number }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/delivery/orders"] });
+      // Geocode All places leads too, so the week's visits learn their pins.
+      queryClient.invalidateQueries({ queryKey: ["/api/delivery/visits"] });
       toast({
         title: "Geocoding complete",
         description: `Geocoded ${data.geocoded} locations, ${data.failed} failed`,

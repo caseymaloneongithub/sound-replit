@@ -13,6 +13,8 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS longitude numeric(10,7);
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS geocoded_at timestamp;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS visit_week date;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS visited_at timestamp;
+-- The touch point the visit wrote, so Undo removes exactly that one (review, 2026-10-06).
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS visit_touch_point_id varchar REFERENCES lead_touch_points(id) ON DELETE SET NULL;
 ALTER TABLE delivery_route_stops ADD COLUMN IF NOT EXISTS lead_id varchar REFERENCES leads(id) ON DELETE CASCADE;
 
 -- Imported leads carry the address in their notes after the "<area> route" part:

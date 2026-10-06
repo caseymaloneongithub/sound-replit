@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, decimal, timestamp, date, boolean, index, jsonb, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, decimal, timestamp, date, boolean, index, jsonb, unique, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -742,6 +742,10 @@ export const leads = pgTable("leads", {
   // and when the driver marked it visited. A past week is simply no longer a tag.
   visitWeek: date("visit_week"),
   visitedAt: timestamp("visited_at"),
+  // The touch point that visit wrote, so Undo takes back exactly that one. The
+  // two tables reference each other, so this side names its column type to
+  // keep TypeScript from chasing the cycle.
+  visitTouchPointId: varchar("visit_touch_point_id").references((): AnyPgColumn => leadTouchPoints.id, { onDelete: 'set null' }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

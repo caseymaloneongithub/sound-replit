@@ -97,6 +97,7 @@ import {
   type MaterialOrder, type InsertMaterialOrder,
   type OrderMaterial,
 } from "@shared/schema";
+import { VISIT_TOUCH_POINT_SUBJECT } from "@shared/lead-visits";
 import { eq, and, or, desc, asc, sql, inArray, isNull, gte, lt } from "drizzle-orm";
 import {
   materialLevel,
@@ -369,7 +370,8 @@ export interface IStorage {
   // CRM - Touch point management
   getLeadTouchPoints(leadId: string): Promise<LeadTouchPoint[]>;
   createLeadTouchPoint(touchPoint: InsertLeadTouchPoint): Promise<LeadTouchPoint>;
-  deleteLatestLeadTouchPoint(leadId: string, subject: string): Promise<void>;
+  markLeadVisited(leadId: string, createdByUserId: string, notes: string | null): Promise<Lead | undefined>;
+  undoLeadVisit(leadId: string): Promise<Lead | undefined>;
   getRecentTouchPoints(limit?: number): Promise<Array<LeadTouchPoint & { leadBusinessName: string; createdByName: string }>>;
   
   // ACCOUNTING MODULE - Plaid Items
@@ -5169,15 +5171,46 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  /** Undoing a visit takes its touch point back: the latest one with that subject. */
-  async deleteLatestLeadTouchPoint(leadId: string, subject: string): Promise<void> {
-    const [latest] = await db
-      .select({ id: leadTouchPoints.id })
-      .from(leadTouchPoints)
-      .where(and(eq(leadTouchPoints.leadId, leadId), eq(leadTouchPoints.subject, subject)))
-      .orderBy(desc(leadTouchPoints.createdAt))
-      .limit(1);
-    if (latest) await db.delete(leadTouchPoints).where(eq(leadTouchPoints.id, latest.id));
+  /**
+   * The driver's Visited (owner, 2026-10-05): the lead is stamped and a touch
+   * point goes into its history in one transaction, and the lead remembers
+   * which touch point, so Undo takes back exactly that one. A lead already
+   * visited stays as it is — a second tap adds nothing (review, 2026-10-06).
+   */
+  async markLeadVisited(leadId: string, createdByUserId: string, notes: string | null): Promise<Lead | undefined> {
+    return db.transaction(async (tx) => {
+      const [lead] = await tx.select().from(leads).where(eq(leads.id, leadId)).for("update");
+      if (!lead) return undefined;
+      if (lead.visitedAt) return lead;
+      const [touchPoint] = await tx
+        .insert(leadTouchPoints)
+        .values({ leadId, type: "meeting", subject: VISIT_TOUCH_POINT_SUBJECT, notes, createdByUserId })
+        .returning();
+      const [updated] = await tx
+        .update(leads)
+        .set({ visitedAt: new Date(), visitTouchPointId: touchPoint.id, updatedAt: new Date() })
+        .where(eq(leads.id, leadId))
+        .returning();
+      return updated;
+    });
+  }
+
+  /** Undo a visit: only the touch point that visit wrote goes, and only once. */
+  async undoLeadVisit(leadId: string): Promise<Lead | undefined> {
+    return db.transaction(async (tx) => {
+      const [lead] = await tx.select().from(leads).where(eq(leads.id, leadId)).for("update");
+      if (!lead) return undefined;
+      if (!lead.visitedAt) return lead;
+      if (lead.visitTouchPointId) {
+        await tx.delete(leadTouchPoints).where(eq(leadTouchPoints.id, lead.visitTouchPointId));
+      }
+      const [updated] = await tx
+        .update(leads)
+        .set({ visitedAt: null, visitTouchPointId: null, updatedAt: new Date() })
+        .where(eq(leads.id, leadId))
+        .returning();
+      return updated;
+    });
   }
 
   async getRecentTouchPoints(limit: number = 10): Promise<Array<LeadTouchPoint & { leadBusinessName: string; createdByName: string }>> {

@@ -42,7 +42,7 @@ import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDir
 import { geocodeForEdit, geocodeLeadForEdit, refreshLeadPin, refreshLocationPin } from "./location-geocode";
 import { checkMaterialStockAlerts } from "./material-alerts";
 import { LEAD_TYPES, LEAD_ZIP_RE, leadZipFrom, type LeadType } from "@shared/schema";
-import { weekMondayOf, VISIT_TOUCH_POINT_SUBJECT } from "@shared/lead-visits";
+import { weekMondayOf } from "@shared/lead-visits";
 import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -11543,7 +11543,8 @@ If you have any questions, please don't hesitate to reach out!`,
       if (week !== null && !(typeof week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(week))) {
         return res.status(400).json({ message: "week must be a date (YYYY-MM-DD) or null" });
       }
-      const lead = await storage.updateLead(req.params.id, { visitWeek: week ? weekMondayOf(week) : null, visitedAt: null });
+      // A new tag starts the visit over; the earlier visit's touch point stays as history.
+      const lead = await storage.updateLead(req.params.id, { visitWeek: week ? weekMondayOf(week) : null, visitedAt: null, visitTouchPointId: null });
       if (!lead) {
         return res.status(404).json({ message: "Lead not found" });
       }
@@ -11555,21 +11556,16 @@ If you have any questions, please don't hesitate to reach out!`,
   });
 
   // The driver's Visited button: when it happened, and a touch point on the lead
-  // so the visit is in its history. DELETE undoes both.
+  // so the visit is in its history. DELETE undoes both. Both are one transaction
+  // and both are safe to repeat: a second Visited adds nothing, a second Undo
+  // removes nothing more (review, 2026-10-06).
   app.post("/api/crm/leads/:id/visited", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
     try {
       const date = typeof req.body?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.date) ? req.body.date : null;
-      const lead = await storage.updateLead(req.params.id, { visitedAt: new Date() });
+      const lead = await storage.markLeadVisited(req.params.id, req.user.id, date ? `Delivery route of ${date}` : null);
       if (!lead) {
         return res.status(404).json({ message: "Lead not found" });
       }
-      await storage.createLeadTouchPoint({
-        leadId: lead.id,
-        type: "meeting",
-        subject: VISIT_TOUCH_POINT_SUBJECT,
-        notes: date ? `Delivery route of ${date}` : null,
-        createdByUserId: req.user.id,
-      });
       res.json(lead);
     } catch (error: any) {
       console.error("Error marking lead visited:", error);
@@ -11579,11 +11575,10 @@ If you have any questions, please don't hesitate to reach out!`,
 
   app.delete("/api/crm/leads/:id/visited", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
-      const lead = await storage.updateLead(req.params.id, { visitedAt: null });
+      const lead = await storage.undoLeadVisit(req.params.id);
       if (!lead) {
         return res.status(404).json({ message: "Lead not found" });
       }
-      await storage.deleteLatestLeadTouchPoint(lead.id, VISIT_TOUCH_POINT_SUBJECT);
       res.json(lead);
     } catch (error: any) {
       console.error("Error undoing a lead visit:", error);
@@ -13134,9 +13129,11 @@ If you have any questions, please don't hesitate to reach out!`,
             notes: c?.notes ?? null,
           });
         } else if (stop.stopType === 'visit' && stop.leadId) {
-          // A sales visit (owner, 2026-10-05): the lead and who to ask for.
+          // A sales visit (owner, 2026-10-05): the lead and who to ask for. A lead
+          // untagged since the route was built is no visit to make — the same
+          // check Driver Mode makes (review, 2026-10-06).
           const lead = await storage.getLead(stop.leadId);
-          if (!lead) continue;
+          if (!lead || lead.visitWeek !== weekMondayOf(new Date(route.routeDate).toISOString().slice(0, 10))) continue;
           stopLines.push({
             order: stop.stopOrder + 1,
             label: `Visit: ${lead.businessName}`,
