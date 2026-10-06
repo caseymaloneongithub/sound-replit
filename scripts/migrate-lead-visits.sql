@@ -17,6 +17,14 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS visited_at timestamp;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS visit_touch_point_id varchar REFERENCES lead_touch_points(id) ON DELETE SET NULL;
 ALTER TABLE delivery_route_stops ADD COLUMN IF NOT EXISTS lead_id varchar REFERENCES leads(id) ON DELETE CASCADE;
 
+-- A visit recorded before that column existed points at the latest visit entry
+-- in its history, so Undo can take that one back too (review, 2026-10-06).
+UPDATE leads SET visit_touch_point_id = (
+    SELECT t.id FROM lead_touch_points t
+    WHERE t.lead_id = leads.id AND t.subject = 'Visited on the delivery route'
+    ORDER BY t.created_at DESC LIMIT 1)
+WHERE visited_at IS NOT NULL AND visit_touch_point_id IS NULL;
+
 -- Imported leads carry the address in their notes after the "<area> route" part:
 --   "… — cafe · Ballard route — 1417 NW 54th St #101, Seattle, 98107 — https://…"
 -- Street is what sits before the last ", <city>, <zip>" of that part.
