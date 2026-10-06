@@ -90,6 +90,7 @@ export type ShippingQuote = {
   settingsVersion: number;
   stub?: boolean;          // true when no carrier key was configured and a stand-in rate was used
   repackedAt?: string;     // set when a staff edit re-planned the boxes after payment
+  planVersion?: number;    // bumped on every repack; labels record the version they were bought for (absent = 1)
 };
 
 export type ShippingLabel = {
@@ -102,6 +103,8 @@ export type ShippingLabel = {
   labelUrl: string | null;     // PNG (4x6) from the carrier; null in stub mode
   transactionId: string | null;
   amountCents: number;
+  planVersion?: number;        // the box plan this label was bought for (absent = 1)
+  pendingRateId?: string | null; // set while a purchase is in flight; the rate is the carrier-side identity to reconcile
 };
 
 /**

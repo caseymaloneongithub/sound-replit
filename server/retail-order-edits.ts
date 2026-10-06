@@ -21,7 +21,7 @@
 import { randomUUID } from "node:crypto";
 import { shippingBoxes } from "@shared/schema";
 import { packCans, type ShippingQuote } from "@shared/shipping-policy";
-import { getShippingSettings } from "./shipping";
+import { getShippingSettings, isLabelPurchaseInFlight } from "./shipping";
 import type Stripe from "stripe";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "./db";
@@ -180,6 +180,12 @@ export async function recomputeRetailOrderTotals(tx: DbTx, order: OrderRow): Pro
   // The shipping CHARGE stays what was paid; the repacked plan is for labels.
   let repackedQuote: ShippingQuote | null = null;
   if (order.fulfillmentMethod === 'ship' && lines.length > 0) {
+    // Once labels exist or are being bought, the boxes are spoken for (reviewer,
+    // 2026-10-06): an edit now would leave bought labels describing other boxes.
+    const existingLabels = (order.shippingLabels as unknown[] | null) ?? [];
+    if (existingLabels.length > 0 || isLabelPurchaseInFlight(order.id)) {
+      throw new OrderEditError(409, "Labels have been (or are being) bought for this order — it can't be edited any more");
+    }
     if (legacy.length > 0 || v2.some((l) => !l.cansPerUnit)) {
       throw new OrderEditError(400, "That item is pickup only — it can't be added to a shipped order");
     }
@@ -213,6 +219,7 @@ export async function recomputeRetailOrderTotals(tx: DbTx, order: OrderRow): Pro
       settingsVersion: settings.version,
       ...(prior?.stub ? { stub: true } : {}),
       repackedAt: new Date().toISOString(),
+      planVersion: (prior?.planVersion ?? 1) + 1,
     };
   }
 

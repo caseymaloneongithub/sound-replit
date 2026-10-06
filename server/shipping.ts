@@ -437,16 +437,39 @@ function orderShipTo(order: RetailOrder): ShippingAddress {
 
 /** Orders whose labels are being bought right now, in this process. Railway runs
  *  one process, so this is the whole guard against a double tap; nothing is
- *  written to the row to mark "in progress", so there is no claim to abandon. */
+ *  written to the row to mark "in progress", so there is no claim to abandon.
+ *  Order edits consult it too (see retail-order-edits). */
 const labelsInFlight = new Set<string>();
+export function isLabelPurchaseInFlight(orderId: string): boolean {
+  return labelsInFlight.has(orderId);
+}
+
+type ShippoTransactionList = { results?: ShippoTransaction[] };
+
+/** Any label already bought against this rate (a rate belongs to exactly one shipment,
+ *  so this is the purchase identity we can ask the carrier about after a crash). */
+async function findPurchasedLabelForRate(rateId: string): Promise<ShippoTransaction | null> {
+  const list = await shippo<ShippoTransactionList>(`/transactions/?rate=${encodeURIComponent(rateId)}&results=10`);
+  return (list.results ?? []).find((t) => t.status === 'SUCCESS') ?? null;
+}
+
+function isComplete(l: ShippingLabel): boolean {
+  return !l.pendingRateId && !!l.trackingNumber;
+}
 
 /**
- * Buy one label per box for a shipped order and record them. Resumable and
- * per-box (reviewer, 2026-10-06): each label is persisted the moment it is
- * bought, so a failure on box 2 keeps box 1's label and a retry buys only the
- * boxes still missing. Labels are rated from the ORDER's final address and the
- * quoted service, never from the checkout-time rate id, so an address or name
- * correction (or an expired rate) can't print the wrong label.
+ * Buy one label per box for a shipped order and record them. Resumable, per box,
+ * and crash-safe (reviewer, 2026-10-06):
+ *  - before each carrier purchase the chosen rate id is persisted as a pending
+ *    entry, so if the process dies between "bought" and "saved" the retry asks
+ *    Shippo for that rate's transaction and adopts it instead of buying again;
+ *  - each label is persisted the moment it is bought;
+ *  - every label carries the packing plan's version, and the plan is re-read
+ *    before each box; an order edited mid-purchase stops with a 409 rather than
+ *    shipping on a stale plan;
+ *  - finalisation (shippedAt) is retried even when every label already exists.
+ * Labels are rated from the ORDER's final address and the quoted service, never
+ * from the checkout-time rate id.
  * Does NOT change status — the caller flips it to fulfilled (which deducts stock)
  * once every box has a label.
  */
@@ -454,63 +477,114 @@ export async function purchaseLabelsForOrder(orderId: string): Promise<{ order: 
   if (labelsInFlight.has(orderId)) throw new ShippingError(409, 'Labels for this order are already being bought.');
   labelsInFlight.add(orderId);
   try {
-    const [order] = await db.select().from(retailOrders).where(and(eq(retailOrders.id, orderId), isNull(retailOrders.deletedAt)));
-    if (!order) throw new ShippingError(404, 'Order not found');
+    const readOrder = async () => {
+      const [o] = await db.select().from(retailOrders).where(and(eq(retailOrders.id, orderId), isNull(retailOrders.deletedAt)));
+      if (!o) throw new ShippingError(404, 'Order not found');
+      return o;
+    };
+    let order = await readOrder();
     if (order.fulfillmentMethod !== 'ship') throw new ShippingError(400, 'This is a pickup order — nothing to label.');
     if (order.status === 'cancelled') throw new ShippingError(400, 'This order is cancelled.');
     const quote = order.shippingQuote as ShippingQuote | null;
     if (!quote || quote.boxes.length === 0) throw new ShippingError(400, 'This order has no shipping quote to buy labels from.');
+    const planVersion = quote.planVersion ?? 1;
 
     const labels: ShippingLabel[] = [...(((order.shippingLabels as ShippingLabel[] | null) ?? []))];
-    if (labels.length >= quote.boxes.length) return { order, labels, alreadyHad: true };
+    const staleLabels = labels.filter((l) => isComplete(l) && (l.planVersion ?? 1) !== planVersion);
+    if (staleLabels.length > 0) {
+      throw new ShippingError(409, `${staleLabels.length} label(s) were bought for an earlier box plan of this order (it was edited since). Void or reuse them by hand before buying more.`);
+    }
+
+    const persist = async () => {
+      await db.update(retailOrders).set({ shippingLabels: labels, updatedAt: new Date() }).where(eq(retailOrders.id, orderId));
+    };
 
     const settings = await getShippingSettings();
     const to = orderShipTo(order);
     const allBoxes = await getAllBoxes();
     const shipDate = new Date(Math.max(Date.now(), new Date(quote.shipDate).getTime()));
 
-    for (let i = labels.length; i < quote.boxes.length; i++) {
+    for (let i = 0; i < quote.boxes.length; i++) {
+      if (labels[i] && isComplete(labels[i])) continue;
       const box = quote.boxes[i];
-      let label: ShippingLabel;
+
+      // An edit between boxes changes the plan; stop rather than ship a stale one.
+      if (i > 0 || labels[i]) {
+        const fresh = (await readOrder()).shippingQuote as ShippingQuote | null;
+        if ((fresh?.planVersion ?? 1) !== planVersion) {
+          throw new ShippingError(409, 'This order was edited while its labels were being bought. Review the boxes and buy the remaining labels again.');
+        }
+      }
+
       if (!SHIPPO_KEY) {
-        label = {
+        labels[i] = {
           boxName: box.boxName, cans: box.cans, carrier: box.carrier, service: box.service,
           trackingNumber: `TEST${Date.now().toString(36).toUpperCase()}${i + 1}`,
-          trackingUrl: null, labelUrl: null, transactionId: null, amountCents: box.carrierCents,
+          trackingUrl: null, labelUrl: null, transactionId: null, amountCents: box.carrierCents, planVersion,
         };
-      } else {
-        const boxRow = allBoxes.find((b) => b.id === box.boxId);
-        if (!boxRow) throw new ShippingError(500, `Shipping box ${box.boxName} no longer exists`);
-        const perCan = box.cans > 0
-          ? (box.weightOz - Number(boxRow.tareWeightOz) - boxRow.icePackCount * Number(boxRow.icePackWeightOz)) / box.cans
-          : settings.defaultCanWeightOz;
-        const { rate } = await rateBox(settings, to, boxRow, box.cans, box.cans * Math.max(1, perCan), shipDate, order.customerEmail, box.serviceToken);
-        if (!rate) throw new ShippingError(502, `No service within ${settings.maxTransitDays} days is available any more for ${box.boxName}.`);
-        const tx = await buyLabel(rate.object_id);
-        if (tx.status !== 'SUCCESS') {
-          const why = (tx.messages ?? []).map((m) => m.text).filter(Boolean).join(' ');
-          throw new ShippingError(502, `Carrier refused the label for ${box.boxName}: ${why || tx.status}`);
-        }
-        label = {
-          boxName: box.boxName, cans: box.cans, carrier: rate.provider, service: rate.servicelevel?.name ?? box.service,
-          trackingNumber: tx.tracking_number ?? '',
-          trackingUrl: tx.tracking_url_provider ?? null,
-          labelUrl: tx.label_url ?? null,
-          transactionId: tx.object_id,
-          amountCents: Math.round(Number(rate.amount) * 100),
-        };
+        await persist();
+        continue;
       }
-      labels.push(label);
-      // Persist this label before touching the next box: a bought label is money.
-      await db.update(retailOrders).set({ shippingLabels: labels, updatedAt: new Date() }).where(eq(retailOrders.id, orderId));
+
+      // Crash recovery: a pending entry means a purchase may have gone through.
+      const pending = labels[i]?.pendingRateId ?? null;
+      if (pending) {
+        const found = await findPurchasedLabelForRate(pending);
+        if (found) {
+          labels[i] = {
+            ...labels[i], pendingRateId: null,
+            trackingNumber: found.tracking_number ?? '', trackingUrl: found.tracking_url_provider ?? null,
+            labelUrl: found.label_url ?? null, transactionId: found.object_id,
+          };
+          await persist();
+          continue;
+        }
+      }
+
+      const boxRow = allBoxes.find((b) => b.id === box.boxId);
+      if (!boxRow) throw new ShippingError(500, `Shipping box ${box.boxName} no longer exists`);
+      const perCan = box.cans > 0
+        ? (box.weightOz - Number(boxRow.tareWeightOz) - boxRow.icePackCount * Number(boxRow.icePackWeightOz)) / box.cans
+        : settings.defaultCanWeightOz;
+      const { rate } = await rateBox(settings, to, boxRow, box.cans, box.cans * Math.max(1, perCan), shipDate, order.customerEmail, box.serviceToken);
+      if (!rate) throw new ShippingError(502, `No service within ${settings.maxTransitDays} days is available any more for ${box.boxName}.`);
+
+      // Persist the purchase identity BEFORE spending money on it.
+      labels[i] = {
+        boxName: box.boxName, cans: box.cans, carrier: rate.provider, service: rate.servicelevel?.name ?? box.service,
+        trackingNumber: '', trackingUrl: null, labelUrl: null, transactionId: null,
+        amountCents: Math.round(Number(rate.amount) * 100), planVersion, pendingRateId: rate.object_id,
+      };
+      await persist();
+
+      const tx = await buyLabel(rate.object_id);
+      if (tx.status !== 'SUCCESS') {
+        const why = (tx.messages ?? []).map((m) => m.text).filter(Boolean).join(' ');
+        // Nothing was bought: clear the pending entry so the next attempt re-rates.
+        labels.splice(i, 1);
+        await persist();
+        throw new ShippingError(502, `Carrier refused the label for ${box.boxName}: ${why || tx.status}`);
+      }
+      labels[i] = {
+        ...labels[i], pendingRateId: null,
+        trackingNumber: tx.tracking_number ?? '', trackingUrl: tx.tracking_url_provider ?? null,
+        labelUrl: tx.label_url ?? null, transactionId: tx.object_id,
+      };
+      await persist();
     }
 
-    const [updated] = await db
-      .update(retailOrders)
-      .set({ shippedAt: new Date(), updatedAt: new Date() })
-      .where(eq(retailOrders.id, orderId))
-      .returning();
-    return { order: updated, labels, alreadyHad: false };
+    // Finalise — retried on every call so a crash after the last label still
+    // lands shippedAt, which the week's labels PDF keys on.
+    const alreadyHad = !!order.shippedAt && labels.every(isComplete);
+    if (!order.shippedAt) {
+      const [updated] = await db
+        .update(retailOrders)
+        .set({ shippedAt: new Date(), updatedAt: new Date() })
+        .where(eq(retailOrders.id, orderId))
+        .returning();
+      order = updated;
+    }
+    return { order, labels, alreadyHad };
   } finally {
     labelsInFlight.delete(orderId);
   }

@@ -4021,144 +4021,153 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validated = customerInfoSchema.parse(req.body);
       const sessionId = req.sessionID;
 
-      // Validate payment intent exists and belongs to this session if provided
       if (validated.paymentIntentId && !validated.paymentIntentId.startsWith('pi_')) {
         return res.status(400).json({ message: "Invalid payment intent ID" });
       }
+      const fulfillmentMethod = validated.fulfillmentMethod === 'ship' ? 'ship' : 'pickup';
+      if (fulfillmentMethod === 'ship' && !validated.shipTo) {
+        return res.status(400).json({ message: "Please enter a shipping address.", code: 'address_incomplete' });
+      }
+      if (validated.paymentIntentId && !stripe) {
+        return res.status(503).json({ message: "Payment processing is not configured" });
+      }
 
-      // Fetch tax metadata from payment intent if available
-      let taxMode = 'exclusive';
-      let taxRateBps = 1035; // Default 10.35%
-      let taxAmountCents = 0;
-      let isTaxExempt = false;
-      let paymentIntent: Stripe.PaymentIntent | null = null;
+      // Everything below runs in ONE transaction under an advisory lock on the
+      // intent id (reviewer, 2026-10-06): two submits for the same intent
+      // serialise — the second sees the first's Stripe amount and snapshot — and
+      // the webhook takes the same lock before reading the snapshot, so it can
+      // never read one that disagrees with the amount Stripe holds. The intent is
+      // retrieved INSIDE the lock, and an intent that can't be retrieved and
+      // verified ends the request without touching anything.
+      const totals = await db.transaction(async (tx) => {
+        if (validated.paymentIntentId) {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${validated.paymentIntentId}))`);
+        }
 
-      if (validated.paymentIntentId && stripe) {
-        try {
-          paymentIntent = await stripe.paymentIntents.retrieve(validated.paymentIntentId);
+        let taxMode = 'exclusive';
+        let taxRateBps = 1035; // Default 10.35%
+        let taxAmountCents = 0;
+        const isTaxExempt = false;
+        let paymentIntent: Stripe.PaymentIntent | null = null;
 
-          // 🔒 The intent must be THIS checkout's cart purchase (reviewer, 2026-10-06):
-          // this route re-prices it and replaces its snapshot, so a guessed or leaked
-          // id must reach neither. The intent carries the session that created it;
-          // a signed-in customer may also continue it from a regenerated session.
+        if (validated.paymentIntentId && stripe) {
+          try {
+            paymentIntent = await stripe.paymentIntents.retrieve(validated.paymentIntentId);
+          } catch (error: any) {
+            console.error("Error fetching payment intent for checkout:", error?.message ?? error);
+            throw new ShippingError(503, "We couldn't verify your payment session just now. Please try again in a moment.", 'intent_unavailable');
+          }
+
+          // 🔒 The intent must be THIS checkout's cart purchase: this route re-prices
+          // it and replaces its snapshot, so a guessed or leaked id must reach
+          // neither. The intent carries the session that created it; a signed-in
+          // customer may also continue it from a regenerated session.
           const ownsIntent = paymentIntent.metadata?.type === 'cart_purchase'
             && (paymentIntent.metadata.sessionId === sessionId
               || (!!req.user?.id && paymentIntent.metadata.userId === req.user.id));
           if (!ownsIntent) {
-            return res.status(403).json({ message: "That payment doesn't belong to this checkout. Please reload the page and try again." });
+            throw new ShippingError(403, "That payment doesn't belong to this checkout. Please reload the page and try again.", 'intent_mismatch');
           }
 
-          // Extract tax information from metadata
           if (paymentIntent.metadata.taxRate) {
-            const taxRate = parseFloat(paymentIntent.metadata.taxRate);
-            taxRateBps = Math.round(taxRate * 10000); // Convert to basis points
+            taxRateBps = Math.round(parseFloat(paymentIntent.metadata.taxRate) * 10000);
           }
-
           if (paymentIntent.metadata.taxAmount) {
             taxAmountCents = Math.round(parseFloat(paymentIntent.metadata.taxAmount) * 100);
           }
-        } catch (error) {
-          console.error("Error fetching payment intent for tax metadata:", error);
-          // Continue with defaults if unable to fetch
         }
-      }
 
-      // --- Fulfillment (owner, 2026-10-05) ----------------------------------
-      // Ship: quote the boxes, tax by destination (Stripe Tax), and raise the
-      // intent to subtotal + deposit + shipping + tax. Pickup: make sure the
-      // intent is back at pickup pricing in case Ship was chosen then undone.
-      const fulfillmentMethod = validated.fulfillmentMethod === 'ship' ? 'ship' : 'pickup';
-      let shipTo: ReturnType<typeof validateShipTo> | null = null;
-      let shippingQuote: ShippingQuote | null = null;
-      let shippingCents = 0;
-      let shipDate: Date | null = null;
-      let taxCalculationId: string | null = null;
-      let totals: Record<string, unknown> | null = null;
+        // --- Fulfillment (owner, 2026-10-05) ----------------------------------
+        // Ship: quote the boxes, tax by destination (Stripe Tax), and raise the
+        // intent to subtotal + deposit + shipping + tax. Pickup: make sure the
+        // intent is back at pickup pricing in case Ship was chosen then undone.
+        let shipTo: ReturnType<typeof validateShipTo> | null = null;
+        let shippingQuote: ShippingQuote | null = null;
+        let shippingCents = 0;
+        let shipDate: Date | null = null;
+        let taxCalculationId: string | null = null;
+        let computed: Record<string, unknown> | null = null;
 
-      if (paymentIntent && stripe && paymentIntent.status !== 'succeeded') {
-        const cart = await oneTimeCartCents(sessionId);
-        if (fulfillmentMethod === 'ship') {
-          if (!validated.shipTo) return res.status(400).json({ message: "Please enter a shipping address.", code: 'address_incomplete' });
-          shipTo = validateShipTo(validated.shipTo);
-          const settings = await getShippingSettings();
-          shippingQuote = await quoteShipping({ retailLines: shippingLinesOf(cart.retailItems), legacyLineCount: cart.legacyItems.length, to: shipTo, email: validated.customerEmail, settings });
-          shippingCents = shippingQuote.totalCents;
-          shipDate = new Date(shippingQuote.shipDate);
-          const tax = await calculateShippedOrderTax(stripe, { subtotalCents: cart.subtotalCents, shippingCents, to: shipTo, settings });
-          taxAmountCents = tax.taxCents;
-          taxRateBps = tax.rateBps;
-          taxCalculationId = tax.calculationId;
-          const amount = cart.subtotalCents + cart.depositCents + shippingCents + taxAmountCents;
-          paymentIntent = await stripe.paymentIntents.update(paymentIntent.id, {
-            amount,
-            metadata: {
-              ...paymentIntent.metadata,
-              fulfillment: 'ship',
-              shippingAmount: (shippingCents / 100).toFixed(2),
-              taxAmount: (taxAmountCents / 100).toFixed(2),
-              taxRate: (taxRateBps / 10000).toString(),
-              taxSource: tax.source,
-              shipTo: `${shipTo.city}, ${shipTo.state} ${shipTo.zip}`,
-            },
-          });
-          totals = {
-            subtotal: cart.subtotalCents / 100, depositAmount: cart.depositCents / 100,
-            shippingAmount: shippingCents / 100, taxAmount: taxAmountCents / 100, taxRateBps,
-            total: amount / 100, fulfillmentMethod, shipping: quoteSummary(shippingQuote),
-          };
-        } else {
-          const TAX_RATE = 0.1035;
-          const pickupTax = Math.round(cart.subtotalCents * TAX_RATE);
-          const amount = cart.subtotalCents + cart.depositCents + pickupTax;
-          taxAmountCents = pickupTax;
-          taxRateBps = Math.round(TAX_RATE * 10000);
-          if (paymentIntent.amount !== amount || paymentIntent.metadata.fulfillment === 'ship') {
+        if (paymentIntent && stripe && paymentIntent.status !== 'succeeded') {
+          const cart = await oneTimeCartCents(sessionId);
+          if (fulfillmentMethod === 'ship') {
+            shipTo = validateShipTo(validated.shipTo!);
+            const settings = await getShippingSettings();
+            shippingQuote = await quoteShipping({ retailLines: shippingLinesOf(cart.retailItems), legacyLineCount: cart.legacyItems.length, to: shipTo, email: validated.customerEmail, settings });
+            shippingCents = shippingQuote.totalCents;
+            shipDate = new Date(shippingQuote.shipDate);
+            const tax = await calculateShippedOrderTax(stripe, { subtotalCents: cart.subtotalCents, shippingCents, to: shipTo, settings });
+            taxAmountCents = tax.taxCents;
+            taxRateBps = tax.rateBps;
+            taxCalculationId = tax.calculationId;
+            const amount = cart.subtotalCents + cart.depositCents + shippingCents + taxAmountCents;
             paymentIntent = await stripe.paymentIntents.update(paymentIntent.id, {
               amount,
-              metadata: { ...paymentIntent.metadata, fulfillment: 'pickup', shippingAmount: '0.00', taxAmount: (pickupTax / 100).toFixed(2), taxRate: TAX_RATE.toString(), taxSource: 'flat', shipTo: '' },
+              metadata: {
+                ...paymentIntent.metadata,
+                fulfillment: 'ship',
+                shippingAmount: (shippingCents / 100).toFixed(2),
+                taxAmount: (taxAmountCents / 100).toFixed(2),
+                taxRate: (taxRateBps / 10000).toString(),
+                taxSource: tax.source,
+                shipTo: `${shipTo.city}, ${shipTo.state} ${shipTo.zip}`,
+              },
             });
+            computed = {
+              subtotal: cart.subtotalCents / 100, depositAmount: cart.depositCents / 100,
+              shippingAmount: shippingCents / 100, taxAmount: taxAmountCents / 100, taxRateBps,
+              total: amount / 100, fulfillmentMethod, shipping: quoteSummary(shippingQuote),
+            };
+          } else {
+            const TAX_RATE = 0.1035;
+            const pickupTax = Math.round(cart.subtotalCents * TAX_RATE);
+            const amount = cart.subtotalCents + cart.depositCents + pickupTax;
+            taxAmountCents = pickupTax;
+            taxRateBps = Math.round(TAX_RATE * 10000);
+            if (paymentIntent.amount !== amount || paymentIntent.metadata.fulfillment === 'ship') {
+              paymentIntent = await stripe.paymentIntents.update(paymentIntent.id, {
+                amount,
+                metadata: { ...paymentIntent.metadata, fulfillment: 'pickup', shippingAmount: '0.00', taxAmount: (pickupTax / 100).toFixed(2), taxRate: TAX_RATE.toString(), taxSource: 'flat', shipTo: '' },
+              });
+            }
+            computed = {
+              subtotal: cart.subtotalCents / 100, depositAmount: cart.depositCents / 100,
+              shippingAmount: 0, taxAmount: pickupTax / 100, taxRateBps, total: amount / 100, fulfillmentMethod, shipping: null,
+            };
           }
-          totals = {
-            subtotal: cart.subtotalCents / 100, depositAmount: cart.depositCents / 100,
-            shippingAmount: 0, taxAmount: pickupTax / 100, taxRateBps, total: amount / 100, fulfillmentMethod, shipping: null,
-          };
+        } else if (fulfillmentMethod === 'ship') {
+          throw new ShippingError(400, "Shipping needs a live payment to price. Please reload the checkout.", 'intent_unavailable');
         }
-      } else if (fulfillmentMethod === 'ship') {
-        return res.status(400).json({ message: "Shipping needs a live payment to price. Please reload the checkout." });
-      }
 
-      // One snapshot per intent: "Edit Information" re-submits, and the webhook
-      // must find the LATEST (a stale ship row under a pickup re-price would
-      // mis-verify the amount). Updated IN PLACE under a row lock rather than
-      // delete-then-insert (reviewer, 2026-10-06): the webhook's own
-      // SELECT … FOR UPDATE waits on this lock and then reads the new values,
-      // and a failed write leaves the previous snapshot standing.
-      const snapshot = {
-        sessionId,
-        paymentIntentId: validated.paymentIntentId || null,
-        customerName: validated.customerName,
-        customerEmail: validated.customerEmail,
-        customerPhone: formatPhoneNumber(validated.customerPhone),
-        userId: req.user?.id || null,
-        taxMode,
-        taxRateBps,
-        taxAmountCents,
-        isTaxExempt,
-        notes: validated.flavorNotes || null,
-        fulfillmentMethod,
-        shipName: shipTo?.name ?? null,
-        shipAddress1: shipTo?.address1 ?? null,
-        shipAddress2: shipTo?.address2 ?? null,
-        shipCity: shipTo?.city ?? null,
-        shipState: shipTo?.state ?? null,
-        shipZip: shipTo?.zip ?? null,
-        shipPhone: shipTo?.phone ? formatPhoneNumber(shipTo.phone) : null,
-        shippingCents,
-        shippingQuote: shippingQuote as any,
-        shipDate,
-        stripeTaxCalculationId: taxCalculationId,
-      };
-      await db.transaction(async (tx) => {
+        // One snapshot per intent, updated IN PLACE under the lock: "Edit
+        // Information" re-submits, and the webhook must find the LATEST (a stale
+        // ship row under a pickup re-price would mis-verify the amount). A failed
+        // write leaves the previous snapshot standing.
+        const snapshot = {
+          sessionId,
+          paymentIntentId: validated.paymentIntentId || null,
+          customerName: validated.customerName,
+          customerEmail: validated.customerEmail,
+          customerPhone: formatPhoneNumber(validated.customerPhone),
+          userId: req.user?.id || null,
+          taxMode,
+          taxRateBps,
+          taxAmountCents,
+          isTaxExempt,
+          notes: validated.flavorNotes || null,
+          fulfillmentMethod,
+          shipName: shipTo?.name ?? null,
+          shipAddress1: shipTo?.address1 ?? null,
+          shipAddress2: shipTo?.address2 ?? null,
+          shipCity: shipTo?.city ?? null,
+          shipState: shipTo?.state ?? null,
+          shipZip: shipTo?.zip ?? null,
+          shipPhone: shipTo?.phone ? formatPhoneNumber(shipTo.phone) : null,
+          shippingCents,
+          shippingQuote: shippingQuote as any,
+          shipDate,
+          stripeTaxCalculationId: taxCalculationId,
+        };
         if (validated.paymentIntentId) {
           const existing = await tx
             .select({ id: retailCheckoutSessions.id })
@@ -4170,15 +4179,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (existing.length > 1) {
               await tx.delete(retailCheckoutSessions).where(inArray(retailCheckoutSessions.id, existing.slice(1).map((r) => r.id)));
             }
-            return;
+            return computed;
           }
         }
         await tx.insert(retailCheckoutSessions).values(snapshot);
+        return computed;
       });
 
       res.json({ success: true, totals });
     } catch (error: any) {
       if (error instanceof ShippingError) return res.status(error.status).json({ message: error.message, code: error.code });
+      if (error.name === 'ZodError') return res.status(400).json({ message: "Please check your details and try again." });
       console.error("Error storing customer info:", error);
       res.status(500).json({ message: "Error storing customer info: " + error.message });
     }
@@ -5518,7 +5529,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const client = await pool.connect();
             try {
               await client.query('BEGIN');
-              
+              // Same per-intent lock as /api/checkout/customer-info (reviewer,
+              // 2026-10-06): an in-flight re-price finishes — Stripe amount AND
+              // snapshot — before this reads either.
+              await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [paymentIntent.id]);
+
               // Check for existing order (idempotency via unique constraint)
               const existingOrderResult = await client.query(
                 'SELECT id FROM retail_orders WHERE stripe_payment_intent_id = $1 LIMIT 1',
