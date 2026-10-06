@@ -16,6 +16,7 @@ import { flavors, retailOrderItemsV2, retailOrders, retailProducts, shippingBoxe
 import {
   DEFAULT_SHIPPING_SETTINGS,
   SHIPPING_SETTINGS_KEY,
+  formatShipDate,
   nextShipDate,
   normalizeShippingSettings,
   packCans,
@@ -242,7 +243,9 @@ const QUOTE_TTL_MS = 15 * 60 * 1000;
 
 function cacheKey(cans: number, cansWeightOz: number, to: ShippingAddress, settings: ShippingSettings, shipDate: Date): string {
   const norm = (s: string | null | undefined) => (s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-  return JSON.stringify([cans, Math.round(cansWeightOz), norm(to.address1), norm(to.address2), norm(to.city), norm(to.state), norm(to.zip).slice(0, 5), settings.version, shipDate.toISOString()]);
+  // Name and phone are part of the Shippo shipment the rate belongs to, so two
+  // recipients at one address must not share a cached quote (reviewer, 2026-10-06).
+  return JSON.stringify([cans, Math.round(cansWeightOz), norm(to.name), norm(to.phone), norm(to.address1), norm(to.address2), norm(to.city), norm(to.state), norm(to.zip).slice(0, 5), settings.version, shipDate.toISOString()]);
 }
 
 export function validateShipTo(a: Partial<ShippingAddress> | null | undefined): ShippingAddress {
@@ -432,76 +435,102 @@ function orderShipTo(order: RetailOrder): ShippingAddress {
   };
 }
 
+/** Orders whose labels are being bought right now, in this process. Railway runs
+ *  one process, so this is the whole guard against a double tap; nothing is
+ *  written to the row to mark "in progress", so there is no claim to abandon. */
+const labelsInFlight = new Set<string>();
+
 /**
- * Buy one label per box for a shipped order and record them. Idempotent: an
- * order that already has labels is returned as is. Claims the order first so
- * two taps on "Monday labels" can't buy twice; a failure releases the claim.
- * Does NOT change status — the caller flips it to fulfilled (which deducts stock).
+ * Buy one label per box for a shipped order and record them. Resumable and
+ * per-box (reviewer, 2026-10-06): each label is persisted the moment it is
+ * bought, so a failure on box 2 keeps box 1's label and a retry buys only the
+ * boxes still missing. Labels are rated from the ORDER's final address and the
+ * quoted service, never from the checkout-time rate id, so an address or name
+ * correction (or an expired rate) can't print the wrong label.
+ * Does NOT change status — the caller flips it to fulfilled (which deducts stock)
+ * once every box has a label.
  */
 export async function purchaseLabelsForOrder(orderId: string): Promise<{ order: RetailOrder; labels: ShippingLabel[]; alreadyHad: boolean }> {
-  const [order] = await db.select().from(retailOrders).where(and(eq(retailOrders.id, orderId), isNull(retailOrders.deletedAt)));
-  if (!order) throw new ShippingError(404, 'Order not found');
-  if (order.fulfillmentMethod !== 'ship') throw new ShippingError(400, 'This is a pickup order — nothing to label.');
-  if (order.status === 'cancelled') throw new ShippingError(400, 'This order is cancelled.');
-  const existing = (order.shippingLabels as ShippingLabel[] | null) ?? null;
-  if (existing && existing.length > 0) return { order, labels: existing, alreadyHad: true };
-
-  // '[]' marks "being bought right now"; null means never attempted.
-  const claim = await db.execute(sql`UPDATE retail_orders SET shipping_labels = '[]'::jsonb WHERE id = ${orderId} AND shipping_labels IS NULL RETURNING id`);
-  if (((claim as any).rows?.length ?? (claim as any).rowCount ?? 0) === 0) {
-    throw new ShippingError(409, 'Labels for this order are already being bought.');
-  }
-
-  const quote = order.shippingQuote as ShippingQuote | null;
-  const settings = await getShippingSettings();
-  const labels: ShippingLabel[] = [];
+  if (labelsInFlight.has(orderId)) throw new ShippingError(409, 'Labels for this order are already being bought.');
+  labelsInFlight.add(orderId);
   try {
+    const [order] = await db.select().from(retailOrders).where(and(eq(retailOrders.id, orderId), isNull(retailOrders.deletedAt)));
+    if (!order) throw new ShippingError(404, 'Order not found');
+    if (order.fulfillmentMethod !== 'ship') throw new ShippingError(400, 'This is a pickup order — nothing to label.');
+    if (order.status === 'cancelled') throw new ShippingError(400, 'This order is cancelled.');
+    const quote = order.shippingQuote as ShippingQuote | null;
     if (!quote || quote.boxes.length === 0) throw new ShippingError(400, 'This order has no shipping quote to buy labels from.');
+
+    const labels: ShippingLabel[] = [...(((order.shippingLabels as ShippingLabel[] | null) ?? []))];
+    if (labels.length >= quote.boxes.length) return { order, labels, alreadyHad: true };
+
+    const settings = await getShippingSettings();
     const to = orderShipTo(order);
-    for (const box of quote.boxes) {
-      if (!SHIPPO_KEY || !box.rateId) {
-        labels.push({
+    const allBoxes = await getAllBoxes();
+    const shipDate = new Date(Math.max(Date.now(), new Date(quote.shipDate).getTime()));
+
+    for (let i = labels.length; i < quote.boxes.length; i++) {
+      const box = quote.boxes[i];
+      let label: ShippingLabel;
+      if (!SHIPPO_KEY) {
+        label = {
           boxName: box.boxName, cans: box.cans, carrier: box.carrier, service: box.service,
-          trackingNumber: `TEST${Date.now().toString(36).toUpperCase()}${labels.length + 1}`,
+          trackingNumber: `TEST${Date.now().toString(36).toUpperCase()}${i + 1}`,
           trackingUrl: null, labelUrl: null, transactionId: null, amountCents: box.carrierCents,
-        });
-        continue;
-      }
-      let tx = await buyLabel(box.rateId);
-      if (tx.status !== 'SUCCESS') {
-        // Rates expire after a few days; the Monday batch may well be past that.
-        // Re-rate the same box for the same service and buy again.
-        const boxRow = (await getAllBoxes()).find((b) => b.id === box.boxId);
+        };
+      } else {
+        const boxRow = allBoxes.find((b) => b.id === box.boxId);
         if (!boxRow) throw new ShippingError(500, `Shipping box ${box.boxName} no longer exists`);
-        const perCan = box.cans > 0 ? (box.weightOz - Number(boxRow.tareWeightOz) - boxRow.icePackCount * Number(boxRow.icePackWeightOz)) / box.cans : settings.defaultCanWeightOz;
-        const { rate } = await rateBox(settings, to, boxRow, box.cans, box.cans * Math.max(1, perCan), new Date(Math.max(Date.now(), new Date(quote.shipDate).getTime())), order.customerEmail, box.serviceToken);
-        if (!rate) throw new ShippingError(502, `No ${box.service} rate is available any more for ${box.boxName}.`);
-        tx = await buyLabel(rate.object_id);
+        const perCan = box.cans > 0
+          ? (box.weightOz - Number(boxRow.tareWeightOz) - boxRow.icePackCount * Number(boxRow.icePackWeightOz)) / box.cans
+          : settings.defaultCanWeightOz;
+        const { rate } = await rateBox(settings, to, boxRow, box.cans, box.cans * Math.max(1, perCan), shipDate, order.customerEmail, box.serviceToken);
+        if (!rate) throw new ShippingError(502, `No service within ${settings.maxTransitDays} days is available any more for ${box.boxName}.`);
+        const tx = await buyLabel(rate.object_id);
         if (tx.status !== 'SUCCESS') {
           const why = (tx.messages ?? []).map((m) => m.text).filter(Boolean).join(' ');
           throw new ShippingError(502, `Carrier refused the label for ${box.boxName}: ${why || tx.status}`);
         }
+        label = {
+          boxName: box.boxName, cans: box.cans, carrier: rate.provider, service: rate.servicelevel?.name ?? box.service,
+          trackingNumber: tx.tracking_number ?? '',
+          trackingUrl: tx.tracking_url_provider ?? null,
+          labelUrl: tx.label_url ?? null,
+          transactionId: tx.object_id,
+          amountCents: Math.round(Number(rate.amount) * 100),
+        };
       }
-      labels.push({
-        boxName: box.boxName, cans: box.cans, carrier: box.carrier, service: box.service,
-        trackingNumber: tx.tracking_number ?? '',
-        trackingUrl: tx.tracking_url_provider ?? null,
-        labelUrl: tx.label_url ?? null,
-        transactionId: tx.object_id,
-        amountCents: box.carrierCents,
-      });
+      labels.push(label);
+      // Persist this label before touching the next box: a bought label is money.
+      await db.update(retailOrders).set({ shippingLabels: labels, updatedAt: new Date() }).where(eq(retailOrders.id, orderId));
     }
+
     const [updated] = await db
       .update(retailOrders)
-      .set({ shippingLabels: labels, shippedAt: new Date(), updatedAt: new Date() })
+      .set({ shippedAt: new Date(), updatedAt: new Date() })
       .where(eq(retailOrders.id, orderId))
       .returning();
     return { order: updated, labels, alreadyHad: false };
-  } catch (e) {
-    // Release the claim so staff can retry once the cause is fixed.
-    await db.update(retailOrders).set({ shippingLabels: null }).where(and(eq(retailOrders.id, orderId), sql`shipping_labels = '[]'::jsonb`));
-    throw e;
+  } finally {
+    labelsInFlight.delete(orderId);
   }
+}
+
+/** The receipt email's shipping block for a stored order; undefined for pickups. */
+export function receiptShippingFor(order: RetailOrder) {
+  if (order.fulfillmentMethod !== 'ship') return undefined;
+  const q = order.shippingQuote as ShippingQuote | null;
+  const b = q?.boxes?.[0];
+  return {
+    amount: Number(order.shippingAmount ?? 0),
+    name: order.shipName ?? order.customerName,
+    addressLines: [
+      [order.shipAddress1, order.shipAddress2].filter(Boolean).join(', '),
+      `${order.shipCity ?? ''}, ${order.shipState ?? ''} ${order.shipZip ?? ''}`.trim(),
+    ],
+    shipDate: order.pickupDate ? formatShipDate(order.pickupDate) : 'Monday',
+    service: b ? `${b.carrier} ${b.service}` : 'carrier',
+  };
 }
 
 // ---------------------------------------------------------------------------

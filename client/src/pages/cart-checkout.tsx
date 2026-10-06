@@ -716,10 +716,17 @@ export default function CartCheckout() {
 
   const { items: unifiedCart, isLoading, totalCount } = useUnifiedCart();
   // Whether this cart can ship at all (feature on, no kegs, no subscription).
+  // Keyed on the cart's CONTENTS, not its count (reviewer, 2026-10-06): swapping a
+  // keg for a case keeps the count and must not reuse the pickup-only answer.
+  const cartSignature = unifiedCart
+    .map((c: any) => `${c.type}:${c.item.retailProductId ?? c.item.productId}x${c.item.quantity}${c.item.isSubscription ? 's' : ''}`)
+    .sort()
+    .join('|');
   const { data: shippingOptions } = useQuery<ShippingOptions>({
-    queryKey: ["/api/checkout/shipping-options", totalCount],
+    queryKey: ["/api/checkout/shipping-options", cartSignature],
     queryFn: () => apiRequest("GET", "/api/checkout/shipping-options"),
     enabled: totalCount > 0,
+    staleTime: 0,
   });
   
   // Check if cart contains subscription items

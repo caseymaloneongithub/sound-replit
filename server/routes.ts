@@ -22,7 +22,7 @@ import { recordEvent, listEvents, countEvents, countOpenAlerts, acknowledgeEvent
 import {
   ShippingError, shippingProviderStatus, getShippingSettings, saveShippingSettings, getAllBoxes, getActiveBoxes,
   summarizeCans, quoteShipping, validateShipTo, calculateShippedOrderTax, commitStripeTaxTransaction,
-  purchaseLabelsForOrder, contentsForOrders, buildLabelsPdf, buildStickersCsv, handleTrackingUpdate,
+  purchaseLabelsForOrder, contentsForOrders, buildLabelsPdf, buildStickersCsv, handleTrackingUpdate, receiptShippingFor,
 } from "./shipping";
 import { nextShipDate, formatShipDate, type ShippingQuote, type ShippingLabel } from "@shared/shipping-policy";
 import { insertShippingBoxSchema, shippingBoxes } from "@shared/schema";
@@ -4037,6 +4037,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           paymentIntent = await stripe.paymentIntents.retrieve(validated.paymentIntentId);
 
+          // 🔒 The intent must be THIS checkout's cart purchase (reviewer, 2026-10-06):
+          // this route re-prices it and replaces its snapshot, so a guessed or leaked
+          // id must reach neither. The intent carries the session that created it;
+          // a signed-in customer may also continue it from a regenerated session.
+          const ownsIntent = paymentIntent.metadata?.type === 'cart_purchase'
+            && (paymentIntent.metadata.sessionId === sessionId
+              || (!!req.user?.id && paymentIntent.metadata.userId === req.user.id));
+          if (!ownsIntent) {
+            return res.status(403).json({ message: "That payment doesn't belong to this checkout. Please reload the page and try again." });
+          }
+
           // Extract tax information from metadata
           if (paymentIntent.metadata.taxRate) {
             const taxRate = parseFloat(paymentIntent.metadata.taxRate);
@@ -4118,12 +4129,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // One snapshot per intent: "Edit Information" re-submits, and the webhook
       // must find the LATEST (a stale ship row under a pickup re-price would
-      // mis-verify the amount).
-      if (validated.paymentIntentId) {
-        await db.delete(retailCheckoutSessions).where(eq(retailCheckoutSessions.paymentIntentId, validated.paymentIntentId));
-      }
-
-      await storage.createRetailCheckoutSession({
+      // mis-verify the amount). Updated IN PLACE under a row lock rather than
+      // delete-then-insert (reviewer, 2026-10-06): the webhook's own
+      // SELECT … FOR UPDATE waits on this lock and then reads the new values,
+      // and a failed write leaves the previous snapshot standing.
+      const snapshot = {
         sessionId,
         paymentIntentId: validated.paymentIntentId || null,
         customerName: validated.customerName,
@@ -4147,6 +4157,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         shippingQuote: shippingQuote as any,
         shipDate,
         stripeTaxCalculationId: taxCalculationId,
+      };
+      await db.transaction(async (tx) => {
+        if (validated.paymentIntentId) {
+          const existing = await tx
+            .select({ id: retailCheckoutSessions.id })
+            .from(retailCheckoutSessions)
+            .where(eq(retailCheckoutSessions.paymentIntentId, validated.paymentIntentId))
+            .for('update');
+          if (existing.length > 0) {
+            await tx.update(retailCheckoutSessions).set(snapshot).where(eq(retailCheckoutSessions.id, existing[0].id));
+            if (existing.length > 1) {
+              await tx.delete(retailCheckoutSessions).where(inArray(retailCheckoutSessions.id, existing.slice(1).map((r) => r.id)));
+            }
+            return;
+          }
+        }
+        await tx.insert(retailCheckoutSessions).values(snapshot);
       });
 
       res.json({ success: true, totals });
@@ -9935,6 +9962,7 @@ If you have any questions, please don't hesitate to reach out!`,
         depositAmount: Number(order.depositAmount ?? 0) > 0 ? Number(order.depositAmount) : undefined,
         total: parseFloat(order.totalAmount),
         orderType: order.isSubscriptionOrder ? 'subscription' : 'one-time',
+        shipping: receiptShippingFor(order),
       });
 
       console.log(`[EMAIL] Manually resent order confirmation for ${order.orderNumber} to ${order.customerEmail}`);
@@ -10256,6 +10284,7 @@ If you have any questions, please don't hesitate to reach out!`,
         depositAmount: Number(order.depositAmount ?? 0) > 0 ? Number(order.depositAmount) : undefined,
         total: Number(order.totalAmount),
         orderType: order.isSubscriptionOrder ? 'subscription' : 'one-time',
+        shipping: receiptShippingFor(order),
       });
 
       res.json({ success: true, sentTo: order.customerEmail });
@@ -10276,7 +10305,21 @@ If you have any questions, please don't hesitate to reach out!`,
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid status value" });
       }
-      
+
+      // A shipped order reaches 'fulfilled' only through the label purchase
+      // (reviewer, 2026-10-06): otherwise it would leave the Monday batch with no
+      // label and no tracking. Pickups are unaffected.
+      if (parsed.data.status === 'fulfilled') {
+        const current = await storage.getRetailOrder(req.params.id);
+        if (current?.fulfillmentMethod === 'ship') {
+          const labels = (current.shippingLabels as unknown[] | null) ?? [];
+          const boxes = (current.shippingQuote as ShippingQuote | null)?.boxes?.length ?? 0;
+          if (labels.length < Math.max(1, boxes)) {
+            return res.status(400).json({ message: "Shipped orders are marked shipped by buying their labels — use Shipped on the orders board or Buy labels. No label has been bought for this one yet." });
+          }
+        }
+      }
+
       const userId = parsed.data.status === 'fulfilled' ? req.user?.id : undefined;
       const order = await storage.updateRetailOrderStatus(req.params.id, parsed.data.status, userId);
       if (!order) {

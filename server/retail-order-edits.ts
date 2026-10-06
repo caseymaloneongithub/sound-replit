@@ -19,6 +19,9 @@
  * a second time, however the order is edited in between.
  */
 import { randomUUID } from "node:crypto";
+import { shippingBoxes } from "@shared/schema";
+import { packCans, type ShippingQuote } from "@shared/shipping-policy";
+import { getShippingSettings } from "./shipping";
 import type Stripe from "stripe";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "./db";
@@ -142,6 +145,8 @@ export async function recomputeRetailOrderTotals(tx: DbTx, order: OrderRow): Pro
       unitPrice: retailOrderItemsV2.unitPrice,
       depositEach: retailOrderItemsV2.depositEach,
       catalogueDeposit: retailProducts.deposit,
+      cansPerUnit: retailProducts.cansPerUnit,
+      canWeightOz: retailProducts.canWeightOz,
     })
     .from(retailOrderItemsV2)
     .innerJoin(retailProducts, eq(retailProducts.id, retailOrderItemsV2.retailProductId))
@@ -169,6 +174,48 @@ export async function recomputeRetailOrderTotals(tx: DbTx, order: OrderRow): Pro
   const shipping = Number(order.shippingAmount ?? 0);
   const total = subtotal + tax + deposit + shipping;
 
+  // A shipped order's box plan follows its lines (reviewer, 2026-10-06): an
+  // edit that adds a case repacks the quote so the Monday labels are bought for
+  // the right boxes, and a pickup-only item (keg, legacy catalogue) is refused.
+  // The shipping CHARGE stays what was paid; the repacked plan is for labels.
+  let repackedQuote: ShippingQuote | null = null;
+  if (order.fulfillmentMethod === 'ship' && lines.length > 0) {
+    if (legacy.length > 0 || v2.some((l) => !l.cansPerUnit)) {
+      throw new OrderEditError(400, "That item is pickup only — it can't be added to a shipped order");
+    }
+    const boxes = await tx.select().from(shippingBoxes).where(eq(shippingBoxes.isActive, true));
+    if (boxes.length === 0) throw new OrderEditError(503, "No shipping boxes are set up");
+    const settings = await getShippingSettings();
+    const cans = v2.reduce((s, l) => s + l.cansPerUnit! * l.quantity, 0);
+    const weight = v2.reduce((s, l) => s + l.cansPerUnit! * l.quantity * (Number(l.canWeightOz ?? 0) || settings.defaultCanWeightOz), 0);
+    const perCan = cans > 0 ? weight / cans : settings.defaultCanWeightOz;
+    const prior = order.shippingQuote as ShippingQuote | null;
+    const template = prior?.boxes?.[0];
+    const packed = packCans(cans, boxes.map((b) => ({ id: b.id, name: b.name, canCapacity: b.canCapacity })));
+    const newBoxes = packed.map((p) => {
+      const b = boxes.find((x) => x.id === p.box.id)!;
+      const weightOz = Math.round((Number(b.tareWeightOz) + p.cans * perCan + b.icePackCount * Number(b.icePackWeightOz)) * 10) / 10;
+      return {
+        boxId: b.id, boxName: b.name, cans: p.cans, weightOz,
+        rateId: null, // labels re-rate from the order's address and this service
+        carrier: template?.carrier ?? 'USPS', service: template?.service ?? 'Ground', serviceToken: template?.serviceToken ?? null,
+        estimatedDays: template?.estimatedDays ?? null,
+        carrierCents: 0, packagingCents: b.packagingFeeCents + settings.flatFeeCents,
+      };
+    });
+    repackedQuote = {
+      boxes: newBoxes,
+      carrierCents: prior?.carrierCents ?? 0,
+      packagingCents: newBoxes.reduce((s, b) => s + b.packagingCents, 0),
+      totalCents: prior?.totalCents ?? Math.round(shipping * 100),
+      shipDate: prior?.shipDate ?? (order.pickupDate ? new Date(order.pickupDate).toISOString() : new Date().toISOString()),
+      estimatedDays: prior?.estimatedDays ?? null,
+      settingsVersion: settings.version,
+      ...(prior?.stub ? { stub: true } : {}),
+      repackedAt: new Date().toISOString(),
+    };
+  }
+
   await tx
     .update(retailOrders)
     .set({
@@ -177,6 +224,7 @@ export async function recomputeRetailOrderTotals(tx: DbTx, order: OrderRow): Pro
       depositAmount: deposit.toFixed(2),
       totalAmount: total.toFixed(2),
       amountPaid: amountPaid.toFixed(2),
+      ...(repackedQuote ? { shippingQuote: repackedQuote } : {}),
       updatedAt: new Date(),
     })
     .where(eq(retailOrders.id, order.id));

@@ -89,6 +89,7 @@ export type ShippingQuote = {
   estimatedDays: number | null; // slowest box
   settingsVersion: number;
   stub?: boolean;          // true when no carrier key was configured and a stand-in rate was used
+  repackedAt?: string;     // set when a staff edit re-planned the boxes after payment
 };
 
 export type ShippingLabel = {

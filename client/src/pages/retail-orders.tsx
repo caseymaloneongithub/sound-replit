@@ -57,7 +57,7 @@ const invalidateOrders = () => queryClient.invalidateQueries({ predicate: q => S
 
 const PAGE_SIZE = 25;
 
-const STATUSES = ['pending', 'ready_for_pickup', 'fulfilled', 'cancelled'] as const;
+const STATUSES = ['pending', 'ready_for_pickup', 'packed', 'fulfilled', 'cancelled'] as const;
 
 function getStatusLabel(status: string): string {
   switch (status) {
@@ -141,7 +141,12 @@ export default function RetailOrders() {
   };
 
   const updateOrderStatusMutation = useMutation({
-    mutationFn: async ({ orderId, status }: { orderId: string; status: string }) => {
+    mutationFn: async ({ orderId, status, ship }: { orderId: string; status: string; ship?: boolean }) => {
+      // A shipped order is marked Shipped by buying its label(s) — the shipping
+      // route does that and sets fulfilled; the bare status route refuses it.
+      if (ship && status === 'fulfilled') {
+        return await apiRequest('POST', `/api/staff/shipping/orders/${orderId}/labels`, {});
+      }
       return await apiRequest('PATCH', `/api/retail/orders/${orderId}/status`, { status });
     },
     onSuccess: () => {
@@ -464,7 +469,7 @@ export default function RetailOrders() {
                             <Select
                               value={order.status}
                               onValueChange={(newStatus) =>
-                                updateOrderStatusMutation.mutate({ orderId: order.id, status: newStatus })
+                                updateOrderStatusMutation.mutate({ orderId: order.id, status: newStatus, ship: order.fulfillmentMethod === 'ship' })
                               }
                               disabled={updateOrderStatusMutation.isPending || order.status === 'fulfilled' || order.status === 'cancelled'}
                             >
@@ -724,6 +729,14 @@ export default function RetailOrders() {
                 </Badge>
               )}
             </TabsTrigger>
+            <TabsTrigger value="packed" data-testid="tab-packed">
+              Packed
+              {(orderCounts?.packed ?? 0) > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {orderCounts!.packed}
+                </Badge>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="fulfilled" data-testid="tab-fulfilled">
               Fulfilled
               {(orderCounts?.fulfilled ?? 0) > 0 && (
@@ -753,6 +766,9 @@ export default function RetailOrders() {
                 {renderOrdersTable()}
               </TabsContent>
               <TabsContent value="ready_for_pickup">
+                {renderOrdersTable()}
+              </TabsContent>
+              <TabsContent value="packed">
                 {renderOrdersTable()}
               </TabsContent>
               <TabsContent value="fulfilled">
