@@ -71,6 +71,25 @@ export function CustomerPricingDialog({
     enabled: open && scope !== "account",
   });
 
+  // Every location override of this customer, so the dialog knows on open where
+  // the pricing lives (owner, 2026-10-06: it "defaults back to whole account even
+  // if we have saved per location pricing") and can say so in the scope list.
+  const customerLocationKey = ["/api/wholesale-location-pricing/for-customer", customer?.id] as const;
+  const { data: customerLocationPricing = [], isLoading: customerLocationLoading } = useQuery<WholesaleLocationPricing[]>({
+    queryKey: customerLocationKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/wholesale-location-pricing/for-customer/${customer!.id}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load location pricing");
+      return res.json();
+    },
+    enabled: open && !!customer,
+  });
+  const overridesByLocation = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of customerLocationPricing) m.set(p.locationId, (m.get(p.locationId) ?? 0) + 1);
+    return m;
+  }, [customerLocationPricing]);
+
   const accountByUnit = useMemo(() => {
     const m = new Map<string, WholesaleCustomerPricing>();
     for (const p of accountPricing) m.set(p.unitTypeId, p);
@@ -85,12 +104,27 @@ export function CustomerPricingDialog({
 
   const scopedByUnit: Map<string, { id: string; customPrice: string }> =
     scope === "account" ? accountByUnit : locationByUnit;
-  const isLoading = scope === "account" ? accountLoading : accountLoading || locationLoading;
 
-  // Reset scope when the dialog opens; reset the draft whenever scope or data changes.
+  // Open on the scope that holds the pricing: the whole account when it has
+  // overrides (or nothing does), otherwise the first location that does. Chosen
+  // once per open, after both lists have loaded; the picker takes it from there.
+  const [scopeChosen, setScopeChosen] = useState(false);
   useEffect(() => {
-    if (open) setScope("account");
+    if (!open) return;
+    setScope("account");
+    setScopeChosen(false);
   }, [open, customer?.id]);
+  useEffect(() => {
+    if (!open || scopeChosen || accountLoading || customerLocationLoading || !locationInfo) return;
+    if (multiLocation && accountPricing.length === 0) {
+      const withOverrides = locations.find((l) => (overridesByLocation.get(l.id) ?? 0) > 0);
+      if (withOverrides) setScope(withOverrides.id);
+    }
+    setScopeChosen(true);
+  }, [open, scopeChosen, accountLoading, customerLocationLoading, locationInfo, multiLocation, accountPricing, locations, overridesByLocation]);
+  const isLoading = !scopeChosen || (scope === "account" ? accountLoading : accountLoading || locationLoading);
+
+  // Reset the draft whenever scope or data changes.
   useEffect(() => {
     if (!open) return;
     const next: Record<string, string> = {};
@@ -154,6 +188,7 @@ export function CustomerPricingDialog({
       queryClient.invalidateQueries({ queryKey: accountKey });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale-customer-pricing"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wholesale-location-pricing"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale-location-pricing/for-customer"] });
       toast({
         title: "Pricing saved",
         description:
@@ -185,10 +220,18 @@ export function CustomerPricingDialog({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="account">Whole account</SelectItem>
-              {locations.map((l) => (
-                <SelectItem key={l.id} value={l.id}>{l.locationName}</SelectItem>
-              ))}
+              {/* Each scope says how many custom prices it holds, so the one with pricing is plain to see. */}
+              <SelectItem value="account" data-testid="option-pricing-scope-account">
+                Whole account{accountPricing.length ? ` · ${accountPricing.length} custom` : ""}
+              </SelectItem>
+              {locations.map((l) => {
+                const count = overridesByLocation.get(l.id) ?? 0;
+                return (
+                  <SelectItem key={l.id} value={l.id} data-testid={`option-pricing-scope-${l.id}`}>
+                    {l.locationName}{count ? ` · ${count} custom` : ""}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         )}

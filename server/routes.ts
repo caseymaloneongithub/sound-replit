@@ -2905,6 +2905,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Per-LOCATION price overrides (owner, 2026-09-09): multi-location customers can
   // pay different prices per store. Resolution: location -> customer -> list.
+  // All of a customer's location overrides at once (owner, 2026-10-06): the
+  // pricing dialog opens on the scope that actually holds pricing.
+  app.get("/api/wholesale-location-pricing/for-customer/:customerId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      res.json(await storage.getWholesaleLocationPricingForCustomer(req.params.customerId));
+    } catch (error: any) {
+      res.status(500).json({ message: "Error fetching location pricing: " + error.message });
+    }
+  });
+
   app.get("/api/wholesale-location-pricing/:locationId", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       res.json(await storage.getWholesaleLocationPricing(req.params.locationId));

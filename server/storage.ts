@@ -207,6 +207,7 @@ export interface IStorage {
   setWholesaleUnitTypeFlavors(unitTypeId: string, flavorIds: string[]): Promise<void>;
   
   getWholesaleCustomerPricing(customerId: string): Promise<WholesaleCustomerPricing[]>;
+  getWholesaleLocationPricingForCustomer(customerId: string): Promise<WholesaleLocationPricing[]>;
   getWholesaleCustomerPrice(customerId: string, unitTypeId: string): Promise<WholesaleCustomerPricing | undefined>;
   setWholesaleCustomerPrice(pricing: InsertWholesaleCustomerPricing): Promise<WholesaleCustomerPricing>;
   deleteWholesaleCustomerPrice(id: string): Promise<void>;
@@ -2106,6 +2107,18 @@ export class PostgresStorage implements IStorage {
   // --- Per-location price overrides (owner, 2026-09-09) ---
   async getWholesaleLocationPricing(locationId: string): Promise<WholesaleLocationPricing[]> {
     return await db.select().from(wholesaleLocationPricing).where(eq(wholesaleLocationPricing.locationId, locationId));
+  }
+
+  // Every location override a customer has, across its locations: the pricing
+  // dialog opens on the scope that holds pricing and says which others do
+  // (owner, 2026-10-06).
+  async getWholesaleLocationPricingForCustomer(customerId: string): Promise<WholesaleLocationPricing[]> {
+    const rows = await db
+      .select({ pricing: wholesaleLocationPricing })
+      .from(wholesaleLocationPricing)
+      .innerJoin(wholesaleLocations, eq(wholesaleLocations.id, wholesaleLocationPricing.locationId))
+      .where(eq(wholesaleLocations.customerId, customerId));
+    return rows.map((r) => r.pricing);
   }
 
   async setWholesaleLocationPrice(data: { locationId: string; unitTypeId: string; customPrice: string }): Promise<WholesaleLocationPricing> {
