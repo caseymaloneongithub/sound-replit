@@ -701,19 +701,34 @@ function LeadsSheet() {
                           (visitMutation.isPending && visitMutation.variables?.id === lead.id) ||
                           (visitedMutation.isPending && visitedMutation.variables?.id === lead.id);
                         if (visit?.done) {
+                          // The next visit is a new tag; the earlier visit's touch point
+                          // stays in the history (review: undo was the only way on).
                           return (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 font-normal text-green-700 dark:text-green-400"
-                              title="Undo this visit"
-                              disabled={busy}
-                              onClick={(e) => { e.stopPropagation(); undoVisit(lead); }}
-                              data-testid={`button-visit-${lead.id}`}
-                            >
-                              <CalendarCheck className="w-3.5 h-3.5 mr-1" />
-                              {visit.label}
-                            </Button>
+                            <div className="flex items-center">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 font-normal text-green-700 dark:text-green-400"
+                                title="Undo this visit"
+                                disabled={busy}
+                                onClick={(e) => { e.stopPropagation(); undoVisit(lead); }}
+                                data-testid={`button-visit-${lead.id}`}
+                              >
+                                <CalendarCheck className="w-3.5 h-3.5 mr-1" />
+                                {visit.label}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-primary"
+                                title={`Visit again this week (${visitWeekLabel(thisWeek)}) — the earlier visit stays in the history`}
+                                disabled={busy}
+                                onClick={(e) => { e.stopPropagation(); visitMutation.mutate({ id: lead.id, week: thisWeek }); }}
+                                data-testid={`button-visit-again-${lead.id}`}
+                              >
+                                <CalendarPlus className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
                           );
                         }
                         return (
@@ -867,16 +882,28 @@ function LeadsSheet() {
                   </div>
                   <div className="flex gap-2">
                     {visitState(selectedLead)?.done ? (
-                      <Button
-                        variant="secondary"
-                        disabled={visitedMutation.isPending}
-                        onClick={() => undoVisit(selectedLead)}
-                        title="Undo this visit"
-                        data-testid="button-detail-visit"
-                      >
-                        <CalendarCheck className="w-4 h-4 mr-1.5" />
-                        {visitState(selectedLead)?.label}
-                      </Button>
+                      <>
+                        <Button
+                          variant="secondary"
+                          disabled={visitedMutation.isPending}
+                          onClick={() => undoVisit(selectedLead)}
+                          title="Undo this visit"
+                          data-testid="button-detail-visit"
+                        >
+                          <CalendarCheck className="w-4 h-4 mr-1.5" />
+                          {visitState(selectedLead)?.label}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled={visitMutation.isPending}
+                          onClick={() => visitMutation.mutate({ id: selectedLead.id, week: thisWeek })}
+                          title="Tag for another visit this week — the earlier visit stays in the history"
+                          data-testid="button-detail-visit-again"
+                        >
+                          <CalendarPlus className="w-4 h-4 mr-1.5" />
+                          Visit again
+                        </Button>
+                      </>
                     ) : (
                       <>
                         <Button
