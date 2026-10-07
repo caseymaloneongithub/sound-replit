@@ -117,6 +117,15 @@ export default function WholesaleOrders() {
 
   const selectedOrder = orders?.find(o => o.id === selectedOrderId);
   const selectedCustomer = customers?.find(c => c.id === selectedOrder?.customerId);
+  // The details dialog shows THIS order's contact, the way the expanded row does:
+  // the store's own contact when the order has a location, then the email given
+  // at submission, then the account. It used to show the account alone, so every
+  // Evergreens store read as the AP mailbox with no name (owner, 2026-10-07).
+  const orderContact = selectedOrder && selectedCustomer ? {
+    name: selectedOrder.locationContactName || selectedCustomer.contactName,
+    email: selectedOrder.locationEmail || selectedOrder.contactEmail || selectedCustomer.email,
+    phone: selectedOrder.locationContactPhone || selectedCustomer.phone,
+  } : null;
 
   const { data: customerLocations = [] } = useQuery<WholesaleLocation[]>({
     queryKey: ["/api/wholesale/customers", selectedOrder?.customerId, "locations"],
@@ -907,9 +916,14 @@ export default function WholesaleOrders() {
                 <h3 className="font-semibold mb-2">Customer Information</h3>
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div><strong>Business:</strong> {selectedCustomer.businessName}</div>
-                  <div><strong>Contact:</strong> {selectedCustomer.contactName}</div>
-                  <div><strong>Email:</strong> {selectedCustomer.email}</div>
-                  <div><strong>Phone:</strong> {selectedCustomer.phone}</div>
+                  <div><strong>Contact:</strong> {orderContact?.name}</div>
+                  <div data-testid="text-order-contact-email"><strong>Email:</strong> {orderContact?.email}</div>
+                  <div><strong>Phone:</strong> {orderContact?.phone}</div>
+                  {orderContact && orderContact.email !== selectedCustomer.email && (
+                    <div className="col-span-2 text-muted-foreground" data-testid="text-account-email">
+                      <strong>Account email:</strong> {selectedCustomer.email}
+                    </div>
+                  )}
                 </div>
               </div>
 

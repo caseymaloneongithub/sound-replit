@@ -1866,8 +1866,8 @@ export function buildWholesaleOrderConfirmationEmail(params: WholesaleOrderConfi
   const orderDateFormatted = format(params.orderDate, 'MMMM d, yyyy');
   const deliveryDateFormatted = params.deliveryDate ? format(params.deliveryDate, 'MMMM d, yyyy') : null;
   const dueDateFormatted = params.dueDate ? format(params.dueDate, 'MMMM d, yyyy') : null;
-  // "Dear ," when the account has no contact on file read as broken (2026-09-02).
-  const greeting = params.contactName?.trim() ? `Dear ${params.contactName},` : 'Hello,';
+  // No "Dear <name>," line (owner, 2026-10-07): the email opens on the thank-you
+  // paragraph, like the plain-text version always has.
   const locationLine = params.location
     ? `${params.location.locationName && params.location.locationName !== 'Main Location' ? params.location.locationName + ' — ' : ''}${params.location.address}, ${params.location.city}, ${params.location.state} ${params.location.zipCode}`
     : null;
@@ -1918,10 +1918,6 @@ orders@soundkombucha.com
   ${getEmailHeader('Order Confirmation')}
   
   <div style="padding: 32px 24px;">
-    <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 16px; margin: 0 0 24px 0;">
-      ${greeting}
-    </p>
-
     <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 16px; margin: 0 0 24px 0; white-space: pre-line;">
       ${bodyParagraph}
     </p>
