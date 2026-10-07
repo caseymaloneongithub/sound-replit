@@ -594,6 +594,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return created.id;
   }
 
+  /** A second checkout refused because the invoice's payment is already in:
+   *  settled, or a bank debit still processing (review, 2026-10-07). */
+  class WholesalePaymentBlocked extends Error {
+    constructor(public readonly reason: 'paid' | 'processing') {
+      super(reason === 'paid'
+        ? "This invoice has already been paid"
+        : "A bank payment for this invoice is already processing. It can take up to 5 business days to clear.");
+      this.name = 'WholesalePaymentBlocked';
+    }
+  }
+
   async function createWholesaleCheckoutSession(order: any, customer: any, items: any[]) {
     if (!stripe) throw new Error("Stripe is not configured");
     const baseUrl = getBaseUrl();
@@ -694,6 +705,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Outdated or nearly out of time: closed at Stripe BEFORE its replacement
           // exists, so the customer can never hold two payable sessions.
           await stripe.checkout.sessions.expire(current.sessionId);
+        } else if (existing?.status === 'complete') {
+          // Completed at Stripe before its webhook reached the invoice (review,
+          // 2026-10-07): bring the invoice up to date the way the webhook would,
+          // then refuse a second checkout. Only a payment that failed outright
+          // frees the invoice for a fresh session.
+          const intentId = typeof existing.payment_intent === 'string' ? existing.payment_intent : existing.payment_intent?.id;
+          if (existing.payment_status === 'paid') {
+            await settleWholesaleInvoice(order.id, intentId);
+            throw new WholesalePaymentBlocked('paid');
+          }
+          const intent = intentId ? await stripe.paymentIntents.retrieve(intentId) : null;
+          const failed = !!intent && (intent.status === 'canceled' || intent.status === 'requires_payment_method');
+          if (!failed) {
+            await storage.updateWholesaleOrder(order.id, {
+              paymentInitiatedAt: new Date(),
+              paymentFailedAt: null,
+              ...(intentId ? { stripePaymentIntentId: intentId } : {}),
+            });
+            throw new WholesalePaymentBlocked('processing');
+          }
         }
       }
       const created = await createSession();
@@ -769,7 +800,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return page(410, "This payment link has expired", `It was good for a year from the invoice. Ask us for a fresh invoice for ${order.invoiceNumber}.`);
       }
       if (!stripe) return page(503, "Online payment is unavailable right now", "Please try again in a little while, or mail a check.");
-      const session = await createWholesaleCheckoutSession(order, customer, items);
+      let session;
+      try {
+        session = await createWholesaleCheckoutSession(order, customer, items);
+      } catch (e) {
+        // Paid or processing at Stripe already, found while checking the open session.
+        if (e instanceof WholesalePaymentBlocked) {
+          return e.reason === 'paid'
+            ? page(200, `${invoice} is paid`, "Thank you — there's nothing more to do.")
+            : page(200, `${invoice} is processing`, "A bank payment for this invoice is already on its way. Bank transfers take 4–5 business days to clear.");
+        }
+        throw e;
+      }
       if (!session.url) throw new Error("Stripe returned no checkout URL");
       res.redirect(303, session.url);
     } catch (error: any) {
@@ -9887,6 +9929,9 @@ If you have any questions, please don't hesitate to reach out!`,
       const session = await createWholesaleCheckoutSession(order, customer, orderDetails.items);
       res.json({ url: session.url, sessionId: session.id });
     } catch (error: any) {
+      if (error instanceof WholesalePaymentBlocked) {
+        return res.status(400).json({ message: error.message });
+      }
       console.error("Wholesale payment checkout error:", error);
       res.status(500).json({ message: "Error creating checkout: " + error.message });
     }
