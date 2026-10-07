@@ -409,10 +409,15 @@ export default function DeliveryRoutes() {
     return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   };
 
-  const ordersWithGeocode = deliveryOrders.filter(
+  // Delivered orders (shipped separately, or dropped before a re-optimize) are
+  // listed for the record but never routed — the same rule as the server's
+  // optimize (owner, 2026-10-07).
+  const openDeliveries = deliveryOrders.filter((o) => o.status !== 'delivered');
+  const deliveredAlready = deliveryOrders.filter((o) => o.status === 'delivered');
+  const ordersWithGeocode = openDeliveries.filter(
     (o) => o.location?.latitude && o.location?.longitude
   );
-  const ordersWithoutGeocode = deliveryOrders.filter(
+  const ordersWithoutGeocode = openDeliveries.filter(
     (o) => !o.location?.latitude || !o.location?.longitude
   );
 
@@ -547,8 +552,9 @@ export default function DeliveryRoutes() {
                     <CardTitle className="flex items-center gap-2">
                       Deliveries for {format(selectedDate, "MMMM d, yyyy")}
                     </CardTitle>
-                    <CardDescription>
-                      {deliveryOrders.length} deliveries scheduled
+                    <CardDescription data-testid="text-deliveries-summary">
+                      {openDeliveries.length} {openDeliveries.length === 1 ? 'delivery' : 'deliveries'} to route
+                      {deliveredAlready.length > 0 && ` · ${deliveredAlready.length} already delivered`}
                     </CardDescription>
                   </div>
                   <Button
@@ -582,7 +588,7 @@ export default function DeliveryRoutes() {
                         </p>
                       </div>
                     )}
-                    {deliveryOrders.map((order) => (
+                    {openDeliveries.map((order) => (
                       <div
                         key={order.id}
                         className="flex items-center justify-between p-3 border rounded-md"
@@ -613,6 +619,26 @@ export default function DeliveryRoutes() {
                         </div>
                       </div>
                     ))}
+                    {deliveredAlready.length > 0 && (
+                      <div className="pt-3 border-t space-y-2" data-testid="section-delivered-already">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Already delivered — not routed
+                        </p>
+                        {deliveredAlready.map((order) => (
+                          <div
+                            key={order.id}
+                            className="flex items-center justify-between px-3 py-2 rounded-md bg-muted/40 text-sm text-muted-foreground"
+                            data-testid={`delivered-order-${order.id}`}
+                          >
+                            <span>
+                              {order.customer?.businessName || "Unknown"}
+                              {order.location?.locationName && order.location.locationName !== "Main Location" && ` — ${order.location.locationName}`}
+                            </span>
+                            <Badge variant="outline">Delivered</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -1031,8 +1057,14 @@ export default function DeliveryRoutes() {
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Delivery Orders:</span>
-                    <span className="font-medium">{deliveryOrders.length}</span>
+                    <span className="font-medium" data-testid="text-summary-open">{openDeliveries.length}</span>
                   </div>
+                  {deliveredAlready.length > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Already Delivered:</span>
+                      <span className="font-medium" data-testid="text-summary-delivered">{deliveredAlready.length}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Ready for Routing:</span>
                     <span className="font-medium">{ordersWithGeocode.length}</span>

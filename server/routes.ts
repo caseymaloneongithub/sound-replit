@@ -12709,8 +12709,10 @@ If you have any questions, please don't hesitate to reach out!`,
     try {
       const targetDate = new Date(req.params.date);
       if (isNaN(targetDate.getTime())) return res.status(400).json({ message: "Invalid date" });
+      // Delivered orders left the shelf when they were marked delivered, so
+      // they are no longer demand against it.
       const dayOrders = (await storage.getWholesaleOrdersByDeliveryDate(targetDate))
-        .filter(o => o.status !== 'cancelled' && o.fulfillmentMethod !== 'pickup');
+        .filter(o => o.status !== 'cancelled' && o.status !== 'delivered' && o.fulfillmentMethod !== 'pickup');
       if (!dayOrders.length) return res.json({ rows: [], shortages: 0 });
 
       const orderIds = dayOrders.map(o => o.id);
@@ -12818,6 +12820,10 @@ If you have any questions, please don't hesitate to reach out!`,
         const orderDate = new Date(order.deliveryDate);
         return orderDate.toDateString() === targetDate.toDateString() &&
                order.status !== 'cancelled' &&
+               // Already delivered — shipped separately, or dropped before a
+               // re-optimize — isn't a stop (owner, 2026-10-07: three Portland
+               // stores marked delivered were about to send the van to Oregon).
+               order.status !== 'delivered' &&
                // Pickups are collected at the brewery — never route a driver to them.
                order.fulfillmentMethod !== 'pickup';
       });
@@ -13098,9 +13104,12 @@ If you have any questions, please don't hesitate to reach out!`,
       }
       // Deliveries scheduled since the route was built (or with no route at
       // all) ride along at the end, marked unrouted so the driver knows.
+      // A delivered order that was never routed (shipped separately, or done
+      // before a re-optimize left it out) isn't a stop to ride along; one the
+      // route does hold stays, shown as done.
       const routedOrders = new Set(skeleton.filter((s) => s.type === 'order').map((s) => s.id));
       for (const o of dayOrders) {
-        if (!routedOrders.has(o.id)) skeleton.push({ type: 'order', id: o.id, latitude: null, longitude: null, distanceFromPrevious: null, durationFromPrevious: null, routed: false });
+        if (!routedOrders.has(o.id) && o.status !== 'delivered') skeleton.push({ type: 'order', id: o.id, latitude: null, longitude: null, distanceFromPrevious: null, durationFromPrevious: null, routed: false });
       }
 
       // Navigation uses the stop's CURRENT pin — never the coordinates frozen in
