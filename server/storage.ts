@@ -370,7 +370,7 @@ export interface IStorage {
   // CRM - Touch point management
   getLeadTouchPoints(leadId: string): Promise<LeadTouchPoint[]>;
   createLeadTouchPoint(touchPoint: InsertLeadTouchPoint): Promise<LeadTouchPoint>;
-  markLeadVisited(leadId: string, createdByUserId: string, notes: string | null): Promise<Lead | undefined>;
+  markLeadVisited(leadId: string, createdByUserId: string, notes: string | null, subject?: string): Promise<Lead | undefined>;
   undoLeadVisit(leadId: string): Promise<Lead | undefined>;
   getRecentTouchPoints(limit?: number): Promise<Array<LeadTouchPoint & { leadBusinessName: string; createdByName: string }>>;
   
@@ -5177,14 +5177,14 @@ export class PostgresStorage implements IStorage {
    * which touch point, so Undo takes back exactly that one. A lead already
    * visited stays as it is — a second tap adds nothing (review, 2026-10-06).
    */
-  async markLeadVisited(leadId: string, createdByUserId: string, notes: string | null): Promise<Lead | undefined> {
+  async markLeadVisited(leadId: string, createdByUserId: string, notes: string | null, subject: string = VISIT_TOUCH_POINT_SUBJECT): Promise<Lead | undefined> {
     return db.transaction(async (tx) => {
       const [lead] = await tx.select().from(leads).where(eq(leads.id, leadId)).for("update");
       if (!lead) return undefined;
       if (lead.visitedAt) return lead;
       const [touchPoint] = await tx
         .insert(leadTouchPoints)
-        .values({ leadId, type: "meeting", subject: VISIT_TOUCH_POINT_SUBJECT, notes, createdByUserId })
+        .values({ leadId, type: "meeting", subject, notes, createdByUserId })
         .returning();
       const [updated] = await tx
         .update(leads)

@@ -32,3 +32,6 @@ export function visitWeekLabel(monday: string): string {
 
 /** The touch point a visit leaves on the lead; undoing the visit removes the latest one. */
 export const VISIT_TOUCH_POINT_SUBJECT = "Visited on the delivery route";
+/** The same, for a visit marked straight from the leads sheet — a drop-in on
+ *  the owner's own time, no route involved (owner, 2026-10-07). */
+export const DROP_IN_TOUCH_POINT_SUBJECT = "Visited";

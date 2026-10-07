@@ -42,7 +42,7 @@ import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDir
 import { geocodeForEdit, geocodeLeadForEdit, refreshLeadPin, refreshLocationPin } from "./location-geocode";
 import { checkMaterialStockAlerts } from "./material-alerts";
 import { LEAD_TYPES, LEAD_ZIP_RE, leadZipFrom, type LeadType } from "@shared/schema";
-import { weekMondayOf } from "@shared/lead-visits";
+import { weekMondayOf, DROP_IN_TOUCH_POINT_SUBJECT } from "@shared/lead-visits";
 import { getBaseUrl } from "./app-url";
 import { wholesalePayLink, payLinkSignatureMatches } from "./wholesale-pay-link";
 import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable, wholesaleOrders as wholesaleOrdersTable } from "@shared/schema";
@@ -11845,7 +11845,12 @@ If you have any questions, please don't hesitate to reach out!`,
   app.post("/api/crm/leads/:id/visited", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
     try {
       const date = typeof req.body?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.date) ? req.body.date : null;
-      const lead = await storage.markLeadVisited(req.params.id, req.user.id, date ? `Delivery route of ${date}` : null);
+      // Driver Mode sends the route day; the leads sheet sends source "sheet" for a
+      // drop-in with no route, and the touch point says which it was.
+      const dropIn = req.body?.source === "sheet";
+      const lead = dropIn
+        ? await storage.markLeadVisited(req.params.id, req.user.id, "Marked from the leads sheet", DROP_IN_TOUCH_POINT_SUBJECT)
+        : await storage.markLeadVisited(req.params.id, req.user.id, date ? `Delivery route of ${date}` : null);
       if (!lead) {
         return res.status(404).json({ message: "Lead not found" });
       }

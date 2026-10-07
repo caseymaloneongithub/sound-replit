@@ -12,7 +12,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, CalendarPlus, CalendarCheck } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, CalendarPlus, CalendarCheck, Check } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { LinkifiedText, firstWebAddress } from "@/components/linkified-text";
@@ -294,11 +294,33 @@ function LeadsSheet() {
   });
   const toggleVisit = (lead: Lead) =>
     visitMutation.mutate({ id: lead.id, week: lead.visitWeek === thisWeek ? null : thisWeek });
-  // How a lead's tag reads: this week, visited, or a week still to come. A past
-  // week is no tag any more.
+  // A visit marked from the sheet — a drop-in on the owner's own time, no route
+  // (owner, 2026-10-07) — or undone. Driver Mode records the route visits.
+  const visitedMutation = useMutation({
+    mutationFn: async ({ id, visited }: { id: string; visited: boolean }) =>
+      visited
+        ? await apiRequest("POST", `/api/crm/leads/${id}/visited`, { source: "sheet" })
+        : await apiRequest("DELETE", `/api/crm/leads/${id}/visited`),
+    onSuccess: (lead: Lead, { visited }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/leads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/leads/search"] });
+      setSelectedLead((current) => (current && current.id === lead.id ? lead : current));
+      toast({ title: visited ? "Marked visited" : "Visit undone" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+  const undoVisit = (lead: Lead) => {
+    if (confirm(`Undo the visit to "${lead.businessName}"? The visit comes off its history.`)) {
+      visitedMutation.mutate({ id: lead.id, visited: false });
+    }
+  };
+  // How a lead's visit reads: the last visit (until a new tag starts the next
+  // one over), this week, or a week still to come. A past week is no tag any more.
   const visitState = (lead: Lead): { label: string; done: boolean } | null => {
-    if (!lead.visitWeek || lead.visitWeek < thisWeek) return null;
     if (lead.visitedAt) return { label: `Visited ${format(new Date(lead.visitedAt), "MMM d")}`, done: true };
+    if (!lead.visitWeek || lead.visitWeek < thisWeek) return null;
     return { label: lead.visitWeek === thisWeek ? "This week" : `Week of ${visitWeekLabel(lead.visitWeek)}`, done: false };
   };
 
@@ -675,19 +697,51 @@ function LeadsSheet() {
                       {(() => {
                         const visit = visitState(lead);
                         const tagged = lead.visitWeek === thisWeek;
+                        const busy =
+                          (visitMutation.isPending && visitMutation.variables?.id === lead.id) ||
+                          (visitedMutation.isPending && visitedMutation.variables?.id === lead.id);
+                        if (visit?.done) {
+                          return (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 font-normal text-green-700 dark:text-green-400"
+                              title="Undo this visit"
+                              disabled={busy}
+                              onClick={(e) => { e.stopPropagation(); undoVisit(lead); }}
+                              data-testid={`button-visit-${lead.id}`}
+                            >
+                              <CalendarCheck className="w-3.5 h-3.5 mr-1" />
+                              {visit.label}
+                            </Button>
+                          );
+                        }
                         return (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className={cn("h-7 px-2 font-normal", visit?.done ? "text-green-700 dark:text-green-400" : tagged ? "text-primary" : "text-muted-foreground")}
-                            title={tagged ? "Take the visit tag off" : `Visit this week (${visitWeekLabel(thisWeek)})`}
-                            disabled={visitMutation.isPending && visitMutation.variables?.id === lead.id}
-                            onClick={(e) => { e.stopPropagation(); toggleVisit(lead); }}
-                            data-testid={`button-visit-${lead.id}`}
-                          >
-                            {visit?.done ? <CalendarCheck className="w-3.5 h-3.5 mr-1" /> : <CalendarPlus className="w-3.5 h-3.5 mr-1" />}
-                            {visit ? visit.label : "Visit this week"}
-                          </Button>
+                          <div className="flex items-center">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className={cn("h-7 px-2 font-normal", tagged ? "text-primary" : "text-muted-foreground")}
+                              title={tagged ? "Take the visit tag off" : `Visit this week (${visitWeekLabel(thisWeek)})`}
+                              disabled={busy}
+                              onClick={(e) => { e.stopPropagation(); toggleVisit(lead); }}
+                              data-testid={`button-visit-${lead.id}`}
+                            >
+                              <CalendarPlus className="w-3.5 h-3.5 mr-1" />
+                              {visit ? visit.label : "Visit this week"}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-green-700 dark:hover:text-green-400"
+                              title="Mark visited — dropped in, no route"
+                              disabled={busy}
+                              onClick={(e) => { e.stopPropagation(); visitedMutation.mutate({ id: lead.id, visited: true }); }}
+                              data-testid={`button-mark-visited-${lead.id}`}
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
                         );
                       })()}
                     </td>
@@ -812,15 +866,40 @@ function LeadsSheet() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <Button
-                      variant={selectedLead.visitWeek === thisWeek ? "secondary" : "outline"}
-                      disabled={visitMutation.isPending}
-                      onClick={() => toggleVisit(selectedLead)}
-                      data-testid="button-detail-visit"
-                    >
-                      {visitState(selectedLead)?.done ? <CalendarCheck className="w-4 h-4 mr-1.5" /> : <CalendarPlus className="w-4 h-4 mr-1.5" />}
-                      {visitState(selectedLead)?.label ?? "Visit this week"}
-                    </Button>
+                    {visitState(selectedLead)?.done ? (
+                      <Button
+                        variant="secondary"
+                        disabled={visitedMutation.isPending}
+                        onClick={() => undoVisit(selectedLead)}
+                        title="Undo this visit"
+                        data-testid="button-detail-visit"
+                      >
+                        <CalendarCheck className="w-4 h-4 mr-1.5" />
+                        {visitState(selectedLead)?.label}
+                      </Button>
+                    ) : (
+                      <>
+                        <Button
+                          variant={selectedLead.visitWeek === thisWeek ? "secondary" : "outline"}
+                          disabled={visitMutation.isPending}
+                          onClick={() => toggleVisit(selectedLead)}
+                          data-testid="button-detail-visit"
+                        >
+                          <CalendarPlus className="w-4 h-4 mr-1.5" />
+                          {visitState(selectedLead)?.label ?? "Visit this week"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled={visitedMutation.isPending}
+                          onClick={() => visitedMutation.mutate({ id: selectedLead.id, visited: true })}
+                          title="Dropped in on your own — no route needed"
+                          data-testid="button-detail-mark-visited"
+                        >
+                          <Check className="w-4 h-4 mr-1.5" />
+                          Mark visited
+                        </Button>
+                      </>
+                    )}
                     <Button
                       variant="outline"
                       size="icon"
