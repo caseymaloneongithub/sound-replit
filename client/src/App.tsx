@@ -49,7 +49,8 @@ import PurchaseOrders from "@/pages/purchase-orders";
 import InventoryDashboard from "@/pages/inventory-dashboard";
 import Reports from "@/pages/reports";
 import Account from "@/pages/account";
-import StaffPortal from "@/pages/staff-portal";
+import LeadsPage from "@/pages/leads";
+import UserManagement from "@/pages/user-management";
 import AdminFlavors from "@/pages/admin-flavors";
 import AdminRetailProducts from "@/pages/admin-retail-products";
 import AdminShipping from "@/pages/admin-shipping";
@@ -129,6 +130,7 @@ function Router() {
       <StaffProtectedRoute path="/staff-portal/wholesale/orders" component={WholesaleOrders} />
       <StaffProtectedRoute path="/staff-portal/wholesale/delivery-report" component={WholesaleDeliveryReport} />
       <StaffProtectedRoute path="/staff-portal/wholesale/customers" component={WholesaleCustomers} />
+      <StaffProtectedRoute path="/staff-portal/wholesale/leads" component={LeadsPage} />
       <StaffProtectedRoute path="/staff-portal/wholesale/delivery-routes" component={DeliveryRoutes} />
       {/* Driver mode: the delivery day on a phone (owner, 2026-09-22). Short path — it's the installed app's start page. */}
       <StaffProtectedRoute path="/driver" component={DriverMode} />
@@ -155,6 +157,7 @@ function Router() {
       <AdminProtectedRoute path="/admin/accounting/banks" component={AccountingBanks} />
       <AdminProtectedRoute path="/admin/accounting/income-statement" component={AccountingIncomeStatement} />
       <AdminProtectedRoute path="/admin/email-campaign" component={AdminEmailCampaign} />
+      <SuperAdminProtectedRoute path="/admin/users" component={UserManagement} />
       <SuperAdminProtectedRoute path="/admin/ops-events" component={AdminOpsEvents} />
       {/* The old /inventory hub duplicated the sidebar; the dashboard is the real front door. */}
       <Route path="/inventory" component={() => <Redirect to="/inventory/dashboard" />} />
@@ -167,9 +170,10 @@ function Router() {
       <StaffProtectedRoute path="/reports" component={Reports} />
       <Route path="/account" component={Account} />
       
-      {/* CRM and User Management routes using staff portal with query params */}
-      <StaffProtectedRoute path="/crm" component={StaffPortal} />
-      <StaffProtectedRoute path="/user-management" component={StaffPortal} />
+      {/* The legacy tabbed Staff Portal answered at these two paths; its only two
+          non-duplicate tabs (Leads, User Management) became pages of their own. */}
+      <Route path="/crm" component={() => <Redirect to="/staff-portal/wholesale/leads" />} />
+      <Route path="/user-management" component={() => <Redirect to="/admin/users" />} />
       
       {/* Redirect /staff-portal to wholesale orders by default */}
       <Route path="/staff-portal" component={() => <Redirect to="/staff-portal/orders-board" />} />

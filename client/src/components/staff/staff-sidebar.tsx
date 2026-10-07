@@ -142,7 +142,7 @@ export function StaffSidebar({ onLinkClick, headerAction }: StaffSidebarProps) {
           icon: TruckIcon,
           alsoMatch: ["/staff-portal/wholesale/delivery-routes"],
         },
-        { title: "Leads", href: "/crm", icon: Building2 },
+        { title: "Leads", href: "/staff-portal/wholesale/leads", icon: Building2 },
         { title: "Invoices", href: "/staff-portal/wholesale/invoices", icon: FileCheck, adminOnly: true, adminBadge: true },
       ],
     },
@@ -193,7 +193,9 @@ export function StaffSidebar({ onLinkClick, headerAction }: StaffSidebarProps) {
       title: "Admin",
       adminOnly: true,
       items: [
-        { title: "User Management", href: "/user-management", icon: UserCog, adminOnly: true },
+        // The page and every endpoint behind it are super-admin only; admins used to
+        // land on an empty tab.
+        { title: "User Management", href: "/admin/users", icon: UserCog, adminOnly: true, superAdminOnly: true },
         { title: "Email Campaign", href: "/admin/email-campaign", icon: Send, adminOnly: true },
         { title: "Site Events", href: "/admin/ops-events", icon: Activity, adminOnly: true, superAdminOnly: true },
       ],

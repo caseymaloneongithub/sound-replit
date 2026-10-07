@@ -17,6 +17,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { LinkifiedText, firstWebAddress } from "@/components/linkified-text";
 import { weekMondayOf, visitWeekLabel } from "@shared/lead-visits";
+import { StaffLayout } from "@/components/staff/staff-layout";
 import {
   insertLeadSchema,
   insertLeadTouchPointSchema,
@@ -76,7 +77,19 @@ const TH = "sticky top-0 z-20 h-8 px-2 text-left align-middle text-xs font-mediu
 const TD = "h-9 px-2 align-middle whitespace-nowrap bg-card group-hover:bg-muted border-b border-r";
 const FROZEN_RIGHT_EDGE = "border-r-0 shadow-[-1px_0_0_hsl(var(--border))]";
 
-export default function CRMPage() {
+// A page of its own since 2026-10-07; it used to be the CRM tab of the legacy
+// tabbed Staff Portal (owner: "This page should just be its own page").
+export default function LeadsPage() {
+  return (
+    <StaffLayout>
+      <div className="max-w-7xl mx-auto px-6 py-12">
+        <LeadsSheet />
+      </div>
+    </StaffLayout>
+  );
+}
+
+function LeadsSheet() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<LeadTypeFilter>("all");
@@ -327,8 +340,8 @@ export default function CRMPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold" data-testid="heading-crm">CRM - Lead Management</h2>
-          <p className="text-muted-foreground" data-testid="text-crm-description">Track and manage potential customers</p>
+          <h1 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-heading)' }} data-testid="heading-crm">Leads</h1>
+          <p className="text-muted-foreground" data-testid="text-crm-description">Prospects to visit and sign as wholesale accounts</p>
         </div>
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogTrigger asChild>
