@@ -78,6 +78,12 @@ export default function WholesaleOrders() {
   const [editItems, setEditItems] = useState<EditItem[]>([]);
   const [editNotes, setEditNotes] = useState('');
   const [editPoNumber, setEditPoNumber] = useState('');
+  // PO number and notes arrive after the fact — accounts payable often sends the
+  // PO once the invoice lands (owner, 2026-10-07) — so the details view edits
+  // just those two at any status, delivered included, without the item editor.
+  const [isEditingDetails, setIsEditingDetails] = useState(false);
+  const [detailsPo, setDetailsPo] = useState('');
+  const [detailsNotes, setDetailsNotes] = useState('');
   // Delivery <-> pickup, or a different store, after the fact (owner, 2026-09-16).
   const [editFulfillment, setEditFulfillment] = useState<'delivery' | 'pickup'>('delivery');
   const [editLocationId, setEditLocationId] = useState('');
@@ -300,6 +306,7 @@ export default function WholesaleOrders() {
       setEditPoNumber((selectedOrder as any).poNumber || '');
       setEditFulfillment(selectedOrder.fulfillmentMethod === 'pickup' ? 'pickup' : 'delivery');
       setEditLocationId(selectedOrder.locationId || '');
+      setIsEditingDetails(false);
       setIsEditMode(true);
     }
   };
@@ -355,9 +362,33 @@ export default function WholesaleOrders() {
     });
   };
 
+  const updateOrderDetailsMutation = useMutation({
+    mutationFn: async ({ orderId, poNumber, notes }: { orderId: string; poNumber: string; notes: string }) =>
+      apiRequest("PATCH", `/api/wholesale/orders/${orderId}`, {
+        poNumber: poNumber.trim() || null,
+        notes: notes.trim() || null,
+      }),
+    onSuccess: () => {
+      toast({ title: "Order updated", description: "PO number and notes saved." });
+      queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders"] });
+      setIsEditingDetails(false);
+    },
+    onError: (error: any) => {
+      toast({ title: "Couldn't save", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const openDetailsEditor = () => {
+    if (!selectedOrder) return;
+    setDetailsPo(selectedOrder.poNumber || '');
+    setDetailsNotes(selectedOrder.notes || '');
+    setIsEditingDetails(true);
+  };
+
   const handleCloseDialog = () => {
     setSelectedOrderId(null);
     setIsEditMode(false);
+    setIsEditingDetails(false);
     setEditItems([]);
     setEditNotes('');
   };
@@ -945,14 +976,70 @@ export default function WholesaleOrders() {
                     </div>
                   )}
                 </div>
-                {!isEditMode && (selectedOrder as any).poNumber && (
-                  <div className="mb-2">
-                    <strong>PO #:</strong> <span data-testid="text-po-number">{(selectedOrder as any).poNumber}</span>
-                  </div>
-                )}
-                {!isEditMode && selectedOrder.notes && (
-                  <div className="mt-2">
-                    <strong>Notes:</strong> <span className="italic">{selectedOrder.notes}</span>
+                {!isEditMode && (
+                  <div className="mt-3 pt-3 border-t" data-testid="section-order-details">
+                    {isEditingDetails ? (
+                      <div className="space-y-3">
+                        <div>
+                          <Label htmlFor="details-po">PO #</Label>
+                          <Input
+                            id="details-po"
+                            value={detailsPo}
+                            onChange={(e) => setDetailsPo(e.target.value)}
+                            placeholder="Customer's purchase order number"
+                            maxLength={50}
+                            className="mt-1"
+                            data-testid="input-details-po"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="details-notes">Notes</Label>
+                          <Textarea
+                            id="details-notes"
+                            value={detailsNotes}
+                            onChange={(e) => setDetailsNotes(e.target.value)}
+                            placeholder="Anything about this order worth keeping with it"
+                            className="mt-1"
+                            data-testid="textarea-details-notes"
+                          />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button variant="outline" size="sm" onClick={() => setIsEditingDetails(false)} data-testid="button-cancel-details">
+                            Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => selectedOrderId && updateOrderDetailsMutation.mutate({ orderId: selectedOrderId, poNumber: detailsPo, notes: detailsNotes })}
+                            disabled={updateOrderDetailsMutation.isPending}
+                            data-testid="button-save-details"
+                          >
+                            {updateOrderDetailsMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                            Save
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1 text-sm">
+                          <div>
+                            <strong>PO #:</strong>{' '}
+                            {selectedOrder.poNumber
+                              ? <span data-testid="text-po-number">{selectedOrder.poNumber}</span>
+                              : <span className="text-muted-foreground" data-testid="text-po-number">none yet</span>}
+                          </div>
+                          <div>
+                            <strong>Notes:</strong>{' '}
+                            {selectedOrder.notes
+                              ? <span className="italic whitespace-pre-line" data-testid="text-order-notes">{selectedOrder.notes}</span>
+                              : <span className="text-muted-foreground" data-testid="text-order-notes">none</span>}
+                          </div>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={openDetailsEditor} data-testid="button-edit-details">
+                          <Pencil className="w-3.5 h-3.5 mr-1.5" />
+                          {selectedOrder.poNumber || selectedOrder.notes ? 'Edit' : 'Add PO # or notes'}
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
