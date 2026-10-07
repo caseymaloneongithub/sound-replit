@@ -646,6 +646,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   /**
+   * The payment link in an emailed invoice. A Stripe Checkout URL dies after 24
+   * hours (owner, 2026-10-07: Pot of Gold Coffee's "pay by bank transfer link in
+   * their email expired even though it was fairly recent"), so the email carries
+   * OUR link, /pay/<order>/<signature>: every click mints a fresh Checkout session
+   * and sends the customer on, after checking the invoice is still payable. The
+   * signature is the key, as the Stripe URL it replaces was; the link is good for
+   * a year from the invoice ("those should never expire, or maybe something like
+   * after a year").
+   */
+  const PAY_LINK_DAYS = 365;
+  const payLinkSecret = () => process.env.PAY_LINK_SECRET || process.env.SESSION_SECRET || 'dev-pay-link-secret';
+  const payLinkSignature = (orderId: string) =>
+    crypto.createHmac('sha256', payLinkSecret()).update(`wholesale-pay:${orderId}`).digest('base64url').slice(0, 32);
+  function wholesalePayLink(orderId: string): string {
+    return `${getBaseUrl()}/pay/${orderId}/${payLinkSignature(orderId)}`;
+  }
+
+  app.get("/pay/:orderId/:signature", async (req, res) => {
+    const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+    // The customer followed a link in an email, so a plain page beats an error code.
+    const page = (status: number, title: string, body: string) =>
+      res.status(status).type('html').send(
+        `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
+        `<title>${escape(title)} — Puget Sound Kombucha Co.</title>` +
+        `<style>body{font-family:Arial,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1d292f;line-height:1.5}h1{font-size:1.4rem}a{color:#ad5c29}</style></head>` +
+        `<body><h1>${escape(title)}</h1><p>${escape(body)}</p><p>Questions? <a href="mailto:orders@soundkombucha.com">orders@soundkombucha.com</a> · (206) 789-5219</p></body></html>`,
+      );
+    try {
+      const { orderId, signature } = req.params;
+      const expected = Buffer.from(payLinkSignature(orderId));
+      const given = Buffer.from(String(signature));
+      if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) {
+        return page(404, "This payment link isn't valid", "Check the link in your invoice email, or ask us for a fresh invoice.");
+      }
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!checkSubmissionRateLimit(`pay-link:${ip}`, 30, 60 * 60 * 1000)) {
+        return page(429, "Too many tries", "Please wait a few minutes and open the link again.");
+      }
+      const details = await storage.getWholesaleOrderWithDetails(orderId);
+      if (!details) {
+        return page(404, "This payment link isn't valid", "Check the link in your invoice email, or ask us for a fresh invoice.");
+      }
+      const { order, customer, items } = details;
+      const invoice = `Invoice ${order.invoiceNumber}`;
+      if (order.paidAt) return page(200, `${invoice} is paid`, "Thank you — there's nothing more to do.");
+      if (order.paymentInitiatedAt && !order.paymentFailedAt) {
+        return page(200, `${invoice} is processing`, "A bank payment for this invoice is already on its way. Bank transfers take 4–5 business days to clear.");
+      }
+      if (!customer.allowOnlinePayment && !customer.allowCardPayment) {
+        return page(200, invoice, "Online payment isn't set up for your account. Please mail a check to Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233, or get in touch.");
+      }
+      if (Date.now() - new Date(order.orderDate).getTime() > PAY_LINK_DAYS * 24 * 60 * 60 * 1000) {
+        return page(410, "This payment link has expired", `It was good for a year from the invoice. Ask us for a fresh invoice for ${order.invoiceNumber}.`);
+      }
+      if (!stripe) return page(503, "Online payment is unavailable right now", "Please try again in a little while, or mail a check.");
+      const session = await createWholesaleCheckoutSession(order, customer, items);
+      if (!session.url) throw new Error("Stripe returned no checkout URL");
+      res.redirect(303, session.url);
+    } catch (error: any) {
+      console.error("[WHOLESALE PAY] Pay link failed:", error);
+      page(500, "Something went wrong", "We couldn't open the payment page. Please try again in a few minutes.");
+    }
+  });
+
+  /**
    * Mark a wholesale invoice as SETTLED and send the receipts.
    *
    * Only call this when the money has actually arrived. With ACH that means
@@ -9276,12 +9341,9 @@ If you have any questions, please don't hesitate to reach out!`,
       // Don't email a payment link for an invoice that's already paid or has a debit in
       // flight — following it would start a second ACH debit for the same invoice.
       if ((customer.allowOnlinePayment || customer.allowCardPayment) && stripe && !order.paidAt && !order.paymentInitiatedAt) {
-        if (isPreview) {
-          paymentUrl = '#payment-link-included-on-send';
-        } else {
-          const session = await createWholesaleCheckoutSession(order, customer, items);
-          paymentUrl = session.url;
-        }
+        // Our own link, not a Stripe session URL (those expire in a day): it opens a
+        // fresh Checkout session on each click for a year. See wholesalePayLink.
+        paymentUrl = isPreview ? '#payment-link-included-on-send' : wholesalePayLink(order.id);
       }
 
       // Prepare invoice items for email — adjustments render as qty-1 lines so the
