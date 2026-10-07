@@ -440,8 +440,8 @@ export default function RetailOrders() {
                               {order.fulfillmentMethod === 'ship' && (
                                 <div className="mt-1 text-xs text-muted-foreground" data-testid={`text-ship-to-${order.id}`}>
                                   <span className="font-medium text-foreground">Ships to</span> {[order.shipAddress1, order.shipAddress2].filter(Boolean).join(', ')}, {order.shipCity}, {order.shipState} {order.shipZip}
-                                  {Array.isArray(order.shippingLabels) && (order.shippingLabels as any[]).length > 0 && (
-                                    <span> · {(order.shippingLabels as any[]).map((l: any, i: number) => l.trackingUrl
+                                  {Array.isArray(order.shippingLabels) && (order.shippingLabels as any[]).filter((l: any) => l.trackingNumber).length > 0 && (
+                                    <span> · {(order.shippingLabels as any[]).filter((l: any) => l.trackingNumber).map((l: any, i: number) => l.trackingUrl
                                       ? <a key={i} href={l.trackingUrl} target="_blank" rel="noreferrer" className="underline">{l.trackingNumber}</a>
                                       : <span key={i}>{l.trackingNumber}</span>).reduce((acc: any[], el: any, i: number) => i === 0 ? [el] : [...acc, ', ', el], [])}</span>
                                   )}

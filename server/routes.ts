@@ -22,7 +22,7 @@ import { recordEvent, listEvents, countEvents, countOpenAlerts, acknowledgeEvent
 import {
   ShippingError, shippingProviderStatus, getShippingSettings, saveShippingSettings, getAllBoxes, getActiveBoxes,
   summarizeCans, quoteShipping, validateShipTo, calculateShippedOrderTax, commitStripeTaxTransaction,
-  purchaseLabelsForOrder, contentsForOrders, buildLabelsPdf, buildStickersCsv, handleTrackingUpdate, receiptShippingFor,
+  purchaseLabelsForOrder, contentsForOrders, buildLabelsPdf, buildStickersCsv, handleTrackingUpdate, receiptShippingFor, completeLabels,
 } from "./shipping";
 import { nextShipDate, formatShipDate, type ShippingQuote, type ShippingLabel } from "@shared/shipping-policy";
 import { insertShippingBoxSchema, shippingBoxes } from "@shared/schema";
@@ -227,6 +227,27 @@ async function markSoldOutBottleFlavors<T extends { container?: string | null; f
         }
       : ut
   );
+}
+
+// ---- Per-payment-intent serialisation (reviewer, 2026-10-06) ------------------
+// Checkout customer-info re-prices an intent and saves its snapshot; the Stripe
+// webhook reads that snapshot. Both wait on THIS in-process lock — never on a
+// row or advisory lock held across Stripe/Shippo calls: holding a pooled
+// connection while calling out, and querying the pool again from inside the
+// same transaction, can exhaust the pool and stall every request. Railway runs
+// one process, so an in-process lock is complete.
+const intentLocks = new Map<string, Promise<void>>();
+async function acquireIntentLock(key: string): Promise<() => void> {
+  const prev = intentLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => { release = resolve; });
+  const chained = prev.then(() => mine);
+  intentLocks.set(key, chained);
+  await prev;
+  return () => {
+    release();
+    if (intentLocks.get(key) === chained) intentLocks.delete(key);
+  };
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -4125,17 +4146,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(503).json({ message: "Payment processing is not configured" });
       }
 
-      // Everything below runs in ONE transaction under an advisory lock on the
-      // intent id (reviewer, 2026-10-06): two submits for the same intent
-      // serialise — the second sees the first's Stripe amount and snapshot — and
-      // the webhook takes the same lock before reading the snapshot, so it can
-      // never read one that disagrees with the amount Stripe holds. The intent is
-      // retrieved INSIDE the lock, and an intent that can't be retrieved and
-      // verified ends the request without touching anything.
-      const totals = await db.transaction(async (tx) => {
-        if (validated.paymentIntentId) {
-          await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${validated.paymentIntentId}))`);
-        }
+      // Everything below runs under the per-intent in-process lock (reviewer,
+      // 2026-10-06): two submits for the same intent serialise — the second sees
+      // the first's Stripe amount and snapshot — and the webhook takes the same
+      // lock before reading the snapshot, so it can never read one that disagrees
+      // with the amount Stripe holds. No database connection is held while Stripe
+      // or the carrier are called; only the final snapshot write is a (short)
+      // transaction. The intent is retrieved INSIDE the lock, and one that can't
+      // be retrieved and verified ends the request without touching anything.
+      const releaseIntent = validated.paymentIntentId ? await acquireIntentLock(validated.paymentIntentId) : () => {};
+      let totals: Record<string, unknown> | null = null;
+      try {
+      totals = await (async () => {
 
         let taxMode = 'exclusive';
         let taxRateBps = 1035; // Default 10.35%
@@ -4261,23 +4283,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
           shipDate,
           stripeTaxCalculationId: taxCalculationId,
         };
-        if (validated.paymentIntentId) {
-          const existing = await tx
-            .select({ id: retailCheckoutSessions.id })
-            .from(retailCheckoutSessions)
-            .where(eq(retailCheckoutSessions.paymentIntentId, validated.paymentIntentId))
-            .for('update');
-          if (existing.length > 0) {
-            await tx.update(retailCheckoutSessions).set(snapshot).where(eq(retailCheckoutSessions.id, existing[0].id));
-            if (existing.length > 1) {
-              await tx.delete(retailCheckoutSessions).where(inArray(retailCheckoutSessions.id, existing.slice(1).map((r) => r.id)));
+        // The write alone is a transaction: a row lock on the intent's snapshot,
+        // held for milliseconds.
+        await db.transaction(async (tx) => {
+          if (validated.paymentIntentId) {
+            const existing = await tx
+              .select({ id: retailCheckoutSessions.id })
+              .from(retailCheckoutSessions)
+              .where(eq(retailCheckoutSessions.paymentIntentId, validated.paymentIntentId))
+              .for('update');
+            if (existing.length > 0) {
+              await tx.update(retailCheckoutSessions).set(snapshot).where(eq(retailCheckoutSessions.id, existing[0].id));
+              if (existing.length > 1) {
+                await tx.delete(retailCheckoutSessions).where(inArray(retailCheckoutSessions.id, existing.slice(1).map((r) => r.id)));
+              }
+              return;
             }
-            return computed;
           }
-        }
-        await tx.insert(retailCheckoutSessions).values(snapshot);
+          await tx.insert(retailCheckoutSessions).values(snapshot);
+        });
         return computed;
-      });
+      })();
+      } finally {
+        releaseIntent();
+      }
 
       res.json({ success: true, totals });
     } catch (error: any) {
@@ -5618,15 +5647,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // checkout session row tells us better.
             let clearSessionId = sessionId;
 
+            // Same per-intent lock as /api/checkout/customer-info (reviewer,
+            // 2026-10-06): an in-flight re-price finishes — Stripe amount AND
+            // snapshot — before this reads either. Taken BEFORE a connection is
+            // held, so a waiting webhook never ties up the pool.
+            const releaseIntent = await acquireIntentLock(paymentIntent.id);
             // Use transaction for atomic order creation
             const client = await pool.connect();
             try {
               await client.query('BEGIN');
-              // Same per-intent lock as /api/checkout/customer-info (reviewer,
-              // 2026-10-06): an in-flight re-price finishes — Stripe amount AND
-              // snapshot — before this reads either.
-              await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [paymentIntent.id]);
-
+              
               // Check for existing order (idempotency via unique constraint)
               const existingOrderResult = await client.query(
                 'SELECT id FROM retail_orders WHERE stripe_payment_intent_id = $1 LIMIT 1',
@@ -5984,8 +6014,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               throw error;
             } finally {
               client.release();
+              releaseIntent();
             }
-            
+
             // Always clear both carts (outside transaction)
             if (clearSessionId) {
               await storage.clearCart(clearSessionId);
@@ -8665,7 +8696,7 @@ If you have any questions, please don't hesitate to reach out!`,
   app.get("/api/staff/shipping/batch/labels.pdf", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const weekOffset = Math.max(-26, Math.min(26, Number(req.query.weekOffset) || 0));
-      const orders = (await shipOrdersForWeek(weekOffset, 'all')).filter((o) => ((o.shippingLabels as ShippingLabel[] | null) ?? []).length > 0);
+      const orders = (await shipOrdersForWeek(weekOffset, 'all')).filter((o) => completeLabels(o).length > 0);
       const contents = await contentsForOrders(orders.map((o) => o.id));
       const pdf = await buildLabelsPdf(orders, contents);
       const { mondayISO } = getPacificWeekRange(weekOffset);
@@ -8764,7 +8795,7 @@ If you have any questions, please don't hesitate to reach out!`,
           fulfillment: (o.fulfillmentMethod === 'ship' ? 'ship' : 'pickup') as 'ship' | 'pickup',
           shipping: o.fulfillmentMethod === 'ship' ? (() => {
             const q = o.shippingQuote as ShippingQuote | null;
-            const labels = (o.shippingLabels as ShippingLabel[] | null) ?? [];
+            const labels = completeLabels(o);
             return {
               destination: [o.shipCity, o.shipState].filter(Boolean).join(', '),
               boxes: q?.boxes.map((b) => ({ name: b.boxName, cans: b.cans })) ?? [],
@@ -10420,7 +10451,7 @@ If you have any questions, please don't hesitate to reach out!`,
       if (parsed.data.status === 'fulfilled') {
         const current = await storage.getRetailOrder(req.params.id);
         if (current?.fulfillmentMethod === 'ship') {
-          const labels = (current.shippingLabels as unknown[] | null) ?? [];
+          const labels = completeLabels(current);
           const boxes = (current.shippingQuote as ShippingQuote | null)?.boxes?.length ?? 0;
           if (labels.length < Math.max(1, boxes)) {
             return res.status(400).json({ message: "Shipped orders are marked shipped by buying their labels — use Shipped on the orders board or Buy labels. No label has been bought for this one yet." });

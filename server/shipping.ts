@@ -446,15 +446,26 @@ export function isLabelPurchaseInFlight(orderId: string): boolean {
 
 type ShippoTransactionList = { results?: ShippoTransaction[] };
 
-/** Any label already bought against this rate (a rate belongs to exactly one shipment,
- *  so this is the purchase identity we can ask the carrier about after a crash). */
-async function findPurchasedLabelForRate(rateId: string): Promise<ShippoTransaction | null> {
+/** What the carrier knows about a rate we started buying: a finished label, a
+ *  purchase still processing, or nothing (safe to buy). A rate belongs to exactly
+ *  one shipment, so it is the purchase identity we can ask about after a crash. */
+async function reconcileRate(rateId: string): Promise<{ bought: ShippoTransaction | null; processing: boolean }> {
   const list = await shippo<ShippoTransactionList>(`/transactions/?rate=${encodeURIComponent(rateId)}&results=10`);
-  return (list.results ?? []).find((t) => t.status === 'SUCCESS') ?? null;
+  const results = list.results ?? [];
+  return {
+    bought: results.find((t) => t.status === 'SUCCESS') ?? null,
+    processing: results.some((t) => t.status === 'QUEUED' || t.status === 'WAITING'),
+  };
 }
 
 function isComplete(l: ShippingLabel): boolean {
   return !l.pendingRateId && !!l.trackingNumber;
+}
+
+/** The labels that are actually bought (a pending entry is a purchase in flight,
+ *  not a label — reviewer, 2026-10-06). Use this everywhere labels are counted. */
+export function completeLabels(order: { shippingLabels?: unknown }): ShippingLabel[] {
+  return (((order.shippingLabels as ShippingLabel[] | null) ?? [])).filter(isComplete);
 }
 
 /**
@@ -495,8 +506,19 @@ export async function purchaseLabelsForOrder(orderId: string): Promise<{ order: 
       throw new ShippingError(409, `${staleLabels.length} label(s) were bought for an earlier box plan of this order (it was edited since). Void or reuse them by hand before buying more.`);
     }
 
+    // Every write is conditional on the plan version it was planned for: an edit
+    // that repacked the order in the meantime (it holds the row lock while it
+    // checks for labels, so it can only slip in BEFORE our first write) makes
+    // the write match nothing and the purchase stops before any money moves.
     const persist = async () => {
-      await db.update(retailOrders).set({ shippingLabels: labels, updatedAt: new Date() }).where(eq(retailOrders.id, orderId));
+      const rows = await db
+        .update(retailOrders)
+        .set({ shippingLabels: labels, updatedAt: new Date() })
+        .where(and(eq(retailOrders.id, orderId), sql`coalesce((${retailOrders.shippingQuote}->>'planVersion')::int, 1) = ${planVersion}`))
+        .returning({ id: retailOrders.id });
+      if (rows.length === 0) {
+        throw new ShippingError(409, 'This order was edited while its labels were being bought. Review the boxes and buy the remaining labels again.');
+      }
     };
 
     const settings = await getShippingSettings();
@@ -527,17 +549,22 @@ export async function purchaseLabelsForOrder(orderId: string): Promise<{ order: 
       }
 
       // Crash recovery: a pending entry means a purchase may have gone through.
+      // Adopt a finished one; wait on one still processing; only buy again when
+      // the carrier has nothing for that rate.
       const pending = labels[i]?.pendingRateId ?? null;
       if (pending) {
-        const found = await findPurchasedLabelForRate(pending);
-        if (found) {
+        const { bought, processing } = await reconcileRate(pending);
+        if (bought) {
           labels[i] = {
             ...labels[i], pendingRateId: null,
-            trackingNumber: found.tracking_number ?? '', trackingUrl: found.tracking_url_provider ?? null,
-            labelUrl: found.label_url ?? null, transactionId: found.object_id,
+            trackingNumber: bought.tracking_number ?? '', trackingUrl: bought.tracking_url_provider ?? null,
+            labelUrl: bought.label_url ?? null, transactionId: bought.object_id,
           };
           await persist();
           continue;
+        }
+        if (processing) {
+          throw new ShippingError(409, `The carrier is still processing the label for ${box.boxName}. Try again in a minute.`);
         }
       }
 
@@ -558,6 +585,11 @@ export async function purchaseLabelsForOrder(orderId: string): Promise<{ order: 
       await persist();
 
       const tx = await buyLabel(rate.object_id);
+      if (tx.status === 'QUEUED' || tx.status === 'WAITING') {
+        // Still processing at the carrier: keep the pending entry; the next
+        // attempt reconciles it instead of buying again.
+        throw new ShippingError(409, `The carrier is still processing the label for ${box.boxName}. Try again in a minute.`);
+      }
       if (tx.status !== 'SUCCESS') {
         const why = (tx.messages ?? []).map((m) => m.text).filter(Boolean).join(' ');
         // Nothing was bought: clear the pending entry so the next attempt re-rates.
@@ -664,7 +696,7 @@ export async function buildLabelsPdf(orders: RetailOrder[], contents: Map<string
   const done = new Promise<Buffer>((resolve) => doc.on('end', () => resolve(Buffer.concat(chunks))));
 
   for (const order of orders) {
-    const labels = (order.shippingLabels as ShippingLabel[] | null) ?? [];
+    const labels = completeLabels(order);
     for (let i = 0; i < labels.length; i++) {
       const label = labels[i];
       doc.addPage();
@@ -696,7 +728,7 @@ export async function buildLabelsPdf(orders: RetailOrder[], contents: Map<string
       doc.font('Helvetica-Bold').fontSize(12).text('PERISHABLE — KEEP REFRIGERATED', 16, 404, { width: LABEL_W - 32, align: 'center' });
     }
   }
-  if (orders.every((o) => (((o.shippingLabels as ShippingLabel[] | null) ?? []).length === 0))) {
+  if (orders.every((o) => completeLabels(o).length === 0)) {
     doc.addPage();
     doc.font('Helvetica').fontSize(12).text('No labels have been bought for this batch yet.', 16, 200, { width: LABEL_W - 32, align: 'center' });
   }
@@ -718,7 +750,7 @@ export function buildStickersCsv(orders: RetailOrder[], contents: Map<string, Or
   const header = ['Order', 'Customer', 'Box', 'BoxOf', 'Shipper', 'Cans', 'Contents', 'ShipDate', 'Carrier', 'Service', 'Tracking', 'Address', 'City', 'State', 'Zip', 'Phone', 'Warning'];
   const lines = [header.join(',')];
   for (const o of orders) {
-    const labels = (o.shippingLabels as ShippingLabel[] | null) ?? [];
+    const labels = completeLabels(o);
     const quote = o.shippingQuote as ShippingQuote | null;
     const boxes = labels.length > 0 ? labels : (quote?.boxes ?? []).map((b) => ({ boxName: b.boxName, cans: b.cans, carrier: b.carrier, service: b.service, trackingNumber: '' }));
     const items = (contents.get(o.id) ?? []).map((c) => `${c.quantity} × ${c.label}`).join('; ');
