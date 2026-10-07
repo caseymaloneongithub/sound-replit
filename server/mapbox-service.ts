@@ -168,7 +168,7 @@ export async function optimizeDeliveryRoute(
   }
   try {
     return points.length > OPTIMIZED_TRIPS_MAX_COORDINATES
-      ? await optimizeViaMatrix(points)
+      ? await optimizeViaMatrix(points, ['the start point', ...stops.map((s) => s.name), 'the end point'])
       : await optimizeViaOptimizedTrips(points);
   } catch (error: any) {
     if (error instanceof RouteOptimizationError) throw error;
@@ -230,8 +230,9 @@ async function optimizeViaOptimizedTrips(points: Point[]): Promise<OptimizedRout
 }
 
 /** Eleven to 23 stops: a drive-time matrix from Mapbox, the order chosen here,
- *  then Directions over that order for the line on the map and the real legs. */
-async function optimizeViaMatrix(points: Point[]): Promise<OptimizedRoute> {
+ *  then Directions over that order for the line on the map and the real legs.
+ *  `labels` name each point for the error when one can't be reached. */
+async function optimizeViaMatrix(points: Point[], labels: string[]): Promise<OptimizedRoute> {
   const response = await fetch(
     `https://api.mapbox.com/directions-matrix/v1/mapbox/driving/${coordinatePath(points)}?annotations=duration,distance&access_token=${MAPBOX_ACCESS_TOKEN}`
   );
@@ -252,19 +253,35 @@ async function optimizeViaMatrix(points: Point[]): Promise<OptimizedRoute> {
   const order = shortestOpenTour(durations);
   const last = points.length - 1;
   const ordered = [points[0], ...order.map((i) => points[i]), points[last]];
+  const legPairs = ordered.slice(1).map((_, k) => ({
+    from: k === 0 ? 0 : order[k - 1],
+    to: k < order.length ? order[k] : last,
+  }));
+
+  // Every leg of the chosen order must be drivable. A null in the matrix is a
+  // pair Mapbox can't connect by road (a pin in the water, off the network);
+  // the search steers around what it can, and a leg it couldn't avoid is an
+  // error naming the stop — never a zero saved as a finished route (review).
+  const unreachable = legPairs.filter(({ from, to }) => durations[from]?.[to] == null);
+  if (unreachable.length) {
+    const cutOff = (i: number) =>
+      (durations[i] ?? []).every((d, j) => j === i || d == null) ||
+      durations.every((row, j) => j === i || row?.[i] == null);
+    const blame = ({ from, to }: { from: number; to: number }) =>
+      cutOff(to) ? to : cutOff(from) ? from : to === last ? from : to;
+    const names = Array.from(new Set(unreachable.map((pair) => labels[blame(pair)])));
+    throw new RouteOptimizationError(
+      `Mapbox can't find a drivable route to ${names.join(', ')}. Check the pin — Geocode All, or correct the address — and optimize again.`
+    );
+  }
 
   // Directions draws the line and gives the legs as driven. If it can't, the
   // matrix's own numbers stand in and the route saves without a line.
   const directions = await getRouteDirections(ordered);
-  const legFrom = (from: number, to: number) => ({
+  const matrixLegs = legPairs.map(({ from, to }) => ({
     distance: distances?.[from]?.[to] ?? 0,
-    duration: durations[from]?.[to] ?? 0,
-  });
-  const matrixLegs = ordered.slice(1).map((_, k) => {
-    const from = k === 0 ? 0 : order[k - 1];
-    const to = k < order.length ? order[k] : last;
-    return legFrom(from, to);
-  });
+    duration: durations[from]![to]!,
+  }));
   const legs = directions?.legs?.length === matrixLegs.length ? directions.legs : matrixLegs;
 
   // Same shape as the Optimized Trips path: the leg INTO the stop at drive
@@ -288,7 +305,8 @@ async function optimizeViaMatrix(points: Point[]): Promise<OptimizedRoute> {
 }
 
 // A pair Mapbox can't connect by road: far enough to lose every comparison
-// while the sums stay finite, so the rest of the day still gets an order.
+// while the sums stay finite, so the search steers around it whenever some
+// order can. A leg it couldn't avoid fails the day by name (optimizeViaMatrix).
 const UNREACHABLE_SECONDS = 10_000_000;
 
 /** Drive order for the stops of a duration matrix whose first index is the
