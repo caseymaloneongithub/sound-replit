@@ -718,12 +718,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const intent = intentId ? await stripe.paymentIntents.retrieve(intentId) : null;
           const failed = !!intent && (intent.status === 'canceled' || intent.status === 'requires_payment_method');
           if (!failed) {
-            await storage.updateWholesaleOrder(order.id, {
-              paymentInitiatedAt: new Date(),
-              paymentFailedAt: null,
-              ...(intentId ? { stripePaymentIntentId: intentId } : {}),
-            });
-            throw new WholesalePaymentBlocked('processing');
+            // Recorded only where the invoice says nothing yet: a failure the
+            // webhook wrote while Stripe was being read stays, and wins — so a
+            // failed debit can be tried again (review, 2026-10-07).
+            await db
+              .update(wholesaleOrdersTable)
+              .set({ paymentInitiatedAt: new Date(), ...(intentId ? { stripePaymentIntentId: intentId } : {}) })
+              .where(and(
+                eq(wholesaleOrdersTable.id, order.id),
+                isNull(wholesaleOrdersTable.paymentInitiatedAt),
+                isNull(wholesaleOrdersTable.paymentFailedAt),
+              ));
+            const [latest] = await db
+              .select({ failedAt: wholesaleOrdersTable.paymentFailedAt })
+              .from(wholesaleOrdersTable)
+              .where(eq(wholesaleOrdersTable.id, order.id));
+            if (!latest?.failedAt) throw new WholesalePaymentBlocked('processing');
+            // The debit failed after all: the spent session gives way to a fresh one.
           }
         }
       }
