@@ -16,7 +16,7 @@ import { DeliveriesTabs, useSharedDeliveryDate } from "@/components/staff/delive
 import { visitWeekLabel } from "@shared/lead-visits";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiErrorMessage, queryClient } from "@/lib/queryClient";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -340,7 +340,8 @@ export default function DeliveryRoutes() {
     onError: (error: Error) => {
       toast({
         title: "Optimization failed",
-        description: error.message,
+        // The server's reason in plain words, not the status code and raw JSON.
+        description: apiErrorMessage(error, "The route couldn't be optimized. Try again in a moment."),
         variant: "destructive",
       });
     },

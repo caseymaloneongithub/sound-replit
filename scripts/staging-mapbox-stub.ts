@@ -6,6 +6,8 @@
  *   - geocoding places an address at a spot near downtown Seattle, nudged by
  *     the text so different addresses get different pins;
  *   - Optimized Trips keeps the stops in the order given;
+ *   - the Matrix measures straight lines at 30 km/h, so the eleven-plus-stop
+ *     tour search has real geography to order;
  *   - Directions makes every leg 1 km and 3 minutes;
  *   - the static map image is a 404, so the packet prints without one.
  * Nothing here runs in production: it sets the token itself and is only ever
@@ -52,6 +54,20 @@ globalThis.fetch = (async (input: any, init?: any) => {
       trips: [{ distance: 1000 * (coordinates.length - 1), duration: 180 * (coordinates.length - 1), geometry: { type: "LineString", coordinates }, legs: legsFor(coordinates.length) }],
       waypoints: coordinates.map((_, i) => ({ waypoint_index: i, trips_index: 0 })),
     });
+  }
+
+  const matrix = pathname.match(/^\/directions-matrix\/v1\/mapbox\/driving\/(.+)$/);
+  if (matrix) {
+    const coordinates = coordsOf(matrix[1]);
+    const meters = (a: number[], b: number[]) => {
+      const dLat = (b[1] - a[1]) * 111_320;
+      const dLng = (b[0] - a[0]) * 111_320 * Math.cos(((a[1] + b[1]) / 2) * Math.PI / 180);
+      return Math.round(Math.hypot(dLat, dLng));
+    };
+    const distances = coordinates.map((a) => coordinates.map((b) => meters(a, b)));
+    const durations = distances.map((row) => row.map((m) => Math.round(m * 0.12))); // 30 km/h
+    console.log(`[MAPBOX STUB] matrix over ${coordinates.length} points, straight lines at 30 km/h`);
+    return json({ code: "Ok", durations, distances });
   }
 
   const directions = pathname.match(/^\/directions\/v5\/mapbox\/driving\/(.+)$/);

@@ -38,7 +38,7 @@ import { createStripeCustomer } from "./stripeCustomer";
 // frequencyToDays deliberately NOT imported from pickup-policy: the single source of
 // truth for frequency conversion is @shared/subscription-frequency (imported above).
 import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange, nextPickupDateFromScheduled } from "@shared/pickup-policy";
-import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections } from "./mapbox-service";
+import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections, RouteOptimizationError } from "./mapbox-service";
 import { geocodeForEdit, geocodeLeadForEdit, refreshLeadPin, refreshLocationPin } from "./location-geocode";
 import { checkMaterialStockAlerts } from "./material-alerts";
 import { LEAD_TYPES, LEAD_ZIP_RE, leadZipFrom, type LeadType } from "@shared/schema";
@@ -12916,7 +12916,7 @@ If you have any questions, please don't hesitate to reach out!`,
       });
 
       if (!optimizedRoute) {
-        return res.status(500).json({ message: "Failed to optimize route" });
+        return res.status(500).json({ message: "Route optimization isn't set up on this server: no Mapbox token." });
       }
 
       // Reorder stops into the optimized drive sequence. stopIndex says which INPUT
@@ -12987,6 +12987,12 @@ If you have any questions, please don't hesitate to reach out!`,
         ...(await routeProvenance(savedRoute)),
       });
     } catch (error: any) {
+      // Mapbox's own refusal (too many stops, a pin off the road network, a bad
+      // token) reaches the page in its own words; everything else stays a 500.
+      if (error instanceof RouteOptimizationError) {
+        console.error("Route optimization refused:", error.message);
+        return res.status(502).json({ message: error.message });
+      }
       console.error("Error optimizing route:", error);
       res.status(500).json({ message: "Error optimizing route: " + error.message });
     }
