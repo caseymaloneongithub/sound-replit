@@ -91,6 +91,7 @@ async function resendSendMail(mailOptions: any): Promise<void> {
     body: JSON.stringify({
       from: process.env.RESEND_FROM || mailOptions.from,
       to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
+      ...(mailOptions.bcc ? { bcc: Array.isArray(mailOptions.bcc) ? mailOptions.bcc : [mailOptions.bcc] } : {}),
       subject: mailOptions.subject,
       html: mailOptions.html,
       text: mailOptions.text,
@@ -2726,6 +2727,104 @@ export async function sendWholesaleInvoiceEmail(params: WholesaleInvoiceEmailPar
 
 // Admin email for notifications
 const ADMIN_EMAIL = 'orders@soundkombucha.com';
+
+// ---- Overdue invoice reminders (owner, 2026-10-07) ---------------------------
+
+export interface InvoiceReminderEmailParams {
+  to: string[];
+  businessName: string;
+  invoiceNumber: string;
+  amount: number;
+  dueDate: Date;
+  /** 0 = due today; otherwise the days overdue the reminder is for (7, 14, 21, …). */
+  daysOverdue: number;
+  /** Our durable pay link, when the account may pay online. */
+  paymentUrl: string | null;
+}
+
+/** "due today", "a week overdue", "2 weeks overdue", … */
+export function overdueWording(daysOverdue: number): string {
+  if (daysOverdue <= 0) return "due today";
+  const weeks = Math.floor(daysOverdue / 7);
+  if (weeks < 1) return `${daysOverdue} days overdue`;
+  return weeks === 1 ? "a week overdue" : `${weeks} weeks overdue`;
+}
+
+/**
+ * One reminder per stage: on the due date, a week overdue, two weeks, three,
+ * then every week until the invoice is paid. A copy goes to orders@ so the
+ * office sees what the customer saw; replies land there too.
+ */
+export async function sendInvoiceReminderEmail(params: InvoiceReminderEmailParams): Promise<void> {
+  const transporter = createTransporter();
+  const wording = overdueWording(params.daysOverdue);
+  const subject = `Invoice ${params.invoiceNumber} is ${wording} — Puget Sound Kombucha Co.`;
+
+  if (!transporter) {
+    console.log(`[EMAIL] Would send invoice reminder (${wording}) for ${params.invoiceNumber} to: ${params.to.join(', ')}`);
+    return;
+  }
+
+  const amount = `$${params.amount.toFixed(2)}`;
+  const due = params.dueDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' });
+  const opening = params.daysOverdue <= 0
+    ? `A quick note that invoice ${params.invoiceNumber} for ${amount} is due today, ${due}.`
+    : `Invoice ${params.invoiceNumber} for ${amount} was due on ${due} and is now ${wording}.`;
+  const mailCheck = 'Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233';
+
+  const text = `
+Hi ${params.businessName},
+
+${opening}
+${params.paymentUrl ? `
+Pay by bank transfer: ${params.paymentUrl}
+(Bank transfers take 4-5 business days to clear.)
+Or mail a check to: ${mailCheck}` : `
+Please mail a check to: ${mailCheck}`}
+
+Already taken care of it? Just reply to this email and we'll sort it out.
+
+Thank you,
+Puget Sound Kombucha Co.
+orders@soundkombucha.com · (206) 789-5219
+  `.trim();
+
+  const html = `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: ${BRAND_COLORS.white};">
+  ${getEmailHeader('Payment reminder')}
+  <div style="padding: 32px 24px;">
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 16px 0;">Hi ${params.businessName},</p>
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 24px 0;">${opening}</p>
+    <div style="background-color: ${BRAND_COLORS.backgroundGrey}; border-radius: 8px; padding: 20px 24px; margin: 0 0 24px 0;">
+      <div style="color: ${BRAND_COLORS.mediumGrey}; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;">Amount due</div>
+      <div style="color: ${BRAND_COLORS.darkGrey}; font-size: 28px; font-weight: 700; margin-top: 4px;">${amount}</div>
+      <div style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; margin-top: 4px;">Invoice ${params.invoiceNumber} · due ${due}</div>
+    </div>
+    ${params.paymentUrl ? `
+    <div style="text-align: center; margin: 0 0 16px 0;">
+      <a href="${params.paymentUrl}" style="display: inline-block; background-color: ${BRAND_COLORS.black}; color: ${BRAND_COLORS.white}; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600;">Pay by bank transfer</a>
+    </div>
+    <p style="color: ${BRAND_COLORS.mediumGrey}; font-size: 13px; line-height: 1.6; margin: 0 0 24px 0; text-align: center;">
+      Bank transfers take 4&ndash;5 business days to clear. Or mail a check to ${mailCheck}.
+    </p>` : `
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 24px 0;">Please mail a check to ${mailCheck}.</p>`}
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0;">Already taken care of it? Just reply to this email and we'll sort it out.</p>
+  </div>
+  ${getEmailFooter()}
+</div>
+  `;
+
+  await transporter.sendMail({
+    from: `"Puget Sound Kombucha Co." <${process.env.GMAIL_USER}>`,
+    to: params.to,
+    bcc: ADMIN_EMAIL,
+    replyTo: ADMIN_EMAIL,
+    subject,
+    text,
+    html,
+  });
+  console.log(`[EMAIL] ✅ Sent invoice reminder (${wording}) for ${params.invoiceNumber} to ${params.to.join(', ')}`);
+}
 
 /**
  * Send data retention cleanup notification to admin

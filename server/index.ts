@@ -7,6 +7,7 @@ import { scheduleDataRetentionJobs } from "./data-retention-cron";
 import { resumeUnfinishedCampaigns, startCampaignScheduler } from "./campaigns";
 import { startOpsDigestCron } from "./ops-events";
 import { startMaterialStockAlertCron } from "./material-alerts";
+import { startInvoiceReminderCron } from "./invoice-reminders";
 
 const app = express();
 
@@ -70,6 +71,8 @@ app.use((req, res, next) => {
     startOpsDigestCron();
     // Daily materials stock-level check (Watch / Order now emails), before the digest.
     startMaterialStockAlertCron();
+    // Overdue wholesale invoice reminders (owner, 2026-10-07), mid-morning.
+    startInvoiceReminderCron();
   }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

@@ -38,6 +38,16 @@ type WholesaleOrderWithPayment = WholesaleOrder & {
   dueDate?: string | null;
   paidAt?: string | null;
   invoiceSentAt?: string | null;
+  paymentReminderStage?: number | null;
+  paymentReminderAt?: string | null;
+};
+
+/** The last overdue reminder, as the row shows it: "Reminded Oct 8 · 1 wk". */
+const reminderNote = (order: WholesaleOrderWithPayment): string | null => {
+  if (!order.paymentReminderAt || order.paidAt) return null;
+  const stage = order.paymentReminderStage ?? 0;
+  const when = format(new Date(order.paymentReminderAt), "MMM d");
+  return `Reminded ${when} · ${stage === 0 ? "due" : `${Math.floor(stage / 7)} wk`}`;
 };
 
 export default function WholesaleInvoices() {
@@ -368,8 +378,15 @@ export default function WholesaleInvoices() {
               Paid
             </span>
           ) : order.invoiceSentAt ? (
-            <span className="inline-flex items-center rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/40 dark:text-sky-200 px-2 py-0.5 text-xs font-medium whitespace-nowrap">
-              Sent {format(new Date(order.invoiceSentAt), "MMM dd")}
+            <span className="inline-flex flex-col items-start gap-0.5">
+              <span className="inline-flex items-center rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/40 dark:text-sky-200 px-2 py-0.5 text-xs font-medium whitespace-nowrap">
+                Sent {format(new Date(order.invoiceSentAt), "MMM dd")}
+              </span>
+              {reminderNote(order) && (
+                <span className="text-xs text-muted-foreground whitespace-nowrap pl-2" data-testid={`text-reminded-${order.id}`}>
+                  {reminderNote(order)}
+                </span>
+              )}
             </span>
           ) : (
             <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200 px-2 py-0.5 text-xs font-medium whitespace-nowrap">

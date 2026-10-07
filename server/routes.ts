@@ -43,6 +43,8 @@ import { geocodeForEdit, geocodeLeadForEdit, refreshLeadPin, refreshLocationPin 
 import { checkMaterialStockAlerts } from "./material-alerts";
 import { LEAD_TYPES, LEAD_ZIP_RE, leadZipFrom, type LeadType } from "@shared/schema";
 import { weekMondayOf } from "@shared/lead-visits";
+import { getBaseUrl } from "./app-url";
+import { wholesalePayLink, payLinkSignatureMatches } from "./wholesale-pay-link";
 import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -65,14 +67,6 @@ class OrderValidationError extends Error {
   }
 }
 
-function getBaseUrl(): string {
-  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, "");
-  if (process.env.REPLIT_DOMAINS) return `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`;
-  if (process.env.NODE_ENV !== "development") {
-    console.warn("[CONFIG] APP_URL is not set — payment redirects will point at localhost.");
-  }
-  return "http://localhost:5000";
-}
 
 const stripe = process.env.STRIPE_SECRET_KEY 
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -646,22 +640,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   /**
-   * The payment link in an emailed invoice. A Stripe Checkout URL dies after 24
-   * hours (owner, 2026-10-07: Pot of Gold Coffee's "pay by bank transfer link in
-   * their email expired even though it was fairly recent"), so the email carries
-   * OUR link, /pay/<order>/<signature>: every click mints a fresh Checkout session
-   * and sends the customer on, after checking the invoice is still payable. The
-   * signature is the key, as the Stripe URL it replaces was; the link is good for
-   * a year from the invoice ("those should never expire, or maybe something like
-   * after a year").
+   * Where the payment link in an emailed invoice lands (see wholesale-pay-link.ts
+   * for why it isn't a Stripe URL): every click mints a fresh Checkout session and
+   * sends the customer on, after checking the invoice is still payable. The link
+   * is good for a year from the invoice (owner, 2026-10-07: "those should never
+   * expire, or maybe something like after a year").
    */
   const PAY_LINK_DAYS = 365;
-  const payLinkSecret = () => process.env.PAY_LINK_SECRET || process.env.SESSION_SECRET || 'dev-pay-link-secret';
-  const payLinkSignature = (orderId: string) =>
-    crypto.createHmac('sha256', payLinkSecret()).update(`wholesale-pay:${orderId}`).digest('base64url').slice(0, 32);
-  function wholesalePayLink(orderId: string): string {
-    return `${getBaseUrl()}/pay/${orderId}/${payLinkSignature(orderId)}`;
-  }
 
   app.get("/pay/:orderId/:signature", async (req, res) => {
     const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
@@ -675,9 +660,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
     try {
       const { orderId, signature } = req.params;
-      const expected = Buffer.from(payLinkSignature(orderId));
-      const given = Buffer.from(String(signature));
-      if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) {
+      if (!payLinkSignatureMatches(orderId, signature)) {
         return page(404, "This payment link isn't valid", "Check the link in your invoice email, or ask us for a fresh invoice.");
       }
       const ip = req.ip || req.socket.remoteAddress || "unknown";

@@ -453,6 +453,9 @@ export const wholesaleCustomers = pgTable("wholesale_customers", {
   // meant "online payment at all" — it now specifically means ACH.
   allowOnlinePayment: boolean("allow_online_payment").notNull().default(true),
   allowCardPayment: boolean("allow_card_payment").notNull().default(false),
+  // Overdue invoice reminder emails for this account (owner, 2026-10-07); off
+  // for accounts handled in person.
+  paymentReminders: boolean("payment_reminders").notNull().default(true),
   // Stripe customer for this business, created lazily at first invoice checkout so
   // Stripe can remember their bank account/card and re-offer it one-click on the
   // next invoice (entering ACH details every time was the pain point).
@@ -667,6 +670,11 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   paymentFailedAt: timestamp("payment_failed_at"), // ACH debit returned (e.g. insufficient funds)
   stripePaymentIntentId: text("stripe_payment_intent_id"), // Links to Stripe payment
   invoiceSentAt: timestamp("invoice_sent_at"), // When invoice was emailed
+  // Overdue reminders (owner, 2026-10-07): the days-overdue stage of the last
+  // reminder emailed (0 = due today, then 7, 14, 21, …) and when. See
+  // server/invoice-reminders.ts.
+  paymentReminderStage: integer("payment_reminder_stage"),
+  paymentReminderAt: timestamp("payment_reminder_at"),
   updatedAt: timestamp("updated_at").defaultNow().$onUpdateFn(() => new Date()),
   deletedAt: timestamp("deleted_at"), // Soft delete - null means active
 });
