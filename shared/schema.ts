@@ -731,7 +731,9 @@ export const impersonationLogs = pgTable("impersonation_logs", {
 export const leads = pgTable("leads", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   businessName: text("business_name").notNull(),
-  contactName: text("contact_name").notNull(),
+  // Optional: a lead usually starts as a place, and the person comes later
+  // (owner, 2026-10-07: "we don't usually have that at first").
+  contactName: text("contact_name"),
   email: varchar("email"),
   phone: varchar("phone"),
   priorityLevel: text("priority_level").notNull().default('medium'), // 'low', 'medium', 'high'

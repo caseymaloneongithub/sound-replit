@@ -58,7 +58,7 @@ const leadTypeLabel = (type: string | null) => (type ? LEAD_TYPE_LABELS[type as 
 // The edit form's values for a lead.
 const leadFormValues = (lead: Lead): z.infer<typeof insertLeadSchema> => ({
   businessName: lead.businessName,
-  contactName: lead.contactName,
+  contactName: lead.contactName || "",
   email: lead.email || "",
   phone: lead.phone || "",
   priorityLevel: lead.priorityLevel,
@@ -377,9 +377,9 @@ function LeadsSheet() {
                       name="contactName"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Contact Name *</FormLabel>
+                          <FormLabel>Contact Name</FormLabel>
                           <FormControl>
-                            <Input {...field} data-testid="input-contact-name" />
+                            <Input {...field} value={field.value ?? ""} placeholder="Add when you have one" data-testid="input-contact-name" />
                           </FormControl>
                           <FormMessage data-testid="error-contact-name" />
                         </FormItem>
@@ -850,7 +850,9 @@ function LeadsSheet() {
                     <h4 className="text-sm font-semibold mb-2" data-testid="heading-contact-info">Contact Information</h4>
                     <div className="space-y-2 text-sm">
                       <div className="flex items-center gap-2" data-testid="text-detail-contact">
-                        <span>{selectedLead.contactName}</span>
+                        {selectedLead.contactName
+                          ? <span>{selectedLead.contactName}</span>
+                          : <span className="text-muted-foreground">No contact yet</span>}
                       </div>
                       {selectedLead.email && (
                         <div className="flex items-center gap-2" data-testid="text-detail-email">
@@ -961,9 +963,9 @@ function LeadsSheet() {
                       name="contactName"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Contact Name *</FormLabel>
+                          <FormLabel>Contact Name</FormLabel>
                           <FormControl>
-                            <Input {...field} data-testid="input-edit-contact-name" />
+                            <Input {...field} value={field.value ?? ""} placeholder="Add when you have one" data-testid="input-edit-contact-name" />
                           </FormControl>
                           <FormMessage data-testid="error-edit-contact-name" />
                         </FormItem>

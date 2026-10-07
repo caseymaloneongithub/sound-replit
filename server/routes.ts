@@ -11750,8 +11750,8 @@ If you have any questions, please don't hesitate to reach out!`,
     try {
       const { businessName, contactName, email, phone, priorityLevel, status, notes, assignedToUserId } = req.body;
 
-      if (!businessName || !contactName) {
-        return res.status(400).json({ message: "Business name and contact name are required" });
+      if (!businessName) {
+        return res.status(400).json({ message: "Business name is required" });
       }
       const extra = leadFieldsFrom(req.body);
       if ("message" in extra) {
@@ -11760,7 +11760,8 @@ If you have any questions, please don't hesitate to reach out!`,
 
       const lead = await storage.createLead({
         businessName,
-        contactName,
+        // The contact usually arrives after the place does; blank is no contact.
+        contactName: typeof contactName === "string" && contactName.trim() ? contactName.trim() : null,
         email,
         phone,
         priorityLevel: priorityLevel || 'medium',
@@ -11797,6 +11798,9 @@ If you have any questions, please don't hesitate to reach out!`,
       }
       // The pin and the visit tag have their own endpoints; an edit can't set them.
       const { latitude, longitude, geocodedAt, visitWeek, visitedAt, ...fields } = req.body ?? {};
+      if ("contactName" in fields) {
+        fields.contactName = typeof fields.contactName === "string" && fields.contactName.trim() ? fields.contactName.trim() : null;
+      }
       // The pin follows the address, as a store location's does.
       const pin = await geocodeLeadForEdit(existing, extra.value);
       const updates = { ...fields, ...extra.value, ...pin };
