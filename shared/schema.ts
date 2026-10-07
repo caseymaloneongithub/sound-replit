@@ -675,6 +675,12 @@ export const wholesaleOrders = pgTable("wholesale_orders", {
   // server/invoice-reminders.ts.
   paymentReminderStage: integer("payment_reminder_stage"),
   paymentReminderAt: timestamp("payment_reminder_at"),
+  // The due date that stage counted from: a new due date starts the schedule over.
+  paymentReminderDueDate: timestamp("payment_reminder_due_date"),
+  // The open Stripe Checkout session for this invoice, reused by every pay link
+  // click and the Pay button while it lasts, so two clicks can't leave two
+  // payable sessions (review, 2026-10-07).
+  checkoutSessionId: text("checkout_session_id"),
   updatedAt: timestamp("updated_at").defaultNow().$onUpdateFn(() => new Date()),
   deletedAt: timestamp("deleted_at"), // Soft delete - null means active
 });

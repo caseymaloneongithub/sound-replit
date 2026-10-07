@@ -46,8 +46,15 @@ export async function sendInvoiceReminders(now: Date = new Date()): Promise<{ se
     // a bank debit already on its way needs no nudge.
     if (!order.dueDate || !order.invoiceSentAt || order.paidAt || order.status === 'cancelled') continue;
     if (order.paymentInitiatedAt && !order.paymentFailedAt) continue;
-    const stage = reminderStageFor(daysOverdueOn(new Date(order.dueDate), today));
-    if (stage === null || (order.paymentReminderStage ?? -1) >= stage) continue;
+    const dueDate = new Date(order.dueDate);
+    const days = daysOverdueOn(dueDate, today);
+    const stage = reminderStageFor(days);
+    if (stage === null) continue;
+    // The last stage counts only against the due date it was sent for: a new due
+    // date starts the schedule over (review, 2026-10-07).
+    const sameDueDate = order.paymentReminderDueDate != null && new Date(order.paymentReminderDueDate).getTime() === dueDate.getTime();
+    const lastStage = sameDueDate ? (order.paymentReminderStage ?? -1) : -1;
+    if (lastStage >= stage) continue;
 
     try {
       const customer = await storage.getWholesaleCustomer(order.customerId);
@@ -62,20 +69,22 @@ export async function sendInvoiceReminders(now: Date = new Date()): Promise<{ se
         continue;
       }
       const canPayOnline = customer.allowOnlinePayment !== false || customer.allowCardPayment !== false;
+      // The stage is for not repeating; the customer reads the real count — a
+      // first run that was late says "3 days overdue", never "due today".
       await sendInvoiceReminderEmail({
         to: recipients.to,
         businessName: customer.businessName,
         invoiceNumber: order.invoiceNumber,
         amount: Number(order.totalAmount),
-        dueDate: new Date(order.dueDate),
-        daysOverdue: stage,
+        dueDate,
+        daysOverdue: days,
         paymentUrl: canPayOnline ? wholesalePayLink(order.id) : null,
       });
       await db
         .update(wholesaleOrders)
-        .set({ paymentReminderStage: stage, paymentReminderAt: now })
+        .set({ paymentReminderStage: stage, paymentReminderAt: now, paymentReminderDueDate: dueDate })
         .where(eq(wholesaleOrders.id, order.id));
-      sent.push(`${order.invoiceNumber} (${overdueWording(stage)})`);
+      sent.push(`${order.invoiceNumber} (${overdueWording(days)})`);
     } catch (error) {
       console.error(`[INVOICE REMINDERS] ${order.invoiceNumber} failed:`, error);
     }

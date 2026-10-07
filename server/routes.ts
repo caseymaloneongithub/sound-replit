@@ -45,7 +45,7 @@ import { LEAD_TYPES, LEAD_ZIP_RE, leadZipFrom, type LeadType } from "@shared/sch
 import { weekMondayOf } from "@shared/lead-visits";
 import { getBaseUrl } from "./app-url";
 import { wholesalePayLink, payLinkSignatureMatches } from "./wholesale-pay-link";
-import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable } from "@shared/schema";
+import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable, wholesaleOrders as wholesaleOrdersTable } from "@shared/schema";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -629,13 +629,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
       cancel_url: `${baseUrl}/wholesale-customer/invoice/${order.id}`,
     });
 
+    const createSession = async () => {
+      try {
+        return await stripe.checkout.sessions.create(buildParams(await ensureWholesaleStripeCustomer(customer)));
+      } catch (e: any) {
+        // Stale reference (deleted in Stripe, or from another mode) — mint fresh, retry.
+        if (e?.code !== 'resource_missing') throw e;
+        console.warn(`[WHOLESALE PAY] Stale Stripe customer for ${customer.businessName} — recreating`);
+        return await stripe.checkout.sessions.create(buildParams(await ensureWholesaleStripeCustomer(customer, true)));
+      }
+    };
+
+    // ONE open session per invoice (review, 2026-10-07): a second click on the
+    // emailed link, or the Pay button, gets the session that's already open
+    // rather than a second one that could be paid as well. Checked and replaced
+    // under a per-invoice lock, so two clicks at once can't each mint their own.
+    return await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'wholesale-pay:' + order.id}))`);
+      const [current] = await tx
+        .select({ sessionId: wholesaleOrdersTable.checkoutSessionId })
+        .from(wholesaleOrdersTable)
+        .where(eq(wholesaleOrdersTable.id, order.id));
+      if (current?.sessionId) {
+        const existing = await stripe.checkout.sessions.retrieve(current.sessionId).catch(() => null);
+        // Still open with time to pay — a session expires 24 hours after it's minted.
+        if (existing && existing.status === 'open' && existing.url && (existing.expires_at ?? 0) * 1000 > Date.now() + 5 * 60 * 1000) {
+          return existing;
+        }
+      }
+      const created = await createSession();
+      await tx.update(wholesaleOrdersTable).set({ checkoutSessionId: created.id }).where(eq(wholesaleOrdersTable.id, order.id));
+      return created;
+    });
+  }
+
+  /**
+   * Once an invoice is settled — online or by a check marked paid — a Checkout
+   * session still open for it must not stay payable for the rest of its day.
+   * Best effort: a session that already completed can't be expired, and that's fine.
+   */
+  async function expireWholesaleCheckoutSession(orderId: string): Promise<void> {
+    if (!stripe) return;
     try {
-      return await stripe.checkout.sessions.create(buildParams(await ensureWholesaleStripeCustomer(customer)));
+      const [row] = await db
+        .select({ sessionId: wholesaleOrdersTable.checkoutSessionId })
+        .from(wholesaleOrdersTable)
+        .where(eq(wholesaleOrdersTable.id, orderId));
+      if (!row?.sessionId) return;
+      const session = await stripe.checkout.sessions.retrieve(row.sessionId);
+      if (session.status === 'open') await stripe.checkout.sessions.expire(row.sessionId);
     } catch (e: any) {
-      // Stale reference (deleted in Stripe, or from another mode) — mint fresh, retry.
-      if (e?.code !== 'resource_missing') throw e;
-      console.warn(`[WHOLESALE PAY] Stale Stripe customer for ${customer.businessName} — recreating`);
-      return await stripe.checkout.sessions.create(buildParams(await ensureWholesaleStripeCustomer(customer, true)));
+      console.warn(`[WHOLESALE PAY] Couldn't expire the open checkout session for order ${orderId}: ${e?.message ?? e}`);
     }
   }
 
@@ -764,6 +808,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ...(paymentIntentId ? { stripePaymentIntentId: paymentIntentId } : {}),
     });
     console.log(`[WEBHOOK] ✅ Wholesale invoice ${order.invoiceNumber} settled (funds received)`);
+    void expireWholesaleCheckoutSession(orderId);
 
     // Receipt to the customer (owner reversal 2026-08-31 of the 2026-08-19 no-receipt
     // policy): now that locations bill their own AP inboxes, settlement sends a receipt
@@ -9458,6 +9503,9 @@ If you have any questions, please don't hesitate to reach out!`,
         paidAt,
         paidByUserId: user.id,
       });
+      // A pay link the customer already opened must not stay payable for a check
+      // that's been recorded.
+      void expireWholesaleCheckoutSession(req.params.id);
 
       // Check arrived and staff recorded it — the customer's AP inbox gets the same
       // receipt an online payment would have produced (owner, 2026-08-31). The

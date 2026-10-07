@@ -6,3 +6,7 @@
 ALTER TABLE wholesale_orders ADD COLUMN IF NOT EXISTS payment_reminder_stage integer;
 ALTER TABLE wholesale_orders ADD COLUMN IF NOT EXISTS payment_reminder_at timestamp;
 ALTER TABLE wholesale_customers ADD COLUMN IF NOT EXISTS payment_reminders boolean NOT NULL DEFAULT true;
+-- Review, 2026-10-07: the due date a reminder stage counted from, and the one
+-- open Stripe Checkout session an invoice's pay link and button share.
+ALTER TABLE wholesale_orders ADD COLUMN IF NOT EXISTS payment_reminder_due_date timestamp;
+ALTER TABLE wholesale_orders ADD COLUMN IF NOT EXISTS checkout_session_id text;

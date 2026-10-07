@@ -17,11 +17,13 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS visited_at timestamp;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS visit_touch_point_id varchar REFERENCES lead_touch_points(id) ON DELETE SET NULL;
 ALTER TABLE delivery_route_stops ADD COLUMN IF NOT EXISTS lead_id varchar REFERENCES leads(id) ON DELETE CASCADE;
 
--- A visit recorded before that column existed points at the latest visit entry
--- in its history, so Undo can take that one back too (review, 2026-10-06).
+-- A visit recorded before that column existed points at the visit entry its own
+-- Visited wrote — the one created within minutes of the visit stamp — so Undo
+-- can take that one back too and never a different entry (review, 2026-10-06).
 UPDATE leads SET visit_touch_point_id = (
     SELECT t.id FROM lead_touch_points t
     WHERE t.lead_id = leads.id AND t.subject = 'Visited on the delivery route'
+      AND t.created_at BETWEEN leads.visited_at - interval '5 minutes' AND leads.visited_at + interval '5 minutes'
     ORDER BY t.created_at DESC LIMIT 1)
 WHERE visited_at IS NOT NULL AND visit_touch_point_id IS NULL;
 
