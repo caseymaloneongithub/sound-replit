@@ -750,9 +750,20 @@ export function buildStickersCsv(orders: RetailOrder[], contents: Map<string, Or
   const header = ['Order', 'Customer', 'Box', 'BoxOf', 'Shipper', 'Cans', 'Contents', 'ShipDate', 'Carrier', 'Service', 'Tracking', 'Address', 'City', 'State', 'Zip', 'Phone', 'Warning'];
   const lines = [header.join(',')];
   for (const o of orders) {
-    const labels = completeLabels(o);
+    // Rows come from the QUOTED box plan — every box the packer has to fill —
+    // with tracking filled in where that box's label exists (reviewer,
+    // 2026-10-06: a half-bought order must still list every box). Labels sit at
+    // their box's index; a pending entry contributes no tracking.
     const quote = o.shippingQuote as ShippingQuote | null;
-    const boxes = labels.length > 0 ? labels : (quote?.boxes ?? []).map((b) => ({ boxName: b.boxName, cans: b.cans, carrier: b.carrier, service: b.service, trackingNumber: '' }));
+    const rawLabels = (o.shippingLabels as ShippingLabel[] | null) ?? [];
+    const planned = quote?.boxes ?? [];
+    const boxes = planned.length > 0
+      ? planned.map((b, i) => {
+          const l = rawLabels[i];
+          const done = l && isComplete(l);
+          return { boxName: b.boxName, cans: b.cans, carrier: done ? l.carrier : b.carrier, service: done ? l.service : b.service, trackingNumber: done ? l.trackingNumber : '' };
+        })
+      : completeLabels(o);
     const items = (contents.get(o.id) ?? []).map((c) => `${c.quantity} × ${c.label}`).join('; ');
     boxes.forEach((b, i) => {
       lines.push([

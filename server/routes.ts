@@ -8,7 +8,7 @@ import { storage } from "./storage";
 import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, insertMaterialSchema, insertSupplierSchema, insertProcessSchema, insertProductionSchema, insertMaterialOrderSchema, retailProducts, retailProductFlavors, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings, wholesaleOrderItems, wholesaleUnitTypes, deliveryRoutes, deliveryRouteStops } from "@shared/schema";
 import { eq, sql, and, or, asc, desc, isNull, inArray, gte, lt, ne } from "drizzle-orm";
 import { db } from "./db";
-import { Pool } from "@neondatabase/serverless";
+import { Pool, type PoolClient } from "@neondatabase/serverless";
 import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
@@ -618,16 +618,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: 'wholesale_invoice_payment',
     };
 
+    // Each method is an independent per-customer switch. ACH is ASYNCHRONOUS —
+    // authorised here, funds settle days later via payment_intent.succeeded (see
+    // settleWholesaleInvoice); card settles instantly and checkout.session.completed
+    // marks it paid on the spot. Callers must not create a session when both are off.
+    const paymentMethodTypes = [
+      ...(customer.allowOnlinePayment !== false ? ['us_bank_account' as const] : []),
+      ...(customer.allowCardPayment !== false ? ['card' as const] : []),
+    ];
+
     const buildParams = (stripeCustomerId: string): Stripe.Checkout.SessionCreateParams => ({
       mode: 'payment',
-      // Each method is an independent per-customer switch. ACH is ASYNCHRONOUS —
-      // authorised here, funds settle days later via payment_intent.succeeded (see
-      // settleWholesaleInvoice); card settles instantly and checkout.session.completed
-      // marks it paid on the spot. Callers must not create a session when both are off.
-      payment_method_types: [
-        ...(customer.allowOnlinePayment !== false ? ['us_bank_account' as const] : []),
-        ...(customer.allowCardPayment !== false ? ['card' as const] : []),
-      ],
+      payment_method_types: paymentMethodTypes,
       ...(customer.allowOnlinePayment !== false ? {
         payment_method_options: {
           us_bank_account: { verification_method: 'automatic' },
@@ -663,25 +665,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // ONE open session per invoice (review, 2026-10-07): a second click on the
     // emailed link, or the Pay button, gets the session that's already open
-    // rather than a second one that could be paid as well. Checked and replaced
-    // under a per-invoice lock, so two clicks at once can't each mint their own.
-    return await db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'wholesale-pay:' + order.id}))`);
-      const [current] = await tx
+    // rather than a second one that could be paid as well. The check and the
+    // replacement run under a per-invoice lock — in process, like the retail
+    // checkout's — with no database connection held across the Stripe calls: a
+    // first-time customer's Stripe record is saved through storage on its own
+    // connection, and a transaction here starved the pool for it (review).
+    const release = await acquireIntentLock(`wholesale-pay:${order.id}`);
+    try {
+      const [current] = await db
         .select({ sessionId: wholesaleOrdersTable.checkoutSessionId })
         .from(wholesaleOrdersTable)
         .where(eq(wholesaleOrdersTable.id, order.id));
       if (current?.sessionId) {
-        const existing = await stripe.checkout.sessions.retrieve(current.sessionId).catch(() => null);
-        // Still open with time to pay — a session expires 24 hours after it's minted.
-        if (existing && existing.status === 'open' && existing.url && (existing.expires_at ?? 0) * 1000 > Date.now() + 5 * 60 * 1000) {
-          return existing;
+        // An uncertain lookup must not mint a second session beside one that may
+        // still be payable: this click fails and can simply be tried again.
+        const existing = await stripe.checkout.sessions.retrieve(current.sessionId).catch((e: any) => {
+          if (e?.code === 'resource_missing') return null; // gone at Stripe (other mode, deleted): replace it
+          throw new Error(`Couldn't check the invoice's open payment session: ${e?.message ?? e}`);
+        });
+        if (existing?.status === 'open') {
+          // Still open, and still right: the amount and the ways to pay the invoice
+          // has NOW — an invoice edited to $150, or an account switched to ACH only,
+          // must not keep a $100 card session — with time left to pay it.
+          const sameTerms = existing.amount_total === lineItems[0].price_data.unit_amount
+            && (existing.payment_method_types ?? []).slice().sort().join(',') === paymentMethodTypes.slice().sort().join(',');
+          const timeLeft = (existing.expires_at ?? 0) * 1000 - Date.now() > 5 * 60 * 1000;
+          if (sameTerms && timeLeft && existing.url) return existing;
+          // Outdated or nearly out of time: closed at Stripe BEFORE its replacement
+          // exists, so the customer can never hold two payable sessions.
+          await stripe.checkout.sessions.expire(current.sessionId);
         }
       }
       const created = await createSession();
-      await tx.update(wholesaleOrdersTable).set({ checkoutSessionId: created.id }).where(eq(wholesaleOrdersTable.id, order.id));
+      await db.update(wholesaleOrdersTable).set({ checkoutSessionId: created.id }).where(eq(wholesaleOrdersTable.id, order.id));
       return created;
-    });
+    } finally {
+      release();
+    }
   }
 
   /**
@@ -5652,8 +5672,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // snapshot — before this reads either. Taken BEFORE a connection is
             // held, so a waiting webhook never ties up the pool.
             const releaseIntent = await acquireIntentLock(paymentIntent.id);
-            // Use transaction for atomic order creation
-            const client = await pool.connect();
+            // Use transaction for atomic order creation. Acquiring the connection
+            // is inside the lock's protection too (reviewer, 2026-10-06): a failed
+            // connect must release the lock, or every retry of this payment would
+            // wait on it until the process restarted.
+            let client: PoolClient;
+            try {
+              client = await pool.connect();
+            } catch (connectError) {
+              releaseIntent();
+              throw connectError;
+            }
             try {
               await client.query('BEGIN');
               
