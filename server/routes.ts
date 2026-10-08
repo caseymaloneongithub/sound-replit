@@ -11721,10 +11721,10 @@ If you have any questions, please don't hesitate to reach out!`,
   // by type; 2026-10-05: a visit needs an address): one of LEAD_TYPES or none, a
   // 5-digit zip or none, trimmed address parts; a blank field is none. Only the
   // fields the request carries, so an update can leave the rest alone.
-  type LeadFields = { businessType?: LeadType | null; zipCode?: string | null; address?: string | null; city?: string | null; state?: string | null };
+  type LeadFields = { businessType?: LeadType | null; zipCode?: string | null; address?: string | null; city?: string | null; state?: string | null; website?: string | null };
   const leadFieldsFrom = (body: any): { value: LeadFields } | { message: string } => {
     const value: LeadFields = {};
-    for (const part of ["address", "city", "state"] as const) {
+    for (const part of ["address", "city", "state", "website"] as const) {
       if (body && part in body) {
         const text = typeof body[part] === "string" ? body[part].trim() : "";
         value[part] = text || (part === "state" ? "WA" : null);
@@ -11773,6 +11773,7 @@ If you have any questions, please don't hesitate to reach out!`,
         address: extra.value.address ?? null,
         city: extra.value.city ?? null,
         state: extra.value.state ?? 'WA',
+        website: extra.value.website ?? null,
       });
       // A lead with a street gets its pin now, so it can go on a route.
       const placed = await refreshLeadPin(lead);

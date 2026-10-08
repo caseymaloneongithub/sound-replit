@@ -736,6 +736,9 @@ export const leads = pgTable("leads", {
   contactName: text("contact_name"),
   email: varchar("email"),
   phone: varchar("phone"),
+  // The business's website, as typed (owner, 2026-10-07: "we can't add the
+  // website in the edit modal"); the sheet falls back to a link in the notes.
+  website: text("website"),
   priorityLevel: text("priority_level").notNull().default('medium'), // 'low', 'medium', 'high'
   status: text("status").notNull().default('new'), // 'new', 'contacted', 'qualified', 'proposal', 'negotiation', 'won', 'lost'
   notes: text("notes"),

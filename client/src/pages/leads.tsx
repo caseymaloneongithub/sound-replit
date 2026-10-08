@@ -68,7 +68,19 @@ const leadFormValues = (lead: Lead): z.infer<typeof insertLeadSchema> => ({
   zipCode: lead.zipCode ?? "",
   address: lead.address ?? "",
   city: lead.city ?? "",
+  // A link found in the notes before there was a field shows here, so saving
+  // the form makes it the lead's website for good.
+  website: lead.website ?? firstWebAddress(lead.notes)?.href ?? "",
 });
+
+// The sheet's Website: the field, else the first link in the notes.
+const leadSite = (lead: Lead): { href: string; host: string } | null => {
+  if (lead.website) {
+    return firstWebAddress(lead.website)
+      ?? { href: /^https?:\/\//i.test(lead.website) ? lead.website : `https://${lead.website}`, host: lead.website };
+  }
+  return firstWebAddress(lead.notes);
+};
 
 // Spreadsheet cells: a gridline on every cell (border-separate keeps them on the
 // sticky header and the frozen columns), one line each, and an opaque ground so
@@ -202,6 +214,7 @@ function LeadsSheet() {
       zipCode: "",
       address: "",
       city: "",
+      website: "",
     },
   });
 
@@ -220,6 +233,7 @@ function LeadsSheet() {
       zipCode: "",
       address: "",
       city: "",
+      website: "",
     },
   });
 
@@ -474,6 +488,19 @@ function LeadsSheet() {
                       )}
                     />
                   </div>
+                  <FormField
+                    control={createForm.control}
+                    name="website"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Website</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value ?? ""} inputMode="url" placeholder="example.com" data-testid="input-website" />
+                        </FormControl>
+                        <FormMessage data-testid="error-website" />
+                      </FormItem>
+                    )}
+                  />
                   <div className="grid grid-cols-2 gap-4">
                     <FormField
                       control={createForm.control}
@@ -680,7 +707,7 @@ function LeadsSheet() {
             </thead>
             <tbody className="[&>tr:last-child>td]:border-b-0">
               {sortedLeads.map((lead) => {
-                const site = firstWebAddress(lead.notes);
+                const site = leadSite(lead);
                 return (
                   <tr
                     key={lead.id}
@@ -880,7 +907,9 @@ function LeadsSheet() {
                       )}
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  {/* Clear of the dialog's close X (top right); Delete lives at the
+                      bottom, away from everything (owner, 2026-10-07). */}
+                  <div className="flex gap-2 pr-8">
                     {visitState(selectedLead)?.done ? (
                       <>
                         <Button
@@ -935,18 +964,6 @@ function LeadsSheet() {
                     >
                       <Pencil className="w-4 h-4" />
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={() => {
-                        if (confirm("Are you sure you want to delete this lead?")) {
-                          deleteLeadMutation.mutate(selectedLead.id);
-                        }
-                      }}
-                      data-testid="button-delete-lead"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
                   </div>
                 </div>
               </DialogHeader>
@@ -974,6 +991,16 @@ function LeadsSheet() {
                           </a>
                         </div>
                       )}
+                      {(() => {
+                        const site = leadSite(selectedLead);
+                        return site && (
+                          <div className="flex items-center gap-2" data-testid="text-detail-website">
+                            <a href={site.href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                              {site.host}
+                            </a>
+                          </div>
+                        );
+                      })()}
                       {selectedLead.address && (
                         <div data-testid="text-detail-address">
                           {[selectedLead.address, selectedLead.city, selectedLead.state, selectedLead.zipCode].filter(Boolean).join(", ")}
@@ -1032,6 +1059,22 @@ function LeadsSheet() {
                       ))}
                     </div>
                   )}
+                </div>
+                <div className="pt-2 border-t">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => {
+                      if (confirm("Are you sure you want to delete this lead?")) {
+                        deleteLeadMutation.mutate(selectedLead.id);
+                      }
+                    }}
+                    data-testid="button-delete-lead"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete lead
+                  </Button>
                 </div>
               </div>
             </>
@@ -1144,6 +1187,19 @@ function LeadsSheet() {
                       )}
                     />
                   </div>
+                  <FormField
+                    control={editForm.control}
+                    name="website"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Website</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value ?? ""} inputMode="url" placeholder="example.com" data-testid="input-edit-website" />
+                        </FormControl>
+                        <FormMessage data-testid="error-edit-website" />
+                      </FormItem>
+                    )}
+                  />
                   <div className="grid grid-cols-2 gap-4">
                     <FormField
                       control={editForm.control}
