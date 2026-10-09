@@ -109,7 +109,20 @@ export function getPacificWeekRange(offsetWeeks = 0): { start: Date; end: Date; 
  * often on bad data — and was removed in favor of the shared module, which throws.
  */
 export function nextPickupDateFromScheduled(currentPickupDate: Date, frequency: string): Date {
-  return normalizeToAllowedPickupDay(addDays(currentPickupDate, frequencyToDays(frequency)));
+  return addPickupDays(currentPickupDate, frequencyToDays(frequency));
+}
+
+/**
+ * The allowed pickup day `days` calendar days after `date`, counted in Seattle.
+ * Adding the days as milliseconds crosses a daylight-saving change an hour
+ * short, which turns a midnight Thursday pickup into a Wednesday (a bi-weekly
+ * October 22 landed on November 4 instead of the 5th — review, 2026-10-09).
+ */
+export function addPickupDays(date: Date, days: number): Date {
+  const dateStr = formatInTimeZone(date, PICKUP_POLICY.timezone, 'yyyy-MM-dd');
+  const [y, m, d] = dateStr.split('-').map(Number);
+  // Noon UTC is the same calendar day in Seattle whatever the offset.
+  return normalizeToAllowedPickupDay(new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0)));
 }
 
 /**

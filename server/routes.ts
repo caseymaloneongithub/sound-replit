@@ -37,7 +37,7 @@ import { getObjectAclPolicy } from "./objectAcl";
 import { createStripeCustomer } from "./stripeCustomer";
 // frequencyToDays deliberately NOT imported from pickup-policy: the single source of
 // truth for frequency conversion is @shared/subscription-frequency (imported above).
-import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange, nextPickupDateFromScheduled } from "@shared/pickup-policy";
+import { normalizeToAllowedPickupDay, isAllowedPickupDay, PICKUP_POLICY, getBillingDateForPickup, getPacificWeekRange, nextPickupDateFromScheduled, addPickupDays } from "@shared/pickup-policy";
 import { geocodeAddress, optimizeDeliveryRoute, getFacilityLocation, getRouteDirections, RouteOptimizationError } from "./mapbox-service";
 import { geocodeForEdit, geocodeLeadForEdit, refreshLeadPin, refreshLocationPin } from "./location-geocode";
 import { checkMaterialStockAlerts } from "./material-alerts";
@@ -6870,12 +6870,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // the charge to the Monday of that week. The customer's Skip and the staff
   // portal's Skip next (owner, 2026-10-09) both do exactly this.
   const datesAfterSkip = (sub: { subscriptionFrequency: string; nextDeliveryDate: Date | null }) => {
-    const intervalDays = frequencyToDays(sub.subscriptionFrequency);
-    const base = sub.nextDeliveryDate ? new Date(sub.nextDeliveryDate) : new Date();
-    base.setDate(base.getDate() + intervalDays);
-    const nextDeliveryDate = normalizeToAllowedPickupDay(base);
+    // Calendar days in Seattle, so a skip across a daylight-saving change keeps
+    // its weekday (review, 2026-10-09).
+    const nextDeliveryDate = addPickupDays(sub.nextDeliveryDate ? new Date(sub.nextDeliveryDate) : new Date(), frequencyToDays(sub.subscriptionFrequency));
     return { nextDeliveryDate, nextChargeAt: getBillingDateForPickup(nextDeliveryDate) };
   };
+  // The skip is ONE conditional write: the "not mid-billing" test rides in the
+  // WHERE, so a billing run that takes the lock between a read and this write
+  // leaves the write a no-op (null) instead of moving the dates under a charge
+  // the customer or staff were just told was skipped (review, 2026-10-09).
+  const applySkip = async (sub: { id: string; subscriptionFrequency: string; nextDeliveryDate: Date | null }) => {
+    const { nextDeliveryDate, nextChargeAt } = datesAfterSkip(sub);
+    const [updated] = await db
+      .update(retailSubscriptions)
+      .set({ nextDeliveryDate, nextChargeAt })
+      .where(and(
+        eq(retailSubscriptions.id, sub.id),
+        eq(retailSubscriptions.status, 'active'),
+        eq(retailSubscriptions.processingLock, false),
+        inArray(retailSubscriptions.billingStatus, ['active', 'payment_failed']),
+      ))
+      .returning();
+    return updated ?? null;
+  };
+  const SKIP_BUSY = "This subscription is being processed right now. Please try again in a moment.";
 
   app.post("/api/my-subscriptions/:id/skip", isAuthenticated, async (req: any, res) => {
     try {
@@ -6887,15 +6905,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const busy = billingInFlight(sub);
       if (busy) return res.status(409).json({ message: busy });
 
-      const { nextDeliveryDate, nextChargeAt } = datesAfterSkip(sub);
+      const updated = await applySkip(sub);
+      if (!updated) return res.status(409).json({ message: SKIP_BUSY });
 
-      const [updated] = await db
-        .update(retailSubscriptions)
-        .set({ nextDeliveryDate, nextChargeAt })
-        .where(eq(retailSubscriptions.id, sub.id))
-        .returning();
-
-      console.log(`[SUBSCRIPTION] Customer skipped one delivery on ${sub.id}; next pickup ${nextDeliveryDate.toISOString()}`);
+      console.log(`[SUBSCRIPTION] Customer skipped one delivery on ${sub.id}; next pickup ${updated.nextDeliveryDate?.toISOString()}`);
       res.json(updated);
     } catch (error: any) {
       console.error("Error skipping delivery:", error);
@@ -10999,18 +11012,25 @@ If you have any questions, please don't hesitate to reach out!`,
         // The form sends a bare date: that calendar day at the brewery, as a
         // customer-made pickup date is (a bare "2026-10-22" parsed as UTC is the
         // evening before in Seattle).
-        updates.nextDeliveryDate = validated.nextDeliveryDate
+        const wanted = validated.nextDeliveryDate
           ? /^\d{4}-\d{2}-\d{2}$/.test(validated.nextDeliveryDate)
             ? fromZonedTime(`${validated.nextDeliveryDate}T00:00:00`, PICKUP_POLICY.timezone)
             : new Date(validated.nextDeliveryDate)
           : null;
-        // Billing follows the pickup: Monday 4 AM Pacific of the pickup week, the
-        // same rule as signup and the customer's own skip. Moving the pickup
-        // alone used to leave the charge — and its reminder email — on the old
-        // week (owner, 2026-10-09: a customer who asked to skip a week was still
-        // reminded of, and would have been billed on, the original Monday).
-        if (updates.nextDeliveryDate && validated.nextChargeAt === undefined) {
-          updates.nextChargeAt = getBillingDateForPickup(updates.nextDeliveryDate);
+        // The form sends the pickup date with every save, so only a CHANGED day
+        // moves anything: a name or phone edit must not pull a mid-week retry
+        // back to Monday (review, 2026-10-09).
+        const pacificDay = (d: Date | null) => (d ? formatInTimeZone(d, PICKUP_POLICY.timezone, 'yyyy-MM-dd') : null);
+        if (pacificDay(wanted) !== pacificDay(existing.nextDeliveryDate ?? null)) {
+          updates.nextDeliveryDate = wanted;
+          // Billing follows the pickup: Monday 4 AM Pacific of the pickup week, the
+          // same rule as signup and the customer's own skip. Moving the pickup
+          // alone used to leave the charge — and its reminder email — on the old
+          // week (owner, 2026-10-09: a customer who asked to skip a week was still
+          // reminded of, and would have been billed on, the original Monday).
+          if (wanted && validated.nextChargeAt === undefined) {
+            updates.nextChargeAt = getBillingDateForPickup(wanted);
+          }
         }
       }
       if (validated.nextChargeAt !== undefined) {
@@ -11053,14 +11073,10 @@ If you have any questions, please don't hesitate to reach out!`,
       const busy = billingInFlight(sub);
       if (busy) return res.status(409).json({ message: busy });
 
-      const { nextDeliveryDate, nextChargeAt } = datesAfterSkip(sub);
-      const [updated] = await db
-        .update(retailSubscriptions)
-        .set({ nextDeliveryDate, nextChargeAt })
-        .where(eq(retailSubscriptions.id, sub.id))
-        .returning();
+      const updated = await applySkip(sub);
+      if (!updated) return res.status(409).json({ message: SKIP_BUSY });
 
-      console.log(`[SUBSCRIPTION] Staff ${req.user?.email ?? req.user?.id} skipped one delivery on ${sub.id}; next pickup ${nextDeliveryDate.toISOString()}, charge ${nextChargeAt.toISOString()}`);
+      console.log(`[SUBSCRIPTION] Staff ${req.user?.email ?? req.user?.id} skipped one delivery on ${sub.id}; next pickup ${updated.nextDeliveryDate?.toISOString()}, charge ${updated.nextChargeAt?.toISOString()}`);
       res.json(updated);
     } catch (error: any) {
       console.error("Error skipping delivery:", error);

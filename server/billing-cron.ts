@@ -5,7 +5,7 @@ import { db } from './db';
 import { pool } from './storage';
 import { retailOrders, retailOrderItemsV2, retailSubscriptions, retailSubscriptionItems, retailProducts, flavors, users } from '../shared/schema';
 import { eq, and, lte, sql, gte, lt, or, isNull, inArray } from 'drizzle-orm';
-import { normalizeToAllowedPickupDay, getBillingDateForPickup, PICKUP_POLICY } from '../shared/pickup-policy';
+import { normalizeToAllowedPickupDay, getBillingDateForPickup, PICKUP_POLICY, addPickupDays } from '../shared/pickup-policy';
 import { frequencyToDays } from '../shared/subscription-frequency';
 
 /** A processing lock older than this is treated as stranded and reclaimed. */
@@ -172,9 +172,12 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
     const orderPickupDate = isFirstOrder
       ? normalizeToAllowedPickupDay(new Date())
       : (sub.nextDeliveryDate || new Date());
+    // Calendar days in Seattle (addPickupDays): on this UTC host, adding days as
+    // milliseconds across a daylight-saving change landed a Thursday pickup on
+    // Wednesday (review, 2026-10-09).
     const normalizedNextPickupDate = isFirstOrder
-      ? (sub.nextDeliveryDate ?? normalizeToAllowedPickupDay(addDays(new Date(), daysUntilNext)))
-      : normalizeToAllowedPickupDay(addDays(sub.nextDeliveryDate || new Date(), daysUntilNext));
+      ? (sub.nextDeliveryDate ?? addPickupDays(new Date(), daysUntilNext))
+      : addPickupDays(sub.nextDeliveryDate || new Date(), daysUntilNext);
     // Billing happens on Monday of the pickup week
     const nextBillingDate = isFirstOrder && sub.nextChargeAt
       ? sub.nextChargeAt
