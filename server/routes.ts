@@ -10989,7 +10989,22 @@ If you have any questions, please don't hesitate to reach out!`,
       }
       if (validated.billingStatus !== undefined) updates.billingStatus = validated.billingStatus;
       if (validated.nextDeliveryDate !== undefined) {
-        updates.nextDeliveryDate = validated.nextDeliveryDate ? new Date(validated.nextDeliveryDate) : null;
+        // The form sends a bare date: that calendar day at the brewery, as a
+        // customer-made pickup date is (a bare "2026-10-22" parsed as UTC is the
+        // evening before in Seattle).
+        updates.nextDeliveryDate = validated.nextDeliveryDate
+          ? /^\d{4}-\d{2}-\d{2}$/.test(validated.nextDeliveryDate)
+            ? fromZonedTime(`${validated.nextDeliveryDate}T00:00:00`, PICKUP_POLICY.timezone)
+            : new Date(validated.nextDeliveryDate)
+          : null;
+        // Billing follows the pickup: Monday 4 AM Pacific of the pickup week, the
+        // same rule as signup and the customer's own skip. Moving the pickup
+        // alone used to leave the charge — and its reminder email — on the old
+        // week (owner, 2026-10-09: a customer who asked to skip a week was still
+        // reminded of, and would have been billed on, the original Monday).
+        if (updates.nextDeliveryDate && validated.nextChargeAt === undefined) {
+          updates.nextChargeAt = getBillingDateForPickup(updates.nextDeliveryDate);
+        }
       }
       if (validated.nextChargeAt !== undefined) {
         updates.nextChargeAt = validated.nextChargeAt ? new Date(validated.nextChargeAt) : null;
