@@ -11,8 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Loader2, Plus, Edit, Trash2 } from "lucide-react";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Loader2, Plus, Edit, Trash2, SkipForward } from "lucide-react";
+import { apiRequest, apiErrorMessage, queryClient } from "@/lib/queryClient";
 import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
@@ -179,6 +179,23 @@ export default function RetailSubscriptions() {
         description: error.message || "Failed to update subscription",
         variant: "destructive",
       });
+    },
+  });
+
+  // One click skips the customer's next delivery (owner, 2026-10-09): the same
+  // move as the customer's own Skip — one cadence forward, the card charged on
+  // the Monday of the new pickup week. The toast says the dates that resulted.
+  const skipMutation = useMutation({
+    mutationFn: async (id: string) => await apiRequest('POST', `/api/retail/subscriptions/${id}/skip`),
+    onSuccess: (updated: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/retail/subscriptions'] });
+      toast({
+        title: "Next delivery skipped",
+        description: `Next pickup ${format(new Date(updated.nextDeliveryDate), 'EEE, MMM d')}; the card is charged ${format(new Date(updated.nextChargeAt), 'EEE, MMM d')}.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({ title: "Couldn't skip", description: apiErrorMessage(error, "The delivery couldn't be skipped."), variant: "destructive" });
     },
   });
 
@@ -496,13 +513,52 @@ export default function RetailSubscriptions() {
                               {subscription.customerPhone}
                             </span>
                             {subscription.nextDeliveryDate && (
-                              <span className="flex items-center gap-1">
+                              <span className="flex items-center gap-1" data-testid={`text-next-pickup-${subscription.id}`}>
                                 Next: {format(new Date(subscription.nextDeliveryDate), 'MMM d, yyyy')}
+                              </span>
+                            )}
+                            {subscription.nextChargeAt && subscription.status === 'active' && (
+                              <span className="flex items-center gap-1" data-testid={`text-next-charge-${subscription.id}`}>
+                                Bills {format(new Date(subscription.nextChargeAt), 'MMM d')}
                               </span>
                             )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          {subscription.status === 'active' && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={skipMutation.isPending && skipMutation.variables === subscription.id}
+                                  data-testid={`button-skip-${subscription.id}`}
+                                >
+                                  <SkipForward className="w-4 h-4 mr-1" />
+                                  Skip next
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Skip the next delivery?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    {subscription.customerName}'s {getFrequencyLabel(subscription.subscriptionFrequency).toLowerCase()} subscription moves one interval forward
+                                    {subscription.nextDeliveryDate ? ` from ${format(new Date(subscription.nextDeliveryDate), 'EEE, MMM d')}` : ''}.
+                                    The card is charged on the Monday of the new pickup week instead, and the billing reminder follows it. Nothing is charged for the skipped week.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => skipMutation.mutate(subscription.id)}
+                                    data-testid={`button-confirm-skip-${subscription.id}`}
+                                  >
+                                    Skip it
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
                           <Button
                             variant="outline"
                             size="sm"

@@ -6866,6 +6866,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   /** Skip exactly one delivery — push the schedule out by a single cadence interval. */
+  // One skipped delivery: the next pickup moves one cadence interval forward, and
+  // the charge to the Monday of that week. The customer's Skip and the staff
+  // portal's Skip next (owner, 2026-10-09) both do exactly this.
+  const datesAfterSkip = (sub: { subscriptionFrequency: string; nextDeliveryDate: Date | null }) => {
+    const intervalDays = frequencyToDays(sub.subscriptionFrequency);
+    const base = sub.nextDeliveryDate ? new Date(sub.nextDeliveryDate) : new Date();
+    base.setDate(base.getDate() + intervalDays);
+    const nextDeliveryDate = normalizeToAllowedPickupDay(base);
+    return { nextDeliveryDate, nextChargeAt: getBillingDateForPickup(nextDeliveryDate) };
+  };
+
   app.post("/api/my-subscriptions/:id/skip", isAuthenticated, async (req: any, res) => {
     try {
       const sub = await loadOwnedSubscription(req.params.id, req.user.id);
@@ -6876,11 +6887,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const busy = billingInFlight(sub);
       if (busy) return res.status(409).json({ message: busy });
 
-      const intervalDays = frequencyToDays(sub.subscriptionFrequency);
-      const base = sub.nextDeliveryDate ? new Date(sub.nextDeliveryDate) : new Date();
-      base.setDate(base.getDate() + intervalDays);
-      const nextDeliveryDate = normalizeToAllowedPickupDay(base);
-      const nextChargeAt = getBillingDateForPickup(nextDeliveryDate);
+      const { nextDeliveryDate, nextChargeAt } = datesAfterSkip(sub);
 
       const [updated] = await db
         .update(retailSubscriptions)
@@ -11024,6 +11031,40 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(400).json({ message: "Validation error", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to update subscription" });
+    }
+  });
+
+  // Skip a customer's next delivery from the staff portal (owner, 2026-10-09:
+  // "an easy skip button") — the customer's own Skip, done for them: one
+  // cadence interval forward, charge on the Monday of the new pickup week.
+  app.post("/api/retail/subscriptions/:id/skip", isAuthenticated, isStaffOrAdmin, async (req: any, res) => {
+    try {
+      const [sub] = await db
+        .select()
+        .from(retailSubscriptions)
+        .where(eq(retailSubscriptions.id, req.params.id));
+      if (!sub) return res.status(404).json({ message: "Subscription not found" });
+      if (sub.status !== 'active') {
+        return res.status(400).json({ message: `This subscription is ${sub.status} — only active subscriptions can skip a delivery.` });
+      }
+      if (sub.billingType !== 'local_managed') {
+        return res.status(400).json({ message: "This subscription bills through Stripe; skip it in the Stripe dashboard." });
+      }
+      const busy = billingInFlight(sub);
+      if (busy) return res.status(409).json({ message: busy });
+
+      const { nextDeliveryDate, nextChargeAt } = datesAfterSkip(sub);
+      const [updated] = await db
+        .update(retailSubscriptions)
+        .set({ nextDeliveryDate, nextChargeAt })
+        .where(eq(retailSubscriptions.id, sub.id))
+        .returning();
+
+      console.log(`[SUBSCRIPTION] Staff ${req.user?.email ?? req.user?.id} skipped one delivery on ${sub.id}; next pickup ${nextDeliveryDate.toISOString()}, charge ${nextChargeAt.toISOString()}`);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error skipping delivery:", error);
+      res.status(500).json({ message: "Error skipping delivery" });
     }
   });
 
