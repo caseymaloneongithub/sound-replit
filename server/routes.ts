@@ -6879,7 +6879,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // WHERE, so a billing run that takes the lock between a read and this write
   // leaves the write a no-op (null) instead of moving the dates under a charge
   // the customer or staff were just told was skipped (review, 2026-10-09).
-  const applySkip = async (sub: { id: string; subscriptionFrequency: string; nextDeliveryDate: Date | null }) => {
+  const applySkip = async (sub: { id: string; subscriptionFrequency: string; nextDeliveryDate: Date | null; nextChargeAt: Date | null }) => {
     const { nextDeliveryDate, nextChargeAt } = datesAfterSkip(sub);
     const [updated] = await db
       .update(retailSubscriptions)
@@ -6889,11 +6889,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         eq(retailSubscriptions.status, 'active'),
         eq(retailSubscriptions.processingLock, false),
         inArray(retailSubscriptions.billingStatus, ['active', 'payment_failed']),
+        // The dates the skip was computed from must still be the dates on file.
+        // A billing run that charged and advanced the subscription in the gap —
+        // lock taken and released — would otherwise be "skipped" to the very
+        // dates billing just set, and nothing skipped (review, 2026-10-09).
+        sub.nextDeliveryDate ? eq(retailSubscriptions.nextDeliveryDate, sub.nextDeliveryDate) : isNull(retailSubscriptions.nextDeliveryDate),
+        sub.nextChargeAt ? eq(retailSubscriptions.nextChargeAt, sub.nextChargeAt) : isNull(retailSubscriptions.nextChargeAt),
       ))
       .returning();
-    return updated ?? null;
+    if (updated) return { updated, message: null };
+    // Say which it was: still mid-billing, or already moved on.
+    const [now] = await db
+      .select({ processingLock: retailSubscriptions.processingLock, billingStatus: retailSubscriptions.billingStatus, status: retailSubscriptions.status })
+      .from(retailSubscriptions)
+      .where(eq(retailSubscriptions.id, sub.id));
+    const busy = !!now && (now.processingLock || !['active', 'payment_failed'].includes(now.billingStatus));
+    return { updated: null, message: busy ? SKIP_BUSY : SKIP_CHANGED };
   };
   const SKIP_BUSY = "This subscription is being processed right now. Please try again in a moment.";
+  const SKIP_CHANGED = "This subscription's dates just changed — a charge may have gone through. Reload, check the next pickup, and skip again if it still needs it.";
 
   app.post("/api/my-subscriptions/:id/skip", isAuthenticated, async (req: any, res) => {
     try {
@@ -6905,8 +6919,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const busy = billingInFlight(sub);
       if (busy) return res.status(409).json({ message: busy });
 
-      const updated = await applySkip(sub);
-      if (!updated) return res.status(409).json({ message: SKIP_BUSY });
+      const { updated, message } = await applySkip(sub);
+      if (!updated) return res.status(409).json({ message });
 
       console.log(`[SUBSCRIPTION] Customer skipped one delivery on ${sub.id}; next pickup ${updated.nextDeliveryDate?.toISOString()}`);
       res.json(updated);
@@ -11073,8 +11087,8 @@ If you have any questions, please don't hesitate to reach out!`,
       const busy = billingInFlight(sub);
       if (busy) return res.status(409).json({ message: busy });
 
-      const updated = await applySkip(sub);
-      if (!updated) return res.status(409).json({ message: SKIP_BUSY });
+      const { updated, message } = await applySkip(sub);
+      if (!updated) return res.status(409).json({ message });
 
       console.log(`[SUBSCRIPTION] Staff ${req.user?.email ?? req.user?.id} skipped one delivery on ${sub.id}; next pickup ${updated.nextDeliveryDate?.toISOString()}, charge ${updated.nextChargeAt?.toISOString()}`);
       res.json(updated);
