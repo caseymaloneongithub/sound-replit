@@ -5429,6 +5429,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).send(`Webhook Error: ${err.message}`);
       }
 
+      // So a handler failure's Site Event says which event it was.
+      req.stripeEventType = event.type;
+
       switch (event.type) {
         case 'checkout.session.completed': {
           const session = event.data.object as Stripe.Checkout.Session;

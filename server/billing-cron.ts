@@ -200,6 +200,23 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
       // Serialize order-number generation for the duration of this transaction
       await orderClient.query('SELECT pg_advisory_xact_lock($1)', [123456789]);
 
+      // Idempotency, re-checked INSIDE the lock. The billing run finalizes a
+      // charge the moment Stripe confirms it, and Stripe's payment_intent.succeeded
+      // webhook lands a second later and finalizes the same charge. The second
+      // caller passed the check above (no order yet), waited here for the first
+      // to commit, then hit the unique index on the payment intent, reported
+      // "incomplete", and raised a Site Event alert on every billing day (the
+      // Oct 12 alerts). Now it sees the first caller's order and is done.
+      const already = await orderClient.query(
+        `SELECT id FROM retail_orders WHERE stripe_payment_intent_id = $1 LIMIT 1`,
+        [paymentIntentId]
+      );
+      if (already.rowCount) {
+        await orderClient.query('ROLLBACK');
+        console.log(`[BILLING] Order already exists for PaymentIntent ${paymentIntentId} (finalized by the other caller), skipping`);
+        return true;
+      }
+
       // Numbering considers ALL rows, soft-deleted included: order_number is globally
       // unique, so a soft-deleted order keeps its number reserved. Filtering deleted_at
       // here meant that whenever the highest-numbered order was soft-deleted, the next
