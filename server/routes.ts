@@ -10475,13 +10475,19 @@ If you have any questions, please don't hesitate to reach out!`,
         // A staff no-charge order (every line at $0) stays free when a line is added.
         const existing = await tx.select({ unitPrice: retailOrderItemsV2.unitPrice }).from(retailOrderItemsV2).where(eq(retailOrderItemsV2.orderId, order.id));
         const noCharge = existing.length > 0 && existing.every((l) => Number(l.unitPrice) === 0);
+        // A subscription order's lines carry the subscriber discount, as the
+        // renewal priced them: a can case added to a renewal went in at list
+        // price while the bottle cases beside it sat at the discount (owner,
+        // 2026-10-12). Same arithmetic as the renewal's live price.
+        const discountPct = order.isSubscriptionOrder ? Number(product.subscriptionDiscount ?? 0) : 0;
+        const unitPrice = Number(product.price) * (1 - (Number.isFinite(discountPct) ? discountPct : 0) / 100);
         await storage.addRetailOrderItemV2({
           orderId: order.id,
           retailProductId: product.id,
           selectedFlavorId: itemFields.selectedFlavorId,
           notes: itemFields.notes,
           quantity: validated.quantity,
-          unitPrice: noCharge ? '0.00' : String(product.price),
+          unitPrice: noCharge ? '0.00' : unitPrice.toFixed(2),
         }, tx);
       });
       res.status(201).json({ success: true, totals });
