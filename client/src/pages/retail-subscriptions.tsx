@@ -199,6 +199,20 @@ export default function RetailSubscriptions() {
     },
   });
 
+  // "The card is fixed — charge it now" (owner, 2026-10-12): a fresh attempt on a
+  // subscription whose last charge failed. The server says what happened.
+  const retryChargeMutation = useMutation({
+    mutationFn: async (id: string) => await apiRequest('POST', `/api/retail/subscriptions/${id}/retry-charge`),
+    onSuccess: (result: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/retail/subscriptions'] });
+      toast({ title: "Charged", description: result?.message ?? "The payment went through." });
+    },
+    onError: (error: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/retail/subscriptions'] });
+      toast({ title: "Charge didn't go through", description: apiErrorMessage(error, "The charge failed."), variant: "destructive" });
+    },
+  });
+
   const deleteSubscriptionMutation = useMutation({
     mutationFn: async (id: string) => {
       return await apiRequest('DELETE', `/api/retail/subscriptions/${id}`);
@@ -522,9 +536,49 @@ export default function RetailSubscriptions() {
                                 Bills {format(new Date(subscription.nextChargeAt), 'MMM d')}
                               </span>
                             )}
+                            {subscription.status !== 'cancelled' && (subscription.retryCount > 0 || ['retrying', 'payment_failed', 'awaiting_auth'].includes(subscription.billingStatus)) && (
+                              <span className="flex items-center gap-1 text-destructive font-medium" data-testid={`text-charge-failed-${subscription.id}`}>
+                                Last charge failed{subscription.retryCount > 0 ? ` · attempt ${subscription.retryCount} of 3` : ''}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          {subscription.status !== 'cancelled' && (subscription.retryCount > 0 || ['retrying', 'payment_failed', 'awaiting_auth'].includes(subscription.billingStatus)) && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="border-destructive/40 text-destructive hover:text-destructive"
+                                  disabled={retryChargeMutation.isPending && retryChargeMutation.variables === subscription.id}
+                                  data-testid={`button-retry-charge-${subscription.id}`}
+                                >
+                                  {retryChargeMutation.isPending && retryChargeMutation.variables === subscription.id
+                                    ? <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                    : null}
+                                  Retry charge
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Charge the card on file now?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    A fresh attempt for {subscription.customerName}. If they've saved a new card in My Account, this uses it. A success creates the order and moves the schedule on; a failure counts as another attempt and emails both of you why.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => retryChargeMutation.mutate(subscription.id)}
+                                    data-testid={`button-confirm-retry-charge-${subscription.id}`}
+                                  >
+                                    Charge now
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
                           {subscription.status === 'active' && (
                             <AlertDialog>
                               <AlertDialogTrigger asChild>

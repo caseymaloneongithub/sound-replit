@@ -564,9 +564,20 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
     const exhausted = newRetryCount >= MAX_RETRY_ATTEMPTS;
 
     // A StripeCardError is a DEFINITIVE decline — Stripe processed the request and
-    // refused it, so no money moved. Anything else (timeout, connection reset, 5xx)
-    // is AMBIGUOUS: the charge may well have succeeded and we simply lost the reply.
-    const isDefiniteDecline = error?.type === 'StripeCardError';
+    // refused it, so no money moved. So is Stripe refusing the saved card itself
+    // (StripeInvalidRequestError about the PaymentMethod: detached, or never
+    // attached to the customer — Kirk Miller, 2026-10-12): no charge was made,
+    // and retrying the same card can never succeed. Backing off mints a new
+    // idempotency key, so once the customer saves a new card the next attempt
+    // picks it up (the default-card lookup above) instead of replaying the
+    // refused request. Anything else (timeout, connection reset, 5xx) is
+    // AMBIGUOUS: the charge may well have succeeded and we simply lost the reply.
+    const cardUnusable = error?.type === 'StripeInvalidRequestError' && /payment ?method/i.test(error?.message ?? '');
+    const isDefiniteDecline = error?.type === 'StripeCardError' || cardUnusable;
+    // The customer gets a sentence about what to do, not Stripe's own.
+    const customerReason = cardUnusable
+      ? "The card we have on file can no longer be charged. Please add a new card under My Account and we'll try again."
+      : (error?.message || 'Your card was declined.');
 
     // Only back off for definite declines. The idempotency key is derived from
     // nextChargeAt, so moving that date mints a NEW key — which is correct for a
@@ -613,7 +624,7 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
           customerName: subscription.customerName || 'there',
           subscriptionItems,
           amount: totalAmount,
-          errorMessage: error?.message || 'Your card was declined.',
+          errorMessage: customerReason,
         });
       }
 
@@ -643,12 +654,17 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
  * period returns the original PaymentIntent. retryCount is deliberately kept —
  * repeated failed retries still march toward the pause.
  */
-export async function chargeSubscriptionNow(subscriptionId: string): Promise<{ ok: boolean; message: string }> {
+export async function chargeSubscriptionNow(subscriptionId: string, options: { byStaff?: boolean } = {}): Promise<{ ok: boolean; message: string }> {
   if (!stripe) return { ok: false, message: "Billing isn't configured" };
   const [sub] = await db.select().from(retailSubscriptions).where(eq(retailSubscriptions.id, subscriptionId));
   if (!sub) return { ok: false, message: 'Subscription not found' };
   if (sub.status === 'cancelled') return { ok: false, message: 'This subscription is cancelled' };
-  if (!['retrying', 'payment_failed', 'awaiting_auth'].includes(sub.billingStatus)) {
+  // A failed attempt still counting toward the pause leaves billingStatus 'active'
+  // with retryCount > 0; staff may retry those too (owner, 2026-10-12).
+  const failedBefore =
+    ['retrying', 'payment_failed', 'awaiting_auth'].includes(sub.billingStatus) ||
+    (!!options.byStaff && sub.retryCount > 0);
+  if (!failedBefore) {
     return { ok: false, message: 'There is no failed payment to retry on this subscription' };
   }
   const lock = await db.update(retailSubscriptions)
@@ -676,11 +692,22 @@ export async function chargeSubscriptionNow(subscriptionId: string): Promise<{ o
       .leftJoin(retailProducts, eq(retailSubscriptionItems.retailProductId, retailProducts.id))
       .where(eq(retailSubscriptionItems.subscriptionId, subscriptionId));
     if (items.length === 0) return { ok: false, message: 'This subscription has no items' };
-    console.log(`[BILLING] Customer-initiated retry for ${subscriptionId}`);
-    const ok = await processRetailSubscriptionBilling({ ...sub, status: 'active', billingStatus: 'active' }, items);
+    console.log(`[BILLING] ${options.byStaff ? 'Staff' : 'Customer'}-initiated retry for ${subscriptionId}`);
+    // Staff asked for a NEW attempt: re-key it. The last attempt's key carries
+    // Stripe's refusal (a detached card, a decline), and re-presenting it replays
+    // that refusal even after the customer saved a new card. Safe: a lost reply
+    // to a charge that actually succeeded is finalized by the
+    // payment_intent.succeeded webhook long before anyone reaches for this.
+    const attempt = options.byStaff ? { ...sub, nextChargeAt: new Date() } : sub;
+    if (options.byStaff) {
+      await db.update(retailSubscriptions)
+        .set({ nextChargeAt: attempt.nextChargeAt })
+        .where(eq(retailSubscriptions.id, subscriptionId));
+    }
+    const ok = await processRetailSubscriptionBilling({ ...attempt, status: 'active', billingStatus: 'active' }, items);
     return ok
-      ? { ok: true, message: 'Payment went through — your next case is on the schedule.' }
-      : { ok: false, message: "The charge didn't go through — double-check your payment method and try again." };
+      ? { ok: true, message: options.byStaff ? 'Charged — the order is created and the schedule moved on.' : 'Payment went through — your next case is on the schedule.' }
+      : { ok: false, message: options.byStaff ? "The charge didn't go through — the failure email says why." : "The charge didn't go through — double-check your payment method and try again." };
   } finally {
     await db.update(retailSubscriptions)
       .set({ processingLock: false, processingLockedAt: null })

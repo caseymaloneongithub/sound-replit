@@ -5164,13 +5164,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let preservePm = !!transactionError?.preservePaymentMethod;
         if (!preservePm) {
           try {
+            // ANY live subscription on this card keeps it attached — not only a
+            // parked one. A second checkout a minute after a successful signup
+            // (same card, already attached) failed here and detached the card
+            // the first, active subscription was billing; six weeks on, its
+            // renewal failed with "detached from a Customer … may not be used
+            // again" (owner, 2026-10-12, Kirk Miller).
             const refs = await db
               .select({ id: retailSubscriptions.id })
               .from(retailSubscriptions)
               .where(and(
                 eq(retailSubscriptions.stripePaymentMethodId, validated.paymentMethodId),
-                eq(retailSubscriptions.status, 'pending'),
-                eq(retailSubscriptions.billingStatus, 'first_charge_uncertain'),
+                ne(retailSubscriptions.status, 'cancelled'),
               ))
               .limit(1);
             preservePm = refs.length > 0;
@@ -11098,6 +11103,20 @@ If you have any questions, please don't hesitate to reach out!`,
     } catch (error: any) {
       console.error("Error skipping delivery:", error);
       res.status(500).json({ message: "Error skipping delivery" });
+    }
+  });
+
+  // "The card is fixed — charge it now", done by an admin (owner, 2026-10-12,
+  // after a renewal failed on a detached card). A fresh attempt: see
+  // chargeSubscriptionNow for why it re-keys the charge when staff ask.
+  app.post("/api/retail/subscriptions/:id/retry-charge", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { chargeSubscriptionNow } = await import('./billing-cron');
+      const result = await chargeSubscriptionNow(req.params.id, { byStaff: true });
+      console.log(`[SUBSCRIPTION] Staff ${req.user?.email ?? req.user?.id} retried the charge on ${req.params.id}: ${result.ok ? 'charged' : result.message}`);
+      res.status(result.ok ? 200 : 400).json({ message: result.message });
+    } catch (error: any) {
+      res.status(500).json({ message: "Retry failed: " + error.message });
     }
   });
 
