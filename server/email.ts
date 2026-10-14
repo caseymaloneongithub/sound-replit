@@ -2384,8 +2384,9 @@ export function renderInvoicePage(doc: PDFKit.PDFDocument, params: WholesaleInvo
   }
 }
 
-// Driver's delivery packet: page 1 is the route in drive order, then each stop's
-// invoice on its own page — one print job hands the driver everything.
+// Driver's delivery packet: page 1 is the packing list (owner, 2026-10-14: the
+// truck gets loaded before anyone reads the route), then the route in drive order,
+// then each stop's invoice on its own page — one print job hands the driver everything.
 export async function generateDeliveryPacketPDF(input: {
   routeDate: Date;
   totalDistanceMeters?: number | null;
@@ -2394,6 +2395,8 @@ export async function generateDeliveryPacketPDF(input: {
   // Aggregated across all deliveries (real products only, no invoice adjustments) —
   // what to load on the truck.
   packingList: Array<{ unit: string; flavor: string; quantity: number }>;
+  // One sample 6-pack per lead visited on the route (owner, 2026-10-14).
+  samples?: Array<{ leadName: string }>;
   invoices: WholesaleInvoiceEmailParams[];
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -2402,25 +2405,104 @@ export async function generateDeliveryPacketPDF(input: {
     doc.on('data', (chunk) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
+    const samples = input.samples ?? [];
 
-    // ===== PAGE 1: THE ROUTE =====
-    try {
-      doc.image('attached_assets/invoice-logo.png', PDF_MARGIN, PDF_MARGIN, { width: 48 });
-    } catch { /* wordmark below carries it */ }
-    doc.fontSize(22).font('Helvetica-Bold').fillColor(TEXT_COLOR);
-    doc.text('Delivery Route', PDF_MARGIN, PDF_MARGIN + 4, { width: PDF_CONTENT_WIDTH, align: 'right' });
-    doc.fontSize(11).font('Helvetica').fillColor(LABEL_COLOR);
-    doc.text(format(input.routeDate, 'EEEE, MMMM d, yyyy'), PDF_MARGIN, PDF_MARGIN + 32, { width: PDF_CONTENT_WIDTH, align: 'right' });
+    // Logo, title and date at the top of a page, then a rule; returns the y below it.
+    const pageHeader = (title: string, subtitle: string | null): number => {
+      try {
+        doc.image('attached_assets/invoice-logo.png', PDF_MARGIN, PDF_MARGIN, { width: 48 });
+      } catch { /* wordmark below carries it */ }
+      doc.fontSize(22).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+      doc.text(title, PDF_MARGIN, PDF_MARGIN + 4, { width: PDF_CONTENT_WIDTH, align: 'right' });
+      doc.fontSize(11).font('Helvetica').fillColor(LABEL_COLOR);
+      doc.text(format(input.routeDate, 'EEEE, MMMM d, yyyy'), PDF_MARGIN, PDF_MARGIN + 32, { width: PDF_CONTENT_WIDTH, align: 'right' });
+      if (subtitle) doc.text(subtitle, PDF_MARGIN, PDF_MARGIN + 46, { width: PDF_CONTENT_WIDTH, align: 'right' });
+      const ruleY = PDF_MARGIN + 78;
+      doc.moveTo(PDF_MARGIN, ruleY).lineTo(PDF_WIDTH - PDF_MARGIN, ruleY).lineWidth(1).strokeColor('#dddddd').stroke();
+      return ruleY + 12;
+    };
 
+    // ===== PAGE 1: PACKING LIST — flavor × unit matrix (units along the top,
+    // flavors down the side — owner, 2026-08-31), so loading the truck reads like
+    // the pack sheet; then a sample 6-pack for every lead visited.
+    let onFirstPage = true;
+    if (input.packingList.length > 0 || samples.length > 0) {
+      let py = pageHeader('Packing List', input.invoices.length > 0
+        ? `Everything across all ${input.invoices.length} deliveries`
+        : 'Samples for the visits on this route');
+
+      if (input.packingList.length > 0) {
+        const units = Array.from(new Set(input.packingList.map((e) => e.unit))).sort();
+        const flavorRows = Array.from(new Set(input.packingList.map((e) => e.flavor))).sort();
+        const qty = new Map(input.packingList.map((e) => [`${e.unit}|${e.flavor}`, e.quantity]));
+
+        const FLAVOR_W = 130;
+        const ALL_W = 50;
+        const unitW = (PDF_CONTENT_WIDTH - FLAVOR_W - ALL_W) / Math.max(units.length, 1);
+        const colX = (i: number) => PDF_MARGIN + FLAVOR_W + i * unitW;
+        const allX = PDF_MARGIN + FLAVOR_W + units.length * unitW;
+
+        doc.rect(PDF_MARGIN, py - 5, PDF_CONTENT_WIDTH, 26).fill(HEADER_BG);
+        doc.fontSize(9).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+        doc.text('Flavor', PDF_MARGIN + 6, py + 4);
+        units.forEach((u, i) => doc.text(u, colX(i), py, { width: unitW - 6, align: 'right' }));
+        doc.text('All', allX, py + 4, { width: ALL_W, align: 'right' });
+        py += 30;
+
+        doc.fontSize(11);
+        const colTotals = new Array(units.length).fill(0);
+        let grandTotal = 0;
+        for (const flavor of flavorRows) {
+          if (py > doc.page.height - 70) { doc.addPage(); py = PDF_MARGIN; }
+          doc.font('Helvetica').fillColor(TEXT_COLOR).text(flavor, PDF_MARGIN + 6, py, { width: FLAVOR_W - 10 });
+          let rowTotal = 0;
+          units.forEach((u, i) => {
+            const n = qty.get(`${u}|${flavor}`) ?? 0;
+            rowTotal += n;
+            colTotals[i] += n;
+            doc.fillColor(n ? TEXT_COLOR : LABEL_COLOR).text(n ? String(n) : '—', colX(i), py, { width: unitW - 6, align: 'right' });
+          });
+          grandTotal += rowTotal;
+          doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(String(rowTotal), allX, py, { width: ALL_W, align: 'right' });
+          py = doc.y + 5;
+          doc.moveTo(PDF_MARGIN, py - 2).lineTo(PDF_WIDTH - PDF_MARGIN, py - 2).lineWidth(0.5).strokeColor('#eeeeee').stroke();
+          py += 4;
+        }
+        py += 4;
+        doc.font('Helvetica-Bold').fillColor(TEXT_COLOR);
+        doc.text('Total units', PDF_MARGIN + 6, py);
+        units.forEach((u, i) => doc.text(String(colTotals[i]), colX(i), py, { width: unitW - 6, align: 'right' }));
+        doc.text(String(grandTotal), allX, py, { width: ALL_W, align: 'right' });
+        py = doc.y + 22;
+      }
+
+      // One sample 6-pack per lead visited (owner, 2026-10-14), listed by lead so
+      // the driver knows which stop each one is for.
+      if (samples.length > 0) {
+        if (py > doc.page.height - 110) { doc.addPage(); py = PDF_MARGIN; }
+        doc.fontSize(12).font('Helvetica-Bold').fillColor(TEXT_COLOR);
+        doc.text(`Samples for visits  ·  ${samples.length} × 6-pack`, PDF_MARGIN, py);
+        py = doc.y + 3;
+        doc.fontSize(9).font('Helvetica').fillColor(LABEL_COLOR);
+        doc.text('One sample 6-pack for each lead on the route.', PDF_MARGIN, py);
+        py = doc.y + 8;
+        doc.fontSize(11).fillColor(TEXT_COLOR);
+        for (const s of samples) {
+          if (py > doc.page.height - 70) { doc.addPage(); py = PDF_MARGIN; }
+          doc.text(`1 × sample 6-pack  —  ${s.leadName}`, PDF_MARGIN + 6, py, { width: PDF_CONTENT_WIDTH - 6 });
+          py = doc.y + 6;
+        }
+      }
+      onFirstPage = false;
+    }
+
+    // ===== THE ROUTE, IN DRIVE ORDER =====
+    if (!onFirstPage) doc.addPage();
     const miles = input.totalDistanceMeters ? (input.totalDistanceMeters / 1609.34).toFixed(1) + ' mi' : null;
     const mins = input.totalDurationSeconds ? Math.round(input.totalDurationSeconds / 60) : null;
     const duration = mins != null ? (mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins} min`) : null;
     const summary = [`${input.stops.length} stops`, miles, duration ? `about ${duration} driving` : null].filter(Boolean).join('  ·  ');
-    doc.text(summary, PDF_MARGIN, PDF_MARGIN + 46, { width: PDF_CONTENT_WIDTH, align: 'right' });
-
-    let y = PDF_MARGIN + 78;
-    doc.moveTo(PDF_MARGIN, y).lineTo(PDF_WIDTH - PDF_MARGIN, y).lineWidth(1).strokeColor('#dddddd').stroke();
-    y += 12;
+    let y = pageHeader('Delivery Route', summary);
 
     for (const stop of input.stops) {
       if (y > doc.page.height - 90) { doc.addPage(); y = PDF_MARGIN; }
@@ -2441,59 +2523,6 @@ export async function generateDeliveryPacketPDF(input: {
       y += 7;
       doc.moveTo(PDF_MARGIN, y).lineTo(PDF_WIDTH - PDF_MARGIN, y).lineWidth(0.5).strokeColor('#eeeeee').stroke();
       y += 10;
-    }
-
-    // ===== PACKING LIST: flavor × unit matrix (units along the top, flavors down
-    // the side — owner, 2026-08-31), so loading the truck reads like the pack sheet.
-    if (input.packingList.length > 0) {
-      doc.addPage();
-      doc.fontSize(22).font('Helvetica-Bold').fillColor(TEXT_COLOR);
-      doc.text('Packing List', PDF_MARGIN, PDF_MARGIN);
-      doc.fontSize(10).font('Helvetica').fillColor(LABEL_COLOR);
-      doc.text(`Everything across all ${input.invoices.length} deliveries on ${format(input.routeDate, 'MMMM d')}`, PDF_MARGIN, PDF_MARGIN + 28);
-
-      const units = Array.from(new Set(input.packingList.map((e) => e.unit))).sort();
-      const flavorRows = Array.from(new Set(input.packingList.map((e) => e.flavor))).sort();
-      const qty = new Map(input.packingList.map((e) => [`${e.unit}|${e.flavor}`, e.quantity]));
-
-      const FLAVOR_W = 130;
-      const ALL_W = 50;
-      const unitW = (PDF_CONTENT_WIDTH - FLAVOR_W - ALL_W) / Math.max(units.length, 1);
-      const colX = (i: number) => PDF_MARGIN + FLAVOR_W + i * unitW;
-      const allX = PDF_MARGIN + FLAVOR_W + units.length * unitW;
-
-      let py = PDF_MARGIN + 56;
-      doc.rect(PDF_MARGIN, py - 5, PDF_CONTENT_WIDTH, 26).fill(HEADER_BG);
-      doc.fontSize(9).font('Helvetica-Bold').fillColor(TEXT_COLOR);
-      doc.text('Flavor', PDF_MARGIN + 6, py + 4);
-      units.forEach((u, i) => doc.text(u, colX(i), py, { width: unitW - 6, align: 'right' }));
-      doc.text('All', allX, py + 4, { width: ALL_W, align: 'right' });
-      py += 30;
-
-      doc.fontSize(11);
-      const colTotals = new Array(units.length).fill(0);
-      let grandTotal = 0;
-      for (const flavor of flavorRows) {
-        if (py > doc.page.height - 70) { doc.addPage(); py = PDF_MARGIN; }
-        doc.font('Helvetica').fillColor(TEXT_COLOR).text(flavor, PDF_MARGIN + 6, py, { width: FLAVOR_W - 10 });
-        let rowTotal = 0;
-        units.forEach((u, i) => {
-          const n = qty.get(`${u}|${flavor}`) ?? 0;
-          rowTotal += n;
-          colTotals[i] += n;
-          doc.fillColor(n ? TEXT_COLOR : LABEL_COLOR).text(n ? String(n) : '—', colX(i), py, { width: unitW - 6, align: 'right' });
-        });
-        grandTotal += rowTotal;
-        doc.font('Helvetica-Bold').fillColor(TEXT_COLOR).text(String(rowTotal), allX, py, { width: ALL_W, align: 'right' });
-        py = doc.y + 5;
-        doc.moveTo(PDF_MARGIN, py - 2).lineTo(PDF_WIDTH - PDF_MARGIN, py - 2).lineWidth(0.5).strokeColor('#eeeeee').stroke();
-        py += 4;
-      }
-      py += 4;
-      doc.font('Helvetica-Bold').fillColor(TEXT_COLOR);
-      doc.text('Total units', PDF_MARGIN + 6, py);
-      units.forEach((u, i) => doc.text(String(colTotals[i]), colX(i), py, { width: unitW - 6, align: 'right' }));
-      doc.text(String(grandTotal), allX, py, { width: ALL_W, align: 'right' });
     }
 
     // ===== INVOICES, IN DRIVE ORDER =====

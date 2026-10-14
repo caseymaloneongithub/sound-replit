@@ -13497,6 +13497,7 @@ If you have any questions, please don't hesitate to reach out!`,
 
       const stopLines: any[] = [];
       const invoices: any[] = [];
+      const samples: Array<{ leadName: string }> = [];
       for (const stop of [...stops].sort((a, b) => a.stopOrder - b.stopOrder)) {
         if (stop.stopType === 'order' && stop.wholesaleOrderId) {
           const details = await storage.getWholesaleOrderWithDetails(stop.wholesaleOrderId);
@@ -13555,6 +13556,8 @@ If you have any questions, please don't hesitate to reach out!`,
           // check Driver Mode makes (review, 2026-10-06).
           const lead = await storage.getLead(stop.leadId);
           if (!lead || lead.visitWeek !== weekMondayOf(new Date(route.routeDate).toISOString().slice(0, 10))) continue;
+          // A sample 6-pack rides along for every lead visited (owner, 2026-10-14).
+          samples.push({ leadName: lead.businessName });
           stopLines.push({
             order: stop.stopOrder + 1,
             label: `Visit: ${lead.businessName}`,
@@ -13588,6 +13591,7 @@ If you have any questions, please don't hesitate to reach out!`,
         totalDurationSeconds: route.totalDurationSeconds,
         stops: stopLines,
         packingList,
+        samples,
         invoices,
       });
       res.setHeader('Content-Type', 'application/pdf');
