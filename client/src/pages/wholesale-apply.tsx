@@ -182,7 +182,7 @@ export default function WholesaleApply() {
                 value={form.about}
                 onChange={set("about")}
                 rows={4}
-                placeholder="Which products you're interested in (bottles, cans, kegs), roughly how much you'd go through in a week, and anything else we should know."
+                placeholder="Which products you're interested in (cans, kegs), roughly how much you'd go through in a week, and anything else we should know."
                 data-testid="input-about"
               />
             </div>
