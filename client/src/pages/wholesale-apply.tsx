@@ -28,9 +28,10 @@ export default function WholesaleApply() {
     city: "",
     state: "WA",
     zipCode: "",
-    // Named for what it is, not "message" — it maps onto the delivery instructions we
-    // store per location once the account exists.
-    deliveryInstructions: "",
+    // The applicant's own words — what they'd like to carry, what the business is
+    // (owner, 2026-10-14; it used to ask for delivery instructions, which nobody
+    // has before they're a customer).
+    about: "",
     website: "", // honeypot — hidden from real users
   });
 
@@ -175,13 +176,14 @@ export default function WholesaleApply() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="deliveryInstructions">Additional delivery instructions</Label>
+              <Label htmlFor="about">Tell us about your business</Label>
               <Textarea
-                id="deliveryInstructions"
-                value={form.deliveryInstructions}
-                onChange={set("deliveryInstructions")}
-                rows={3}
-                data-testid="input-delivery-instructions"
+                id="about"
+                value={form.about}
+                onChange={set("about")}
+                rows={4}
+                placeholder="Which products you're interested in (bottles, cans, kegs), roughly how much you'd go through in a week, and anything else we should know."
+                data-testid="input-about"
               />
             </div>
 

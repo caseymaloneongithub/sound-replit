@@ -413,13 +413,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         city: z.string().min(1, "City is required"),
         state: z.string().min(1, "State is required"),
         zipCode: z.string().min(1, "ZIP code is required"),
+        // "Tell us about your business" (owner, 2026-10-14). The old field name is
+        // still accepted so a form loaded before the deploy submits fine.
+        about: z.string().optional(),
         deliveryInstructions: z.string().optional(),
       });
 
       const data = applicationSchema.parse(req.body);
+      const about = (data.about ?? data.deliveryInstructions ?? '').trim();
       // Only the free-text field is scored — a business NAME is not a pitch
       // ("Seo's Cafe" is a café; reviewer, 2026-09-15).
-      const verdict = spamScore(data.deliveryInstructions ?? '', { name: data.contactName, email: data.email, company: data.businessName });
+      const verdict = spamScore(about, { name: data.contactName, email: data.email, company: data.businessName });
       if (verdict.score >= SPAM_THRESHOLD) return pretendReceived(`score ${verdict.score}: ${verdict.reasons.join(', ')}`);
 
       // The leads table has no columns for most of the application specifics, so they're
@@ -427,8 +431,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const notes = [
         "— Wholesale application from the website —",
         `Address: ${data.address}, ${data.city}, ${data.state} ${data.zipCode}`,
-        // Copy these onto the location record when converting this lead to an account.
-        data.deliveryInstructions && `\nDelivery instructions:\n${data.deliveryInstructions}`,
+        about && `\nAbout the business:\n${about}`,
       ].filter(Boolean).join("\n");
 
       const lead = await storage.createLead({
