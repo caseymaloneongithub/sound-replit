@@ -536,7 +536,14 @@ export default function RetailSubscriptions() {
                                 Bills {format(new Date(subscription.nextChargeAt), 'MMM d')}
                               </span>
                             )}
-                            {subscription.status !== 'cancelled' && (subscription.retryCount > 0 || ['retrying', 'payment_failed', 'awaiting_auth'].includes(subscription.billingStatus)) && (
+                            {/* Still processing with Stripe: it settles on its own, and the
+                                server refuses a retry over it. */}
+                            {subscription.status !== 'cancelled' && subscription.billingStatus === 'awaiting_confirmation' && (
+                              <span className="flex items-center gap-1 text-muted-foreground font-medium" data-testid={`text-charge-pending-${subscription.id}`}>
+                                Payment pending with Stripe
+                              </span>
+                            )}
+                            {subscription.status !== 'cancelled' && subscription.billingStatus !== 'awaiting_confirmation' && (subscription.retryCount > 0 || ['retrying', 'payment_failed', 'awaiting_auth'].includes(subscription.billingStatus)) && (
                               <span className="flex items-center gap-1 text-destructive font-medium" data-testid={`text-charge-failed-${subscription.id}`}>
                                 Last charge failed{subscription.retryCount > 0 ? ` · attempt ${subscription.retryCount} of 3` : ''}
                               </span>
@@ -544,7 +551,7 @@ export default function RetailSubscriptions() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          {subscription.status !== 'cancelled' && (subscription.retryCount > 0 || ['retrying', 'payment_failed', 'awaiting_auth'].includes(subscription.billingStatus)) && (
+                          {subscription.status !== 'cancelled' && subscription.billingStatus !== 'awaiting_confirmation' && (subscription.retryCount > 0 || ['retrying', 'payment_failed', 'awaiting_auth'].includes(subscription.billingStatus)) && (
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button

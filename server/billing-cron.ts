@@ -648,11 +648,121 @@ async function processRetailSubscriptionBilling(subscription: any, items: any[])
 }
 
 /**
+ * Settle every earlier payment attempt on a subscription before a fresh charge
+ * (reviewer, 2026-10-15: "Staff Retry can charge a customer twice"). A staff
+ * retry mints a new idempotency key, so anything still open from the last
+ * attempt would be charged on top of: a PaymentIntent still `processing` with
+ * Stripe, one waiting on the customer's authentication, or one that succeeded
+ * while our reply was lost and that no webhook has finalized yet (staging has
+ * no webhooks at all). So, for every PaymentIntent of this subscription Stripe
+ * still knows about -- the last one recorded, plus any created for it in the
+ * last PRIOR_ATTEMPT_WINDOW_DAYS, because a lost reply records no id:
+ *   succeeded, no order yet   finalize it; that IS the charge, nothing new is made
+ *   processing / on hold      refuse; it settles on its own
+ *   open, not confirmed       cancel it, so it can never complete behind a new one
+ *   canceled, or booked       nothing open
+ * Any doubt -- Stripe unreachable, a cancel that didn't take -- refuses too: an
+ * unknown outcome is not a safe one to charge over.
+ */
+const PRIOR_ATTEMPT_WINDOW_DAYS = 30;
+
+type PriorAttempts =
+  | { outcome: 'clear' }
+  | { outcome: 'finalized'; paymentIntentId: string }
+  | { outcome: 'blocked'; message: string };
+
+const describeIntent = (pi: Stripe.PaymentIntent) =>
+  `$${(pi.amount / 100).toFixed(2)} payment from ${new Date(pi.created * 1000).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' })}`;
+
+async function settleOnePriorAttempt(pi: Stripe.PaymentIntent): Promise<PriorAttempts | null> {
+  switch (pi.status) {
+    case 'succeeded': {
+      const [order] = await db
+        .select({ id: retailOrders.id })
+        .from(retailOrders)
+        .where(eq(retailOrders.stripePaymentIntentId, pi.id))
+        .limit(1);
+      if (order) return null; // paid and booked: nothing open
+      console.warn(`[BILLING] ${pi.id} (${describeIntent(pi)}) succeeded but has no order — finalizing it instead of charging again`);
+      return (await finalizeRetailSubscriptionCharge(pi.id))
+        ? { outcome: 'finalized', paymentIntentId: pi.id }
+        : { outcome: 'blocked', message: `A ${describeIntent(pi)} already went through, but its order couldn't be created — see the server log before charging again.` };
+    }
+    case 'processing':
+    case 'requires_capture':
+      return {
+        outcome: 'blocked',
+        message: `A ${describeIntent(pi)} is still ${pi.status === 'processing' ? 'processing' : 'on hold'} with Stripe. It settles on its own; retry after it does, if it fails.`,
+      };
+    case 'requires_payment_method':
+    case 'requires_confirmation':
+    case 'requires_action': {
+      // No money has moved, and nothing in this app will ever confirm it — but
+      // Stripe would still take a confirmation. Cancel it so it can't.
+      try {
+        await stripe!.paymentIntents.cancel(pi.id);
+        console.log(`[BILLING] Canceled open ${pi.id} (${pi.status}, ${describeIntent(pi)}) ahead of a fresh charge`);
+        return null;
+      } catch (cancelError: any) {
+        // It moved on while we looked: where did it land?
+        const now = await stripe!.paymentIntents.retrieve(pi.id);
+        if (now.status === 'canceled') return null;
+        if (now.status === 'succeeded' || now.status === 'processing' || now.status === 'requires_capture') return settleOnePriorAttempt(now);
+        return { outcome: 'blocked', message: `An earlier ${describeIntent(pi)} is still open with Stripe (${now.status}) and couldn't be canceled: ${cancelError?.message ?? 'unknown error'}` };
+      }
+    }
+    default: // canceled
+      return null;
+  }
+}
+
+async function settlePriorAttempts(sub: { id: string; stripeCustomerId: string | null; lastPaymentIntentId: string | null }): Promise<PriorAttempts> {
+  if (!stripe) return { outcome: 'blocked', message: "Billing isn't configured" };
+  const candidates = new Map<string, Stripe.PaymentIntent>();
+  try {
+    if (sub.lastPaymentIntentId) {
+      try {
+        candidates.set(sub.lastPaymentIntentId, await stripe.paymentIntents.retrieve(sub.lastPaymentIntentId));
+      } catch (e: any) {
+        // An id these keys don't know (a live id on staging's test keys) can't be charged here either.
+        if (e?.code !== 'resource_missing') throw e;
+      }
+    }
+    if (sub.stripeCustomerId) {
+      const since = Math.floor(Date.now() / 1000) - PRIOR_ATTEMPT_WINDOW_DAYS * 86400;
+      const recent = await stripe.paymentIntents
+        .list({ customer: sub.stripeCustomerId, created: { gte: since }, limit: 100 })
+        .autoPagingToArray({ limit: 500 });
+      for (const pi of recent) candidates.set(pi.id, pi);
+    }
+  } catch (e: any) {
+    console.error(`[BILLING] Couldn't check ${sub.id}'s earlier payment attempts with Stripe:`, e?.message ?? e);
+    return { outcome: 'blocked', message: "Couldn't confirm with Stripe whether an earlier payment is still open — try again in a minute." };
+  }
+  // This subscription's only, oldest first: a charge that went through is
+  // finalized before a later stray attempt is canceled.
+  const ours = Array.from(candidates.values())
+    .filter((pi) => pi.metadata?.retailSubscriptionId === sub.id)
+    .sort((a, b) => a.created - b.created);
+  for (const pi of ours) {
+    try {
+      const settled = await settleOnePriorAttempt(pi);
+      if (settled) return settled;
+    } catch (e: any) {
+      console.error(`[BILLING] Couldn't settle ${pi.id} for ${sub.id}:`, e?.message ?? e);
+      return { outcome: 'blocked', message: `Couldn't settle an earlier ${describeIntent(pi)} with Stripe — try again in a minute.` };
+    }
+  }
+  return { outcome: 'clear' };
+}
+
+/**
  * Customer-initiated immediate retry after a failed payment ("I fixed my card,
  * charge it now"). Safe against double-charges: the idempotency key derives from
  * nextChargeAt, which this does not change, so re-presenting the same billing
  * period returns the original PaymentIntent. retryCount is deliberately kept —
- * repeated failed retries still march toward the pause.
+ * repeated failed retries still march toward the pause. Before either path
+ * charges, settlePriorAttempts() settles whatever the last attempt left open.
  */
 export async function chargeSubscriptionNow(subscriptionId: string, options: { byStaff?: boolean } = {}): Promise<{ ok: boolean; message: string }> {
   if (!stripe) return { ok: false, message: "Billing isn't configured" };
@@ -672,7 +782,27 @@ export async function chargeSubscriptionNow(subscriptionId: string, options: { b
     .where(and(eq(retailSubscriptions.id, subscriptionId), eq(retailSubscriptions.processingLock, false)))
     .returning({ id: retailSubscriptions.id });
   if (lock.length === 0) return { ok: false, message: 'A payment attempt is already in progress — check back in a minute' };
+  const who = options.byStaff ? 'Staff' : 'Customer';
   try {
+    // The row as it is now that this attempt holds the lock: a webhook may have
+    // recorded a payment intent since the read above.
+    const [locked] = await db.select().from(retailSubscriptions).where(eq(retailSubscriptions.id, subscriptionId));
+    const current = locked ?? sub;
+    // Nothing fresh starts over an earlier attempt that is still open.
+    const prior = await settlePriorAttempts(current);
+    if (prior.outcome === 'finalized') {
+      console.log(`[BILLING] ${who}-initiated retry for ${subscriptionId}: ${prior.paymentIntentId} had already succeeded — finalized it, nothing new charged`);
+      return {
+        ok: true,
+        message: options.byStaff
+          ? 'The earlier charge had already gone through — its order is created and the schedule moved on. Nothing new was charged.'
+          : 'That payment had already gone through — your next case is on the schedule.',
+      };
+    }
+    if (prior.outcome === 'blocked') {
+      console.warn(`[BILLING] ${who}-initiated retry for ${subscriptionId} refused: ${prior.message}`);
+      return { ok: false, message: prior.message };
+    }
     // Back to active so the charge and its bookkeeping run the normal path.
     await db.update(retailSubscriptions)
       .set({ status: 'active', billingStatus: 'active' })
@@ -692,13 +822,13 @@ export async function chargeSubscriptionNow(subscriptionId: string, options: { b
       .leftJoin(retailProducts, eq(retailSubscriptionItems.retailProductId, retailProducts.id))
       .where(eq(retailSubscriptionItems.subscriptionId, subscriptionId));
     if (items.length === 0) return { ok: false, message: 'This subscription has no items' };
-    console.log(`[BILLING] ${options.byStaff ? 'Staff' : 'Customer'}-initiated retry for ${subscriptionId}`);
+    console.log(`[BILLING] ${who}-initiated retry for ${subscriptionId}`);
     // Staff asked for a NEW attempt: re-key it. The last attempt's key carries
     // Stripe's refusal (a detached card, a decline), and re-presenting it replays
-    // that refusal even after the customer saved a new card. Safe: a lost reply
-    // to a charge that actually succeeded is finalized by the
-    // payment_intent.succeeded webhook long before anyone reaches for this.
-    const attempt = options.byStaff ? { ...sub, nextChargeAt: new Date() } : sub;
+    // that refusal even after the customer saved a new card. A new key can't
+    // double an open attempt: settlePriorAttempts above finalized or canceled
+    // every earlier one, or refused to get this far.
+    const attempt = options.byStaff ? { ...current, nextChargeAt: new Date() } : current;
     if (options.byStaff) {
       await db.update(retailSubscriptions)
         .set({ nextChargeAt: attempt.nextChargeAt })
