@@ -20,10 +20,13 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Loader2, Plus } from "lucide-react";
 import type { Flavor } from "@shared/schema";
+import { lineDraw } from "@shared/material-waste";
 
 type BomLine = {
   id: string; materialId: string; units: string;
   materialTitle: string; materialUnit: string; materialCost: string;
+  // The material's waste rate, a percentage on top of `units` (shared/material-waste.ts).
+  materialWasteRate: string;
 };
 type Recipe = {
   id: string; title: string; unit: string; standardBatch: string;
@@ -216,7 +219,8 @@ function BomEditor({ recipe, materials, onClose }: {
   return (
     <div className="space-y-4 py-2">
       <p className="text-xs text-muted-foreground">
-        Quantities are per <strong>1 {recipe.unit}</strong> produced. Changes affect future
+        Quantities are per <strong>1 {recipe.unit}</strong> produced, before waste: a material's
+        waste rate (set on the Materials page) goes on top when a batch is logged. Changes affect future
         batches only — stock already drawn by past productions is not adjusted.
       </p>
 
@@ -240,7 +244,9 @@ function BomEditor({ recipe, materials, onClose }: {
             <TableRow key={m.id} data-testid={`row-bom-${m.id}`}>
               <TableCell className="text-sm">
                 {shortMaterial(m.materialTitle)}{" "}
-                <span className="text-xs text-muted-foreground">({m.materialUnit})</span>
+                <span className="text-xs text-muted-foreground">
+                  ({m.materialUnit}){n(m.materialWasteRate) > 0 ? ` +${n(m.materialWasteRate)}% waste` : ""}
+                </span>
               </TableCell>
               <TableCell className="text-right">
                 <Input
@@ -338,8 +344,9 @@ export default function Recipes() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // Each line's draw carries its material's waste, as a logged batch's does.
   const batchCost = (r: Recipe) =>
-    r.materials.reduce((sum, m) => sum + n(m.units) * n(m.materialCost), 0);
+    r.materials.reduce((sum, m) => sum + lineDraw(m.units, m.materialWasteRate) * n(m.materialCost), 0);
 
   // A recipe for a switched-off flavor sits with the inactive ones (owner, 2026-09-23).
   const isShown = (r: Recipe) => r.isActive && !r.flavorRetired;
@@ -430,9 +437,14 @@ export default function Recipes() {
                             <TableCell className="text-sm">{shortMaterial(m.materialTitle)}</TableCell>
                             <TableCell className="text-right tabular-nums text-sm">
                               {n(m.units).toLocaleString()} <span className="text-muted-foreground text-xs">{m.materialUnit}</span>
+                              {n(m.materialWasteRate) > 0 && (
+                                <div className="text-xs text-muted-foreground" data-testid={`text-bom-waste-${m.id}`}>
+                                  {lineDraw(m.units, m.materialWasteRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} with {n(m.materialWasteRate)}% waste
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell className="text-right tabular-nums text-sm">
-                              {money(n(m.units) * n(m.materialCost))}
+                              {money(lineDraw(m.units, m.materialWasteRate) * n(m.materialCost))}
                             </TableCell>
                           </TableRow>
                         ))}

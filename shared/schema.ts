@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, integer, decimal, timestamp, date, boolean, index, jsonb, unique, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { MAX_WASTE_RATE } from "./material-waste";
 
 // Session storage table (managed by connect-pg-simple)
 // Note: connect-pg-simple creates and manages this table automatically
@@ -1156,6 +1157,11 @@ export const materials = pgTable("materials", {
   title: text("title").notNull(),
   unit: text("unit").notNull(), // e.g. 'lb', 'gal', 'each'
   cost: decimal("cost", { precision: 12, scale: 4 }).notNull().default('0'), // cost per unit
+  // Waste on top of what recipes call for, as a percentage (owner, 2026-10-15: "if I
+  // say 2% of cans are wasted, then the inventories and costs reflect that 2%
+  // additional usage"). Applied wherever a recipe line becomes a quantity, by the one
+  // multiplier in shared/material-waste.ts.
+  wasteRate: decimal("waste_rate", { precision: 6, scale: 3 }).notNull().default('0'),
   supplierId: varchar("supplier_id").references(() => suppliers.id),
   orderSize: decimal("order_size", { precision: 14, scale: 4 }).notNull().default('0'), // default reorder quantity
   stock: decimal("stock", { precision: 14, scale: 4 }).notNull().default('0'), // current on-hand
@@ -1256,7 +1262,13 @@ export const orderMaterials = pgTable("order_materials", {
 
 // Insert schemas - MATERIALS INVENTORY MODULE
 export const insertSupplierSchema = createInsertSchema(suppliers).omit({ id: true, createdAt: true, deletedAt: true });
-export const insertMaterialSchema = createInsertSchema(materials).omit({ id: true, createdAt: true, deletedAt: true, watchAlertedAt: true, reorderAlertedAt: true });
+export const insertMaterialSchema = createInsertSchema(materials, {
+  // A percentage from 0 to 100 (a decimal column arrives as a string).
+  wasteRate: (schema) => schema.refine(
+    (v) => { const pct = Number(v); return Number.isFinite(pct) && pct >= 0 && pct <= MAX_WASTE_RATE; },
+    { message: `Waste rate must be between 0 and ${MAX_WASTE_RATE} percent` },
+  ),
+}).omit({ id: true, createdAt: true, deletedAt: true, watchAlertedAt: true, reorderAlertedAt: true });
 export const insertProcessSchema = createInsertSchema(processes).omit({ id: true, createdAt: true, deletedAt: true });
 export const insertProcessMaterialSchema = createInsertSchema(processMaterials).omit({ id: true });
 export const insertProductionSchema = createInsertSchema(productions).omit({ id: true, createdAt: true });

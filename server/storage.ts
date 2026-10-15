@@ -111,6 +111,7 @@ import {
   type OnOrder,
   type OrderCoverageKey,
 } from "@shared/material-health";
+import { wasteMultiplier } from "@shared/material-waste";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import session from "express-session";
@@ -1051,7 +1052,7 @@ export class PostgresStorage implements IStorage {
     flavorName: string | null;
     finishedProductName: string | null;
     flavorRetired: boolean;
-    materials: { id: string; materialId: string; units: string; materialTitle: string; materialUnit: string; materialCost: string }[];
+    materials: { id: string; materialId: string; units: string; materialTitle: string; materialUnit: string; materialCost: string; materialWasteRate: string }[];
   })[]> {
     const procRows = await db
       .select({
@@ -1081,6 +1082,7 @@ export class PostgresStorage implements IStorage {
         materialTitle: materials.title,
         materialUnit: materials.unit,
         materialCost: materials.cost,
+        materialWasteRate: materials.wasteRate,
       })
       .from(processMaterials)
       .innerJoin(materials, eq(processMaterials.materialId, materials.id));
@@ -1099,6 +1101,7 @@ export class PostgresStorage implements IStorage {
           materialTitle: b.materialTitle,
           materialUnit: b.materialUnit,
           materialCost: b.materialCost,
+          materialWasteRate: b.materialWasteRate,
         })),
     }));
   }
@@ -1171,10 +1174,13 @@ export class PostgresStorage implements IStorage {
 
       // Snapshot consumption from the recipe AS IT IS NOW â€” this is the record of truth
       // for reversal, so later recipe edits can't change what this batch "used".
+      // Each line is drawn with its material's waste rate on top (shared/material-waste.ts):
+      // 2% waste on cans means the batch uses 2% more cans than the recipe line says.
       await tx.execute(sql`
         INSERT INTO production_material_usage (production_id, material_id, units_consumed)
-        SELECT ${created.id}, pm.material_id, (${String(created.units)}::numeric * pm.units)
+        SELECT ${created.id}, pm.material_id, (${String(created.units)}::numeric * pm.units * (1 + m.waste_rate / 100))
         FROM process_materials pm
+        JOIN materials m ON m.id = pm.material_id
         WHERE pm.process_id = ${created.processId} AND pm.units > 0
       `);
 
@@ -1226,6 +1232,7 @@ export class PostgresStorage implements IStorage {
           WHERE u.production_id = ${id} AND u.material_id = m.id
         `);
       } else {
+        // No waste rate here: a batch this old was drawn before waste rates existed.
         console.warn(`[INVENTORY] Production ${id} predates usage snapshots â€” restoring from the CURRENT recipe (may differ from what was consumed if the recipe changed).`);
         await tx.execute(sql`
           UPDATE materials m
@@ -1407,7 +1414,9 @@ export class PostgresStorage implements IStorage {
    * shared/material-health.ts): only the time since its first recorded use,
    * with the last 30 days weighted most. Consumption per batch is the batch's
    * recorded consumption (production_material_usage, kept since 2026-08-31) or,
-   * for batches logged before that, its recipe times the units produced.
+   * for batches logged before that, its recipe times the units produced. A
+   * material's waste rate is already in the recorded consumption; the fallback
+   * batches were drawn before waste rates existed, so none is added there.
    */
   async getMaterialUsageRates(): Promise<Map<string, number>> {
     const DAY = 24 * 60 * 60 * 1000;
@@ -1554,12 +1563,14 @@ export class PostgresStorage implements IStorage {
       .leftJoin(flavors, eq(processes.flavorId, flavors.id))
       .where(gte(productions.date, cutoff));
 
-    // Per-unit material cost for each recipe
+    // Per-unit material cost for each recipe, each line with its material's waste
+    // on top (shared/material-waste.ts), as a logged batch draws it.
     const bom = await db
       .select({
         processId: processMaterials.processId,
         units: processMaterials.units,
         cost: materials.cost,
+        wasteRate: materials.wasteRate,
       })
       .from(processMaterials)
       .innerJoin(materials, eq(processMaterials.materialId, materials.id));
@@ -1568,7 +1579,7 @@ export class PostgresStorage implements IStorage {
     for (const b of bom) {
       costPerUnit.set(
         b.processId,
-        (costPerUnit.get(b.processId) ?? 0) + Number(b.units) * Number(b.cost)
+        (costPerUnit.get(b.processId) ?? 0) + Number(b.units) * wasteMultiplier(b.wasteRate) * Number(b.cost)
       );
     }
 
@@ -1626,6 +1637,7 @@ export class PostgresStorage implements IStorage {
         materialUnit: materials.unit,
         stock: materials.stock,
         perUnit: processMaterials.units,
+        wasteRate: materials.wasteRate,
       })
       .from(processes)
       .leftJoin(processMaterials, eq(processMaterials.processId, processes.id))
@@ -1654,7 +1666,8 @@ export class PostgresStorage implements IStorage {
         .filter(g => g.materialId && Number(g.perUnit) > 0)
         .map(g => {
           const stock = Math.max(0, Number(g.stock)); // negative drift can't produce anything
-          const perUnit = Number(g.perUnit);
+          // What one unit of output really draws: the recipe line plus the material's waste.
+          const perUnit = Number(g.perUnit) * wasteMultiplier(g.wasteRate);
           return {
             materialId: g.materialId!,
             title: g.materialTitle!,

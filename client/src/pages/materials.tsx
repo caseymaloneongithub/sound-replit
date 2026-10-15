@@ -31,6 +31,7 @@ import {
   type OrderCoverageKey,
 } from "@shared/material-health";
 import { CoverageTag, OnOrderLine } from "@/components/staff/on-order";
+import { MAX_WASTE_RATE } from "@shared/material-waste";
 
 type EnrichedMaterial = Material & {
   supplierName: string | null;
@@ -90,6 +91,7 @@ function MaterialForm({
   const [title, setTitle] = useState(material?.title ?? "");
   const [unit, setUnit] = useState(material?.unit ?? "");
   const [cost, setCost] = useState(material ? String(n(material.cost)) : "0");
+  const [wasteRate, setWasteRate] = useState(material ? String(n(material.wasteRate)) : "0");
   const [stock, setStock] = useState(material ? String(n(material.stock)) : "0");
   const [orderSize, setOrderSize] = useState(material ? String(n(material.orderSize)) : "0");
   const [supplierId, setSupplierId] = useState<string>(material?.supplierId ?? "none");
@@ -104,6 +106,7 @@ function MaterialForm({
         title,
         unit,
         cost: String(n(cost)),
+        wasteRate: String(n(wasteRate)),
         orderSize: String(n(orderSize)),
         supplierId: supplierId === "none" ? null : supplierId,
         isActive,
@@ -122,7 +125,8 @@ function MaterialForm({
       toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const canSave = title.trim().length > 0 && unit.trim().length > 0;
+  const wasteOk = n(wasteRate) >= 0 && n(wasteRate) <= MAX_WASTE_RATE;
+  const canSave = title.trim().length > 0 && unit.trim().length > 0 && wasteOk;
 
   return (
     <div className="space-y-4 py-2">
@@ -170,6 +174,16 @@ function MaterialForm({
             onChange={(e) => setCost(e.target.value)} data-testid="input-material-cost" />
         </div>
         <div className="space-y-2">
+          <label className="text-sm font-medium">Waste %</label>
+          <Input type="number" step="0.1" min="0" max={MAX_WASTE_RATE} value={wasteRate}
+            onChange={(e) => setWasteRate(e.target.value)} data-testid="input-material-waste" />
+          <p className={`text-xs ${wasteOk ? "text-muted-foreground" : "text-destructive"}`}>
+            {wasteOk
+              ? "Extra draw on every batch: at 2%, a recipe line of 100 uses 102, in stock and in cost."
+              : `Enter a percentage from 0 to ${MAX_WASTE_RATE}.`}
+          </p>
+        </div>
+        <div className="space-y-2">
           <label className="text-sm font-medium">{isEdit ? "On hand" : "Opening stock"}</label>
           {isEdit ? (
             <div className="h-10 flex items-center text-sm tabular-nums" title="Use Record count to change stock">
@@ -181,7 +195,8 @@ function MaterialForm({
           )}
           {isEdit && <p className="text-xs text-muted-foreground">Change stock with Record count, so the change is logged.</p>}
         </div>
-        <div className="space-y-2">
+      </div>
+      <div className="space-y-2">
           <label className="text-sm font-medium">Reorder size</label>
           <Input type="number" step="0.0001" min="0" value={orderSize}
             onChange={(e) => setOrderSize(e.target.value)} data-testid="input-material-ordersize" />
@@ -190,7 +205,6 @@ function MaterialForm({
             or, as a failsafe, when it's down to {Math.round(ORDER_NOW_SHARE_OF_REORDER * 100)}% of this. Watch is within {WATCH_MULTIPLIER} times
             the lead-time level. Admins are emailed when it drops to each.
           </p>
-        </div>
       </div>
       {isEdit && (
         <div className="flex items-center justify-between rounded-md border p-3">
@@ -480,7 +494,14 @@ export default function Materials() {
                       <TableCell className="text-right tabular-nums text-muted-foreground">
                         {n(m.orderSize).toLocaleString()}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{money(n(m.cost))}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {money(n(m.cost))}
+                        {n(m.wasteRate) > 0 && (
+                          <div className="text-xs text-muted-foreground" data-testid={`text-waste-${m.id}`}>
+                            +{n(m.wasteRate)}% waste
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums font-medium">
                         {money(n(m.stock) * n(m.cost))}
                       </TableCell>

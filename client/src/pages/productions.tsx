@@ -18,6 +18,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Loader2, Plus } from "lucide-react";
+import { lineDraw } from "@shared/material-waste";
 
 type Recipe = {
   id: string; title: string; unit: string; flavorName: string | null;
@@ -25,7 +26,8 @@ type Recipe = {
   isActive: boolean;
   // Its flavor is switched off on the Flavors page (owner, 2026-09-23).
   flavorRetired?: boolean;
-  materials: { units: string; materialCost: string }[];
+  // Each line's draw carries its material's waste rate (shared/material-waste.ts).
+  materials: { units: string; materialCost: string; materialWasteRate: string }[];
 };
 type Production = {
   id: string; processId: string; units: string; date: string;
@@ -60,7 +62,7 @@ function LogProductionForm({ recipes, onClose }: { recipes: Recipe[]; onClose: (
 
   const recipe = recipes.find((r) => r.id === processId);
   const costPerUnit = recipe
-    ? recipe.materials.reduce((s, m) => s + n(m.units) * n(m.materialCost), 0)
+    ? recipe.materials.reduce((s, m) => s + lineDraw(m.units, m.materialWasteRate) * n(m.materialCost), 0)
     : 0;
 
   const save = useMutation({
@@ -182,7 +184,7 @@ export default function Productions() {
   const costPerUnitByProcess = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of recipes) {
-      map.set(r.id, r.materials.reduce((s, m) => s + n(m.units) * n(m.materialCost), 0));
+      map.set(r.id, r.materials.reduce((s, m) => s + lineDraw(m.units, m.materialWasteRate) * n(m.materialCost), 0));
     }
     return map;
   }, [recipes]);
