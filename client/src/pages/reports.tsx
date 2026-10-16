@@ -4,7 +4,7 @@ import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { WholesaleOrder, RetailSubscription } from "@shared/schema";
+import type { WholesaleOrder, RetailSubscription, WholesaleCustomer } from "@shared/schema";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useAuth } from "@/hooks/use-auth";
 
@@ -17,6 +17,9 @@ export default function Reports() {
 
   const { data: subscriptions } = useQuery<RetailSubscription[]>({
     queryKey: ["/api/retail/subscriptions"],
+  });
+  const { data: customers } = useQuery<WholesaleCustomer[]>({
+    queryKey: ["/api/wholesale/customers"],
   });
 
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -31,12 +34,42 @@ export default function Reports() {
     return orderDate >= monthAgo;
   }).length || 0;
 
-  const orderStatusData = [
-    { name: 'Pending', value: orders?.filter(o => o.status === 'pending').length || 0, color: '#94a3b8' },
-    { name: 'Processing', value: orders?.filter(o => o.status === 'processing').length || 0, color: '#60a5fa' },
-    { name: 'Shipped', value: orders?.filter(o => o.status === 'shipped').length || 0, color: '#34d399' },
-    { name: 'Delivered', value: orders?.filter(o => o.status === 'delivered').length || 0, color: '#10b981' },
+  // Orders by customer (owner, 2026-10-16: "replace this with orders by customers.
+  // group anyone under 1% into other"). Every wholesale order that wasn't cancelled,
+  // all time, counted against its customer; customers under 1% of the total pool
+  // into one Other slice.
+  const OTHER_BELOW_SHARE = 0.01;
+  const CUSTOMER_COLORS = [
+    '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6', '#f97316', '#6366f1',
+    '#84cc16', '#ec4899', '#06b6d4', '#a855f7', '#eab308', '#22c55e', '#0ea5e9', '#d946ef',
   ];
+  type CustomerSlice = { key: string; name: string; value: number; share: string; color: string };
+  const customerSlices: CustomerSlice[] = (() => {
+    const counted = (orders ?? []).filter(o => o.status !== 'cancelled');
+    const total = counted.length;
+    if (total === 0) return [];
+    const byCustomer = new Map<string, number>();
+    for (const o of counted) byCustomer.set(o.customerId, (byCustomer.get(o.customerId) ?? 0) + 1);
+    const named = Array.from(byCustomer.entries())
+      .map(([id, value]) => ({ key: id, name: customers?.find(c => c.id === id)?.businessName ?? 'Unknown customer', value }))
+      .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+    const share = (value: number) => (100 * value / total).toFixed(1);
+    const slices: CustomerSlice[] = named
+      .filter(c => c.value / total >= OTHER_BELOW_SHARE)
+      .map((c, i) => ({ ...c, share: share(c.value), color: CUSTOMER_COLORS[i % CUSTOMER_COLORS.length] }));
+    const small = named.filter(c => c.value / total < OTHER_BELOW_SHARE);
+    if (small.length > 0) {
+      const value = small.reduce((s, c) => s + c.value, 0);
+      slices.push({
+        key: 'other',
+        name: `Other (${small.length} ${small.length === 1 ? 'customer' : 'customers'})`,
+        value,
+        share: share(value),
+        color: '#94a3b8',
+      });
+    }
+    return slices;
+  })();
 
   // Trend granularity (owner, 2026-09-09): weekly by default — with under two
   // months of history, monthly buckets were two lonely bars — monthly a toggle away.
@@ -216,31 +249,51 @@ export default function Reports() {
         </Card>
       )}
 
-      <Card data-testid="card-order-status-chart">
+      <Card data-testid="card-orders-by-customer">
         <CardHeader>
-          <CardTitle>Order Status Distribution</CardTitle>
-          <CardDescription>Current wholesale order pipeline</CardDescription>
+          <CardTitle>Orders by Customer</CardTitle>
+          <CardDescription>Share of all wholesale orders — customers under 1% are grouped as Other</CardDescription>
         </CardHeader>
         <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={orderStatusData.filter(d => d.value > 0)}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                outerRadius={100}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {orderStatusData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
+          {customerSlices.length === 0 ? (
+            <p className="text-muted-foreground text-sm py-12 text-center">No wholesale orders yet.</p>
+          ) : (
+            <div className="grid gap-6 md:grid-cols-2 items-center">
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={customerSlices}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    // Only slices big enough to carry a label get one; the list names the rest.
+                    label={(p: any) => (p.percent >= 0.05 ? `${p.name} ${Math.round(p.percent * 100)}%` : null)}
+                    outerRadius={100}
+                    dataKey="value"
+                    nameKey="name"
+                  >
+                    {customerSlices.map((s) => (
+                      <Cell key={s.key} fill={s.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(v: number, name: string) => [`${v} ${v === 1 ? 'order' : 'orders'}`, name]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <ul className="space-y-0.5 text-sm max-h-72 overflow-y-auto pr-1" data-testid="list-orders-by-customer">
+                {customerSlices.map((s) => (
+                  <li key={s.key} className="flex items-center justify-between gap-3 py-1" data-testid={`row-customer-share-${s.key}`}>
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: s.color }} />
+                      <span className="truncate">{s.name}</span>
+                    </span>
+                    <span className="tabular-nums text-muted-foreground whitespace-nowrap">
+                      {s.value} {s.value === 1 ? 'order' : 'orders'} · {s.share}%
+                    </span>
+                  </li>
                 ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
+              </ul>
+            </div>
+          )}
         </CardContent>
       </Card>
 
