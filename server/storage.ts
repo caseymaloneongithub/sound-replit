@@ -1636,8 +1636,14 @@ export class PostgresStorage implements IStorage {
         materialTitle: materials.title,
         materialUnit: materials.unit,
         stock: materials.stock,
-        perUnit: processMaterials.units,
-        wasteRate: materials.wasteRate,
+        // What one unit of output really draws (the recipe line plus the material's
+        // waste) and how many whole units the stock covers, both in exact numeric
+        // SQL, the arithmetic the deduction itself uses. In JS, 12 x 1.05 is
+        // 12.600000000000001, and 126 caps floored to 9 cases instead of 10
+        // (review, 2026-10-16).
+        perUnit: sql<string>`(${processMaterials.units} * (1 + ${materials.wasteRate} / 100))`,
+        maxFromThis: sql<number | null>`CASE WHEN ${processMaterials.units} > 0
+          THEN floor(greatest(${materials.stock}, 0) / (${processMaterials.units} * (1 + ${materials.wasteRate} / 100)))::float8 END`,
       })
       .from(processes)
       .leftJoin(processMaterials, eq(processMaterials.processId, processes.id))
@@ -1666,15 +1672,13 @@ export class PostgresStorage implements IStorage {
         .filter(g => g.materialId && Number(g.perUnit) > 0)
         .map(g => {
           const stock = Math.max(0, Number(g.stock)); // negative drift can't produce anything
-          // What one unit of output really draws: the recipe line plus the material's waste.
-          const perUnit = Number(g.perUnit) * wasteMultiplier(g.wasteRate);
           return {
             materialId: g.materialId!,
             title: g.materialTitle!,
             unit: g.materialUnit!,
             stock,
-            perUnit,
-            maxFromThis: Math.floor(stock / perUnit),
+            perUnit: Number(g.perUnit),
+            maxFromThis: Number(g.maxFromThis ?? 0),
           };
         })
         .sort((a, b) => a.maxFromThis - b.maxFromThis);
