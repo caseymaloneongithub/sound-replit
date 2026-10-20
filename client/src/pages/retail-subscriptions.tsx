@@ -15,6 +15,7 @@ import { Loader2, Plus, Edit, Trash2, SkipForward } from "lucide-react";
 import { apiRequest, apiErrorMessage, queryClient } from "@/lib/queryClient";
 import { flavorOptionLabel } from "@/lib/flavor-display";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -87,6 +88,10 @@ type SubscriptionFormData = z.infer<typeof subscriptionSchema>;
 
 export default function RetailSubscriptions() {
   const { toast } = useToast();
+  // "Retry charge" is admin-only on the server; staff still see that a charge
+  // failed, just not a button that could only fail (owner, 2026-10-20).
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const [activeTab, setActiveTab] = useState('active');
   const [searchQuery, setSearchQuery] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -551,7 +556,7 @@ export default function RetailSubscriptions() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          {subscription.status !== 'cancelled' && subscription.billingStatus !== 'awaiting_confirmation' && (subscription.retryCount > 0 || ['retrying', 'payment_failed', 'awaiting_auth'].includes(subscription.billingStatus)) && (
+                          {isAdmin && subscription.status !== 'cancelled' && subscription.billingStatus !== 'awaiting_confirmation' && (subscription.retryCount > 0 || ['retrying', 'payment_failed', 'awaiting_auth'].includes(subscription.billingStatus)) && (
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button

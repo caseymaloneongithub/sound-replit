@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2, MoreHorizontal } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 
 interface RetailCustomer {
   id: string;
@@ -64,6 +65,11 @@ export default function RetailCustomers() {
     },
   });
 
+  // The bulk welcome send and the CSV import are admin-only on the server; staff
+  // keep adding customers and sending one welcome at a time (owner, 2026-10-20).
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+
   // The migration send: dry-run first, confirm with real numbers, then commit.
   const [sendAllPreview, setSendAllPreview] = useState<{ total: number; regulars: number; subscribers: string[]; emailsEnabled: boolean } | null>(null);
   const sendAllDryRun = useMutation({
@@ -104,10 +110,14 @@ export default function RetailCustomers() {
             <p className="text-muted-foreground">Add customers, import from Shopify, start orders</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => sendAllDryRun.mutate()} disabled={sendAllDryRun.isPending} data-testid="button-send-all-welcomes">
-              {sendAllDryRun.isPending ? "Checking…" : "Email everyone unsent"}
-            </Button>
-            <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="button-import-customers">Import CSV</Button>
+            {isAdmin && (
+              <Button variant="outline" onClick={() => sendAllDryRun.mutate()} disabled={sendAllDryRun.isPending} data-testid="button-send-all-welcomes">
+                {sendAllDryRun.isPending ? "Checking…" : "Email everyone unsent"}
+              </Button>
+            )}
+            {isAdmin && (
+              <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="button-import-customers">Import CSV</Button>
+            )}
             <Button onClick={() => setAddOpen(true)} data-testid="button-add-retail-customer">Add customer</Button>
           </div>
         </div>

@@ -91,7 +91,10 @@ export default function WholesaleOrders() {
   // Each tab's dollar total is revenue, which is admin-and-up (owner, 2026-09-30:
   // "Hide 1 and 2 for staff"); staff keep the order count and each order's own total.
   const { user } = useAuth();
-  const showsRevenue = user?.role === 'admin' || user?.role === 'super_admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const showsRevenue = isAdmin;
+  // Deleting an order is admin-only on the server (DELETE /api/wholesale/orders/:id),
+  // so staff don't see a Delete button that could only fail (owner, 2026-10-20).
 
   const { data: ordersData, isLoading } = useQuery<{ orders: (WholesaleOrder & { locationName?: string | null; locationEmail?: string | null; locationContactName?: string | null; locationContactPhone?: string | null })[]; total: number }>({
     queryKey: ["/api/wholesale/orders"],
@@ -758,6 +761,7 @@ export default function WholesaleOrders() {
                           >
                             <FileText className="w-4 h-4" />
                           </Button>
+                          {isAdmin && (
                           <AlertDialog>
                             <AlertDialogTrigger asChild>
                               <Button
@@ -791,6 +795,7 @@ export default function WholesaleOrders() {
                               </AlertDialogFooter>
                             </AlertDialogContent>
                           </AlertDialog>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1232,7 +1237,7 @@ export default function WholesaleOrders() {
             </div>
           )}
 
-          {!isEditMode && (
+          {!isEditMode && isAdmin && (
             <div className="flex justify-start pt-2 border-t">
               <AlertDialog>
                 <AlertDialogTrigger asChild>

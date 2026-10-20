@@ -144,9 +144,12 @@ function Router() {
       <StaffProtectedRoute path="/retail/orders" component={RetailOrders} />
       <StaffProtectedRoute path="/retail/subscriptions" component={RetailSubscriptions} />
       <StaffProtectedRoute path="/retail/customers" component={RetailCustomers} />
-      <StaffProtectedRoute path="/admin/flavors" component={AdminFlavors} />
-      <StaffProtectedRoute path="/admin/retail-products" component={AdminRetailProducts} />
-      <StaffProtectedRoute path="/admin/wholesale-units" component={AdminWholesaleUnits} />
+      {/* Catalog admin: every save on these pages is admin-only on the server and the
+          sidebar already hides them from staff, so the pages are admin-only too
+          (owner, 2026-10-20: no buttons staff can't use). */}
+      <AdminProtectedRoute path="/admin/flavors" component={AdminFlavors} />
+      <AdminProtectedRoute path="/admin/retail-products" component={AdminRetailProducts} />
+      <AdminProtectedRoute path="/admin/wholesale-units" component={AdminWholesaleUnits} />
       <AdminProtectedRoute path="/admin/shipping" component={AdminShipping} />
       {/* Money pages are admin-and-up (like their APIs): a staff deep-link bounces to
           the orders board instead of rendering a shell of 403s. */}

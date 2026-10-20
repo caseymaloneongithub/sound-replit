@@ -34,7 +34,12 @@ export default function WholesaleCustomers() {
   const [locationDialogOpen, setLocationDialogOpen] = useState(false);
   const [pricingDialogOpen, setPricingDialogOpen] = useState(false);
   const { user: currentUser } = useAuth();
-  const canEditPricing = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+  // Creating, editing, deleting and importing customers, the email template and
+  // pricing changes are all admin-only on the server; staff get the customer list,
+  // contacts, locations and a read-only look at pricing, and no buttons that could
+  // only fail (owner, 2026-10-20).
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+  const canEditPricing = isAdmin;
   const [editingLocation, setEditingLocation] = useState<WholesaleLocation | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<WholesaleCustomer | null>(null);
   const [newEmail, setNewEmail] = useState("");
@@ -501,12 +506,14 @@ export default function WholesaleCustomers() {
           </div>
           <div className="flex gap-2">
             <Dialog open={templateDialogOpen} onOpenChange={setTemplateDialogOpen}>
+              {isAdmin && (
               <DialogTrigger asChild>
                 <Button variant="outline" data-testid="button-email-template">
                   <FileDown className="w-4 h-4 mr-2" />
                   Email Template
                 </Button>
               </DialogTrigger>
+              )}
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Email CSV Template</DialogTitle>
@@ -564,12 +571,14 @@ export default function WholesaleCustomers() {
                 setImportErrors([]);
               }
             }}>
+              {isAdmin && (
               <DialogTrigger asChild>
                 <Button variant="outline" data-testid="button-import-csv">
                   <Upload className="w-4 h-4 mr-2" />
                   Import CSV
                 </Button>
               </DialogTrigger>
+              )}
               <DialogContent className="sm:max-w-[550px]">
                 <DialogHeader>
                   <DialogTitle>Import Wholesale Customers</DialogTitle>
@@ -657,10 +666,12 @@ export default function WholesaleCustomers() {
               </DialogContent>
             </Dialog>
 
+            {isAdmin && (
             <Button onClick={handleAddNewCustomer} data-testid="button-add-customer">
               <Plus className="w-4 h-4 mr-2" />
               Add Customer
             </Button>
+            )}
 
             <Dialog open={dialogOpen} onOpenChange={(open) => {
               setDialogOpen(open);
@@ -880,7 +891,7 @@ export default function WholesaleCustomers() {
                                   onCheckedChange={(checked) => {
                                     togglePaymentMutation.mutate({ id: customer.id, allowOnlinePayment: checked });
                                   }}
-                                  disabled={togglePaymentMutation.isPending}
+                                  disabled={!isAdmin || togglePaymentMutation.isPending}
                                   data-testid={`switch-payment-${customer.id}`}
                                 />
                               </TableCell>
@@ -891,7 +902,7 @@ export default function WholesaleCustomers() {
                                   onCheckedChange={(checked) => {
                                     togglePaymentMutation.mutate({ id: customer.id, allowCardPayment: checked });
                                   }}
-                                  disabled={togglePaymentMutation.isPending}
+                                  disabled={!isAdmin || togglePaymentMutation.isPending}
                                   data-testid={`switch-card-${customer.id}`}
                                 />
                               </TableCell>
@@ -903,6 +914,7 @@ export default function WholesaleCustomers() {
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
+                                    {isAdmin && (
                                     <DropdownMenuItem
                                       onClick={() => handleEditCustomer(customer)}
                                       data-testid={`button-edit-customer-${customer.id}`}
@@ -910,6 +922,7 @@ export default function WholesaleCustomers() {
                                       <Edit className="w-4 h-4 mr-2" />
                                       Edit Customer
                                     </DropdownMenuItem>
+                                    )}
                                     <DropdownMenuItem
                                       onClick={() => {
                                         setSelectedCustomer(customer);
@@ -951,6 +964,7 @@ export default function WholesaleCustomers() {
                                       <DollarSign className="w-4 h-4 mr-2" />
                                       Pricing
                                     </DropdownMenuItem>
+                                    {isAdmin && (
                                     <DropdownMenuItem
                                       onClick={() => {
                                         setCustomerToDelete(customer);
@@ -962,6 +976,7 @@ export default function WholesaleCustomers() {
                                       <Trash2 className="w-4 h-4 mr-2" />
                                       Delete Customer
                                     </DropdownMenuItem>
+                                    )}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </TableCell>
