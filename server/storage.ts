@@ -112,17 +112,15 @@ import {
   type OrderCoverageKey,
 } from "@shared/material-health";
 import { wasteMultiplier } from "@shared/material-waste";
-import { Pool, neonConfig } from "@neondatabase/serverless";
-import ws from "ws";
+import { createPool } from "./db-pool";
+import type { Pool as PgPool } from "pg";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { db } from "./db";
 
-neonConfig.webSocketConstructor = ws;
-
 // Exported so other modules (e.g. billing-cron) can run true interactive
 // transactions with advisory locks â€” the neon-http `db` client cannot.
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+export const pool = createPool(); // Neon's driver, or node-postgres for a local DATABASE_URL (db-pool.ts)
 
 const PostgresSessionStore = connectPg(session);
 
@@ -458,7 +456,8 @@ export class PostgresStorage implements IStorage {
 
   constructor() {
     this.sessionStore = new PostgresSessionStore({ 
-      pool,
+      // Typed as Neon's pool (db-pool.ts); the session store wants pg's, which it matches in API.
+      pool: pool as unknown as PgPool,
       tableName: "sessions",
       createTableIfMissing: true
     });
