@@ -4,6 +4,7 @@ import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { WholesaleOrder, RetailSubscription, WholesaleCustomer } from "@shared/schema";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useAuth } from "@/hooks/use-auth";
@@ -35,23 +36,44 @@ export default function Reports() {
   }).length || 0;
 
   // Orders by customer (owner, 2026-10-16: "replace this with orders by customers.
-  // group anyone under 1% into other"). Every wholesale order that wasn't cancelled,
-  // all time, counted against its customer; customers under 1% of the total pool
-  // into one Other slice.
+  // group anyone under 1% into other", then "I want it by $ amount" with a
+  // last-3/6/9/12-months-or-all-time selector, all time by default). The value of
+  // every wholesale order placed in the period that wasn't cancelled, summed against
+  // its customer; customers under 1% of the period's total pool into one Other slice.
   const OTHER_BELOW_SHARE = 0.01;
+  const CUSTOMER_PERIODS = [
+    { value: '3', label: 'Last 3 months' },
+    { value: '6', label: 'Last 6 months' },
+    { value: '9', label: 'Last 9 months' },
+    { value: '12', label: 'Last 12 months' },
+    { value: 'all', label: 'All time' },
+  ] as const;
+  type CustomerPeriod = (typeof CUSTOMER_PERIODS)[number]['value'];
+  const [customerPeriod, setCustomerPeriod] = useState<CustomerPeriod>('all');
+  const customerPeriodLabel = CUSTOMER_PERIODS.find(p => p.value === customerPeriod)?.label ?? 'All time';
+  const money0 = (v: number) => `$${Math.round(v).toLocaleString()}`;
   const CUSTOMER_COLORS = [
     '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6', '#f97316', '#6366f1',
     '#84cc16', '#ec4899', '#06b6d4', '#a855f7', '#eab308', '#22c55e', '#0ea5e9', '#d946ef',
   ];
-  type CustomerSlice = { key: string; name: string; value: number; share: string; color: string };
+  type CustomerSlice = { key: string; name: string; value: number; orders: number; share: string; color: string };
   const customerSlices: CustomerSlice[] = (() => {
-    const counted = (orders ?? []).filter(o => o.status !== 'cancelled');
-    const total = counted.length;
-    if (total === 0) return [];
-    const byCustomer = new Map<string, number>();
-    for (const o of counted) byCustomer.set(o.customerId, (byCustomer.get(o.customerId) ?? 0) + 1);
+    const now = new Date();
+    const since = customerPeriod === 'all'
+      ? null
+      : new Date(now.getFullYear(), now.getMonth() - Number(customerPeriod), now.getDate());
+    const counted = (orders ?? []).filter(o => o.status !== 'cancelled' && (!since || new Date(o.orderDate) >= since));
+    const total = counted.reduce((s, o) => s + Number(o.totalAmount), 0);
+    if (total <= 0) return [];
+    const byCustomer = new Map<string, { value: number; orders: number }>();
+    for (const o of counted) {
+      const entry = byCustomer.get(o.customerId) ?? { value: 0, orders: 0 };
+      entry.value += Number(o.totalAmount);
+      entry.orders += 1;
+      byCustomer.set(o.customerId, entry);
+    }
     const named = Array.from(byCustomer.entries())
-      .map(([id, value]) => ({ key: id, name: customers?.find(c => c.id === id)?.businessName ?? 'Unknown customer', value }))
+      .map(([id, v]) => ({ key: id, name: customers?.find(c => c.id === id)?.businessName ?? 'Unknown customer', ...v }))
       .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
     const share = (value: number) => (100 * value / total).toFixed(1);
     const slices: CustomerSlice[] = named
@@ -64,6 +86,7 @@ export default function Reports() {
         key: 'other',
         name: `Other (${small.length} ${small.length === 1 ? 'customer' : 'customers'})`,
         value,
+        orders: small.reduce((s, c) => s + c.orders, 0),
         share: share(value),
         color: '#94a3b8',
       });
@@ -250,13 +273,27 @@ export default function Reports() {
       )}
 
       <Card data-testid="card-orders-by-customer">
-        <CardHeader>
-          <CardTitle>Orders by Customer</CardTitle>
-          <CardDescription>Share of all wholesale orders — customers under 1% are grouped as Other</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
+          <div>
+            <CardTitle>Orders by Customer</CardTitle>
+            <CardDescription>
+              Share of wholesale order value, {customerPeriodLabel.toLowerCase()} — customers under 1% are grouped as Other
+            </CardDescription>
+          </div>
+          <Select value={customerPeriod} onValueChange={(v) => setCustomerPeriod(v as CustomerPeriod)}>
+            <SelectTrigger className="w-40 shrink-0" data-testid="select-customer-period">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CUSTOMER_PERIODS.map((p) => (
+                <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </CardHeader>
         <CardContent>
           {customerSlices.length === 0 ? (
-            <p className="text-muted-foreground text-sm py-12 text-center">No wholesale orders yet.</p>
+            <p className="text-muted-foreground text-sm py-12 text-center">No wholesale orders in this period.</p>
           ) : (
             <div className="grid gap-6 md:grid-cols-2 items-center">
               <ResponsiveContainer width="100%" height={300}>
@@ -276,7 +313,12 @@ export default function Reports() {
                       <Cell key={s.key} fill={s.color} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v: number, name: string) => [`${v} ${v === 1 ? 'order' : 'orders'}`, name]} />
+                  <Tooltip
+                    formatter={(v: number, name: string, item: any) => {
+                      const n = Number(item?.payload?.orders ?? 0);
+                      return [`${money0(v)} · ${n} ${n === 1 ? 'order' : 'orders'}`, name];
+                    }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
               <ul className="space-y-0.5 text-sm max-h-72 overflow-y-auto pr-1" data-testid="list-orders-by-customer">
@@ -287,7 +329,7 @@ export default function Reports() {
                       <span className="truncate">{s.name}</span>
                     </span>
                     <span className="tabular-nums text-muted-foreground whitespace-nowrap">
-                      {s.value} {s.value === 1 ? 'order' : 'orders'} · {s.share}%
+                      {money0(s.value)} · {s.orders} {s.orders === 1 ? 'order' : 'orders'} · {s.share}%
                     </span>
                   </li>
                 ))}
