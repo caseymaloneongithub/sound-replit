@@ -8,7 +8,8 @@ import { storage } from "./storage";
 import { insertWholesaleCustomerSchema, insertWholesaleLocationSchema, insertWholesaleOrderSchema, insertProductSchema, insertWholesalePricingSchema, insertProductTypeSchema, retailOrders, retailCheckoutSessions, products, retailOrderItems, retailOrderItemsV2, inventoryAdjustments, updateProfileSchema, users, insertFlavorSchema, insertRetailProductSchema, insertWholesaleUnitTypeSchema, insertMaterialSchema, insertSupplierSchema, insertProcessSchema, insertProductionSchema, insertMaterialOrderSchema, retailProducts, retailProductFlavors, retailSubscriptions, retailSubscriptionItems, retailCartItems, flavors, insertAccountingCategorySchema, insertAccountingTransactionSchema, siteSettings, wholesaleOrderItems, wholesaleUnitTypes, deliveryRoutes, deliveryRouteStops } from "@shared/schema";
 import { eq, sql, and, or, asc, desc, isNull, inArray, gte, lt, ne } from "drizzle-orm";
 import { db } from "./db";
-import { Pool, type PoolClient } from "@neondatabase/serverless";
+import type { PoolClient } from "@neondatabase/serverless";
+import { createPool } from "./db-pool";
 import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import { addDays, addHours, parseISO, format, differenceInCalendarDays } from "date-fns";
 import { setupAuth, isAuthenticated } from "./auth";
@@ -47,7 +48,9 @@ import { getBaseUrl } from "./app-url";
 import { wholesalePayLink, payLinkSignatureMatches } from "./wholesale-pay-link";
 import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable, wholesaleOrders as wholesaleOrdersTable } from "@shared/schema";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// Neon's driver, or node-postgres for a local DATABASE_URL (db-pool.ts); the
+// Neon driver alone turned a localhost URL into a websocket to localhost.
+const pool = createPool();
 
 /**
  * Public base URL, used for Stripe success/cancel redirects and emailed links.
@@ -5772,9 +5775,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   [paymentIntent.id]
                 );
                 
-                if (checkoutSessionResult.rows.length === 0) {
+                let checkoutSession = checkoutSessionResult.rows[0];
+                if (!checkoutSession && sessionId) {
+                  // The paid intent isn't the one the snapshot names. The checkout page
+                  // could create two intents for one checkout (Kester Limner, 2026-10-16):
+                  // Stripe's form stayed on the first, the snapshot recorded the second,
+                  // and this lookup found nothing — money taken, no order. The latest
+                  // snapshot for the intent's own cart session IS this checkout: adopt it
+                  // for the intent that actually paid. The amount check below still has
+                  // to pass against the cart, so a stray snapshot can't book a wrong order.
+                  const bySession = await client.query(
+                    `SELECT * FROM retail_checkout_sessions WHERE session_id = $1
+                     ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+                    [sessionId]
+                  );
+                  checkoutSession = bySession.rows[0];
+                  if (checkoutSession) {
+                    await client.query(
+                      'UPDATE retail_checkout_sessions SET payment_intent_id = $1 WHERE id = $2',
+                      [paymentIntent.id, checkoutSession.id]
+                    );
+                    console.warn(`[WEBHOOK] Checkout snapshot ${checkoutSession.id} named ${checkoutSession.payment_intent_id}; adopting it for ${paymentIntent.id}, which is what was paid`);
+                  }
+                }
+                if (!checkoutSession) {
+                  // Nothing to build an order from. Say so where someone will see it —
+                  // a paid intent with no order is the worst state the shop can be in,
+                  // and the server log alone let one sit unseen for six days.
                   console.error(`[WEBHOOK] No checkout session found for payment intent ${paymentIntent.id}`);
                   await client.query('COMMIT');
+                  await recordEvent({
+                    severity: 'alert',
+                    kind: 'checkout.no-snapshot',
+                    message: `Payment ${paymentIntent.id} ($${(paymentIntent.amount / 100).toFixed(2)}) succeeded but no checkout snapshot matches it — no order was created`,
+                    detail: { paymentIntentId: paymentIntent.id, sessionId, amount: paymentIntent.amount, receiptEmail: paymentIntent.receipt_email ?? null },
+                  });
                   // Still clear the cart to prevent stuck state
                   if (sessionId) {
                     await storage.clearCart(sessionId);
@@ -5782,7 +5817,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   break;
                 }
                 
-                const checkoutSession = checkoutSessionResult.rows[0];
+                // (checkoutSession was resolved above: by the paid intent, or adopted by session.)
 
                 // Read carts by the CHECKOUT SESSION's session id, not the one frozen
                 // into PI metadata at intent creation: post-payment account creation

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useStripe, Elements, PaymentElement, useElements } from '@stripe/react-stripe-js';
@@ -709,6 +709,8 @@ function CheckoutForm({ paymentInfo, isSubscription, shippingOptions, onTotals }
 
 export default function CartCheckout() {
   const [clientSecret, setClientSecret] = useState("");
+  // Whether this checkout has asked for its PaymentIntent (see the effect below).
+  const intentRequested = useRef(false);
   const [paymentInfo, setPaymentInfo] = useState<PaymentIntentResponse | null>(null);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -797,6 +799,15 @@ export default function CartCheckout() {
 
     // For one-time purchases, create payment intent (only if we don't have one already)
     if (paymentInfo) return;
+    // ONE intent per checkout. This effect re-runs on every render until paymentInfo
+    // lands (the cart array it depends on is rebuilt each render), and each run used
+    // to create another PaymentIntent. Stripe's form stays bound to the FIRST client
+    // secret it was mounted with while the page recorded the LAST one, so the
+    // customer paid an intent the checkout snapshot didn't name and no order was
+    // created (Kester Limner, 2026-10-16). The ref survives re-runs; it resets on
+    // failure so a retry is still possible.
+    if (intentRequested.current) return;
+    intentRequested.current = true;
     
     apiRequest("POST", "/api/create-cart-payment-intent", {})
       .then((data) => {
@@ -816,6 +827,7 @@ export default function CartCheckout() {
         });
       })
       .catch((error) => {
+        intentRequested.current = false;
         toast({
           title: "Error",
           description: error.message || "Failed to initialize checkout",
