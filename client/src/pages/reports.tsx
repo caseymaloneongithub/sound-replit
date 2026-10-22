@@ -8,7 +8,124 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { WholesaleOrder, RetailSubscription, WholesaleCustomer } from "@shared/schema";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useAuth } from "@/hooks/use-auth";
+import { apiRequest } from "@/lib/queryClient";
 import { startOfDay, subMonths } from "date-fns";
+
+// ---- Revenue shares -------------------------------------------------------------
+// One rule for every share pie on this page (owner, 2026-10-16/22): the entries of a
+// period sorted by value, anything under 1% of the total pooled into one Other slice,
+// slices of 5% and more labelled on the pie, and a list beside or below it naming
+// every slice with its dollars, count and share.
+
+const PERIODS = [
+  { value: '3', label: 'Last 3 months' },
+  { value: '6', label: 'Last 6 months' },
+  { value: '9', label: 'Last 9 months' },
+  { value: '12', label: 'Last 12 months' },
+  { value: 'all', label: 'All time' },
+] as const;
+type Period = (typeof PERIODS)[number]['value'];
+const OTHER_BELOW_SHARE = 0.01;
+const PALETTE = [
+  '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6', '#f97316', '#6366f1',
+  '#84cc16', '#ec4899', '#06b6d4', '#a855f7', '#eab308', '#22c55e', '#0ea5e9', '#d946ef',
+];
+const OTHER_COLOR = '#94a3b8';
+const money0 = (v: number) => `$${Math.round(v).toLocaleString()}`;
+
+type ShareEntry = { key: string; name: string; value: number; count: number };
+type Slice = ShareEntry & { share: string; color: string };
+
+function toShares(entries: ShareEntry[], otherNoun: [string, string]): Slice[] {
+  const total = entries.reduce((s, e) => s + e.value, 0);
+  if (total <= 0) return [];
+  const sorted = entries
+    .filter(e => e.value > 0)
+    .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+  const share = (value: number) => (100 * value / total).toFixed(1);
+  const slices: Slice[] = sorted
+    .filter(e => e.value / total >= OTHER_BELOW_SHARE)
+    .map((e, i) => ({ ...e, share: share(e.value), color: PALETTE[i % PALETTE.length] }));
+  const small = sorted.filter(e => e.value / total < OTHER_BELOW_SHARE);
+  if (small.length > 0) {
+    const value = small.reduce((s, e) => s + e.value, 0);
+    slices.push({
+      key: 'other',
+      name: `Other (${small.length} ${small.length === 1 ? otherNoun[0] : otherNoun[1]})`,
+      value,
+      count: small.reduce((s, e) => s + e.count, 0),
+      share: share(value),
+      color: OTHER_COLOR,
+    });
+  }
+  return slices;
+}
+
+/** A pie of shares with the list that names every slice. */
+function SharePie({ slices, countNoun, layout, testId, empty }: {
+  slices: Slice[];
+  countNoun: [string, string];
+  layout: 'side' | 'stack';
+  testId: string;
+  empty: string;
+}) {
+  if (slices.length === 0) {
+    return <p className="text-muted-foreground text-sm py-12 text-center">{empty}</p>;
+  }
+  const noun = (n: number) => (n === 1 ? countNoun[0] : countNoun[1]);
+  return (
+    <div className={layout === 'side' ? 'grid gap-6 md:grid-cols-2 items-center' : 'space-y-3'}>
+      <ResponsiveContainer width="100%" height={layout === 'side' ? 300 : 240}>
+        <PieChart>
+          <Pie
+            data={slices}
+            cx="50%"
+            cy="50%"
+            labelLine={false}
+            // Only slices big enough to carry a label get one; the list names the rest.
+            label={(p: any) => (p.percent >= 0.05 ? `${p.name} ${Math.round(p.percent * 100)}%` : null)}
+            outerRadius={layout === 'side' ? 100 : 80}
+            dataKey="value"
+            nameKey="name"
+          >
+            {slices.map((s) => (
+              <Cell key={s.key} fill={s.color} />
+            ))}
+          </Pie>
+          <Tooltip
+            formatter={(v: number, name: string, item: any) => {
+              const n = Number(item?.payload?.count ?? 0);
+              return [`${money0(v)} · ${n} ${noun(n)}`, name];
+            }}
+          />
+        </PieChart>
+      </ResponsiveContainer>
+      <ul className="space-y-0.5 text-sm max-h-72 overflow-y-auto pr-1" data-testid={testId}>
+        {slices.map((s) => (
+          <li key={s.key} className="flex items-center justify-between gap-3 py-1" data-testid={`${testId}-${s.key}`}>
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: s.color }} />
+              <span className="truncate">{s.name}</span>
+            </span>
+            <span className="tabular-nums text-muted-foreground whitespace-nowrap">
+              {money0(s.value)} · {s.count} {noun(s.count)} · {s.share}%
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The packaging a wholesale line sells, as the owner groups it: cases of bottles and of cans are one "Case". */
+function packagingOf(container: string | null, unitType: string | null): string {
+  if (container === 'bottle-case' || container === 'can-case') return 'Case';
+  if (container?.startsWith('keg')) return 'Keg';
+  if (container === '6-pack') return 'Samples';
+  return unitType ?? 'Other';
+}
+
+type ProductRevenueRow = { container: string | null; unit_type: string | null; flavor: string | null; revenue: number; units: number };
 
 export default function Reports() {
   const { user } = useAuth();
@@ -38,67 +155,60 @@ export default function Reports() {
     return orderDate >= monthAgo;
   }).length || 0;
 
-  // Orders by customer (owner, 2026-10-16: "replace this with orders by customers.
-  // group anyone under 1% into other", then "I want it by $ amount" with a
-  // last-3/6/9/12-months-or-all-time selector, all time by default). The value of
-  // every wholesale order placed in the period that wasn't cancelled, summed against
-  // its customer; customers under 1% of the period's total pool into one Other slice.
-  const OTHER_BELOW_SHARE = 0.01;
-  const CUSTOMER_PERIODS = [
-    { value: '3', label: 'Last 3 months' },
-    { value: '6', label: 'Last 6 months' },
-    { value: '9', label: 'Last 9 months' },
-    { value: '12', label: 'Last 12 months' },
-    { value: 'all', label: 'All time' },
-  ] as const;
-  type CustomerPeriod = (typeof CUSTOMER_PERIODS)[number]['value'];
-  const [customerPeriod, setCustomerPeriod] = useState<CustomerPeriod>('all');
-  const customerPeriodLabel = CUSTOMER_PERIODS.find(p => p.value === customerPeriod)?.label ?? 'All time';
-  const money0 = (v: number) => `$${Math.round(v).toLocaleString()}`;
-  const CUSTOMER_COLORS = [
-    '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6', '#f97316', '#6366f1',
-    '#84cc16', '#ec4899', '#06b6d4', '#a855f7', '#eab308', '#22c55e', '#0ea5e9', '#d946ef',
-  ];
-  type CustomerSlice = { key: string; name: string; value: number; orders: number; share: string; color: string };
-  const customerSlices: CustomerSlice[] = (() => {
-    const now = new Date();
-    // subMonths clamps to the month's last day (May 31 → Feb 28); building the date
-    // from day-of-month rolled past short months and dropped their first days
-    // (reviewer, 2026-10-22).
-    const since = customerPeriod === 'all'
-      ? null
-      : startOfDay(subMonths(now, Number(customerPeriod)));
+  // Revenue shares (owner, 2026-10-16: "replace this with orders by customers. group
+  // anyone under 1% into other", then "I want it by $ amount" with a last-3/6/9/12-
+  // months-or-all-time selector, all time by default; 2026-10-22: "3 revenue by product
+  // pie charts. by packaging type (case/keg), by flavor, by packing type and flavor.
+  // group cases of bottles and can together for just case"). One period for all four
+  // pies: every wholesale order placed in it that wasn't cancelled.
+  const [period, setPeriod] = useState<Period>('all');
+  const periodLabel = PERIODS.find(p => p.value === period)?.label ?? 'All time';
+  // subMonths clamps to the month's last day (May 31 → Feb 28); building the date
+  // from day-of-month rolled past short months and dropped their first days
+  // (reviewer, 2026-10-22).
+  const since = period === 'all' ? null : startOfDay(subMonths(new Date(), Number(period)));
+
+  const customerSlices = (() => {
     const counted = (orders ?? []).filter(o => o.status !== 'cancelled' && (!since || new Date(o.orderDate) >= since));
-    const total = counted.reduce((s, o) => s + Number(o.totalAmount), 0);
-    if (total <= 0) return [];
-    const byCustomer = new Map<string, { value: number; orders: number }>();
+    const byCustomer = new Map<string, ShareEntry>();
     for (const o of counted) {
-      const entry = byCustomer.get(o.customerId) ?? { value: 0, orders: 0 };
+      const entry = byCustomer.get(o.customerId) ?? {
+        key: o.customerId,
+        name: customers?.find(c => c.id === o.customerId)?.businessName ?? 'Unknown customer',
+        value: 0,
+        count: 0,
+      };
       entry.value += Number(o.totalAmount);
-      entry.orders += 1;
+      entry.count += 1;
       byCustomer.set(o.customerId, entry);
     }
-    const named = Array.from(byCustomer.entries())
-      .map(([id, v]) => ({ key: id, name: customers?.find(c => c.id === id)?.businessName ?? 'Unknown customer', ...v }))
-      .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
-    const share = (value: number) => (100 * value / total).toFixed(1);
-    const slices: CustomerSlice[] = named
-      .filter(c => c.value / total >= OTHER_BELOW_SHARE)
-      .map((c, i) => ({ ...c, share: share(c.value), color: CUSTOMER_COLORS[i % CUSTOMER_COLORS.length] }));
-    const small = named.filter(c => c.value / total < OTHER_BELOW_SHARE);
-    if (small.length > 0) {
-      const value = small.reduce((s, c) => s + c.value, 0);
-      slices.push({
-        key: 'other',
-        name: `Other (${small.length} ${small.length === 1 ? 'customer' : 'customers'})`,
-        value,
-        orders: small.reduce((s, c) => s + c.orders, 0),
-        share: share(value),
-        color: '#94a3b8',
-      });
-    }
-    return slices;
+    return toShares(Array.from(byCustomer.values()), ['customer', 'customers']);
   })();
+
+  // Line revenue (quantity × unit price) by unit type and flavor, from the server —
+  // admin-only, like the rest of the page's money. The three product pies group it
+  // three ways.
+  const sinceParam = since ? since.toISOString() : 'all';
+  const { data: productRevenue } = useQuery<{ rows: ProductRevenueRow[] }>({
+    queryKey: ['/api/reports/wholesale-product-revenue', sinceParam],
+    queryFn: () => apiRequest('GET', `/api/reports/wholesale-product-revenue?since=${encodeURIComponent(sinceParam)}`),
+    enabled: isAdmin,
+  });
+  const productShares = (group: (r: ProductRevenueRow) => string, otherNoun: [string, string]) => {
+    const by = new Map<string, ShareEntry>();
+    for (const r of productRevenue?.rows ?? []) {
+      const name = group(r);
+      const entry = by.get(name) ?? { key: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, value: 0, count: 0 };
+      entry.value += Number(r.revenue);
+      entry.count += Number(r.units);
+      by.set(name, entry);
+    }
+    return toShares(Array.from(by.values()), otherNoun);
+  };
+  const flavorOf = (r: ProductRevenueRow) => r.flavor ?? 'Unknown flavor';
+  const packagingSlices = productShares(r => packagingOf(r.container, r.unit_type), ['type', 'types']);
+  const flavorSlices = productShares(flavorOf, ['flavor', 'flavors']);
+  const packagingFlavorSlices = productShares(r => `${packagingOf(r.container, r.unit_type)} · ${flavorOf(r)}`, ['line', 'lines']);
 
   // Trend granularity (owner, 2026-09-09): weekly by default — with under two
   // months of history, monthly buckets were two lonely bars — monthly a toggle away.
@@ -278,109 +388,71 @@ export default function Reports() {
         </Card>
       )}
 
-      {/* Dollar shares by customer are revenue, admin-and-up like the cards and
-          trend above (reviewer, 2026-10-22). */}
+      {/* Revenue shares are admin-and-up, like the cards and trend above
+          (reviewer, 2026-10-22). */}
       {isAdmin && (
-      <Card data-testid="card-orders-by-customer">
-        <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
-          <div>
-            <CardTitle>Orders by Customer</CardTitle>
-            <CardDescription>
-              Share of wholesale order value, {customerPeriodLabel.toLowerCase()} — customers under 1% are grouped as Other
-            </CardDescription>
-          </div>
-          <Select value={customerPeriod} onValueChange={(v) => setCustomerPeriod(v as CustomerPeriod)}>
-            <SelectTrigger className="w-40 shrink-0" data-testid="select-customer-period">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CUSTOMER_PERIODS.map((p) => (
-                <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </CardHeader>
-        <CardContent>
-          {customerSlices.length === 0 ? (
-            <p className="text-muted-foreground text-sm py-12 text-center">No wholesale orders in this period.</p>
-          ) : (
-            <div className="grid gap-6 md:grid-cols-2 items-center">
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={customerSlices}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    // Only slices big enough to carry a label get one; the list names the rest.
-                    label={(p: any) => (p.percent >= 0.05 ? `${p.name} ${Math.round(p.percent * 100)}%` : null)}
-                    outerRadius={100}
-                    dataKey="value"
-                    nameKey="name"
-                  >
-                    {customerSlices.map((s) => (
-                      <Cell key={s.key} fill={s.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(v: number, name: string, item: any) => {
-                      const n = Number(item?.payload?.orders ?? 0);
-                      return [`${money0(v)} · ${n} ${n === 1 ? 'order' : 'orders'}`, name];
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-              <ul className="space-y-0.5 text-sm max-h-72 overflow-y-auto pr-1" data-testid="list-orders-by-customer">
-                {customerSlices.map((s) => (
-                  <li key={s.key} className="flex items-center justify-between gap-3 py-1" data-testid={`row-customer-share-${s.key}`}>
-                    <span className="flex items-center gap-2 min-w-0">
-                      <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: s.color }} />
-                      <span className="truncate">{s.name}</span>
-                    </span>
-                    <span className="tabular-nums text-muted-foreground whitespace-nowrap">
-                      {money0(s.value)} · {s.orders} {s.orders === 1 ? 'order' : 'orders'} · {s.share}%
-                    </span>
-                  </li>
-                ))}
-              </ul>
+        <>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold" data-testid="text-revenue-breakdown">Revenue breakdown</h2>
+              <p className="text-sm text-muted-foreground">
+                Wholesale orders placed {period === 'all' ? 'all time' : `in the ${periodLabel.toLowerCase()}`} that weren't cancelled; anything under 1% pools into Other.
+              </p>
             </div>
-          )}
-        </CardContent>
-      </Card>
-      )}
+            <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>
+              <SelectTrigger className="w-40 shrink-0" data-testid="select-revenue-period">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PERIODS.map((p) => (
+                  <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-      <Card data-testid="card-order-status">
-        <CardHeader>
-          <CardTitle>Order Status Breakdown</CardTitle>
-          <CardDescription>Current wholesale order pipeline</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-            <span className="font-medium">Pending</span>
-            <Badge variant="secondary" data-testid="badge-status-pending">
-              {orders?.filter(o => o.status === 'pending').length || 0}
-            </Badge>
+          <Card data-testid="card-orders-by-customer">
+            <CardHeader>
+              <CardTitle>Orders by Customer</CardTitle>
+              <CardDescription>Share of wholesale order value by customer, {periodLabel.toLowerCase()}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SharePie slices={customerSlices} countNoun={['order', 'orders']} layout="side" testId="list-orders-by-customer" empty="No wholesale orders in this period." />
+            </CardContent>
+          </Card>
+
+          {/* Three ways to cut the same line revenue (owner, 2026-10-22). */}
+          <div className="grid gap-6 lg:grid-cols-3">
+            <Card data-testid="card-revenue-by-packaging">
+              <CardHeader>
+                <CardTitle>Revenue by Packaging</CardTitle>
+                <CardDescription>Case or keg, {periodLabel.toLowerCase()} — cases of bottles and of cans count as Case</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <SharePie slices={packagingSlices} countNoun={['unit', 'units']} layout="stack" testId="list-revenue-by-packaging" empty="No wholesale lines in this period." />
+              </CardContent>
+            </Card>
+            <Card data-testid="card-revenue-by-flavor">
+              <CardHeader>
+                <CardTitle>Revenue by Flavor</CardTitle>
+                <CardDescription>Every package of a flavor together, {periodLabel.toLowerCase()}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <SharePie slices={flavorSlices} countNoun={['unit', 'units']} layout="stack" testId="list-revenue-by-flavor" empty="No wholesale lines in this period." />
+              </CardContent>
+            </Card>
+            <Card data-testid="card-revenue-by-packaging-flavor">
+              <CardHeader>
+                <CardTitle>Revenue by Packaging and Flavor</CardTitle>
+                <CardDescription>Each package of each flavor, {periodLabel.toLowerCase()}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <SharePie slices={packagingFlavorSlices} countNoun={['unit', 'units']} layout="stack" testId="list-revenue-by-packaging-flavor" empty="No wholesale lines in this period." />
+              </CardContent>
+            </Card>
           </div>
-          <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-            <span className="font-medium">Processing</span>
-            <Badge variant="default" data-testid="badge-status-processing">
-              {orders?.filter(o => o.status === 'processing').length || 0}
-            </Badge>
-          </div>
-          <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-            <span className="font-medium">Shipped</span>
-            <Badge variant="default" data-testid="badge-status-shipped">
-              {orders?.filter(o => o.status === 'shipped').length || 0}
-            </Badge>
-          </div>
-          <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-            <span className="font-medium">Delivered</span>
-            <Badge variant="default" className="bg-green-500" data-testid="badge-status-delivered">
-              {orders?.filter(o => o.status === 'delivered').length || 0}
-            </Badge>
-          </div>
-        </CardContent>
-      </Card>
+        </>
+      )}
       </div>
     </StaffLayout>
   );

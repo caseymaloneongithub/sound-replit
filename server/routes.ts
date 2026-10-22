@@ -2810,6 +2810,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /**
+   * Wholesale revenue by product for the Reports page (owner, 2026-10-22: "3 revenue
+   * by product pie charts. by packaging type (case/keg), by flavor, by packing type
+   * and flavor. group cases of bottles and can together for just case"). Line
+   * revenue (quantity × unit price) of every wholesale order placed since `since`
+   * (an ISO instant; 'all' or absent for all time) that wasn't cancelled, by the
+   * line's unit type (with its container) and flavor; the page groups from there.
+   * Revenue is admin-and-up, like the rest of that page's money.
+   */
+  app.get("/api/reports/wholesale-product-revenue", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const sinceRaw = typeof req.query.since === 'string' ? req.query.since : '';
+      const since = sinceRaw && sinceRaw !== 'all' ? new Date(sinceRaw) : null;
+      if (since && isNaN(since.getTime())) {
+        return res.status(400).json({ message: "Invalid since date" });
+      }
+      const result = await db.execute(sql`
+        SELECT wut.container, wut.name AS unit_type, f.name AS flavor,
+               SUM(oi.quantity * oi.unit_price)::float8 AS revenue,
+               SUM(oi.quantity)::int AS units
+        FROM wholesale_order_items oi
+        JOIN wholesale_orders o ON o.id = oi.order_id
+        LEFT JOIN wholesale_unit_types wut ON wut.id = oi.unit_type_id
+        LEFT JOIN flavors f ON f.id = oi.flavor_id
+        WHERE o.deleted_at IS NULL AND o.status <> 'cancelled'
+          ${since ? sql`AND o.order_date >= ${since}` : sql``}
+        GROUP BY wut.container, wut.name, f.name`);
+      res.json({ rows: result.rows });
+    } catch (error: any) {
+      res.status(500).json({ message: "Error building product revenue: " + error.message });
+    }
+  });
+
   app.get("/api/inventory/cogs-report", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       const days = req.query.days ? parseInt(req.query.days as string, 10) : 90;
