@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -84,7 +84,8 @@ function SharePie({ slices, countNoun, layout, testId, empty }: {
             labelLine={false}
             // Only slices big enough to carry a label get one; the list names the rest.
             label={(p: any) => (p.percent >= 0.05 ? `${p.name} ${Math.round(p.percent * 100)}%` : null)}
-            outerRadius={layout === 'side' ? 100 : 80}
+            // A stacked pie sizes to its card, so three across still fit on a laptop.
+            outerRadius={layout === 'side' ? 100 : '72%'}
             dataKey="value"
             nameKey="name"
           >
@@ -107,7 +108,7 @@ function SharePie({ slices, countNoun, layout, testId, empty }: {
               <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: s.color }} />
               <span className="truncate">{s.name}</span>
             </span>
-            <span className="tabular-nums text-muted-foreground whitespace-nowrap">
+            <span className="tabular-nums text-muted-foreground text-right">
               {money0(s.value)} · {s.count} {noun(s.count)} · {s.share}%
             </span>
           </li>
@@ -166,9 +167,15 @@ export default function Reports() {
   // subMonths clamps to the month's last day (May 31 → Feb 28); building the date
   // from day-of-month rolled past short months and dropped their first days
   // (reviewer, 2026-10-22).
-  const since = period === 'all' ? null : startOfDay(subMonths(new Date(), Number(period)));
+  const since = useMemo(
+    () => (period === 'all' ? null : startOfDay(subMonths(new Date(), Number(period)))),
+    [period],
+  );
 
-  const customerSlices = (() => {
+  // Memoized so a slice array keeps its identity between renders: recharts restarts
+  // a pie's sweep whenever its data changes, and these pages re-render on every
+  // query refetch.
+  const customerSlices = useMemo(() => {
     const counted = (orders ?? []).filter(o => o.status !== 'cancelled' && (!since || new Date(o.orderDate) >= since));
     const byCustomer = new Map<string, ShareEntry>();
     for (const o of counted) {
@@ -183,7 +190,7 @@ export default function Reports() {
       byCustomer.set(o.customerId, entry);
     }
     return toShares(Array.from(byCustomer.values()), ['customer', 'customers']);
-  })();
+  }, [orders, customers, since]);
 
   // Line revenue (quantity × unit price) by unit type and flavor, from the server —
   // admin-only, like the rest of the page's money. The three product pies group it
@@ -194,21 +201,26 @@ export default function Reports() {
     queryFn: () => apiRequest('GET', `/api/reports/wholesale-product-revenue?since=${encodeURIComponent(sinceParam)}`),
     enabled: isAdmin,
   });
-  const productShares = (group: (r: ProductRevenueRow) => string, otherNoun: [string, string]) => {
-    const by = new Map<string, ShareEntry>();
-    for (const r of productRevenue?.rows ?? []) {
-      const name = group(r);
-      const entry = by.get(name) ?? { key: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, value: 0, count: 0 };
-      entry.value += Number(r.revenue);
-      entry.count += Number(r.units);
-      by.set(name, entry);
-    }
-    return toShares(Array.from(by.values()), otherNoun);
-  };
-  const flavorOf = (r: ProductRevenueRow) => r.flavor ?? 'Unknown flavor';
-  const packagingSlices = productShares(r => packagingOf(r.container, r.unit_type), ['type', 'types']);
-  const flavorSlices = productShares(flavorOf, ['flavor', 'flavors']);
-  const packagingFlavorSlices = productShares(r => `${packagingOf(r.container, r.unit_type)} · ${flavorOf(r)}`, ['line', 'lines']);
+  const { packagingSlices, flavorSlices, packagingFlavorSlices } = useMemo(() => {
+    const rows = productRevenue?.rows ?? [];
+    const shares = (group: (r: ProductRevenueRow) => string, otherNoun: [string, string]) => {
+      const by = new Map<string, ShareEntry>();
+      for (const r of rows) {
+        const name = group(r);
+        const entry = by.get(name) ?? { key: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, value: 0, count: 0 };
+        entry.value += Number(r.revenue);
+        entry.count += Number(r.units);
+        by.set(name, entry);
+      }
+      return toShares(Array.from(by.values()), otherNoun);
+    };
+    const flavorOf = (r: ProductRevenueRow) => r.flavor ?? 'Unknown flavor';
+    return {
+      packagingSlices: shares(r => packagingOf(r.container, r.unit_type), ['type', 'types']),
+      flavorSlices: shares(flavorOf, ['flavor', 'flavors']),
+      packagingFlavorSlices: shares(r => `${packagingOf(r.container, r.unit_type)} · ${flavorOf(r)}`, ['line', 'lines']),
+    };
+  }, [productRevenue]);
 
   // Trend granularity (owner, 2026-09-09): weekly by default — with under two
   // months of history, monthly buckets were two lonely bars — monthly a toggle away.
@@ -422,7 +434,7 @@ export default function Reports() {
           </Card>
 
           {/* Three ways to cut the same line revenue (owner, 2026-10-22). */}
-          <div className="grid gap-6 lg:grid-cols-3">
+          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
             <Card data-testid="card-revenue-by-packaging">
               <CardHeader>
                 <CardTitle>Revenue by Packaging</CardTitle>
