@@ -4665,7 +4665,10 @@ export class PostgresStorage implements IStorage {
         await client.query('BEGIN');
         const result = await client.query(
           `UPDATE retail_orders ro
-           SET status = $1, updated_at = now()
+           SET status = $1, updated_at = now(),
+               -- Leaving Fulfilled un-fulfils it: the stamp and who set it go too
+               -- (owner, 2026-10-22), or a pending order would still say "Fulfilled:".
+               fulfilled_at = NULL, fulfilled_by_user_id = NULL
            FROM (SELECT status AS old_status FROM retail_orders WHERE id = $2 AND deleted_at IS NULL FOR UPDATE) prev
            WHERE ro.id = $2 AND ro.deleted_at IS NULL
            RETURNING ro.*, prev.old_status`,
@@ -4673,11 +4676,15 @@ export class PostgresStorage implements IStorage {
         );
         const row = result.rows[0];
         if (row && row.old_status === 'fulfilled' && status !== 'fulfilled') {
+          // Every ledger row tied to this order is stock it moved: the fulfilment
+          // deductions, earlier reversals, and a cancel-with-refund's restore, which
+          // writes its own reason. Netting only the first two over-restored an order
+          // that had been cancelled with a refund, re-fulfilled, and walked back
+          // (owner, 2026-10-22: statuses can move freely now, so that path is real).
           const { rows: nets } = await client.query(
             `SELECT product_id, SUM(quantity)::int AS net
              FROM inventory_adjustments
              WHERE order_id = $1 AND order_type = 'retail'
-               AND reason IN ('fulfillment', 'fulfillment_reversal')
              GROUP BY product_id HAVING SUM(quantity) <> 0`,
             [id]
           );

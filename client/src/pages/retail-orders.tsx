@@ -471,7 +471,11 @@ export default function RetailOrders() {
                               onValueChange={(newStatus) =>
                                 updateOrderStatusMutation.mutate({ orderId: order.id, status: newStatus, ship: order.fulfillmentMethod === 'ship' })
                               }
-                              disabled={updateOrderStatusMutation.isPending || order.status === 'fulfilled' || order.status === 'cancelled'}
+                              // Any status can move to any other (owner, 2026-10-22: "Even staff should be
+                              // able to move these order statuses around"). Leaving Fulfilled gives the
+                              // stock back and re-fulfilling takes it again, by the ledger, so nothing
+                              // here needs to be final.
+                              disabled={updateOrderStatusMutation.isPending}
                             >
                               <SelectTrigger className="w-[140px] h-8" data-testid={`select-retail-order-status-${order.id}`}>
                                 <SelectValue />
