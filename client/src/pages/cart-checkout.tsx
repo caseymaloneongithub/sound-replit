@@ -97,6 +97,9 @@ interface ShippingSummary {
 
 interface PaymentIntentResponse {
   clientSecret: string;
+  // The checkout attempt that created the intent (see CartCheckout); it rides
+  // along to customer-info so the server can tie the two together.
+  attemptId?: string;
   subtotal: number;
   discountAmount?: number;
   taxAmount: number;
@@ -259,6 +262,7 @@ function CheckoutForm({ paymentInfo, isSubscription, shippingOptions, onTotals }
         customerEmail: data.customerEmail,
         customerPhone: data.customerPhone,
         paymentIntentId,
+        attemptId: paymentInfo.attemptId,
         flavorNotes: data.flavorNotes,
         fulfillmentMethod: shipping ? 'ship' : 'pickup',
         shipTo: shipping ? {
@@ -711,6 +715,14 @@ export default function CartCheckout() {
   const [clientSecret, setClientSecret] = useState("");
   // Whether this checkout has asked for its PaymentIntent (see the effect below).
   const intentRequested = useRef(false);
+  // This checkout attempt, one id per load of the page. It rides on every
+  // PaymentIntent the page creates and on the customer details, so the server can
+  // tie a paid intent to this checkout even if the details named a sibling intent.
+  const [attemptId] = useState(() =>
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+  );
   const [paymentInfo, setPaymentInfo] = useState<PaymentIntentResponse | null>(null);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -809,7 +821,7 @@ export default function CartCheckout() {
     if (intentRequested.current) return;
     intentRequested.current = true;
     
-    apiRequest("POST", "/api/create-cart-payment-intent", {})
+    apiRequest("POST", "/api/create-cart-payment-intent", { attemptId })
       .then((data) => {
         if (!data.clientSecret) {
           throw new Error(data.message || "No client secret received");
@@ -817,6 +829,7 @@ export default function CartCheckout() {
         setClientSecret(data.clientSecret);
         setPaymentInfo({
           clientSecret: data.clientSecret,
+          attemptId,
           subtotal: data.subtotal,
           taxAmount: data.taxAmount,
           depositAmount: data.depositAmount || 0,

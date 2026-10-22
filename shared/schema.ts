@@ -565,6 +565,11 @@ export const retailCheckoutSessions = pgTable("retail_checkout_sessions", {
   shippingQuote: jsonb("shipping_quote"), // ShippingQuote: boxes, rate ids, breakdown
   shipDate: timestamp("ship_date"),
   stripeTaxCalculationId: text("stripe_tax_calculation_id"),
+  // Which checkout ATTEMPT (one load of the cart checkout page) wrote this. The page
+  // sends the same id with every PaymentIntent it creates and with the customer
+  // details, so a paid intent this row doesn't name can still be matched to its own
+  // checkout, never to a later one in the same browser session (reviewer, 2026-10-22).
+  attemptId: varchar("attempt_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

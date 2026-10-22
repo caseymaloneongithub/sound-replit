@@ -4117,6 +4117,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     customerEmail: z.string().email(),
     customerPhone: z.string().min(10),
     paymentIntentId: z.string().optional(),
+    // The checkout attempt this came from (see retailCheckoutSessions.attemptId).
+    attemptId: z.string().trim().regex(/^[\w-]{1,64}$/).optional(),
     flavorNotes: z.string().optional(),
     // Shipping (owner, 2026-10-05): 'ship' needs an address; the server quotes
     // and re-prices the payment intent here, so the client's figures never count.
@@ -4349,6 +4351,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const snapshot = {
           sessionId,
           paymentIntentId: validated.paymentIntentId || null,
+          attemptId: validated.attemptId ?? null,
           customerName: validated.customerName,
           customerEmail: validated.customerEmail,
           customerPhone: formatPhoneNumber(validated.customerPhone),
@@ -5314,6 +5317,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const taxAmountCents = Math.round(subtotalCents * TAX_RATE);
       const totalAmountCents = subtotalCents + taxAmountCents + depositAmountCents;
 
+      // The checkout attempt asking (one load of the checkout page): the webhook
+      // can match a paid intent to the snapshot that attempt wrote, should the
+      // snapshot name a sibling intent (see retailCheckoutSessions.attemptId).
+      const attemptId = typeof req.body?.attemptId === 'string' && /^[\w-]{1,64}$/.test(req.body.attemptId)
+        ? req.body.attemptId
+        : null;
       // Create payment intent
       const paymentIntent = await stripe.paymentIntents.create({
         amount: totalAmountCents,
@@ -5326,6 +5335,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
         metadata: {
           sessionId,
+          ...(attemptId ? { attemptId } : {}),
           type: 'cart_purchase',
           userId: req.user?.id || 'guest',
           subtotal: (subtotalCents / 100).toFixed(2),
@@ -5776,44 +5786,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 );
                 
                 let checkoutSession = checkoutSessionResult.rows[0];
-                if (!checkoutSession && sessionId) {
+                const attemptId = typeof paymentIntent.metadata?.attemptId === 'string' ? paymentIntent.metadata.attemptId : null;
+                if (!checkoutSession && attemptId) {
                   // The paid intent isn't the one the snapshot names. The checkout page
                   // could create two intents for one checkout (Kester Limner, 2026-10-16):
                   // Stripe's form stayed on the first, the snapshot recorded the second,
-                  // and this lookup found nothing — money taken, no order. The latest
-                  // snapshot for the intent's own cart session IS this checkout: adopt it
-                  // for the intent that actually paid. The amount check below still has
-                  // to pass against the cart, so a stray snapshot can't book a wrong order.
-                  const bySession = await client.query(
-                    `SELECT * FROM retail_checkout_sessions WHERE session_id = $1
+                  // and this lookup found nothing — money taken, no order. The snapshot
+                  // written by the SAME checkout attempt is this checkout: adopt it for
+                  // the intent that actually paid. The browser session is no key for
+                  // this — sessions span purchases, and a later checkout's snapshot
+                  // carries another recipient and cart (reviewer, 2026-10-22). The
+                  // amount check below still has to pass against the cart.
+                  const byAttempt = await client.query(
+                    `SELECT * FROM retail_checkout_sessions WHERE attempt_id = $1
                      ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-                    [sessionId]
+                    [attemptId]
                   );
-                  checkoutSession = bySession.rows[0];
+                  checkoutSession = byAttempt.rows[0];
                   if (checkoutSession) {
                     await client.query(
                       'UPDATE retail_checkout_sessions SET payment_intent_id = $1 WHERE id = $2',
                       [paymentIntent.id, checkoutSession.id]
                     );
-                    console.warn(`[WEBHOOK] Checkout snapshot ${checkoutSession.id} named ${checkoutSession.payment_intent_id}; adopting it for ${paymentIntent.id}, which is what was paid`);
+                    console.warn(`[WEBHOOK] Checkout snapshot ${checkoutSession.id} (attempt ${attemptId}) named ${checkoutSession.payment_intent_id}; adopting it for ${paymentIntent.id}, which is what was paid`);
                   }
                 }
                 if (!checkoutSession) {
-                  // Nothing to build an order from. Say so where someone will see it —
-                  // a paid intent with no order is the worst state the shop can be in,
-                  // and the server log alone let one sit unseen for six days.
+                  // Nothing this intent can be tied to. Every snapshot and cart stays as
+                  // it is — they are what staff repair from — and the alert names the
+                  // candidates: a paid intent with no order is the worst state the shop
+                  // can be in, and the server log alone let one sit unseen for six days.
                   console.error(`[WEBHOOK] No checkout session found for payment intent ${paymentIntent.id}`);
+                  const candidates = sessionId
+                    ? (await client.query(
+                        `SELECT id, payment_intent_id, attempt_id, customer_name, customer_email, created_at
+                         FROM retail_checkout_sessions WHERE session_id = $1 ORDER BY created_at DESC LIMIT 3`,
+                        [sessionId]
+                      )).rows
+                    : [];
                   await client.query('COMMIT');
                   await recordEvent({
                     severity: 'alert',
                     kind: 'checkout.no-snapshot',
-                    message: `Payment ${paymentIntent.id} ($${(paymentIntent.amount / 100).toFixed(2)}) succeeded but no checkout snapshot matches it — no order was created`,
-                    detail: { paymentIntentId: paymentIntent.id, sessionId, amount: paymentIntent.amount, receiptEmail: paymentIntent.receipt_email ?? null },
+                    message: `Payment ${paymentIntent.id} ($${(paymentIntent.amount / 100).toFixed(2)}) succeeded but no checkout snapshot matches it — no order was created. Its cart and any snapshots for its session were left as they are.`,
+                    detail: {
+                      paymentIntentId: paymentIntent.id,
+                      sessionId,
+                      attemptId,
+                      amount: paymentIntent.amount,
+                      receiptEmail: paymentIntent.receipt_email ?? null,
+                      candidateSnapshots: candidates,
+                    },
                   });
-                  // Still clear the cart to prevent stuck state
-                  if (sessionId) {
-                    await storage.clearCart(sessionId);
-                  }
                   break;
                 }
                 

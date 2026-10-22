@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { WholesaleOrder, RetailSubscription, WholesaleCustomer } from "@shared/schema";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useAuth } from "@/hooks/use-auth";
+import { startOfDay, subMonths } from "date-fns";
 
 export default function Reports() {
   const { user } = useAuth();
@@ -31,7 +32,9 @@ export default function Reports() {
   const monthlyOrders = orders?.filter(o => {
     const orderDate = new Date(o.orderDate);
     const now = new Date();
-    const monthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    // subMonths clamps to the month's last day (May 31 → Apr 30); building the date
+    // from day-of-month rolled past short months (reviewer, 2026-10-22).
+    const monthAgo = startOfDay(subMonths(now, 1));
     return orderDate >= monthAgo;
   }).length || 0;
 
@@ -59,9 +62,12 @@ export default function Reports() {
   type CustomerSlice = { key: string; name: string; value: number; orders: number; share: string; color: string };
   const customerSlices: CustomerSlice[] = (() => {
     const now = new Date();
+    // subMonths clamps to the month's last day (May 31 → Feb 28); building the date
+    // from day-of-month rolled past short months and dropped their first days
+    // (reviewer, 2026-10-22).
     const since = customerPeriod === 'all'
       ? null
-      : new Date(now.getFullYear(), now.getMonth() - Number(customerPeriod), now.getDate());
+      : startOfDay(subMonths(now, Number(customerPeriod)));
     const counted = (orders ?? []).filter(o => o.status !== 'cancelled' && (!since || new Date(o.orderDate) >= since));
     const total = counted.reduce((s, o) => s + Number(o.totalAmount), 0);
     if (total <= 0) return [];
@@ -272,6 +278,9 @@ export default function Reports() {
         </Card>
       )}
 
+      {/* Dollar shares by customer are revenue, admin-and-up like the cards and
+          trend above (reviewer, 2026-10-22). */}
+      {isAdmin && (
       <Card data-testid="card-orders-by-customer">
         <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
           <div>
@@ -338,6 +347,7 @@ export default function Reports() {
           )}
         </CardContent>
       </Card>
+      )}
 
       <Card data-testid="card-order-status">
         <CardHeader>

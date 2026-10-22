@@ -4718,84 +4718,35 @@ export class PostgresStorage implements IStorage {
     try {
       await client.query('BEGIN');
 
-      // Get order items using the same transaction client
-      const orderItemsResult = await client.query(
-        'SELECT id, order_id, product_id, quantity, unit_price FROM retail_order_items WHERE order_id = $1',
+      // Give back exactly what this order still holds, by its ledger: every
+      // inventory_adjustments row tied to the order, netted per product. Fulfilment
+      // took stock; walking the order back to Pending already gave it back; an
+      // earlier cancel restored it. Restoring by "was it ever fulfilled" gave a
+      // reopened order's stock back twice (reviewer, 2026-10-22: 10 → 9 → 10 → 11).
+      // Legacy and v2 lines both land in the ledger when fulfilled, so one query
+      // covers both.
+      const { rows: held } = await client.query(
+        `SELECT product_id, SUM(quantity)::int AS net
+         FROM inventory_adjustments
+         WHERE order_id = $1 AND order_type = 'retail'
+         GROUP BY product_id HAVING SUM(quantity) < 0`,
         [id]
       );
-      
-      const orderItems = orderItemsResult.rows;
-
-      // Restore inventory for each item by creating positive adjustments
-      for (const item of orderItems) {
+      for (const h of held) {
+        const quantity = -h.net;
         await client.query(
-          `INSERT INTO inventory_adjustments 
+          `INSERT INTO inventory_adjustments
           (product_id, quantity, reason, staff_user_id, order_id, order_type)
           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [item.product_id, item.quantity, reason, staffUserId, id, 'retail']
+          [h.product_id, quantity, reason, staffUserId, id, 'retail']
         );
-
-        // Update product stock
         await client.query(
           `UPDATE products
            SET stock_quantity = stock_quantity + $1,
                in_stock = CASE WHEN stock_quantity + $1 > 0 THEN true ELSE in_stock END
            WHERE id = $2`,
-          [item.quantity, item.product_id]
+          [quantity, h.product_id]
         );
-      }
-
-      // Mirror of the v2 fulfilment decrement â€” restore stock for v2 lines too, so a
-      // cancelled order gives back exactly what fulfilment took. Only orders that were
-      // actually fulfilled consumed stock, so only those are restored.
-      const wasFulfilled = await client.query(
-        `SELECT 1 FROM inventory_adjustments WHERE order_id = $1 AND reason = 'fulfillment' LIMIT 1`,
-        [id]
-      );
-
-      if (wasFulfilled.rows.length > 0) {
-        // Same flavor-aware target resolution as the fulfilment decrement, so a
-        // cancellation gives back exactly what fulfilment took.
-        const v2Items = await client.query(
-          `SELECT oi.quantity,
-                  CASE WHEN COALESCE(oi.selected_flavor_id, rp.flavor_id) IS NULL
-                       THEN rp.finished_product_id ELSE fp.id END AS target_id
-           FROM retail_order_items_v2 oi
-           JOIN retail_products rp ON rp.id = oi.retail_product_id
-           LEFT JOIN products anchor ON anchor.id = rp.finished_product_id
-           LEFT JOIN LATERAL (
-             SELECT p.id FROM products p
-             WHERE p.container = COALESCE(rp.container, anchor.container)
-               AND p.flavor_id = COALESCE(oi.selected_flavor_id, rp.flavor_id)
-             LIMIT 1
-           ) fp ON true
-           WHERE oi.order_id = $1
-             AND (rp.finished_product_id IS NOT NULL OR rp.container IS NOT NULL)`,
-          [id]
-        );
-
-        const restore = new Map<string, number>();
-        for (const row of v2Items.rows) {
-          if (!row.target_id) continue; // untracked (e.g. Mixed) â€” nothing was taken
-          restore.set(row.target_id, (restore.get(row.target_id) ?? 0) + row.quantity);
-        }
-
-        for (const [targetId, quantity] of Array.from(restore.entries())) {
-          await client.query(
-            `INSERT INTO inventory_adjustments
-            (product_id, quantity, reason, staff_user_id, order_id, order_type)
-            VALUES ($1, $2, $3, $4, $5, $6)`,
-            [targetId, quantity, reason, staffUserId, id, 'retail']
-          );
-
-          await client.query(
-            `UPDATE products
-             SET stock_quantity = stock_quantity + $1,
-                 in_stock = CASE WHEN stock_quantity + $1 > 0 THEN true ELSE in_stock END
-             WHERE id = $2`,
-            [quantity, targetId]
-          );
-        }
       }
 
       // Update order status to cancelled
