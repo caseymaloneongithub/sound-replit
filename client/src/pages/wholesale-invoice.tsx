@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Printer, ArrowLeft, Landmark, Loader2, Mail, Pencil } from "lucide-react";
+import { Printer, ArrowLeft, Landmark, Link2, Loader2, Mail, Pencil } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -20,25 +20,39 @@ export default function WholesaleInvoice() {
   // the staff route from "Pay Now" / "View Invoice" and got Access Denied.
   const [, params] = useRoute("/wholesale/invoice/:id");
   const [, customerParams] = useRoute("/wholesale-customer/invoice/:id");
+  // A shared link (owner, 2026-10-29): the signature in the URL is the key, so
+  // there's no login and no staff controls, whoever is holding it.
+  const [, linkParams] = useRoute("/invoice/:orderId/:signature");
   const [, setLocation] = useLocation();
-  const orderId = params?.id ?? customerParams?.id;
+  const orderId = params?.id ?? customerParams?.id ?? linkParams?.orderId;
+  const isSharedLink = !!linkParams;
   const { toast } = useToast();
 
   const { data: user } = useQuery<User>({
     queryKey: ["/api/user"],
+    enabled: !isSharedLink,
   });
 
-  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+  // A disabled query still serves what's cached, so a logged-in staffer opening
+  // the shared link would otherwise get the staff controls: the mode decides.
+  const isAdmin = !isSharedLink && (user?.role === "admin" || user?.role === "super_admin");
 
-  const isStaff = user?.role === "staff" || user?.role === "admin" || user?.role === "super_admin";
+  const isStaff = !isSharedLink && (user?.role === "staff" || user?.role === "admin" || user?.role === "super_admin");
 
+  const invoiceKey = isSharedLink
+    ? ["/api/invoice-link", orderId, linkParams.signature]
+    : ["/api/wholesale/orders", orderId, "invoice"];
   const { data: invoiceData, isLoading } = useQuery<{
     order: any;
     customer: any;
     items: any[];
     adjustments: Array<{ id: string; label: string; amount: string }>;
+    /** Shared link only: the pay link, when the invoice is open and the account may pay online. */
+    paymentUrl?: string | null;
+    /** Staff only: the shared link to hand to the customer. */
+    invoiceLink?: string;
   }>({
-    queryKey: ["/api/wholesale/orders", orderId, "invoice"],
+    queryKey: invoiceKey,
     enabled: !!orderId,
   });
 
@@ -46,7 +60,7 @@ export default function WholesaleInvoice() {
   const [adjAmount, setAdjAmount] = useState("");
 
   const refreshInvoice = () =>
-    queryClient.invalidateQueries({ queryKey: ["/api/wholesale/orders", orderId, "invoice"] });
+    queryClient.invalidateQueries({ queryKey: invoiceKey });
 
   const addAdjustment = useMutation({
     mutationFn: async () =>
@@ -199,7 +213,24 @@ export default function WholesaleInvoice() {
   };
 
   const handlePayNow = () => {
+    // From a shared link the pay link does the work: it mints the Checkout
+    // session server-side and needs no login.
+    if (isSharedLink) {
+      if (invoiceData?.paymentUrl) window.location.assign(invoiceData.paymentUrl);
+      return;
+    }
     paymentMutation.mutate();
+  };
+
+  const copyInvoiceLink = async () => {
+    const link = invoiceData?.invoiceLink;
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast({ title: "Invoice link copied", description: "Anyone with the link can view this invoice and pay it online. No login needed." });
+    } catch {
+      toast({ title: "Couldn't copy automatically", description: link });
+    }
   };
 
   if (isLoading) {
@@ -215,8 +246,12 @@ export default function WholesaleInvoice() {
   if (!invoiceData) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <div className="text-muted-foreground">Invoice not found</div>
+        <div className="text-center max-w-md px-4">
+          <div className="text-muted-foreground">
+            {isSharedLink
+              ? "This invoice link isn't valid. Check the link you were sent, or contact orders@soundkombucha.com."
+              : "Invoice not found"}
+          </div>
         </div>
       </div>
     );
@@ -228,29 +263,36 @@ export default function WholesaleInvoice() {
   }, 0);
   // Adjustments lock the moment money starts moving: paid, or an ACH debit in flight.
   const adjustmentsLocked = !!order.paidAt || (!!order.paymentInitiatedAt && !order.paymentFailedAt);
+  // A shared link's server answer already says whether paying is on (paymentUrl);
+  // the logged-in views decide from the account and the order.
+  const canPayNow = isSharedLink
+    ? !!invoiceData.paymentUrl
+    : !!customer.allowOnlinePayment && !order.paidAt && !order.paymentInitiatedAt;
 
   return (
     <div className="min-h-screen bg-background">
       <div className="print:hidden sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container flex h-14 items-center gap-4 px-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => {
-              // A real back button: return to wherever the invoice was opened from
-              // (Invoices list, Orders, delivery packet…). Role-based fallback only
-              // for direct links with no history.
-              if (window.history.length > 1) {
-                window.history.back();
-                return;
-              }
-              const isStaffOrAdmin = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'staff';
-              setLocation(isStaffOrAdmin ? "/staff-portal/wholesale/invoices" : "/wholesale-customer/orders");
-            }}
-            data-testid="button-back"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
+          {!isSharedLink && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                // A real back button: return to wherever the invoice was opened from
+                // (Invoices list, Orders, delivery packet…). Role-based fallback only
+                // for direct links with no history.
+                if (window.history.length > 1) {
+                  window.history.back();
+                  return;
+                }
+                const isStaffOrAdmin = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'staff';
+                setLocation(isStaffOrAdmin ? "/staff-portal/wholesale/invoices" : "/wholesale-customer/orders");
+              }}
+              data-testid="button-back"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          )}
           <h1 className="text-lg font-semibold">Invoice {order.invoiceNumber}</h1>
           <div className="ml-auto flex items-center gap-2">
             {/* A bank debit already in flight: no pay button, or the customer pays twice. */}
@@ -259,7 +301,7 @@ export default function WholesaleInvoice() {
                 Bank payment processing
               </span>
             )}
-            {customer.allowOnlinePayment && !order.paidAt && !order.paymentInitiatedAt && (
+            {canPayNow && (
               <Button
                 onClick={handlePayNow}
                 disabled={paymentMutation.isPending}
@@ -276,6 +318,12 @@ export default function WholesaleInvoice() {
                     Pay by bank transfer
                   </>
                 )}
+              </Button>
+            )}
+            {isStaff && invoiceData.invoiceLink && (
+              <Button onClick={copyInvoiceLink} variant="outline" data-testid="button-copy-link">
+                <Link2 className="mr-2 h-4 w-4" />
+                Copy link
               </Button>
             )}
             {isAdmin && (

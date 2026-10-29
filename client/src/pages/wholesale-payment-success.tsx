@@ -15,13 +15,18 @@ import { Button } from "@/components/ui/button";
 export default function WholesalePaymentSuccess() {
   const [, staffParams] = useRoute("/wholesale/invoice/:id/payment-success");
   const [, customerParams] = useRoute("/wholesale-customer/invoice/:id/payment-success");
+  // Paid from a shared invoice link: back to that link, which needs no login.
+  const [, linkParams] = useRoute("/invoice/:orderId/:signature/payment-success");
   const [, setLocation] = useLocation();
-  const orderId = staffParams?.id ?? customerParams?.id;
+  const orderId = staffParams?.id ?? customerParams?.id ?? linkParams?.orderId;
   const isCustomer = !!customerParams?.id;
+  const isSharedLink = !!linkParams;
 
-  const invoicePath = isCustomer
-    ? `/wholesale-customer/invoice/${orderId}`
-    : `/wholesale/invoice/${orderId}`;
+  const invoicePath = isSharedLink
+    ? `/invoice/${linkParams.orderId}/${linkParams.signature}`
+    : isCustomer
+      ? `/wholesale-customer/invoice/${orderId}`
+      : `/wholesale/invoice/${orderId}`;
   const ordersPath = isCustomer ? "/wholesale-customer/orders" : "/wholesale/orders";
 
   return (
@@ -50,13 +55,15 @@ export default function WholesalePaymentSuccess() {
             >
               View Invoice
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => setLocation(ordersPath)}
-              data-testid="button-back-to-orders"
-            >
-              Back to Orders
-            </Button>
+            {!isSharedLink && (
+              <Button
+                variant="outline"
+                onClick={() => setLocation(ordersPath)}
+                data-testid="button-back-to-orders"
+              >
+                Back to Orders
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>

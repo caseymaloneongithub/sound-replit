@@ -45,7 +45,7 @@ import { checkMaterialStockAlerts } from "./material-alerts";
 import { LEAD_TYPES, LEAD_ZIP_RE, leadZipFrom, type LeadType } from "@shared/schema";
 import { weekMondayOf, DROP_IN_TOUCH_POINT_SUBJECT } from "@shared/lead-visits";
 import { getBaseUrl } from "./app-url";
-import { wholesalePayLink, payLinkSignatureMatches } from "./wholesale-pay-link";
+import { wholesalePayLink, payLinkSignatureMatches, wholesaleInvoiceLink, invoiceLinkSignatureMatches } from "./wholesale-pay-link";
 import { insertDeliveryStopSchema, wholesaleLocations as wholesaleLocationsTable, cartItems as legacyCartItemsTable, wholesaleOrders as wholesaleOrdersTable } from "@shared/schema";
 
 // Neon's driver, or node-postgres for a local DATABASE_URL (db-pool.ts); the
@@ -607,7 +607,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
-  async function createWholesaleCheckoutSession(order: any, customer: any, items: any[]) {
+  /**
+   * `returnTo` is where Stripe sends the customer afterwards. The default is the
+   * logged-in customer's invoice page; a payment started from an emailed link or
+   * a shared invoice link returns to the shared page instead, since whoever is
+   * paying may have no login.
+   */
+  async function createWholesaleCheckoutSession(order: any, customer: any, items: any[], returnTo?: { successUrl: string; cancelUrl: string }) {
     if (!stripe) throw new Error("Stripe is not configured");
     const baseUrl = getBaseUrl();
 
@@ -661,8 +667,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         metadata: paymentMetadata,
         description: `Invoice ${order.invoiceNumber} — ${customer.businessName}`,
       },
-      success_url: `${baseUrl}/wholesale-customer/invoice/${order.id}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${baseUrl}/wholesale-customer/invoice/${order.id}`,
+      success_url: returnTo?.successUrl ?? `${baseUrl}/wholesale-customer/invoice/${order.id}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: returnTo?.cancelUrl ?? `${baseUrl}/wholesale-customer/invoice/${order.id}`,
     });
 
     const createSession = async () => {
@@ -822,9 +828,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return page(410, "This payment link has expired", `It was good for a year from the invoice. Ask us for a fresh invoice for ${order.invoiceNumber}.`);
       }
       if (!stripe) return page(503, "Online payment is unavailable right now", "Please try again in a little while, or mail a check.");
+      // Back to the shared invoice page afterwards, which needs no login.
+      const invoiceLink = wholesaleInvoiceLink(orderId);
       let session;
       try {
-        session = await createWholesaleCheckoutSession(order, customer, items);
+        session = await createWholesaleCheckoutSession(order, customer, items, {
+          successUrl: `${invoiceLink}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancelUrl: invoiceLink,
+        });
       } catch (e) {
         // Paid or processing at Stripe already, found while checking the open session.
         if (e instanceof WholesalePaymentBlocked) {
@@ -839,6 +850,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("[WHOLESALE PAY] Pay link failed:", error);
       page(500, "Something went wrong", "We couldn't open the payment page. Please try again in a few minutes.");
+    }
+  });
+
+  /** What a shared invoice link shows: the printed invoice and nothing else about the account. */
+  const publicInvoice = (
+    details: NonNullable<Awaited<ReturnType<typeof storage.getWholesaleOrderWithDetails>>>,
+    adjustments: Array<{ id: string; label: string; amount: string }>,
+  ) => {
+    const { order, customer, items } = details;
+    const open = !order.paidAt && !(order.paymentInitiatedAt && !order.paymentFailedAt);
+    const mayPayOnline = !!(customer.allowOnlinePayment || customer.allowCardPayment);
+    return {
+      order: {
+        id: order.id,
+        invoiceNumber: order.invoiceNumber,
+        poNumber: order.poNumber ?? null,
+        orderDate: order.orderDate,
+        deliveryDate: order.deliveryDate,
+        dueDate: order.dueDate,
+        paidAt: order.paidAt,
+        paymentInitiatedAt: order.paymentInitiatedAt,
+        paymentFailedAt: order.paymentFailedAt,
+        totalAmount: order.totalAmount,
+        notes: order.notes,
+        location: order.location
+          ? {
+              locationName: order.location.locationName,
+              address: order.location.address,
+              city: order.location.city,
+              state: order.location.state,
+              zipCode: order.location.zipCode,
+              contactName: order.location.contactName,
+              contactPhone: order.location.contactPhone,
+            }
+          : undefined,
+      },
+      customer: { businessName: customer.businessName, contactName: customer.contactName, phone: customer.phone },
+      items: items.map((i) => ({ id: i.id, quantity: i.quantity, unitPrice: i.unitPrice, product: i.product })),
+      adjustments: adjustments.map((a) => ({ id: a.id, label: a.label, amount: a.amount })),
+      // The same pay link the emails carry; null once paid or while a debit is in flight.
+      paymentUrl: open && mayPayOnline ? wholesalePayLink(order.id) : null,
+    };
+  };
+
+  /**
+   * The invoice behind a shared link (owner, 2026-10-29: "be able to send a link
+   * to a customer to an invoice"). No login: the signature in the URL is the key,
+   * as it is for the pay link. A bad signature and an unknown order answer alike,
+   * so the route can't be used to probe which order ids exist.
+   */
+  app.get("/api/invoice-link/:orderId/:signature", async (req, res) => {
+    try {
+      const { orderId, signature } = req.params;
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!checkSubmissionRateLimit(`invoice-link:${ip}`, 60, 60 * 60 * 1000)) {
+        return res.status(429).json({ message: "Too many tries. Please wait a few minutes and open the link again." });
+      }
+      const notValid = () => res.status(404).json({ message: "This invoice link isn't valid" });
+      if (!invoiceLinkSignatureMatches(orderId, signature)) return notValid();
+      const details = await storage.getWholesaleOrderWithDetails(orderId);
+      if (!details || details.order.deletedAt) return notValid();
+      const adjustments = await storage.getWholesaleOrderAdjustments(orderId);
+      res.json(publicInvoice(details, adjustments));
+    } catch (error: any) {
+      console.error("[INVOICE LINK] Failed:", error);
+      res.status(500).json({ message: "We couldn't load this invoice. Please try again in a few minutes." });
     }
   });
 
@@ -9353,7 +9430,10 @@ If you have any questions, please don't hesitate to reach out!`,
         return res.status(404).json({ message: "Order not found" });
       }
       const adjustments = await storage.getWholesaleOrderAdjustments(req.params.id);
-      res.json({ ...orderDetails, adjustments });
+      // Staff also get the link to hand to the customer (owner, 2026-10-29); the
+      // customer's own view has no use for it.
+      const staffViewing = ['staff', 'admin', 'super_admin'].includes((req as any).user?.role);
+      res.json({ ...orderDetails, adjustments, ...(staffViewing ? { invoiceLink: wholesaleInvoiceLink(req.params.id) } : {}) });
     } catch (error: any) {
       res.status(500).json({ message: "Error fetching invoice: " + error.message });
     }

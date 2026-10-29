@@ -138,6 +138,9 @@ function Router() {
       <StaffProtectedRoute path="/staff-portal/orders-board" component={OrdersBoard} />
       <StaffProtectedRoute path="/staff-portal/checklist" component={AdminChecklist} />
       
+      {/* A shared invoice link (owner, 2026-10-29): the signature in the URL is the key, no login. */}
+      <Route path="/invoice/:orderId/:signature/payment-success" component={WholesalePaymentSuccess} />
+      <Route path="/invoice/:orderId/:signature" component={WholesaleInvoice} />
       {/* Invoice pages remain accessible outside main navigation */}
       <StaffProtectedRoute path="/wholesale/invoice/:id/payment-success" component={WholesalePaymentSuccess} />
       <StaffProtectedRoute path="/wholesale/invoice/:id" component={WholesaleInvoice} />
