@@ -75,6 +75,7 @@ export async function sendInvoiceReminders(now: Date = new Date()): Promise<{ se
         to: recipients.to,
         businessName: customer.businessName,
         invoiceNumber: order.invoiceNumber,
+        poNumber: order.poNumber ?? null,
         amount: Number(order.totalAmount),
         dueDate,
         daysOverdue: days,

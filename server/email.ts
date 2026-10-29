@@ -2768,6 +2768,8 @@ export interface InvoiceReminderEmailParams {
   daysOverdue: number;
   /** Our durable pay link, when the account may pay online. */
   paymentUrl: string | null;
+  /** The customer's purchase order number, when the order carries one. */
+  poNumber?: string | null;
 }
 
 /** "due today", "a week overdue", "2 weeks overdue", … */
@@ -2780,24 +2782,21 @@ export function overdueWording(daysOverdue: number): string {
 
 /**
  * One reminder per stage: on the due date, a week overdue, two weeks, three,
- * then every week until the invoice is paid. A copy goes to orders@ so the
- * office sees what the customer saw; replies land there too.
+ * then every week until the invoice is paid. Built apart from the send so the
+ * wording can be checked without a mail transport.
  */
-export async function sendInvoiceReminderEmail(params: InvoiceReminderEmailParams): Promise<void> {
-  const transporter = createTransporter();
+export function buildInvoiceReminderEmail(params: InvoiceReminderEmailParams): { subject: string; text: string; html: string } {
   const wording = overdueWording(params.daysOverdue);
   const subject = `Invoice ${params.invoiceNumber} is ${wording} — Puget Sound Kombucha Co.`;
-
-  if (!transporter) {
-    console.log(`[EMAIL] Would send invoice reminder (${wording}) for ${params.invoiceNumber} to: ${params.to.join(', ')}`);
-    return;
-  }
-
   const amount = `$${params.amount.toFixed(2)}`;
   const due = params.dueDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' });
-  const opening = params.daysOverdue <= 0
-    ? `A quick note that invoice ${params.invoiceNumber} for ${amount} is due today, ${due}.`
-    : `Invoice ${params.invoiceNumber} for ${amount} was due on ${due} and is now ${wording}.`;
+  // The PO rides with the invoice number wherever it's named: accounts payable
+  // files by it (owner, 2026-10-29).
+  const openingWith = (po: string) => params.daysOverdue <= 0
+    ? `A quick note that invoice ${params.invoiceNumber}${po} for ${amount} is due today, ${due}.`
+    : `Invoice ${params.invoiceNumber}${po} for ${amount} was due on ${due} and is now ${wording}.`;
+  const opening = openingWith(params.poNumber ? ` (PO ${params.poNumber})` : '');
+  const openingHtml = openingWith(params.poNumber ? ` (PO ${escapeHtml(params.poNumber)})` : '');
   const mailCheck = 'Puget Sound Kombucha Co., 1008 W Sherri Dr, Gilbert, AZ 85233';
 
   const text = `
@@ -2822,11 +2821,11 @@ orders@soundkombucha.com · (206) 789-5219
   ${getEmailHeader('Payment reminder')}
   <div style="padding: 32px 24px;">
     <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 16px 0;">Hi ${params.businessName},</p>
-    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 24px 0;">${opening}</p>
+    <p style="color: ${BRAND_COLORS.darkGrey}; line-height: 1.6; margin: 0 0 24px 0;">${openingHtml}</p>
     <div style="background-color: ${BRAND_COLORS.backgroundGrey}; border-radius: 8px; padding: 20px 24px; margin: 0 0 24px 0;">
       <div style="color: ${BRAND_COLORS.mediumGrey}; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;">Amount due</div>
       <div style="color: ${BRAND_COLORS.darkGrey}; font-size: 28px; font-weight: 700; margin-top: 4px;">${amount}</div>
-      <div style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; margin-top: 4px;">Invoice ${params.invoiceNumber} · due ${due}</div>
+      <div style="color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; margin-top: 4px;">Invoice ${params.invoiceNumber}${params.poNumber ? ` · PO ${escapeHtml(params.poNumber)}` : ''} · due ${due}</div>
     </div>
     ${params.paymentUrl ? `
     <div style="text-align: center; margin: 0 0 16px 0;">
@@ -2841,7 +2840,19 @@ orders@soundkombucha.com · (206) 789-5219
   ${getEmailFooter()}
 </div>
   `;
+  return { subject, text, html };
+}
 
+/** A copy goes to orders@ so the office sees what the customer saw; replies land there too. */
+export async function sendInvoiceReminderEmail(params: InvoiceReminderEmailParams): Promise<void> {
+  const transporter = createTransporter();
+  const wording = overdueWording(params.daysOverdue);
+  if (!transporter) {
+    console.log(`[EMAIL] Would send invoice reminder (${wording}) for ${params.invoiceNumber} to: ${params.to.join(', ')}`);
+    return;
+  }
+
+  const { subject, text, html } = buildInvoiceReminderEmail(params);
   await transporter.sendMail({
     from: `"Puget Sound Kombucha Co." <${process.env.GMAIL_USER}>`,
     to: params.to,
