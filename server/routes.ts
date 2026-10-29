@@ -616,6 +616,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   async function createWholesaleCheckoutSession(order: any, customer: any, items: any[], returnTo?: { successUrl: string; cancelUrl: string }) {
     if (!stripe) throw new Error("Stripe is not configured");
     const baseUrl = getBaseUrl();
+    const successUrl = returnTo?.successUrl ?? `${baseUrl}/wholesale-customer/invoice/${order.id}/payment-success?session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = returnTo?.cancelUrl ?? `${baseUrl}/wholesale-customer/invoice/${order.id}`;
 
     // ONE line for the full invoice total, not per-item lines. Invoices can carry signed
     // adjustments (pallet fees, damage credits) and Stripe line items cannot be negative,
@@ -667,8 +669,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         metadata: paymentMetadata,
         description: `Invoice ${order.invoiceNumber} — ${customer.businessName}`,
       },
-      success_url: returnTo?.successUrl ?? `${baseUrl}/wholesale-customer/invoice/${order.id}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: returnTo?.cancelUrl ?? `${baseUrl}/wholesale-customer/invoice/${order.id}`,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
     });
 
     const createSession = async () => {
@@ -708,8 +710,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // must not keep a $100 card session — with time left to pay it.
           const sameTerms = existing.amount_total === lineItems[0].price_data.unit_amount
             && (existing.payment_method_types ?? []).slice().sort().join(',') === paymentMethodTypes.slice().sort().join(',');
+          // ...and comes back to where THIS click started: a session opened from the
+          // customer portal returns there, one opened from a shared link or an email
+          // returns to the shared page, which needs no login (review, 2026-10-29).
+          // A session pointed elsewhere is replaced like one with a stale amount.
+          const sameReturn = existing.success_url === successUrl && existing.cancel_url === cancelUrl;
           const timeLeft = (existing.expires_at ?? 0) * 1000 - Date.now() > 5 * 60 * 1000;
-          if (sameTerms && timeLeft && existing.url) return existing;
+          if (sameTerms && sameReturn && timeLeft && existing.url) return existing;
           // Outdated or nearly out of time: closed at Stripe BEFORE its replacement
           // exists, so the customer can never hold two payable sessions.
           await stripe.checkout.sessions.expire(current.sessionId);
@@ -2872,6 +2879,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * revenue (quantity × unit price) of every wholesale order placed since `since`
    * (an ISO instant; 'all' or absent for all time) that wasn't cancelled, by the
    * line's unit type (with its container) and flavor; the page groups from there.
+   * A line from before unit types, which names only a legacy product, takes that
+   * product's container and flavor instead (review, 2026-10-29), so it groups
+   * with the lines sold the new way rather than landing in Other.
    * Revenue is admin-and-up, like the rest of that page's money.
    */
   app.get("/api/reports/wholesale-product-revenue", isAuthenticated, isAdmin, async (req, res) => {
@@ -2882,16 +2892,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid since date" });
       }
       const result = await db.execute(sql`
-        SELECT wut.container, wut.name AS unit_type, f.name AS flavor,
+        SELECT COALESCE(wut.container, p.container) AS container,
+               COALESCE(wut.name, pt.name) AS unit_type,
+               COALESCE(f.name, pf.name, p.name) AS flavor,
                SUM(oi.quantity * oi.unit_price)::float8 AS revenue,
                SUM(oi.quantity)::int AS units
         FROM wholesale_order_items oi
         JOIN wholesale_orders o ON o.id = oi.order_id
         LEFT JOIN wholesale_unit_types wut ON wut.id = oi.unit_type_id
         LEFT JOIN flavors f ON f.id = oi.flavor_id
+        LEFT JOIN products p ON p.id = oi.product_id AND oi.unit_type_id IS NULL
+        LEFT JOIN product_types pt ON pt.id = p.product_type_id
+        LEFT JOIN flavors pf ON pf.id = p.flavor_id
         WHERE o.deleted_at IS NULL AND o.status <> 'cancelled'
           ${since ? sql`AND o.order_date >= ${since}` : sql``}
-        GROUP BY wut.container, wut.name, f.name`);
+        GROUP BY 1, 2, 3`);
       res.json({ rows: result.rows });
     } catch (error: any) {
       res.status(500).json({ message: "Error building product revenue: " + error.message });
