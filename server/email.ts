@@ -1013,6 +1013,9 @@ export async function sendOpsEmail(params: { to: string[]; subject: string; head
   });
 }
 
+/** Text a person typed, made safe to drop into email HTML. */
+const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 /** One material in a stock alert email; `level` is the level it just dropped to. */
 export type MaterialStockAlertItem = {
   level: 'order-now' | 'watch';
@@ -1072,7 +1075,6 @@ export async function sendMaterialStockAlert(params: { adminEmails: string[]; it
   const appUrl = (process.env.APP_URL || 'https://soundkombucha.com').replace(/\/+$/, '');
   const qty = (n: number) => Number(n.toFixed(2)).toLocaleString('en-US');
   const daysLeft = (i: MaterialStockAlertItem) => (i.daysOfCover === null ? '—' : `${Math.max(0, Math.floor(i.daysOfCover))} days`);
-  const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
   const label = (level: MaterialStockAlertItem['level']) => (level === 'order-now' ? 'Order now' : 'Watch');
   const floorPct = `${Math.round(ORDER_NOW_SHARE_OF_REORDER * 100)}%`;
@@ -2626,7 +2628,7 @@ export function buildWholesaleInvoiceEmail(params: WholesaleInvoiceEmailParams):
 Invoice ${params.invoiceNumber}
 Puget Sound Kombucha Co.
 ${params.personalMessage ? `\n${params.personalMessage}\n` : ''}
-Date: ${orderDateFormatted}
+${params.poNumber ? `PO #: ${params.poNumber}\n` : ''}Date: ${orderDateFormatted}
 ${deliveryDateFormatted ? `Delivery Date: ${deliveryDateFormatted}` : ''}
 ${dueDateFormatted ? `Payment Due: ${dueDateFormatted}` : ''}
 
@@ -2659,6 +2661,7 @@ orders@soundkombucha.com
     <p style="color: ${BRAND_COLORS.darkGrey}; font-size: 15px; margin: 0 0 20px 0; white-space: pre-line;">${params.personalMessage}</p>
     ` : ''}
     <div style="margin-bottom: 24px;">
+      ${params.poNumber ? `<p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 4px 0; font-size: 14px;">PO #: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${escapeHtml(params.poNumber)}</span></p>` : ''}
       <p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 4px 0; font-size: 14px;">Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${orderDateFormatted}</span></p>
       ${deliveryDateFormatted ? `<p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 4px 0; font-size: 14px;">Delivery Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${deliveryDateFormatted}</span></p>` : ''}
       ${dueDateFormatted ? `<p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0; font-size: 14px;">Payment Due: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${dueDateFormatted}</span></p>` : ''}

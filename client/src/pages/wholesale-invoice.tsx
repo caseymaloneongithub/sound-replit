@@ -335,6 +335,11 @@ export default function WholesaleInvoice() {
               <div className="text-muted-foreground">
                 Invoice #: <span className="font-semibold text-foreground" data-testid="text-invoice-number">{order.invoiceNumber}</span>
               </div>
+              {order.poNumber && (
+                <div className="text-muted-foreground">
+                  PO #: <span className="font-semibold text-foreground" data-testid="text-po-number">{order.poNumber}</span>
+                </div>
+              )}
               <div className="text-muted-foreground">
                 Date: <span className="font-semibold text-foreground">{format(new Date(order.orderDate), "MMM dd, yyyy")}</span>
               </div>
