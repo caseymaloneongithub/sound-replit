@@ -98,7 +98,7 @@ import {
   type OrderMaterial,
 } from "@shared/schema";
 import { VISIT_TOUCH_POINT_SUBJECT } from "@shared/lead-visits";
-import { eq, and, or, desc, asc, sql, inArray, isNull, gte, lt } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, inArray, isNull, isNotNull, gte, lt } from "drizzle-orm";
 import {
   materialLevel,
   suggestedOrderQty,
@@ -149,6 +149,13 @@ export interface IStorage {
   updateUserStripeId(id: string, stripeCustomerId: string): Promise<User | undefined>;
   getUsersWithoutStripeId(): Promise<User[]>;
   getUsersByRole(role: string): Promise<User[]>;
+  /**
+   * Who hears about site activity by email: every admin and super admin with an
+   * address, once each. The staff role is never on the list — staff get no email
+   * but password resets (owner, 2026-10-29) — so notifications take their
+   * recipients from here instead of querying roles themselves.
+   */
+  getNotificationEmails(): Promise<string[]>;
   
   startImpersonation(adminUserId: string, impersonatedUserId: string, ipAddress?: string, userAgent?: string): Promise<ImpersonationLog>;
   endImpersonation(logId: string): Promise<void>;
@@ -543,6 +550,14 @@ export class PostgresStorage implements IStorage {
       .from(users)
       .where(eq(users.role, role));
     return result;
+  }
+
+  async getNotificationEmails(): Promise<string[]> {
+    const rows = await db
+      .select({ email: users.email })
+      .from(users)
+      .where(and(inArray(users.role, ['admin', 'super_admin']), isNotNull(users.email)));
+    return Array.from(new Set(rows.map((r) => r.email!.trim()).filter((e) => e.length > 0)));
   }
 
   async startImpersonation(adminUserId: string, impersonatedUserId: string, ipAddress?: string, userAgent?: string): Promise<ImpersonationLog> {

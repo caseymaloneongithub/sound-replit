@@ -457,11 +457,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         // Applications go to admins and super-admins only (owner, 2026-09-02) —
         // account setup is their call, not general staff's.
-        const staffUsers = await db
-          .select({ email: users.email })
-          .from(users)
-          .where(sql`${users.role} IN ('admin', 'super_admin') AND ${users.email} IS NOT NULL`);
-        const staffEmails = staffUsers.map(u => u.email).filter((e): e is string => e !== null);
+        const staffEmails = await storage.getNotificationEmails();
         if (staffEmails.length > 0) {
           await sendContactFormNotification({
             staffEmails,
@@ -928,11 +924,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const customer = await storage.getWholesaleCustomer(order.customerId);
 
     try {
-      const admins = await storage.getUsersByRole('admin');
-      const superAdmins = await storage.getUsersByRole('super_admin');
-      const adminEmails = [...admins, ...superAdmins]
-        .map(u => u.email)
-        .filter((email): email is string => !!email);
+      const adminEmails = await storage.getNotificationEmails();
 
       if (adminEmails.length > 0 && customer) {
         const paidLoc = order.locationId ? await storage.getWholesaleLocation(order.locationId) : null;
@@ -984,19 +976,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const verdict = spamScore(validatedData.message, validatedData);
       if (verdict.score >= SPAM_THRESHOLD) return pretendSent(`score ${verdict.score}: ${verdict.reasons.join(', ')}`);
 
-      // Get all staff member emails (staff, admin, super_admin)
-      const staffUsers = await db
-        .select({ email: users.email })
-        .from(users)
-        .where(
-          sql`${users.role} IN ('staff', 'admin', 'super_admin') AND ${users.email} IS NOT NULL`
-        );
+      // Admins and super admins hear about contact messages. The staff role used
+      // to as well; staff get no email but password resets now (owner, 2026-10-29).
+      const staffEmails = await storage.getNotificationEmails();
 
-      const staffEmails = staffUsers
-        .map(u => u.email)
-        .filter((email): email is string => email !== null);
-
-      // Send notification to staff
       if (staffEmails.length > 0) {
         await sendContactFormNotification({
           staffEmails,
@@ -2071,12 +2054,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('[ORDER] Failed to send customer confirmation:', emailError);
       });
 
-      storage.getUsersByRole('admin').then(async (admins) => {
-        const superAdmins = await storage.getUsersByRole('super_admin');
-        const adminEmails = [...admins, ...superAdmins]
-          .map(u => u.email)
-          .filter((email): email is string => !!email);
-
+      storage.getNotificationEmails().then(async (adminEmails) => {
         if (adminEmails.length > 0) {
           await sendWholesaleOrderAdminNotification({
             adminEmails,
@@ -6149,12 +6127,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 });
                 
                 // Send admin notification for retail order (non-blocking)
-                storage.getUsersByRole('admin').then(async (admins) => {
-                  const superAdmins = await storage.getUsersByRole('super_admin');
-                  const adminEmails = [...admins, ...superAdmins]
-                    .map(u => u.email)
-                    .filter((email): email is string => !!email);
-
+                storage.getNotificationEmails().then(async (adminEmails) => {
                   if (adminEmails.length > 0) {
                     await sendRetailOrderAdminNotification({
                       adminEmails,
@@ -6249,11 +6222,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.error(`[WEBHOOK] 🚨 Wholesale ACH payment FAILED for invoice ${wsOrder?.invoiceNumber ?? paymentIntent.metadata.orderId}: ${failure}`);
 
             try {
-              const admins = await storage.getUsersByRole('admin');
-              const superAdmins = await storage.getUsersByRole('super_admin');
-              const adminEmails = [...admins, ...superAdmins]
-                .map(u => u.email)
-                .filter((e): e is string => !!e);
+              const adminEmails = await storage.getNotificationEmails();
               const wsCustomer = wsOrder ? await storage.getWholesaleCustomer(wsOrder.customerId) : null;
               if (adminEmails.length > 0 && wsOrder) {
                 const failLoc = wsOrder.locationId ? await storage.getWholesaleLocation(wsOrder.locationId) : null;
@@ -9334,12 +9303,7 @@ If you have any questions, please don't hesitate to reach out!`,
           console.error('[ORDER] Failed to send customer confirmation:', emailError);
         });
 
-        storage.getUsersByRole('admin').then(async (admins) => {
-          const superAdmins = await storage.getUsersByRole('super_admin');
-          const adminEmails = [...admins, ...superAdmins]
-            .map(u => u.email)
-            .filter((email): email is string => !!email);
-
+        storage.getNotificationEmails().then(async (adminEmails) => {
           if (adminEmails.length > 0) {
             await sendWholesaleOrderAdminNotification({
               adminEmails,

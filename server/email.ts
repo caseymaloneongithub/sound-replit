@@ -1207,7 +1207,7 @@ export async function sendContactFormNotification(params: ContactFormNotificatio
   const transporter = createTransporter();
   
   if (!transporter) {
-    console.log('[EMAIL] Would send contact form notification to staff');
+    console.log('[EMAIL] Would send contact form notification to:', params.staffEmails?.join(', ') || '(no one)');
     console.log('[EMAIL] Contact from:', params.contactName, params.contactEmail);
     console.log('[EMAIL] Message:', params.message);
     return;

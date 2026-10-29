@@ -143,8 +143,7 @@ async function runCheck(notify: boolean): Promise<CheckResult> {
 }
 
 async function lookUpAdminEmails(): Promise<string[]> {
-  const admins = [...(await storage.getUsersByRole("admin")), ...(await storage.getUsersByRole("super_admin"))];
-  return Array.from(new Set(admins.map((u) => u.email).filter((e): e is string => !!e)));
+  return storage.getNotificationEmails();
 }
 
 /**

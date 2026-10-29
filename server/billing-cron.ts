@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { recordEvent } from './ops-events';
 import Stripe from 'stripe';
 import { db } from './db';
-import { pool } from './storage';
+import { pool, storage } from './storage';
 import { retailOrders, retailOrderItemsV2, retailSubscriptions, retailSubscriptionItems, retailProducts, flavors, users } from '../shared/schema';
 import { eq, ne, and, lte, sql, gte, lt, or, isNull, inArray } from 'drizzle-orm';
 import { normalizeToAllowedPickupDay, getBillingDateForPickup, PICKUP_POLICY, addPickupDays } from '../shared/pickup-policy';
@@ -369,11 +369,7 @@ export async function finalizeRetailSubscriptionCharge(paymentIntentId: string):
     // charge after it as "Subscription Renewal", with the pickup it pays for.
     // Only the cart-checkout path emailed admins before, so renewals were silent.
     try {
-      const adminRows = await db
-        .select({ email: users.email })
-        .from(users)
-        .where(or(eq(users.role, 'admin'), eq(users.role, 'super_admin')));
-      const adminEmails = adminRows.map((u) => u.email).filter((e): e is string => !!e);
+      const adminEmails = await storage.getNotificationEmails();
       if (adminEmails.length > 0) {
         // Same shape as the checkout notification: "Flavor - 12 x 16oz bottles".
         const orderItems = items
