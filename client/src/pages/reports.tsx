@@ -61,6 +61,61 @@ function toShares(entries: ShareEntry[], otherNoun: [string, string]): Slice[] {
   return slices;
 }
 
+// A slice's label is drawn by hand so it fits the chart instead of running off
+// the card (owner, 2026-10-28: "get the labels sized so they don't overflow").
+const LABEL_FONT = 11;        // px
+const LABEL_GAP = 6;          // px between a slice's edge and its label
+const GLYPH_WIDTH = 0.56;     // an average sans-serif glyph, as a share of the font size
+const LABEL_MIN_SHARE = 0.05; // smaller slices go unlabelled; the list names them
+
+const textWidth = (s: string) => s.length * LABEL_FONT * GLYPH_WIDTH;
+
+/**
+ * The label lines that fit `room` pixels: the name and share on one line, the
+ * name over the share, or the share alone. A name is never cut short: the list
+ * under the pie names every slice, and "Wildbe..." helps nobody.
+ */
+function fitLabel(name: string, share: string, room: number): string[] {
+  if (textWidth(`${name} ${share}`) <= room) return [`${name} ${share}`];
+  if (textWidth(name) <= room) return [name, share];
+  return [share];
+}
+
+/**
+ * Recharts hands over the slice's geometry in pixels: cx comes from the pie's
+ * "50%", so the chart is twice cx wide. The label sits just outside the middle
+ * of its slice and reads away from the pie's centre line, so it takes only the
+ * room on its own side; a label at the top or bottom runs outward too, which
+ * keeps it clear of the neighbour whose slice follows it round.
+ */
+function renderSliceLabel(p: any) {
+  if (p.percent < LABEL_MIN_SHARE) return null;
+  const width = p.cx * 2;
+  const angle = (-p.midAngle * Math.PI) / 180; // recharts measures angles counter-clockwise
+  const radius = p.outerRadius + LABEL_GAP;
+  const x = p.cx + radius * Math.cos(angle);
+  const y = p.cy + radius * Math.sin(angle);
+  const anchor = x >= p.cx ? 'start' : 'end';
+  const room = (anchor === 'start' ? width - x : x) - 4;
+  const lines = fitLabel(p.name, `${Math.round(p.percent * 100)}%`, room);
+  const lineHeight = LABEL_FONT * 1.2;
+  return (
+    <text
+      x={x}
+      y={y - ((lines.length - 1) * lineHeight) / 2}
+      textAnchor={anchor}
+      dominantBaseline="central"
+      fontSize={LABEL_FONT}
+      fill={p.fill}
+      className="recharts-pie-label-text"
+    >
+      {lines.map((line, i) => (
+        <tspan key={i} x={x} dy={i === 0 ? 0 : lineHeight}>{line}</tspan>
+      ))}
+    </text>
+  );
+}
+
 /** A pie of shares with the list that names every slice. */
 function SharePie({ slices, countNoun, layout, testId, empty }: {
   slices: Slice[];
@@ -82,8 +137,7 @@ function SharePie({ slices, countNoun, layout, testId, empty }: {
             cx="50%"
             cy="50%"
             labelLine={false}
-            // Only slices big enough to carry a label get one; the list names the rest.
-            label={(p: any) => (p.percent >= 0.05 ? `${p.name} ${Math.round(p.percent * 100)}%` : null)}
+            label={renderSliceLabel}
             // A stacked pie sizes to its card, so three across still fit on a laptop.
             outerRadius={layout === 'side' ? 100 : '72%'}
             dataKey="value"
