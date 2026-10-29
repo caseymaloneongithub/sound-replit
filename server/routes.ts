@@ -9751,6 +9751,9 @@ If you have any questions, please don't hesitate to reach out!`,
         location,
         allowOnlinePayment: customer.allowOnlinePayment || customer.allowCardPayment,
         paymentUrl,
+        // The shared link rides along in every invoice email (owner, 2026-10-29),
+        // so the customer can open the invoice without a login or the attachment.
+        invoiceUrl: wholesaleInvoiceLink(order.id),
         paidAt: order.paidAt ? new Date(order.paidAt) : null,
       };
 

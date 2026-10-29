@@ -2184,6 +2184,8 @@ export interface WholesaleInvoiceEmailParams {
   location?: WholesaleInvoiceLocation | null;
   allowOnlinePayment: boolean;
   paymentUrl?: string | null;
+  /** The shared invoice link (owner, 2026-10-29): the invoice online, no login, with the pay button. */
+  invoiceUrl?: string | null;
   paidAt?: Date | null;
 }
 
@@ -2631,6 +2633,7 @@ ${params.personalMessage ? `\n${params.personalMessage}\n` : ''}
 ${params.poNumber ? `PO #: ${params.poNumber}\n` : ''}Date: ${orderDateFormatted}
 ${deliveryDateFormatted ? `Delivery Date: ${deliveryDateFormatted}` : ''}
 ${dueDateFormatted ? `Payment Due: ${dueDateFormatted}` : ''}
+${params.invoiceUrl ? `View this invoice online: ${params.invoiceUrl}` : ''}
 
 ${params.location ? locationText.trim() : `Bill To:
 ${params.businessName}
@@ -2665,6 +2668,7 @@ orders@soundkombucha.com
       <p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 4px 0; font-size: 14px;">Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${orderDateFormatted}</span></p>
       ${deliveryDateFormatted ? `<p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0 0 4px 0; font-size: 14px;">Delivery Date: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${deliveryDateFormatted}</span></p>` : ''}
       ${dueDateFormatted ? `<p style="color: ${BRAND_COLORS.mediumGrey}; margin: 0; font-size: 14px;">Payment Due: <span style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">${dueDateFormatted}</span></p>` : ''}
+      ${params.invoiceUrl ? `<p style="margin: 12px 0 0 0; font-size: 14px;"><a href="${params.invoiceUrl}" style="color: ${BRAND_COLORS.darkGrey}; font-weight: 600;">View this invoice online</a></p>` : ''}
     </div>
     
     <div style="display: flex; gap: 24px; margin-bottom: 24px;">
