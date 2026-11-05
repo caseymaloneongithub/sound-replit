@@ -1223,6 +1223,9 @@ export async function sendContactFormNotification(params: ContactFormNotificatio
   const mailOptions = {
     from: process.env.GMAIL_USER,
     to: params.staffEmails,
+    // Reply goes to the person who wrote in, not back to our own inbox
+    // (owner, 2026-11-04). The address passed the form's validation.
+    replyTo: params.contactEmail,
     subject: `New Contact Form Submission from ${params.contactName}`,
     text: `
 New Contact Form Submission
@@ -1234,9 +1237,6 @@ ${params.contactCompany ? `Company: ${params.contactCompany}` : ''}
 
 Message:
 ${params.message}
-
----
-This notification was sent to all staff members.
     `.trim(),
     html: `
 <div style="max-width: 600px; margin: 0 auto; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 16px; line-height: 1.6; color: ${BRAND_COLORS.darkGrey};">
@@ -1258,8 +1258,6 @@ This notification was sent to all staff members.
       <p style="white-space: pre-wrap; color: ${BRAND_COLORS.darkGrey}; background-color: ${BRAND_COLORS.backgroundGrey}; padding: 16px; border-radius: 4px; margin: 0;">${params.message}</p>
     </div>
     
-    <p style="margin-top: 32px; color: ${BRAND_COLORS.mediumGrey}; font-size: 14px; font-style: italic;">This notification was sent to all staff members.</p>
-    
     ${getEmailFooter()}
   </div>
 </div>
@@ -1269,7 +1267,7 @@ This notification was sent to all staff members.
 
   try {
     await transporter.sendMail(mailOptions);
-    console.log(`[EMAIL] ✅ Sent contact form notification to ${params.staffEmails.length} staff member(s)`);
+    console.log(`[EMAIL] ✅ Sent contact form notification to ${params.staffEmails.length} recipient(s)`);
   } catch (error) {
     console.error('[EMAIL] Failed to send contact form notification:', error);
     throw error;
