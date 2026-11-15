@@ -277,7 +277,6 @@ export default function AdminProfitability() {
 
   const { basis, actuals, catalog } = basisData;
   const u = projection.unitCosts;
-  const operatingCosts = projection.fees + projection.exciseTax + projection.insurance + projection.weeklyFixedCosts;
   const volumeHint = `${num(projection.volume.cases, 0)} cases and ${num(projection.volume.kegs)} kegs a week; `
     + `brew ${num(projection.volume.gallonsBrewed, 0)} at ${num(inputs.liquidWastePercent)}% liquid waste`;
   // Packaging waste is counted here and nowhere else (owner, 2026-11-15: "We're
@@ -375,11 +374,19 @@ export default function AdminProfitability() {
 
         {/* The week at a glance */}
         <div className="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-6 mb-6">
-          <Stat label="Revenue" value={money0(projection.revenue)} hint="per week" testId="stat-revenue" />
-          <Stat label="Cost of goods" value={money0(projection.cogs)} hint={projection.revenue > 0 ? `${pct(projection.cogs / projection.revenue)} of revenue` : undefined} testId="stat-cogs" />
-          <Stat label="Gross margin" value={money0(projection.grossMargin)} hint={projection.revenue > 0 ? pct(projection.grossMargin / projection.revenue) : undefined} testId="stat-gross" />
-          <Stat label="Operating costs" value={money0(operatingCosts)} hint="fees, B&O, insurance, labor, overhead" testId="stat-opex" />
+          {/* Each money tile reads "per week, $X a year" (owner, 2026-11-15: "add annualized to all but gallons");
+              net margin took the gross margin's place ("don't need the gross margin so just replace"). */}
+          <Stat label="Revenue" value={money0(projection.revenue)} hint={`per week, ${money0(projection.annual.revenue)} a year`} testId="stat-revenue" />
+          <Stat label="Cost of goods" value={money0(projection.cogs)} hint={`per week, ${money0(projection.annual.cogs)} a year${projection.revenue > 0 ? `; ${pct(projection.cogs / projection.revenue)} of revenue` : ""}`} testId="stat-cogs" />
+          <Stat label="Operating costs" value={money0(projection.operatingCosts)} hint={`per week, ${money0(projection.annual.operatingCosts)} a year; fees, B&O, insurance, labor, overhead`} testId="stat-opex" />
           <Stat label="Profit" value={money0(projection.operatingProfit)} tone={projection.operatingProfit >= 0 ? "good" : "bad"} hint={`per week, ${money0(projection.annual.operatingProfit)} a year; as owners, this is your pay`} testId="stat-operating" />
+          <Stat
+            label="Net margin"
+            value={projection.revenue > 0 ? pct(projection.netMargin) : "—"}
+            tone={projection.revenue > 0 ? (projection.netMargin >= 0 ? "good" : "bad") : undefined}
+            hint={projection.revenue > 0 ? "profit over sales; the same for the year" : "no sales entered"}
+            testId="stat-net-margin"
+          />
           <Stat label="Gallons" value={num(projection.volume.gallonsPackaged, 0)} hint={volumeHint} testId="stat-gallons" />
         </div>
 

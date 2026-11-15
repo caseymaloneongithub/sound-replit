@@ -220,17 +220,22 @@ export type Projection = {
   };
   /** Everything a week costs whether or not anything sells: labor and overhead. */
   weeklyFixedCosts: number;
+  /** Everything between gross margin and profit: fees, B&O, insurance, labor and overhead. */
+  operatingCosts: number;
   /**
    * What the week leaves after everything above. There is no owner-pay line
    * beneath it (owner, 2026-11-15: "We own 100% so we just call profits our pay").
    */
   operatingProfit: number;
+  /** Profit over revenue (owner, 2026-11-15: "net margin. Profit / Sales"); 0 when nothing sells. */
+  netMargin: number;
   breakEven: {
     /** Volumes × this ratio cover labor and overhead; null when sales don't contribute at all. */
     scale: number | null;
     channels: Record<Channel, { cases: number; kegs: number }> | null;
   };
-  annual: { revenue: number; operatingProfit: number; gallonsPackaged: number };
+  /** The same week 52 times over (owner, 2026-11-15: "add annualized to all but gallons" — the tiles show these). */
+  annual: { revenue: number; cogs: number; operatingCosts: number; operatingProfit: number; gallonsPackaged: number };
 };
 
 const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
@@ -311,6 +316,7 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     + overhead.vehicle + overhead.ownerTravel + overhead.freeProduct;
 
   const weeklyFixedCosts = laborTotal + overhead.total;
+  const operatingCosts = fees + exciseTax + insurance + weeklyFixedCosts;
   const operatingProfit = contribution - weeklyFixedCosts;
 
   const scale = contribution > 0 ? weeklyFixedCosts / contribution : null;
@@ -334,10 +340,14 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     labor: { total: laborTotal, wages, burden: laborBurden, buckets },
     overhead,
     weeklyFixedCosts,
+    operatingCosts,
     operatingProfit,
+    netMargin: safeDiv(operatingProfit, revenue),
     breakEven: { scale, channels: breakEvenChannels },
     annual: {
       revenue: revenue * WEEKS_PER_YEAR,
+      cogs: cogs * WEEKS_PER_YEAR,
+      operatingCosts: operatingCosts * WEEKS_PER_YEAR,
       operatingProfit: operatingProfit * WEEKS_PER_YEAR,
       gallonsPackaged: gallonsPackaged * WEEKS_PER_YEAR,
     },
