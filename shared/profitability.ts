@@ -88,7 +88,6 @@ export const projectionInputsSchema = z.object({
   }),
   /** Employer payroll taxes and the like, as a percentage on top of wages. */
   payrollBurdenPercent: percent,
-  ownerPayPerWeek: money,
   rentPerMonth: money,
   /** Insurance as a share of sales (owner, 2026-11-15: "make insurance a % of sales. Start at 1.2%"). */
   insurancePercent: percent,
@@ -197,15 +196,17 @@ export type Projection = {
   };
   /** Everything a week costs whether or not anything sells: labor and overhead. */
   weeklyFixedCosts: number;
+  /**
+   * What the week leaves after everything above. There is no owner-pay line
+   * beneath it (owner, 2026-11-15: "We own 100% so we just call profits our pay").
+   */
   operatingProfit: number;
-  ownerPay: number;
-  netProfit: number;
   breakEven: {
-    /** Volumes × this ratio break even after owner pay; null when sales don't contribute at all. */
+    /** Volumes × this ratio cover labor and overhead; null when sales don't contribute at all. */
     scale: number | null;
     channels: Record<Channel, { cases: number; kegs: number }> | null;
   };
-  annual: { revenue: number; operatingProfit: number; netProfit: number };
+  annual: { revenue: number; operatingProfit: number };
 };
 
 const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
@@ -281,10 +282,8 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
 
   const weeklyFixedCosts = laborTotal + overhead.total;
   const operatingProfit = contribution - weeklyFixedCosts;
-  const netProfit = operatingProfit - inputs.ownerPayPerWeek;
 
-  const needed = weeklyFixedCosts + inputs.ownerPayPerWeek;
-  const scale = contribution > 0 ? needed / contribution : null;
+  const scale = contribution > 0 ? weeklyFixedCosts / contribution : null;
   const breakEvenChannels = scale === null
     ? null
     : (Object.fromEntries(
@@ -305,13 +304,10 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     overhead,
     weeklyFixedCosts,
     operatingProfit,
-    ownerPay: inputs.ownerPayPerWeek,
-    netProfit,
     breakEven: { scale, channels: breakEvenChannels },
     annual: {
       revenue: revenue * WEEKS_PER_YEAR,
       operatingProfit: operatingProfit * WEEKS_PER_YEAR,
-      netProfit: netProfit * WEEKS_PER_YEAR,
     },
   };
 }
@@ -354,7 +350,6 @@ export function defaultInputs(actuals?: ProjectionActuals | null, catalog?: Cata
     flavorMix: "sales",
     labor: { brewing: line(), packaging: line(), deliveries: line(), maintenance: line() },
     payrollBurdenPercent: 10,
-    ownerPayPerWeek: 0,
     rentPerMonth: 0,
     insurancePercent: 1.2,
     kegReplacementPerYear: 0,
@@ -415,7 +410,6 @@ export function normalizeInputs(raw: unknown, fallback: ProjectionInputs = defau
     flavorMix: r.flavorMix === "even" ? "even" : "sales",
     labor: { brewing: labor("brewing"), packaging: labor("packaging"), deliveries: labor("deliveries"), maintenance: labor("maintenance") },
     payrollBurdenPercent: finite(r.payrollBurdenPercent, fallback.payrollBurdenPercent),
-    ownerPayPerWeek: finite(r.ownerPayPerWeek, fallback.ownerPayPerWeek),
     rentPerMonth: finite(r.rentPerMonth, typeof r.rentPerYear === "number" ? r.rentPerYear / 12 : fallback.rentPerMonth),
     insurancePercent: finite(r.insurancePercent, fallback.insurancePercent),
     kegReplacementPerYear: finite(r.kegReplacementPerYear, fallback.kegReplacementPerYear),

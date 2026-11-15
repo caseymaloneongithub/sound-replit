@@ -364,8 +364,8 @@ export default function AdminProfitability() {
           <Stat label="Cost of goods" value={money0(projection.cogs)} hint={projection.revenue > 0 ? `${pct(projection.cogs / projection.revenue)} of revenue` : undefined} testId="stat-cogs" />
           <Stat label="Gross margin" value={money0(projection.grossMargin)} hint={projection.revenue > 0 ? pct(projection.grossMargin / projection.revenue) : undefined} testId="stat-gross" />
           <Stat label="Operating costs" value={money0(operatingCosts)} hint="fees, B&O, insurance, labor, overhead" testId="stat-opex" />
-          <Stat label="Operating profit" value={money0(projection.operatingProfit)} tone={projection.operatingProfit >= 0 ? "good" : "bad"} hint="before your pay" testId="stat-operating" />
-          <Stat label="After your pay" value={money0(projection.netProfit)} tone={projection.netProfit >= 0 ? "good" : "bad"} hint={`${money0(projection.annual.netProfit)} a year`} testId="stat-net" />
+          <Stat label="Profit" value={money0(projection.operatingProfit)} tone={projection.operatingProfit >= 0 ? "good" : "bad"} hint="per week; as owners, this is your pay" testId="stat-operating" />
+          <Stat label="Profit per year" value={money0(projection.annual.operatingProfit)} tone={projection.annual.operatingProfit >= 0 ? "good" : "bad"} hint={`${WEEKS_PER_YEAR} weeks like this one`} testId="stat-annual" />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
@@ -458,7 +458,7 @@ export default function AdminProfitability() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Labor</CardTitle>
-                <CardDescription>Hours a week by what they're spent on. Burden is employer payroll tax and the like, on top of wages.</CardDescription>
+                <CardDescription>Employees' hours a week by what they're spent on; your own time is paid out of profit. Burden is employer payroll tax and the like, on top of wages.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <Table>
@@ -493,9 +493,6 @@ export default function AdminProfitability() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field label="Payroll burden" hint={`Employer taxes on the hours above: ${money0(projection.labor.burden)} a week`}>
                     <NumberField suffix="%" step="0.5" value={inputs.payrollBurdenPercent} onChange={(v) => set("payrollBurdenPercent", v)} testId="input-payroll-burden" />
-                  </Field>
-                  <Field label="Your own pay, per week" hint="Kept apart so profit shows before and after it">
-                    <NumberField prefix="$" step="1" value={inputs.ownerPayPerWeek} onChange={(v) => set("ownerPayPerWeek", v)} testId="input-owner-pay" />
                   </Field>
                 </div>
               </CardContent>
@@ -596,17 +593,9 @@ export default function AdminProfitability() {
                     </div>
                   ))}
                   <Separator className="my-2" />
-                  <div className="flex justify-between font-medium">
-                    <dt>Operating profit</dt>
-                    <dd className={`tabular-nums ${projection.operatingProfit < 0 ? "text-destructive" : ""}`}>{money0(projection.operatingProfit)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Your pay</dt>
-                    <dd className="tabular-nums">{money0(-projection.ownerPay)}</dd>
-                  </div>
                   <div className="flex justify-between font-semibold">
-                    <dt>Profit after your pay</dt>
-                    <dd className={`tabular-nums ${projection.netProfit < 0 ? "text-destructive" : "text-green-700 dark:text-green-400"}`}>{money0(projection.netProfit)}</dd>
+                    <dt>Profit, yours as owners</dt>
+                    <dd className={`tabular-nums ${projection.operatingProfit < 0 ? "text-destructive" : "text-green-700 dark:text-green-400"}`}>{money0(projection.operatingProfit)}</dd>
                   </div>
                 </dl>
               </CardContent>
@@ -621,12 +610,12 @@ export default function AdminProfitability() {
                   <p className="text-muted-foreground">Sales don't cover their own cost of goods and fees at these prices, so no volume breaks even.</p>
                 ) : projection.breakEven.scale === 0 ? (
                   <p className="text-muted-foreground" data-testid="text-break-even">
-                    With no labor, overhead or pay entered yet, every sale is profit. Fill those in for a real break-even.
+                    With no labor or overhead entered yet, every sale is profit. Fill those in for a real break-even.
                   </p>
                 ) : (
                   <>
                     <p data-testid="text-break-even">
-                      You break even, after your pay, at <span className="font-semibold">{pct(projection.breakEven.scale, 0)}</span> of these volumes.
+                      Labor and overhead are covered at <span className="font-semibold">{pct(projection.breakEven.scale, 0)}</span> of these volumes.
                       {projection.breakEven.scale <= 1
                         ? ` The other ${pct(1 - projection.breakEven.scale, 0)} is profit.`
                         : " You'd need more sales than this at the same mix."}
@@ -647,7 +636,7 @@ export default function AdminProfitability() {
                 <Separator className="my-2" />
                 <p className="text-muted-foreground">
                   Over {WEEKS_PER_YEAR} weeks: {money0(projection.annual.revenue)} in sales,{" "}
-                  <span className={projection.annual.netProfit < 0 ? "text-destructive" : ""}>{money0(projection.annual.netProfit)}</span> after your pay.
+                  <span className={projection.annual.operatingProfit < 0 ? "text-destructive" : ""}>{money0(projection.annual.operatingProfit)}</span> profit.
                 </p>
               </CardContent>
             </Card>
