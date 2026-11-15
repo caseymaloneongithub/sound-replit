@@ -52,6 +52,19 @@ export type StoredScenario = {
 
 const isGallons = (unit: string | null | undefined) => /^gal/i.test(String(unit ?? "").trim());
 
+/**
+ * Which package a retail product is, in the finished-goods vocabulary. Kegs have
+ * no finished product, and unit types have been spelled several ways over time
+ * ('1/6-barrel', '1/6 Barrel Keg'), so the words are the fallback (review,
+ * 2026-11-15). Needs `rp` (retail_products) and `fp` (its finished product) in scope.
+ */
+const retailContainer = sql`CASE
+  WHEN fp.container IS NOT NULL THEN fp.container
+  WHEN rp.unit_type ILIKE '%barrel%' OR rp.unit_type ILIKE '%keg%' OR rp.unit_description ILIKE '%gallon%' THEN 'keg-sixth'
+  WHEN rp.unit_description ILIKE '%can%' THEN 'can-case'
+  WHEN rp.unit_description ILIKE '%bottle%' THEN 'bottle-case'
+END`;
+
 type RecipeLineRow = {
   process_id: string;
   title: string;
@@ -75,7 +88,10 @@ async function recipeCosts(): Promise<{ flavors: Map<string, { name: string; bre
     LEFT JOIN products fp ON fp.id = p.finished_product_id
     JOIN process_materials pm ON pm.process_id = p.id
     JOIN materials m ON m.id = pm.material_id AND m.deleted_at IS NULL
-    WHERE p.deleted_at IS NULL AND p.is_active`);
+    WHERE p.deleted_at IS NULL AND p.is_active
+      -- A flavor switched off on the Flavors page, or a finished product retired, is out of
+      -- the projection even while its recipes stay active (review, 2026-11-15).
+      AND f.is_active = true AND (fp.id IS NULL OR fp.is_active = true)`);
   const lines = rows as unknown as RecipeLineRow[];
 
   type Recipe = { title: string; unit: string; flavorId: string; flavor: string; container: string | null; createdAt: string; cost: number; liquidLinesSkipped: number };
@@ -132,12 +148,15 @@ async function flavorGallons(since: Date): Promise<Map<string, number>> {
       WHERE o.deleted_at IS NULL AND o.status <> 'cancelled' AND o.order_date >= ${since} AND oi.flavor_id IS NOT NULL
       GROUP BY 1),
     rt AS (
-      SELECT i.selected_flavor_id AS flavor_id,
-             SUM(i.quantity * CASE WHEN rp.unit_type ILIKE '%keg%' THEN ${keg} WHEN rp.unit_description ILIKE '%bottle%' THEN ${bottleCase} ELSE ${canCase} END)::float8 AS gallons
+      -- A fixed-flavor product carries its flavor itself; a pick-a-flavor product, on the line.
+      SELECT COALESCE(i.selected_flavor_id, rp.flavor_id) AS flavor_id,
+             SUM(i.quantity * CASE ${retailContainer} WHEN 'keg-sixth' THEN ${keg} WHEN 'bottle-case' THEN ${bottleCase} ELSE ${canCase} END)::float8 AS gallons
       FROM retail_order_items_v2 i
       JOIN retail_orders o ON o.id = i.order_id
       JOIN retail_products rp ON rp.id = i.retail_product_id
-      WHERE o.deleted_at IS NULL AND o.status <> 'cancelled' AND o.order_date >= ${since} AND i.selected_flavor_id IS NOT NULL
+      LEFT JOIN products fp ON fp.id = rp.finished_product_id
+      WHERE o.deleted_at IS NULL AND o.status <> 'cancelled' AND o.order_date >= ${since}
+        AND COALESCE(i.selected_flavor_id, rp.flavor_id) IS NOT NULL
       GROUP BY 1)
     SELECT flavor_id, SUM(gallons)::float8 AS gallons
     FROM (SELECT * FROM ws UNION ALL SELECT * FROM rt) u
@@ -201,12 +220,12 @@ export async function recentActuals(since: Date, weeks: number): Promise<Project
       AND wut.container IN ('can-case', 'keg-sixth')
     GROUP BY 1, 2`);
   const retail = await db.execute(sql`
-    SELECT 'retail' AS channel,
-           CASE WHEN rp.unit_type ILIKE '%keg%' THEN 'keg-sixth' WHEN rp.unit_description ILIKE '%can%' THEN 'can-case' END AS container,
+    SELECT 'retail' AS channel, ${retailContainer} AS container,
            SUM(i.quantity)::float8 AS units, SUM(i.quantity * i.unit_price)::float8 AS revenue
     FROM retail_order_items_v2 i
     JOIN retail_orders o ON o.id = i.order_id
     JOIN retail_products rp ON rp.id = i.retail_product_id
+    LEFT JOIN products fp ON fp.id = rp.finished_product_id
     WHERE o.deleted_at IS NULL AND o.status <> 'cancelled' AND o.order_date >= ${since}
     GROUP BY 1, 2`);
   const rows = [...(wholesale.rows as unknown as VolumeRow[]), ...(retail.rows as unknown as VolumeRow[])];
@@ -234,37 +253,58 @@ export async function catalogPrices(): Promise<CatalogPrices> {
     SELECT container, default_price::float8 AS price FROM wholesale_unit_types
     WHERE is_active AND container IN ('can-case', 'keg-sixth') ORDER BY display_order`);
   const rt = await db.execute(sql`
-    SELECT unit_type, unit_description, price::float8 AS price FROM retail_products
-    WHERE is_active ORDER BY display_order, price`);
+    SELECT ${retailContainer} AS container, rp.price::float8 AS price
+    FROM retail_products rp
+    LEFT JOIN products fp ON fp.id = rp.finished_product_id
+    WHERE rp.is_active ORDER BY rp.display_order, rp.price`);
   const wsRows = ws.rows as unknown as { container: string; price: number }[];
-  const rtRows = rt.rows as unknown as { unit_type: string; unit_description: string; price: number }[];
+  const rtRows = rt.rows as unknown as { container: string | null; price: number }[];
   const wsCase = wsRows.find((r) => r.container === "can-case")?.price ?? null;
   const wsKeg = wsRows.find((r) => r.container === "keg-sixth")?.price ?? null;
-  const rtCase = rtRows.find((r) => /case/i.test(r.unit_type) && /can/i.test(r.unit_description))?.price ?? null;
-  const rtKeg = rtRows.find((r) => /keg/i.test(r.unit_type))?.price ?? null;
+  const rtCase = rtRows.find((r) => r.container === "can-case")?.price ?? null;
+  const rtKeg = rtRows.find((r) => r.container === "keg-sixth")?.price ?? null;
   return {
     casePrice: { distributor: null, wholesale: wsCase, retail: rtCase },
     kegPrice: { distributor: null, wholesale: wsKeg, retail: rtKeg },
   };
 }
 
-async function readScenarios(): Promise<StoredScenario[]> {
-  const [row] = await db.select().from(siteSettings).where(eq(siteSettings.key, SCENARIOS_KEY));
-  if (!row) return [];
+const parseScenarios = (value: string | undefined): StoredScenario[] => {
+  if (!value) return [];
   try {
-    const parsed = JSON.parse(row.value);
+    const parsed = JSON.parse(value);
     return Array.isArray(parsed) ? (parsed as StoredScenario[]) : [];
   } catch {
     return [];
   }
+};
+
+async function readScenarios(): Promise<StoredScenario[]> {
+  const [row] = await db.select().from(siteSettings).where(eq(siteSettings.key, SCENARIOS_KEY));
+  return parseScenarios(row?.value);
 }
 
-async function writeScenarios(list: StoredScenario[]): Promise<void> {
-  const value = JSON.stringify(list);
-  await db
-    .insert(siteSettings)
-    .values({ key: SCENARIOS_KEY, value, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: siteSettings.key, set: { value, updatedAt: new Date() } });
+/** A change the caller should hear about as a 400, not a 500. */
+class ScenarioRejected extends Error {}
+
+/**
+ * The scenarios are one JSON value, so every change is read-modify-write. The
+ * change runs under a per-key advisory lock inside one transaction, the way the
+ * stock-alert marks do, so two admins saving at once can't lose each other's
+ * work (review, 2026-11-15).
+ */
+async function changeScenarios<T>(change: (list: StoredScenario[]) => { list: StoredScenario[]; result: T }): Promise<T> {
+  return await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('profitability_scenarios'))`);
+    const [row] = await tx.select().from(siteSettings).where(eq(siteSettings.key, SCENARIOS_KEY));
+    const { list, result } = change(parseScenarios(row?.value));
+    const value = JSON.stringify(list);
+    await tx
+      .insert(siteSettings)
+      .values({ key: SCENARIOS_KEY, value, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: siteSettings.key, set: { value, updatedAt: new Date() } });
+    return result;
+  });
 }
 
 const saveScenarioSchema = z.object({
@@ -303,33 +343,35 @@ export function registerProfitabilityRoutes(app: Express, deps: Deps) {
         const issue = parsed.error.issues[0];
         return res.status(400).json({ message: issue ? `${issue.path.join(".")}: ${issue.message}` : "Invalid scenario" });
       }
-      const list = await readScenarios();
-      const now = new Date().toISOString();
-      const existing = parsed.data.id ? list.find((s) => s.id === parsed.data.id) : undefined;
-      const saved: StoredScenario = {
-        id: existing?.id ?? crypto.randomUUID(),
-        name: parsed.data.name,
-        inputs: parsed.data.inputs,
-        updatedAt: now,
-        updatedBy: (req as any).user?.id ?? null,
-      };
-      const next = existing ? list.map((s) => (s.id === saved.id ? saved : s)) : [...list, saved];
-      if (next.length > MAX_SCENARIOS) {
-        return res.status(400).json({ message: `Keep it to ${MAX_SCENARIOS} scenarios — delete one first.` });
-      }
-      await writeScenarios(next);
+      const { id, name, inputs } = parsed.data;
+      const updatedBy = (req as any).user?.id ?? null;
+      const saved = await changeScenarios((list) => {
+        const existing = id ? list.find((s) => s.id === id) : undefined;
+        const scenario: StoredScenario = {
+          id: existing?.id ?? crypto.randomUUID(),
+          name,
+          inputs,
+          updatedAt: new Date().toISOString(),
+          updatedBy,
+        };
+        const next = existing ? list.map((s) => (s.id === scenario.id ? scenario : s)) : [...list, scenario];
+        if (next.length > MAX_SCENARIOS) throw new ScenarioRejected(`Keep it to ${MAX_SCENARIOS} scenarios — delete one first.`);
+        return { list: next, result: scenario };
+      });
       res.json(saved);
     } catch (error: any) {
+      if (error instanceof ScenarioRejected) return res.status(400).json({ message: error.message });
       res.status(500).json({ message: "Couldn't save the scenario: " + error.message });
     }
   });
 
   app.delete("/api/profitability/scenarios/:id", isAuthenticated, isAdmin, async (req, res) => {
     try {
-      const list = await readScenarios();
-      const next = list.filter((s) => s.id !== req.params.id);
-      if (next.length === list.length) return res.status(404).json({ message: "Scenario not found" });
-      await writeScenarios(next);
+      const removed = await changeScenarios((list) => {
+        const next = list.filter((s) => s.id !== req.params.id);
+        return { list: next, result: next.length !== list.length };
+      });
+      if (!removed) return res.status(404).json({ message: "Scenario not found" });
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ message: "Couldn't delete the scenario: " + error.message });

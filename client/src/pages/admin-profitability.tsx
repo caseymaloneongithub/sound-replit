@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { History, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
@@ -127,6 +127,9 @@ export default function AdminProfitability() {
   const [inputs, setInputs] = useState<ProjectionInputs | null>(null);
   const [scenarioId, setScenarioId] = useState<string | null>(null);
   const [name, setName] = useState("");
+  // Which scenario the editor shows right now, for a save's answer to check against.
+  const editingRef = useRef<string | null>(null);
+  editingRef.current = scenarioId;
 
   const loadScenario = (s: Scenario) => {
     setScenarioId(s.id);
@@ -152,16 +155,24 @@ export default function AdminProfitability() {
   const dirty = !!inputs && (!savedScenario || savedScenario.name !== name || JSON.stringify(savedScenario.inputs) !== JSON.stringify(inputs));
 
   const save = useMutation({
-    mutationFn: async (asNew: boolean) =>
-      (await apiRequest("POST", "/api/profitability/scenarios", {
+    mutationFn: async (asNew: boolean) => {
+      const startedOn = scenarioId;
+      const saved = (await apiRequest("POST", "/api/profitability/scenarios", {
         id: asNew ? undefined : scenarioId ?? undefined,
         name: name.trim() || "Untitled",
         inputs,
-      })) as Scenario,
-    onSuccess: (saved) => {
-      setScenarioId(saved.id);
-      setName(saved.name);
+      })) as Scenario;
+      return { saved, startedOn };
+    },
+    onSuccess: ({ saved, startedOn }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/profitability/scenarios"] });
+      // The answer re-points the editor only if it is still on the scenario the save
+      // started from; a switch made meanwhile keeps what was switched to (review,
+      // 2026-11-15). The picker is also disabled while a save is in flight.
+      if (editingRef.current === startedOn) {
+        setScenarioId(saved.id);
+        setName(saved.name);
+      }
       toast({ title: "Scenario saved", description: saved.name });
     },
     onError: (e: any) => toast({ title: "Couldn't save", description: e.message, variant: "destructive" }),
@@ -182,6 +193,7 @@ export default function AdminProfitability() {
     },
     onError: (e: any) => toast({ title: "Couldn't delete", description: e.message, variant: "destructive" }),
   });
+  const busy = save.isPending || remove.isPending;
 
   const set = <K extends keyof ProjectionInputs>(key: K, value: ProjectionInputs[K]) =>
     setInputs((i) => (i ? { ...i, [key]: value } : i));
@@ -242,6 +254,7 @@ export default function AdminProfitability() {
               <Label className="text-xs text-muted-foreground">Saved scenario</Label>
               <Select
                 value={scenarioId ?? "__new__"}
+                disabled={busy}
                 onValueChange={(v) => {
                   if (v === "__new__") {
                     setScenarioId(null);
@@ -264,17 +277,17 @@ export default function AdminProfitability() {
               <Label className="text-xs text-muted-foreground">Name</Label>
               <Input value={name} onChange={(e) => setName(e.target.value)} className="w-56 h-9" maxLength={60} data-testid="input-scenario-name" />
             </div>
-            <Button onClick={() => save.mutate(false)} disabled={save.isPending} data-testid="button-save-scenario">
+            <Button onClick={() => save.mutate(false)} disabled={busy} data-testid="button-save-scenario">
               {save.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
               {scenarioId ? "Save" : "Save scenario"}
             </Button>
             {scenarioId && (
-              <Button variant="outline" onClick={() => save.mutate(true)} disabled={save.isPending} data-testid="button-save-as-new">
+              <Button variant="outline" onClick={() => save.mutate(true)} disabled={busy} data-testid="button-save-as-new">
                 <Plus className="w-4 h-4 mr-2" />Save as new
               </Button>
             )}
             {scenarioId && (
-              <Button variant="ghost" onClick={() => remove.mutate(scenarioId)} disabled={remove.isPending} data-testid="button-delete-scenario">
+              <Button variant="ghost" onClick={() => remove.mutate(scenarioId)} disabled={busy} data-testid="button-delete-scenario">
                 <Trash2 className="w-4 h-4 mr-2" />Delete
               </Button>
             )}
