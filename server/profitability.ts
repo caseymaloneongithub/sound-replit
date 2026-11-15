@@ -418,6 +418,14 @@ export function registerProfitabilityRoutes(app: Express, deps: Deps) {
       const updatedBy = (req as any).user?.id ?? null;
       const saved = await changeScenarios((list) => {
         const existing = id ? list.find((s) => s.id === id) : undefined;
+        // One name, one scenario: the page saves over a scenario by sending its id,
+        // so a second scenario under a name already in the list means the page's
+        // list is behind or two people saved at once, and the person should see
+        // the names as they are now rather than get a twin (2026-11-15).
+        const clash = list.find((s) => s.id !== existing?.id && s.name.trim().toLowerCase() === name.toLowerCase());
+        if (clash) {
+          throw new ScenarioRejected(`There's already a scenario named "${clash.name}" — pick it from the list to save over it, or use another name.`);
+        }
         const scenario: StoredScenario = {
           id: existing?.id ?? crypto.randomUUID(),
           name,

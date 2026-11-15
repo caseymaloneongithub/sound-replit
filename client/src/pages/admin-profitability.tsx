@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { History, Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { History, Loader2, Pencil, Save, Trash2 } from "lucide-react";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiErrorMessage, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
   CHANNELS,
@@ -186,17 +186,31 @@ export default function AdminProfitability() {
   const savedScenario = scenarios?.find((s) => s.id === scenarioId) ?? null;
   const dirty = !!inputs && (!savedScenario || savedScenario.name !== name || JSON.stringify(normalizeInputs(savedScenario.inputs)) !== JSON.stringify(inputs));
 
+  // The name in the box decides what Save does (owner, 2026-11-15: "Saved a few
+  // scenarios but only see the current one" — each save under a new name had
+  // renamed the one on screen). A name no scenario has makes a new scenario; a
+  // name already in the list saves over that scenario, on screen or not; and the
+  // button says which before it is pressed. Renaming is its own, smaller button.
+  const trimmedName = name.trim();
+  const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const target = trimmedName ? (scenarios ?? []).find((s) => sameName(s.name, trimmedName)) ?? null : null;
+  const saveLabel = !target
+    ? scenarioId ? "Save as new scenario" : "Save scenario"
+    : target.id === scenarioId ? "Save changes" : `Save over “${target.name}”`;
+  const canRename = !!savedScenario && !!trimmedName && !sameName(savedScenario.name, trimmedName) && !target;
+
   const save = useMutation({
-    mutationFn: async (asNew: boolean) => {
+    mutationFn: async (mode: "save" | "rename") => {
       const startedOn = scenarioId;
-      const saved = (await apiRequest("POST", "/api/profitability/scenarios", {
-        id: asNew ? undefined : scenarioId ?? undefined,
-        name: name.trim() || "Untitled",
-        inputs,
-      })) as Scenario;
-      return { saved, startedOn };
+      const body =
+        mode === "rename" && savedScenario
+          ? // The name only: the scenario keeps the numbers it was saved with.
+            { id: savedScenario.id, name: trimmedName, inputs: normalizeInputs(savedScenario.inputs) }
+          : { id: target?.id, name: trimmedName || "Untitled", inputs };
+      const saved = (await apiRequest("POST", "/api/profitability/scenarios", body)) as Scenario;
+      return { saved, startedOn, mode, created: !body.id };
     },
-    onSuccess: ({ saved, startedOn }) => {
+    onSuccess: ({ saved, startedOn, mode, created }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/profitability/scenarios"] });
       // The answer re-points the editor only if it is still on the scenario the save
       // started from; a switch made meanwhile keeps what was switched to (review,
@@ -205,9 +219,16 @@ export default function AdminProfitability() {
         setScenarioId(saved.id);
         setName(saved.name);
       }
-      toast({ title: "Scenario saved", description: saved.name });
+      toast({
+        title: mode === "rename" ? "Scenario renamed" : created ? "Saved as a new scenario" : "Scenario saved",
+        description: saved.name,
+      });
     },
-    onError: (e: any) => toast({ title: "Couldn't save", description: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      // The list may be behind (another admin saved): show the names as they are now.
+      queryClient.invalidateQueries({ queryKey: ["/api/profitability/scenarios"] });
+      toast({ title: "Couldn't save", description: apiErrorMessage(e, "Couldn't save the scenario"), variant: "destructive" });
+    },
   });
 
   const remove = useMutation({
@@ -274,7 +295,8 @@ export default function AdminProfitability() {
             <p className="text-sm text-muted-foreground max-w-2xl">
               A projected week. Sales by channel go in; ingredient and packaging costs come from the recipes;
               labor, overhead and taxes are yours to set. Every number updates as you type, and what you type is
-              kept for you between visits. Save writes it to a named scenario.
+              kept for you between visits. Save keeps it under the name in the box: a new name makes a new
+              scenario, a name already in the list saves over that one.
             </p>
           </div>
           {dirty && (
@@ -314,13 +336,14 @@ export default function AdminProfitability() {
               <Label className="text-xs text-muted-foreground">Name</Label>
               <Input value={name} onChange={(e) => setName(e.target.value)} className="w-56 h-9" maxLength={60} data-testid="input-scenario-name" />
             </div>
-            <Button onClick={() => save.mutate(false)} disabled={busy} data-testid="button-save-scenario">
-              {save.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-              {scenarioId ? "Save" : "Save scenario"}
+            <Button onClick={() => save.mutate("save")} disabled={busy} data-testid="button-save-scenario">
+              {save.isPending && save.variables === "save" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+              {saveLabel}
             </Button>
-            {scenarioId && (
-              <Button variant="outline" onClick={() => save.mutate(true)} disabled={busy} data-testid="button-save-as-new">
-                <Plus className="w-4 h-4 mr-2" />Save as new
+            {canRename && savedScenario && (
+              <Button variant="outline" onClick={() => save.mutate("rename")} disabled={busy} data-testid="button-rename-scenario">
+                {save.isPending && save.variables === "rename" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Pencil className="w-4 h-4 mr-2" />}
+                Rename “{savedScenario.name}” instead
               </Button>
             )}
             {scenarioId && (
