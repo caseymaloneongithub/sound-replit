@@ -31,7 +31,7 @@ import {
   FileSpreadsheet,
   Send,
   Activity,
-  Navigation, Truck } from "lucide-react";
+  Navigation, Truck, TrendingUp } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useNewContactCount } from "@/components/staff/contact-requests-panel";
 import { isTaskDueInWeek, getTaskDueDateInWeek } from "@/lib/checklist-recurrence";
@@ -182,6 +182,7 @@ export function StaffSidebar({ onLinkClick, headerAction }: StaffSidebarProps) {
       adminOnly: true,
       items: [
         { title: "Revenue", href: "/reports", icon: DollarSign },
+        { title: "Profitability", href: "/admin/profitability", icon: TrendingUp, adminOnly: true },
         { title: "Accounting", href: "/admin/accounting", icon: Calculator, adminOnly: true },
         { title: "Filing Numbers", href: "/admin/filing-numbers", icon: FileSpreadsheet, adminOnly: true },
         { title: "Transactions", href: "/admin/accounting/transactions", icon: Receipt, adminOnly: true },

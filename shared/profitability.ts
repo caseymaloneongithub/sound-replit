@@ -1,0 +1,343 @@
+import { z } from "zod";
+
+/**
+ * Weekly profitability projection (owner, 2026-11-15): "a weekly profitability
+ * projection page (just for owners and super-admin) with inputs for sales (kegs,
+ * distributor cases, wholesale cases, retail cases) with calculations for
+ * ingredient and packaging expenses derived from the recipes."
+ *
+ * The arithmetic lives here so the page and a script compute the same week.
+ * Costs come from the recipes: each flavor's Brew recipe prices a gallon of
+ * kombucha and its Can recipe prices a case's packaging (server/profitability.ts
+ * reads them). A keg's cost is its kombucha alone: "Keg packaging is just labor
+ * so already built in. The cost is the kombucha" (owner). Cases are cans only;
+ * the last bottle cases are selling through and aren't projected.
+ */
+
+export const GALLONS_PER_KEG = 5.16;
+export const OZ_PER_CAN = 12;
+export const CANS_PER_CASE = 12;
+export const OZ_PER_GALLON = 128;
+export const GALLONS_PER_CASE = (CANS_PER_CASE * OZ_PER_CAN) / OZ_PER_GALLON; // 1.125
+export const WEEKS_PER_YEAR = 52;
+
+export const CHANNELS = ["distributor", "wholesale", "retail"] as const;
+export type Channel = (typeof CHANNELS)[number];
+export const CHANNEL_LABELS: Record<Channel, string> = {
+  distributor: "Distributor",
+  wholesale: "Wholesale",
+  retail: "Retail",
+};
+
+export const LABOR_BUCKETS = ["brewing", "packaging", "deliveries", "maintenance"] as const;
+export type LaborBucket = (typeof LABOR_BUCKETS)[number];
+export const LABOR_LABELS: Record<LaborBucket, string> = {
+  brewing: "Brewing & draining",
+  packaging: "Packaging",
+  deliveries: "Deliveries",
+  maintenance: "Maintenance",
+};
+
+const money = z.number().finite().min(0).max(10_000_000);
+const percent = z.number().finite().min(0).max(100);
+const count = z.number().finite().min(0).max(1_000_000);
+
+export const channelInputsSchema = z.object({
+  casesPerWeek: count,
+  casePrice: money,
+  kegsPerWeek: count,
+  kegPrice: money,
+  /** Payment processing on this channel's revenue: cards on retail, ACH on wholesale, nothing on distributor checks. */
+  feePercent: percent,
+});
+export type ChannelInputs = z.infer<typeof channelInputsSchema>;
+
+const laborLineSchema = z.object({ hoursPerWeek: count, ratePerHour: money });
+export type LaborLine = z.infer<typeof laborLineSchema>;
+
+export const projectionInputsSchema = z.object({
+  channels: z.object({
+    distributor: channelInputsSchema,
+    wholesale: channelInputsSchema,
+    retail: channelInputsSchema,
+  }),
+  /** Kombucha lost between the brew and the package, on top of what the package holds. */
+  liquidWastePercent: percent,
+  /** Cans, ends, boxes and stickers spoiled, on top of the recipe (and on top of any waste rate on the materials). */
+  packagingWastePercent: percent,
+  /** How flavors are weighted when their costs differ: by recent sales, or evenly. */
+  flavorMix: z.enum(["sales", "even"]),
+  labor: z.object({
+    brewing: laborLineSchema,
+    packaging: laborLineSchema,
+    deliveries: laborLineSchema,
+    maintenance: laborLineSchema,
+  }),
+  /** Employer payroll taxes and the like, as a percentage on top of wages. */
+  payrollBurdenPercent: percent,
+  ownerPayPerWeek: money,
+  rentPerYear: money,
+  insurancePerYear: money,
+  /** Kegs lost or never returned, as what replacing them costs in a year. */
+  kegReplacementPerYear: money,
+  /** Utilities, CO2 and sanitizer, software, licenses, maintenance parts, loan payments: one weekly figure. */
+  otherOverheadPerWeek: money,
+  vehicleMilesPerWeek: count,
+  ratePerMile: z.number().finite().min(0).max(10),
+  ownerTravelPerWeek: money,
+  /** Washington B&O, as a percentage of sales (0.484% wholesaling and manufacturing, 0.471% retailing). */
+  exciseTaxPercent: percent,
+  /** Samples given away and product dumped, as cases a week at cost. */
+  freeCasesPerWeek: count,
+});
+export type ProjectionInputs = z.infer<typeof projectionInputsSchema>;
+
+/** One flavor's costs as the recipes price them today, and its share of recent sales. */
+export type FlavorCost = {
+  flavorId: string;
+  name: string;
+  /** From the Brew recipe; null when the flavor has none. */
+  ingredientPerGallon: number | null;
+  /** From the Can recipe, before the page's packaging waste; null when the flavor has none. */
+  packagingPerCase: number | null;
+  /** Share of recent sales by volume of kombucha, among flavors with a Brew recipe. 0–1. */
+  salesWeight: number;
+};
+
+export type ProjectionBasis = {
+  flavors: FlavorCost[];
+  /** Weighted over the flavors, for each mix the inputs can choose. */
+  ingredientPerGallon: { sales: number; even: number };
+  packagingPerCase: { sales: number; even: number };
+  /** Things the basis couldn't price, in words for the page. */
+  notes: string[];
+};
+
+export type ChannelActuals = {
+  casesPerWeek: number;
+  casePrice: number | null;
+  kegsPerWeek: number;
+  kegPrice: number | null;
+};
+
+/** Recent weeks of real orders, averaged per week, to start a projection from. */
+export type ProjectionActuals = {
+  weeks: number;
+  since: string;
+  channels: Record<Channel, ChannelActuals>;
+};
+
+/** Catalog prices, where the catalog has one for the channel. */
+export type CatalogPrices = {
+  casePrice: Record<Channel, number | null>;
+  kegPrice: Record<Channel, number | null>;
+};
+
+export type ChannelProjection = {
+  channel: Channel;
+  cases: number;
+  kegs: number;
+  revenue: number;
+  cogs: number;
+  fees: number;
+  exciseTax: number;
+  /** Revenue less cost of goods, fees and B&O: what each week's sales leave to cover everything else. */
+  contribution: number;
+  perCase: { price: number; cost: number; margin: number; marginPercent: number };
+  perKeg: { price: number; cost: number; margin: number; marginPercent: number };
+};
+
+export type Projection = {
+  unitCosts: {
+    ingredientPerGallon: number;
+    packagingPerCase: number;
+    liquidGallonsPerCase: number;
+    liquidGallonsPerKeg: number;
+    caseIngredient: number;
+    caseCost: number;
+    kegCost: number;
+  };
+  channels: ChannelProjection[];
+  revenue: number;
+  cogs: number;
+  grossMargin: number;
+  fees: number;
+  exciseTax: number;
+  contribution: number;
+  labor: { total: number; buckets: Record<LaborBucket, number> };
+  overhead: {
+    rent: number;
+    insurance: number;
+    kegReplacement: number;
+    other: number;
+    vehicle: number;
+    ownerTravel: number;
+    freeProduct: number;
+    total: number;
+  };
+  /** Everything a week costs whether or not anything sells: labor and overhead. */
+  weeklyFixedCosts: number;
+  operatingProfit: number;
+  ownerPay: number;
+  netProfit: number;
+  breakEven: {
+    /** Volumes × this ratio break even after owner pay; null when sales don't contribute at all. */
+    scale: number | null;
+    channels: Record<Channel, { cases: number; kegs: number }> | null;
+  };
+  annual: { revenue: number; operatingProfit: number; netProfit: number };
+};
+
+const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
+
+/** One projected week from the inputs and the recipe-derived basis. */
+export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): Projection {
+  const ingredientPerGallon = basis.ingredientPerGallon[inputs.flavorMix];
+  const packagingPerCase = basis.packagingPerCase[inputs.flavorMix] * (1 + inputs.packagingWastePercent / 100);
+  const liquidFactor = 1 + inputs.liquidWastePercent / 100;
+  const liquidGallonsPerCase = GALLONS_PER_CASE * liquidFactor;
+  const liquidGallonsPerKeg = GALLONS_PER_KEG * liquidFactor;
+  const caseIngredient = ingredientPerGallon * liquidGallonsPerCase;
+  const caseCost = caseIngredient + packagingPerCase;
+  const kegCost = ingredientPerGallon * liquidGallonsPerKeg;
+
+  const channels: ChannelProjection[] = CHANNELS.map((channel) => {
+    const c = inputs.channels[channel];
+    const revenue = c.casesPerWeek * c.casePrice + c.kegsPerWeek * c.kegPrice;
+    const cogs = c.casesPerWeek * caseCost + c.kegsPerWeek * kegCost;
+    const fees = revenue * (c.feePercent / 100);
+    const exciseTax = revenue * (inputs.exciseTaxPercent / 100);
+    const variableRate = c.feePercent / 100 + inputs.exciseTaxPercent / 100;
+    const caseMargin = c.casePrice * (1 - variableRate) - caseCost;
+    const kegMargin = c.kegPrice * (1 - variableRate) - kegCost;
+    return {
+      channel,
+      cases: c.casesPerWeek,
+      kegs: c.kegsPerWeek,
+      revenue,
+      cogs,
+      fees,
+      exciseTax,
+      contribution: revenue - cogs - fees - exciseTax,
+      perCase: { price: c.casePrice, cost: caseCost, margin: caseMargin, marginPercent: safeDiv(caseMargin, c.casePrice) },
+      perKeg: { price: c.kegPrice, cost: kegCost, margin: kegMargin, marginPercent: safeDiv(kegMargin, c.kegPrice) },
+    };
+  });
+
+  const sum = (pick: (c: ChannelProjection) => number) => channels.reduce((s, c) => s + pick(c), 0);
+  const revenue = sum((c) => c.revenue);
+  const cogs = sum((c) => c.cogs);
+  const fees = sum((c) => c.fees);
+  const exciseTax = sum((c) => c.exciseTax);
+  const contribution = sum((c) => c.contribution);
+
+  const burden = 1 + inputs.payrollBurdenPercent / 100;
+  const buckets = Object.fromEntries(
+    LABOR_BUCKETS.map((b) => [b, inputs.labor[b].hoursPerWeek * inputs.labor[b].ratePerHour * burden]),
+  ) as Record<LaborBucket, number>;
+  const laborTotal = LABOR_BUCKETS.reduce((s, b) => s + buckets[b], 0);
+
+  const overhead = {
+    rent: inputs.rentPerYear / WEEKS_PER_YEAR,
+    insurance: inputs.insurancePerYear / WEEKS_PER_YEAR,
+    kegReplacement: inputs.kegReplacementPerYear / WEEKS_PER_YEAR,
+    other: inputs.otherOverheadPerWeek,
+    vehicle: inputs.vehicleMilesPerWeek * inputs.ratePerMile,
+    ownerTravel: inputs.ownerTravelPerWeek,
+    freeProduct: inputs.freeCasesPerWeek * caseCost,
+    total: 0,
+  };
+  overhead.total = overhead.rent + overhead.insurance + overhead.kegReplacement + overhead.other
+    + overhead.vehicle + overhead.ownerTravel + overhead.freeProduct;
+
+  const weeklyFixedCosts = laborTotal + overhead.total;
+  const operatingProfit = contribution - weeklyFixedCosts;
+  const netProfit = operatingProfit - inputs.ownerPayPerWeek;
+
+  const needed = weeklyFixedCosts + inputs.ownerPayPerWeek;
+  const scale = contribution > 0 ? needed / contribution : null;
+  const breakEvenChannels = scale === null
+    ? null
+    : (Object.fromEntries(
+        CHANNELS.map((ch) => [ch, { cases: inputs.channels[ch].casesPerWeek * scale, kegs: inputs.channels[ch].kegsPerWeek * scale }]),
+      ) as Record<Channel, { cases: number; kegs: number }>);
+
+  return {
+    unitCosts: { ingredientPerGallon, packagingPerCase, liquidGallonsPerCase, liquidGallonsPerKeg, caseIngredient, caseCost, kegCost },
+    channels,
+    revenue,
+    cogs,
+    grossMargin: revenue - cogs,
+    fees,
+    exciseTax,
+    contribution,
+    labor: { total: laborTotal, buckets },
+    overhead,
+    weeklyFixedCosts,
+    operatingProfit,
+    ownerPay: inputs.ownerPayPerWeek,
+    netProfit,
+    breakEven: { scale, channels: breakEvenChannels },
+    annual: {
+      revenue: revenue * WEEKS_PER_YEAR,
+      operatingProfit: operatingProfit * WEEKS_PER_YEAR,
+      netProfit: netProfit * WEEKS_PER_YEAR,
+    },
+  };
+}
+
+const round = (n: number, places: number) => Math.round(n * 10 ** places) / 10 ** places;
+
+/** The sales lines a channel starts from: recent actuals where there are any, else the catalog, else zero. */
+function channelFrom(channel: Channel, feePercent: number, actuals?: ProjectionActuals | null, catalog?: CatalogPrices | null): ChannelInputs {
+  const a = actuals?.channels[channel];
+  return {
+    casesPerWeek: round(a?.casesPerWeek ?? 0, 1),
+    casePrice: round(a?.casePrice ?? catalog?.casePrice[channel] ?? 0, 2),
+    kegsPerWeek: round(a?.kegsPerWeek ?? 0, 1),
+    kegPrice: round(a?.kegPrice ?? catalog?.kegPrice[channel] ?? 0, 2),
+    feePercent,
+  };
+}
+
+/** Typical processing fees: Stripe cards on retail (2.9% + 30¢ on a $36 case), ACH on wholesale, checks from the distributor. */
+export const DEFAULT_FEE_PERCENT: Record<Channel, number> = { distributor: 0, wholesale: 0.8, retail: 3.2 };
+
+/** A fresh projection: sales from recent weeks, the owner's stated waste rates, and everything else left for the owner to fill in. */
+export function defaultInputs(actuals?: ProjectionActuals | null, catalog?: CatalogPrices | null): ProjectionInputs {
+  const line = (): LaborLine => ({ hoursPerWeek: 0, ratePerHour: 20 });
+  return {
+    channels: {
+      distributor: channelFrom("distributor", DEFAULT_FEE_PERCENT.distributor, actuals, catalog),
+      wholesale: channelFrom("wholesale", DEFAULT_FEE_PERCENT.wholesale, actuals, catalog),
+      retail: channelFrom("retail", DEFAULT_FEE_PERCENT.retail, actuals, catalog),
+    },
+    liquidWastePercent: 10,
+    packagingWastePercent: 5,
+    flavorMix: "sales",
+    labor: { brewing: line(), packaging: line(), deliveries: line(), maintenance: line() },
+    payrollBurdenPercent: 10,
+    ownerPayPerWeek: 0,
+    rentPerYear: 0,
+    insurancePerYear: 0,
+    kegReplacementPerYear: 0,
+    otherOverheadPerWeek: 0,
+    vehicleMilesPerWeek: 0,
+    ratePerMile: 0.7,
+    ownerTravelPerWeek: 0,
+    exciseTaxPercent: 0.484,
+    freeCasesPerWeek: 0,
+  };
+}
+
+/** The same inputs with the sales lines replaced by recent actuals; fee rates stay as set. */
+export function withActualSales(inputs: ProjectionInputs, actuals: ProjectionActuals, catalog?: CatalogPrices | null): ProjectionInputs {
+  return {
+    ...inputs,
+    channels: {
+      distributor: channelFrom("distributor", inputs.channels.distributor.feePercent, actuals, catalog),
+      wholesale: channelFrom("wholesale", inputs.channels.wholesale.feePercent, actuals, catalog),
+      retail: channelFrom("retail", inputs.channels.retail.feePercent, actuals, catalog),
+    },
+  };
+}
