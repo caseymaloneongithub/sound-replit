@@ -20,6 +20,13 @@ export const CANS_PER_CASE = 12;
 export const OZ_PER_GALLON = 128;
 export const GALLONS_PER_CASE = (CANS_PER_CASE * OZ_PER_CAN) / OZ_PER_GALLON; // 1.125
 export const WEEKS_PER_YEAR = 52;
+/**
+ * CO2 dissolved per gallon for each "volume" of carbonation: one volume is one
+ * litre of CO2 gas (1.964 g at 0 °C and 1 atm) per litre of liquid, and a
+ * gallon is 3.785 litres, so 1.964 × 3.785 / 453.6 = 0.01639 lb per gallon
+ * per volume. At 2.8 volumes that is 0.046 lb a gallon.
+ */
+export const CO2_LB_PER_GALLON_PER_VOLUME = 0.01639;
 
 export const CHANNELS = ["distributor", "wholesale", "retail"] as const;
 export type Channel = (typeof CHANNELS)[number];
@@ -65,6 +72,12 @@ export const projectionInputsSchema = z.object({
   liquidWastePercent: percent,
   /** Cans, ends, boxes and stickers spoiled, on top of the recipe (and on top of any waste rate on the materials). */
   packagingWastePercent: percent,
+  /** What a pound of CO2 costs (owner, 2026-11-15: "CO2 usage is scaled by liquid. I will give a price per lb"). */
+  co2PricePerLb: money,
+  /** Volumes of carbonation in the package; 2.8 for this kombucha. */
+  co2Volumes: z.number().finite().min(0).max(10),
+  /** CO2 used beyond what the kombucha holds: the tank left full of gas after the push, purges, the canning line, leaks. Can exceed 100%. */
+  co2WastePercent: z.number().finite().min(0).max(1000),
   /** How flavors are weighted when their costs differ: by recent sales, or evenly. */
   flavorMix: z.enum(["sales", "even"]),
   labor: z.object({
@@ -156,6 +169,11 @@ export type Projection = {
     liquidGallonsPerCase: number;
     liquidGallonsPerKeg: number;
     caseIngredient: number;
+    kegIngredient: number;
+    /** Pounds of CO2 per packaged gallon, waste included. */
+    co2LbPerGallon: number;
+    caseCo2: number;
+    kegCo2: number;
     caseCost: number;
     kegCost: number;
   };
@@ -200,8 +218,13 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
   const liquidGallonsPerCase = GALLONS_PER_CASE * liquidFactor;
   const liquidGallonsPerKeg = GALLONS_PER_KEG * liquidFactor;
   const caseIngredient = ingredientPerGallon * liquidGallonsPerCase;
-  const caseCost = caseIngredient + packagingPerCase;
-  const kegCost = ingredientPerGallon * liquidGallonsPerKeg;
+  const kegIngredient = ingredientPerGallon * liquidGallonsPerKeg;
+  // CO2 scales with the kombucha in the package, plus the share lost around it.
+  const co2LbPerGallon = inputs.co2Volumes * CO2_LB_PER_GALLON_PER_VOLUME * (1 + inputs.co2WastePercent / 100);
+  const caseCo2 = GALLONS_PER_CASE * co2LbPerGallon * inputs.co2PricePerLb;
+  const kegCo2 = GALLONS_PER_KEG * co2LbPerGallon * inputs.co2PricePerLb;
+  const caseCost = caseIngredient + packagingPerCase + caseCo2;
+  const kegCost = kegIngredient + kegCo2;
 
   const channels: ChannelProjection[] = CHANNELS.map((channel) => {
     const c = inputs.channels[channel];
@@ -269,7 +292,7 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
       ) as Record<Channel, { cases: number; kegs: number }>);
 
   return {
-    unitCosts: { ingredientPerGallon, packagingPerCase, liquidGallonsPerCase, liquidGallonsPerKeg, caseIngredient, caseCost, kegCost },
+    unitCosts: { ingredientPerGallon, packagingPerCase, liquidGallonsPerCase, liquidGallonsPerKeg, caseIngredient, kegIngredient, co2LbPerGallon, caseCo2, kegCo2, caseCost, kegCost },
     channels,
     revenue,
     cogs,
@@ -321,6 +344,13 @@ export function defaultInputs(actuals?: ProjectionActuals | null, catalog?: Cata
     },
     liquidWastePercent: 10,
     packagingWastePercent: 5,
+    co2PricePerLb: 0,
+    co2Volumes: 2.8,
+    // The tank is left full of gas at push pressure (half to three quarters of what
+    // the kombucha held), the canning line purges every can, and kegs are purged:
+    // two and a half times the dissolved amount is a fair start; cylinder
+    // purchases over packaged gallons give the true figure.
+    co2WastePercent: 150,
     flavorMix: "sales",
     labor: { brewing: line(), packaging: line(), deliveries: line(), maintenance: line() },
     payrollBurdenPercent: 10,
@@ -379,6 +409,9 @@ export function normalizeInputs(raw: unknown, fallback: ProjectionInputs = defau
     channels: { distributor: channel("distributor"), wholesale: channel("wholesale"), retail: channel("retail") },
     liquidWastePercent: finite(r.liquidWastePercent, fallback.liquidWastePercent),
     packagingWastePercent: finite(r.packagingWastePercent, fallback.packagingWastePercent),
+    co2PricePerLb: finite(r.co2PricePerLb, fallback.co2PricePerLb),
+    co2Volumes: finite(r.co2Volumes, fallback.co2Volumes),
+    co2WastePercent: finite(r.co2WastePercent, fallback.co2WastePercent),
     flavorMix: r.flavorMix === "even" ? "even" : "sales",
     labor: { brewing: labor("brewing"), packaging: labor("packaging"), deliveries: labor("deliveries"), maintenance: labor("maintenance") },
     payrollBurdenPercent: finite(r.payrollBurdenPercent, fallback.payrollBurdenPercent),

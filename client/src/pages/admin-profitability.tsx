@@ -15,6 +15,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   CHANNELS,
   CHANNEL_LABELS,
+  CO2_LB_PER_GALLON_PER_VOLUME,
+  GALLONS_PER_CASE,
+  GALLONS_PER_KEG,
   LABOR_BUCKETS,
   LABOR_LABELS,
   WEEKS_PER_YEAR,
@@ -386,7 +389,7 @@ export default function AdminProfitability() {
                 <CardTitle className="text-base">What the product costs</CardTitle>
                 <CardDescription>
                   From the recipes: each flavor's Brew recipe prices a gallon, its Can recipe prices a case's packaging.
-                  A keg is {num(u.liquidGallonsPerKeg, 2)} gallons of kombucha and nothing else.
+                  A keg is {num(u.liquidGallonsPerKeg, 2)} gallons of kombucha and its CO2, nothing else.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -406,12 +409,23 @@ export default function AdminProfitability() {
                       </SelectContent>
                     </Select>
                   </Field>
+                  <Field label="CO2, price per lb" hint="From your cylinder or bulk invoices">
+                    <NumberField prefix="$" step="0.01" value={inputs.co2PricePerLb} onChange={(v) => set("co2PricePerLb", v)} testId="input-co2-price" />
+                  </Field>
+                  <Field label="Carbonation, volumes" hint={`${num(inputs.co2Volumes * CO2_LB_PER_GALLON_PER_VOLUME, 4)} lb dissolved per gallon`}>
+                    <NumberField step="0.1" value={inputs.co2Volumes} onChange={(v) => set("co2Volumes", v)} testId="input-co2-volumes" />
+                  </Field>
+                  <Field label="CO2 waste" hint="Gas left in the tank after the push, purges, the canning line, leaks">
+                    <NumberField suffix="%" step="5" value={inputs.co2WastePercent} onChange={(v) => set("co2WastePercent", v)} testId="input-co2-waste" />
+                  </Field>
                 </div>
                 <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2 text-sm">
                   <div className="flex justify-between"><dt className="text-muted-foreground">Ingredients per gallon</dt><dd className="tabular-nums" data-testid="text-ingredient-per-gallon">{money2(u.ingredientPerGallon)}</dd></div>
                   <div className="flex justify-between"><dt className="text-muted-foreground">Packaging per case, with waste</dt><dd className="tabular-nums">{money2(u.packagingPerCase)}</dd></div>
                   <div className="flex justify-between"><dt className="text-muted-foreground">Kombucha per case, with waste</dt><dd className="tabular-nums">{num(u.liquidGallonsPerCase, 3)} gal</dd></div>
                   <div className="flex justify-between"><dt className="text-muted-foreground">Kombucha per keg, with waste</dt><dd className="tabular-nums">{num(u.liquidGallonsPerKeg, 3)} gal</dd></div>
+                  <div className="flex justify-between"><dt className="text-muted-foreground">CO2 per case, with waste</dt><dd className="tabular-nums" data-testid="text-co2-case">{num(GALLONS_PER_CASE * u.co2LbPerGallon, 3)} lb, {money2(u.caseCo2)}</dd></div>
+                  <div className="flex justify-between"><dt className="text-muted-foreground">CO2 per keg, with waste</dt><dd className="tabular-nums" data-testid="text-co2-keg">{num(GALLONS_PER_KEG * u.co2LbPerGallon, 2)} lb, {money2(u.kegCo2)}</dd></div>
                   <div className="flex justify-between font-medium"><dt>Cost per case</dt><dd className="tabular-nums" data-testid="text-case-cost">{money2(u.caseCost)}</dd></div>
                   <div className="flex justify-between font-medium"><dt>Cost per keg</dt><dd className="tabular-nums" data-testid="text-keg-cost">{money2(u.kegCost)}</dd></div>
                 </dl>
