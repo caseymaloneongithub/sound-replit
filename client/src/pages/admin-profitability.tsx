@@ -19,6 +19,7 @@ import {
   LABOR_LABELS,
   WEEKS_PER_YEAR,
   defaultInputs,
+  normalizeInputs,
   projectWeek,
   withActualSales,
   type CatalogPrices,
@@ -39,6 +40,7 @@ import {
 
 type BasisResponse = { basis: ProjectionBasis; actuals: ProjectionActuals; catalog: CatalogPrices };
 type Scenario = { id: string; name: string; inputs: ProjectionInputs; updatedAt: string };
+type Draft = { inputs: ProjectionInputs; scenarioId: string | null; name: string; updatedAt: string };
 
 const money0 = (n: number) =>
   `${n < 0 ? "−" : ""}${Math.abs(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}`;
@@ -123,6 +125,7 @@ export default function AdminProfitability() {
   const { toast } = useToast();
   const { data: basisData, isLoading: basisLoading, error: basisError } = useQuery<BasisResponse>({ queryKey: ["/api/profitability/basis"] });
   const { data: scenarios, isLoading: scenariosLoading } = useQuery<Scenario[]>({ queryKey: ["/api/profitability/scenarios"] });
+  const { data: draftData, isLoading: draftLoading } = useQuery<{ draft: Draft | null }>({ queryKey: ["/api/profitability/draft"] });
 
   const [inputs, setInputs] = useState<ProjectionInputs | null>(null);
   const [scenarioId, setScenarioId] = useState<string | null>(null);
@@ -134,12 +137,21 @@ export default function AdminProfitability() {
   const loadScenario = (s: Scenario) => {
     setScenarioId(s.id);
     setName(s.name);
-    setInputs(s.inputs);
+    setInputs(normalizeInputs(s.inputs));
   };
 
-  // First load: the most recently saved scenario, or a fresh projection from recent sales.
+  // First load: where this admin left off, else the most recently saved scenario,
+  // else a fresh projection from recent sales.
   useEffect(() => {
-    if (inputs || !basisData || !scenarios) return;
+    if (inputs || !basisData || !scenarios || draftData === undefined) return;
+    const draft = draftData?.draft;
+    if (draft) {
+      const stillThere = draft.scenarioId ? scenarios.find((s) => s.id === draft.scenarioId) : undefined;
+      setScenarioId(stillThere?.id ?? null);
+      setName(draft.name || stillThere?.name || "This week");
+      setInputs(normalizeInputs(draft.inputs, defaultInputs(basisData.actuals, basisData.catalog)));
+      return;
+    }
     const latest = [...scenarios].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     if (latest) loadScenario(latest);
     else {
@@ -147,12 +159,29 @@ export default function AdminProfitability() {
       setName("This week");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [basisData, scenarios, inputs]);
+  }, [basisData, scenarios, draftData, inputs]);
+
+  // Kept as typed, a moment after the last change, so leaving the page loses
+  // nothing. The first value after loading is what was just loaded, not a change.
+  const draftLoaded = useRef(false);
+  useEffect(() => {
+    if (!inputs) return;
+    if (!draftLoaded.current) {
+      draftLoaded.current = true;
+      return;
+    }
+    const handle = setTimeout(() => {
+      apiRequest("PUT", "/api/profitability/draft", { inputs, scenarioId, name }).catch((e: any) =>
+        console.warn("[profitability] couldn't keep the inputs:", e?.message),
+      );
+    }, 800);
+    return () => clearTimeout(handle);
+  }, [inputs, scenarioId, name]);
 
   const projection = useMemo(() => (inputs && basisData ? projectWeek(inputs, basisData.basis) : null), [inputs, basisData]);
 
   const savedScenario = scenarios?.find((s) => s.id === scenarioId) ?? null;
-  const dirty = !!inputs && (!savedScenario || savedScenario.name !== name || JSON.stringify(savedScenario.inputs) !== JSON.stringify(inputs));
+  const dirty = !!inputs && (!savedScenario || savedScenario.name !== name || JSON.stringify(normalizeInputs(savedScenario.inputs)) !== JSON.stringify(inputs));
 
   const save = useMutation({
     mutationFn: async (asNew: boolean) => {
@@ -202,7 +231,7 @@ export default function AdminProfitability() {
   const setLabor = (b: LaborBucket, field: "hoursPerWeek" | "ratePerHour", value: number) =>
     setInputs((i) => (i ? { ...i, labor: { ...i.labor, [b]: { ...i.labor[b], [field]: value } } } : i));
 
-  if (basisLoading || scenariosLoading || (!inputs && !basisError)) {
+  if (basisLoading || scenariosLoading || draftLoading || (!inputs && !basisError)) {
     return (
       <StaffLayout>
         <div className="flex items-center justify-center min-h-96">
@@ -224,7 +253,7 @@ export default function AdminProfitability() {
 
   const { basis, actuals, catalog } = basisData;
   const u = projection.unitCosts;
-  const operatingCosts = projection.fees + projection.exciseTax + projection.weeklyFixedCosts;
+  const operatingCosts = projection.fees + projection.exciseTax + projection.insurance + projection.weeklyFixedCosts;
   const actualLine = (ch: Channel) => {
     const a = actuals.channels[ch];
     const parts: string[] = [];
@@ -241,10 +270,15 @@ export default function AdminProfitability() {
             <h1 className="text-2xl font-bold mb-1" data-testid="text-profitability-title">Weekly Profitability</h1>
             <p className="text-sm text-muted-foreground max-w-2xl">
               A projected week. Sales by channel go in; ingredient and packaging costs come from the recipes;
-              labor, overhead and taxes are yours to set. Every number updates as you type.
+              labor, overhead and taxes are yours to set. Every number updates as you type, and what you type is
+              kept for you between visits. Save writes it to a named scenario.
             </p>
           </div>
-          {dirty && <Badge variant="outline" data-testid="badge-unsaved">Unsaved changes</Badge>}
+          {dirty && (
+            <Badge variant="outline" data-testid="badge-unsaved">
+              {scenarioId ? "Differs from the saved scenario" : "Not saved as a scenario yet"}
+            </Badge>
+          )}
         </div>
 
         {/* Scenarios */}
@@ -303,7 +337,7 @@ export default function AdminProfitability() {
           <Stat label="Revenue" value={money0(projection.revenue)} hint="per week" testId="stat-revenue" />
           <Stat label="Cost of goods" value={money0(projection.cogs)} hint={projection.revenue > 0 ? `${pct(projection.cogs / projection.revenue)} of revenue` : undefined} testId="stat-cogs" />
           <Stat label="Gross margin" value={money0(projection.grossMargin)} hint={projection.revenue > 0 ? pct(projection.grossMargin / projection.revenue) : undefined} testId="stat-gross" />
-          <Stat label="Operating costs" value={money0(operatingCosts)} hint="fees, B&O, labor, overhead" testId="stat-opex" />
+          <Stat label="Operating costs" value={money0(operatingCosts)} hint="fees, B&O, insurance, labor, overhead" testId="stat-opex" />
           <Stat label="Operating profit" value={money0(projection.operatingProfit)} tone={projection.operatingProfit >= 0 ? "good" : "bad"} hint="before your pay" testId="stat-operating" />
           <Stat label="After your pay" value={money0(projection.netProfit)} tone={projection.netProfit >= 0 ? "good" : "bad"} hint={`${money0(projection.annual.netProfit)} a year`} testId="stat-net" />
         </div>
@@ -409,13 +443,18 @@ export default function AdminProfitability() {
                       </TableRow>
                     ))}
                     <TableRow>
-                      <TableCell className="font-medium" colSpan={3}>All labor, with burden</TableCell>
+                      <TableCell className="font-medium" colSpan={3}>
+                        All labor, with burden
+                        <div className="text-[11px] font-normal text-muted-foreground" data-testid="text-labor-split">
+                          {money0(projection.labor.wages)} in wages plus {money0(projection.labor.burden)} burden
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right tabular-nums font-medium" data-testid="text-labor-total">{money0(projection.labor.total)}</TableCell>
                     </TableRow>
                   </TableBody>
                 </Table>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Payroll burden">
+                  <Field label="Payroll burden" hint={`Employer taxes on the hours above: ${money0(projection.labor.burden)} a week`}>
                     <NumberField suffix="%" step="0.5" value={inputs.payrollBurdenPercent} onChange={(v) => set("payrollBurdenPercent", v)} testId="input-payroll-burden" />
                   </Field>
                   <Field label="Your own pay, per week" hint="Kept apart so profit shows before and after it">
@@ -428,11 +467,11 @@ export default function AdminProfitability() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Overhead</CardTitle>
-                <CardDescription>Yearly figures are spread over {WEEKS_PER_YEAR} weeks. Together these come to {money0(projection.overhead.total)} a week.</CardDescription>
+                <CardDescription>Monthly and yearly figures are spread over {WEEKS_PER_YEAR} weeks. Together these come to {money0(projection.overhead.total)} a week, with insurance on top as a share of sales.</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                <Field label="Rent, per year"><NumberField prefix="$" step="1" value={inputs.rentPerYear} onChange={(v) => set("rentPerYear", v)} testId="input-rent" /></Field>
-                <Field label="Insurance, per year"><NumberField prefix="$" step="1" value={inputs.insurancePerYear} onChange={(v) => set("insurancePerYear", v)} testId="input-insurance" /></Field>
+                <Field label="Rent, per month"><NumberField prefix="$" step="1" value={inputs.rentPerMonth} onChange={(v) => set("rentPerMonth", v)} testId="input-rent" /></Field>
+                <Field label="Insurance, % of sales" hint={`${money0(projection.insurance)} on this week's sales`}><NumberField suffix="%" step="0.1" value={inputs.insurancePercent} onChange={(v) => set("insurancePercent", v)} testId="input-insurance" /></Field>
                 <Field label="Keg replacement, per year" hint="Kegs lost or never returned"><NumberField prefix="$" step="1" value={inputs.kegReplacementPerYear} onChange={(v) => set("kegReplacementPerYear", v)} testId="input-keg-replacement" /></Field>
                 <Field label="Vehicle miles, per week"><NumberField step="1" value={inputs.vehicleMilesPerWeek} onChange={(v) => set("vehicleMilesPerWeek", v)} testId="input-miles" /></Field>
                 <Field label="Rate per mile"><NumberField prefix="$" step="0.01" value={inputs.ratePerMile} onChange={(v) => set("ratePerMile", v)} testId="input-rate-per-mile" /></Field>
@@ -449,7 +488,7 @@ export default function AdminProfitability() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Margin by channel</CardTitle>
-                <CardDescription>Per unit, after cost of goods, fees and B&O.</CardDescription>
+                <CardDescription>Per unit, after cost of goods, fees, B&O and insurance.</CardDescription>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -506,8 +545,9 @@ export default function AdminProfitability() {
                     ["Cost of goods", -projection.cogs],
                     ["Processing fees", -projection.fees],
                     ["B&O tax", -projection.exciseTax],
+                    ["Insurance", -projection.insurance],
                     ["Labor", -projection.labor.total],
-                    ["Rent and insurance", -(projection.overhead.rent + projection.overhead.insurance)],
+                    ["Rent", -projection.overhead.rent],
                     ["Vehicle and travel", -(projection.overhead.vehicle + projection.overhead.ownerTravel)],
                     ["Keg replacement", -projection.overhead.kegReplacement],
                     ["Other overhead", -projection.overhead.other],

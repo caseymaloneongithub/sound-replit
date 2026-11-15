@@ -23,6 +23,7 @@ import {
   CHANNELS,
   GALLONS_PER_CASE,
   GALLONS_PER_KEG,
+  normalizeInputs,
   projectionInputsSchema,
   type CatalogPrices,
   type Channel,
@@ -53,12 +54,15 @@ export type StoredScenario = {
 const isGallons = (unit: string | null | undefined) => /^gal/i.test(String(unit ?? "").trim());
 
 /**
- * Which package a retail product is, in the finished-goods vocabulary. Kegs have
- * no finished product, and unit types have been spelled several ways over time
- * ('1/6-barrel', '1/6 Barrel Keg'), so the words are the fallback (review,
+ * Which package a retail product is, in the finished-goods vocabulary: the
+ * product's own container first, since that is what an edit changes; then its
+ * linked finished product's, which an edit can leave behind; then the words,
+ * because kegs have no finished product and unit types have been spelled
+ * several ways over time ('1/6-barrel', '1/6 Barrel Keg') (reviews,
  * 2026-11-15). Needs `rp` (retail_products) and `fp` (its finished product) in scope.
  */
 const retailContainer = sql`CASE
+  WHEN rp.container IS NOT NULL THEN rp.container
   WHEN fp.container IS NOT NULL THEN fp.container
   WHEN rp.unit_type ILIKE '%barrel%' OR rp.unit_type ILIKE '%keg%' OR rp.unit_description ILIKE '%gallon%' THEN 'keg-sixth'
   WHEN rp.unit_description ILIKE '%can%' THEN 'can-case'
@@ -273,7 +277,8 @@ const parseScenarios = (value: string | undefined): StoredScenario[] => {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? (parsed as StoredScenario[]) : [];
+    // Saved under an earlier shape of the inputs, a scenario still opens whole.
+    return Array.isArray(parsed) ? (parsed as StoredScenario[]).map((s) => ({ ...s, inputs: normalizeInputs(s.inputs) })) : [];
   } catch {
     return [];
   }
@@ -307,6 +312,32 @@ async function changeScenarios<T>(change: (list: StoredScenario[]) => { list: St
   });
 }
 
+const draftKey = (userId: string) => `profitability_draft:${userId}`;
+
+/** Where one admin left off: the page keeps its inputs here as they're typed. */
+export type StoredDraft = { inputs: ProjectionInputs; scenarioId: string | null; name: string; updatedAt: string };
+
+const draftSchema = z.object({
+  inputs: projectionInputsSchema,
+  scenarioId: z.string().uuid().nullable().optional(),
+  name: z.string().trim().max(60).optional(),
+});
+
+const parseDraft = (value: string | undefined): StoredDraft | null => {
+  if (!value) return null;
+  try {
+    const d = JSON.parse(value);
+    return {
+      inputs: normalizeInputs(d?.inputs),
+      scenarioId: typeof d?.scenarioId === "string" ? d.scenarioId : null,
+      name: String(d?.name ?? ""),
+      updatedAt: String(d?.updatedAt ?? ""),
+    };
+  } catch {
+    return null;
+  }
+};
+
 const saveScenarioSchema = z.object({
   id: z.string().uuid().optional(),
   name: z.string().trim().min(1, "Give the scenario a name").max(60),
@@ -324,6 +355,46 @@ export function registerProfitabilityRoutes(app: Express, deps: Deps) {
     } catch (error: any) {
       console.error("[PROFITABILITY] basis failed:", error);
       res.status(500).json({ message: "Couldn't price the recipes: " + error.message });
+    }
+  });
+
+  // Where this admin left off (owner, 2026-11-15: "Are my inputs saved when I
+  // leave the page?"): the page keeps its inputs here a moment after each
+  // change, per login, and reopens on them. Named scenarios are the deliberate saves.
+  app.get("/api/profitability/draft", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const [row] = await db.select().from(siteSettings).where(eq(siteSettings.key, draftKey(userId)));
+      res.json({ draft: parseDraft(row?.value) });
+    } catch (error: any) {
+      res.status(500).json({ message: "Couldn't load where you left off: " + error.message });
+    }
+  });
+
+  app.put("/api/profitability/draft", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const parsed = draftSchema.safeParse(req.body);
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        return res.status(400).json({ message: issue ? `${issue.path.join(".")}: ${issue.message}` : "Invalid draft" });
+      }
+      const draft: StoredDraft = {
+        inputs: parsed.data.inputs,
+        scenarioId: parsed.data.scenarioId ?? null,
+        name: parsed.data.name ?? "",
+        updatedAt: new Date().toISOString(),
+      };
+      const value = JSON.stringify(draft);
+      await db
+        .insert(siteSettings)
+        .values({ key: draftKey(userId), value, updatedAt: new Date() })
+        .onConflictDoUpdate({ target: siteSettings.key, set: { value, updatedAt: new Date() } });
+      res.json({ success: true, updatedAt: draft.updatedAt });
+    } catch (error: any) {
+      res.status(500).json({ message: "Couldn't keep your inputs: " + error.message });
     }
   });
 

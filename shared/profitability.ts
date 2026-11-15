@@ -76,8 +76,9 @@ export const projectionInputsSchema = z.object({
   /** Employer payroll taxes and the like, as a percentage on top of wages. */
   payrollBurdenPercent: percent,
   ownerPayPerWeek: money,
-  rentPerYear: money,
-  insurancePerYear: money,
+  rentPerMonth: money,
+  /** Insurance as a share of sales (owner, 2026-11-15: "make insurance a % of sales. Start at 1.2%"). */
+  insurancePercent: percent,
   /** Kegs lost or never returned, as what replacing them costs in a year. */
   kegReplacementPerYear: money,
   /** Utilities, CO2 and sanitizer, software, licenses, maintenance parts, loan payments: one weekly figure. */
@@ -141,7 +142,8 @@ export type ChannelProjection = {
   cogs: number;
   fees: number;
   exciseTax: number;
-  /** Revenue less cost of goods, fees and B&O: what each week's sales leave to cover everything else. */
+  insurance: number;
+  /** Revenue less cost of goods, fees, B&O and insurance: what each week's sales leave to cover everything else. */
   contribution: number;
   perCase: { price: number; cost: number; margin: number; marginPercent: number };
   perKeg: { price: number; cost: number; margin: number; marginPercent: number };
@@ -163,11 +165,11 @@ export type Projection = {
   grossMargin: number;
   fees: number;
   exciseTax: number;
+  insurance: number;
   contribution: number;
-  labor: { total: number; buckets: Record<LaborBucket, number> };
+  labor: { total: number; wages: number; burden: number; buckets: Record<LaborBucket, number> };
   overhead: {
     rent: number;
-    insurance: number;
     kegReplacement: number;
     other: number;
     vehicle: number;
@@ -207,7 +209,8 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     const cogs = c.casesPerWeek * caseCost + c.kegsPerWeek * kegCost;
     const fees = revenue * (c.feePercent / 100);
     const exciseTax = revenue * (inputs.exciseTaxPercent / 100);
-    const variableRate = c.feePercent / 100 + inputs.exciseTaxPercent / 100;
+    const insurance = revenue * (inputs.insurancePercent / 100);
+    const variableRate = c.feePercent / 100 + inputs.exciseTaxPercent / 100 + inputs.insurancePercent / 100;
     const caseMargin = c.casePrice * (1 - variableRate) - caseCost;
     const kegMargin = c.kegPrice * (1 - variableRate) - kegCost;
     return {
@@ -218,7 +221,8 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
       cogs,
       fees,
       exciseTax,
-      contribution: revenue - cogs - fees - exciseTax,
+      insurance,
+      contribution: revenue - cogs - fees - exciseTax - insurance,
       perCase: { price: c.casePrice, cost: caseCost, margin: caseMargin, marginPercent: safeDiv(caseMargin, c.casePrice) },
       perKeg: { price: c.kegPrice, cost: kegCost, margin: kegMargin, marginPercent: safeDiv(kegMargin, c.kegPrice) },
     };
@@ -229,17 +233,19 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
   const cogs = sum((c) => c.cogs);
   const fees = sum((c) => c.fees);
   const exciseTax = sum((c) => c.exciseTax);
+  const insurance = sum((c) => c.insurance);
   const contribution = sum((c) => c.contribution);
 
-  const burden = 1 + inputs.payrollBurdenPercent / 100;
+  const burdenFactor = 1 + inputs.payrollBurdenPercent / 100;
   const buckets = Object.fromEntries(
-    LABOR_BUCKETS.map((b) => [b, inputs.labor[b].hoursPerWeek * inputs.labor[b].ratePerHour * burden]),
+    LABOR_BUCKETS.map((b) => [b, inputs.labor[b].hoursPerWeek * inputs.labor[b].ratePerHour * burdenFactor]),
   ) as Record<LaborBucket, number>;
   const laborTotal = LABOR_BUCKETS.reduce((s, b) => s + buckets[b], 0);
+  const wages = laborTotal / burdenFactor;
+  const laborBurden = laborTotal - wages;
 
   const overhead = {
-    rent: inputs.rentPerYear / WEEKS_PER_YEAR,
-    insurance: inputs.insurancePerYear / WEEKS_PER_YEAR,
+    rent: (inputs.rentPerMonth * 12) / WEEKS_PER_YEAR,
     kegReplacement: inputs.kegReplacementPerYear / WEEKS_PER_YEAR,
     other: inputs.otherOverheadPerWeek,
     vehicle: inputs.vehicleMilesPerWeek * inputs.ratePerMile,
@@ -247,7 +253,7 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     freeProduct: inputs.freeCasesPerWeek * caseCost,
     total: 0,
   };
-  overhead.total = overhead.rent + overhead.insurance + overhead.kegReplacement + overhead.other
+  overhead.total = overhead.rent + overhead.kegReplacement + overhead.other
     + overhead.vehicle + overhead.ownerTravel + overhead.freeProduct;
 
   const weeklyFixedCosts = laborTotal + overhead.total;
@@ -270,8 +276,9 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     grossMargin: revenue - cogs,
     fees,
     exciseTax,
+    insurance,
     contribution,
-    labor: { total: laborTotal, buckets },
+    labor: { total: laborTotal, wages, burden: laborBurden, buckets },
     overhead,
     weeklyFixedCosts,
     operatingProfit,
@@ -318,8 +325,8 @@ export function defaultInputs(actuals?: ProjectionActuals | null, catalog?: Cata
     labor: { brewing: line(), packaging: line(), deliveries: line(), maintenance: line() },
     payrollBurdenPercent: 10,
     ownerPayPerWeek: 0,
-    rentPerYear: 0,
-    insurancePerYear: 0,
+    rentPerMonth: 0,
+    insurancePercent: 1.2,
     kegReplacementPerYear: 0,
     otherOverheadPerWeek: 0,
     vehicleMilesPerWeek: 0,
@@ -339,5 +346,51 @@ export function withActualSales(inputs: ProjectionInputs, actuals: ProjectionAct
       wholesale: channelFrom("wholesale", inputs.channels.wholesale.feePercent, actuals, catalog),
       retail: channelFrom("retail", inputs.channels.retail.feePercent, actuals, catalog),
     },
+  };
+}
+
+const finite = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+
+/**
+ * Inputs saved earlier, brought up to today's shape: fields that didn't exist
+ * yet take their defaults, renamed ones carry over (rent used to be a yearly
+ * figure), and anything unreadable falls back. Nothing a scenario holds is lost
+ * to a later addition.
+ */
+export function normalizeInputs(raw: unknown, fallback: ProjectionInputs = defaultInputs()): ProjectionInputs {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const channel = (c: Channel): ChannelInputs => {
+    const x = r.channels?.[c] ?? {};
+    const d = fallback.channels[c];
+    return {
+      casesPerWeek: finite(x.casesPerWeek, d.casesPerWeek),
+      casePrice: finite(x.casePrice, d.casePrice),
+      kegsPerWeek: finite(x.kegsPerWeek, d.kegsPerWeek),
+      kegPrice: finite(x.kegPrice, d.kegPrice),
+      feePercent: finite(x.feePercent, d.feePercent),
+    };
+  };
+  const labor = (b: LaborBucket): LaborLine => {
+    const x = r.labor?.[b] ?? {};
+    const d = fallback.labor[b];
+    return { hoursPerWeek: finite(x.hoursPerWeek, d.hoursPerWeek), ratePerHour: finite(x.ratePerHour, d.ratePerHour) };
+  };
+  return {
+    channels: { distributor: channel("distributor"), wholesale: channel("wholesale"), retail: channel("retail") },
+    liquidWastePercent: finite(r.liquidWastePercent, fallback.liquidWastePercent),
+    packagingWastePercent: finite(r.packagingWastePercent, fallback.packagingWastePercent),
+    flavorMix: r.flavorMix === "even" ? "even" : "sales",
+    labor: { brewing: labor("brewing"), packaging: labor("packaging"), deliveries: labor("deliveries"), maintenance: labor("maintenance") },
+    payrollBurdenPercent: finite(r.payrollBurdenPercent, fallback.payrollBurdenPercent),
+    ownerPayPerWeek: finite(r.ownerPayPerWeek, fallback.ownerPayPerWeek),
+    rentPerMonth: finite(r.rentPerMonth, typeof r.rentPerYear === "number" ? r.rentPerYear / 12 : fallback.rentPerMonth),
+    insurancePercent: finite(r.insurancePercent, fallback.insurancePercent),
+    kegReplacementPerYear: finite(r.kegReplacementPerYear, fallback.kegReplacementPerYear),
+    otherOverheadPerWeek: finite(r.otherOverheadPerWeek, fallback.otherOverheadPerWeek),
+    vehicleMilesPerWeek: finite(r.vehicleMilesPerWeek, fallback.vehicleMilesPerWeek),
+    ratePerMile: finite(r.ratePerMile, fallback.ratePerMile),
+    ownerTravelPerWeek: finite(r.ownerTravelPerWeek, fallback.ownerTravelPerWeek),
+    exciseTaxPercent: finite(r.exciseTaxPercent, fallback.exciseTaxPercent),
+    freeCasesPerWeek: finite(r.freeCasesPerWeek, fallback.freeCasesPerWeek),
   };
 }
