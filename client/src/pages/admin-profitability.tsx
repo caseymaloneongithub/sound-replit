@@ -152,13 +152,13 @@ export default function AdminProfitability() {
       const stillThere = draft.scenarioId ? scenarios.find((s) => s.id === draft.scenarioId) : undefined;
       setScenarioId(stillThere?.id ?? null);
       setName(draft.name || stillThere?.name || "This week");
-      setInputs(normalizeInputs(draft.inputs, defaultInputs(basisData.actuals, basisData.catalog)));
+      setInputs(normalizeInputs(draft.inputs, defaultInputs(basisData.actuals, basisData.catalog, basisData.basis)));
       return;
     }
     const latest = [...scenarios].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     if (latest) loadScenario(latest);
     else {
-      setInputs(defaultInputs(basisData.actuals, basisData.catalog));
+      setInputs(defaultInputs(basisData.actuals, basisData.catalog, basisData.basis));
       setName("This week");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -240,7 +240,7 @@ export default function AdminProfitability() {
       else {
         setScenarioId(null);
         setName("This week");
-        if (basisData) setInputs(defaultInputs(basisData.actuals, basisData.catalog));
+        if (basisData) setInputs(defaultInputs(basisData.actuals, basisData.catalog, basisData.basis));
       }
       toast({ title: "Scenario deleted" });
     },
@@ -278,6 +278,21 @@ export default function AdminProfitability() {
   const { basis, actuals, catalog } = basisData;
   const u = projection.unitCosts;
   const operatingCosts = projection.fees + projection.exciseTax + projection.insurance + projection.weeklyFixedCosts;
+  const volumeHint = `${num(projection.volume.cases, 0)} cases and ${num(projection.volume.kegs)} kegs a week; `
+    + `brew ${num(projection.volume.gallonsBrewed, 0)} at ${num(inputs.liquidWastePercent)}% liquid waste`;
+  // Packaging waste is counted here and nowhere else (owner, 2026-11-15: "We're
+  // not double counting waste from the materials page and the profitability page
+  // are we?"): the hint says what the materials' own rates would have come to.
+  const rated = basis.packagingMaterials.filter((m) => m.wasteRate > 0);
+  const rateSummary = Array.from(new Set(rated.map((m) => m.wasteRate)))
+    .sort((a, b) => b - a)
+    .map((rate) => `${num(rate)}% on ${rated.filter((m) => m.wasteRate === rate).length}`)
+    .join(" and ");
+  const packagingWasteHint = rated.length === 0
+    ? "Spoiled cans, ends, boxes, stickers. The only place packaging waste is counted; nothing in Materials carries a rate on these."
+    : `Spoiled cans, ends, boxes, stickers. The only place packaging waste is counted: Materials has ${rateSummary} of `
+      + `${basis.packagingMaterials.length} packaging materials, which comes to ${num(basis.packagingWasteInMaterials[inputs.flavorMix])}% `
+      + "of a case, and that isn't added again here.";
   const actualLine = (ch: Channel) => {
     const a = actuals.channels[ch];
     const parts: string[] = [];
@@ -318,7 +333,7 @@ export default function AdminProfitability() {
                   if (v === "__new__") {
                     setScenarioId(null);
                     setName("New scenario");
-                    setInputs(defaultInputs(actuals, catalog));
+                    setInputs(defaultInputs(actuals, catalog, basis));
                     return;
                   }
                   const s = scenarios?.find((x) => x.id === v);
@@ -365,7 +380,7 @@ export default function AdminProfitability() {
           <Stat label="Gross margin" value={money0(projection.grossMargin)} hint={projection.revenue > 0 ? pct(projection.grossMargin / projection.revenue) : undefined} testId="stat-gross" />
           <Stat label="Operating costs" value={money0(operatingCosts)} hint="fees, B&O, insurance, labor, overhead" testId="stat-opex" />
           <Stat label="Profit" value={money0(projection.operatingProfit)} tone={projection.operatingProfit >= 0 ? "good" : "bad"} hint="per week; as owners, this is your pay" testId="stat-operating" />
-          <Stat label="Profit per year" value={money0(projection.annual.operatingProfit)} tone={projection.annual.operatingProfit >= 0 ? "good" : "bad"} hint={`${WEEKS_PER_YEAR} weeks like this one`} testId="stat-annual" />
+          <Stat label="Gallons" value={num(projection.volume.gallonsPackaged, 0)} hint={volumeHint} testId="stat-gallons" />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
@@ -420,7 +435,7 @@ export default function AdminProfitability() {
                   <Field label="Liquid waste" hint="Lost between brew and package">
                     <NumberField suffix="%" step="0.5" value={inputs.liquidWastePercent} onChange={(v) => set("liquidWastePercent", v)} testId="input-liquid-waste" />
                   </Field>
-                  <Field label="Packaging waste" hint="Spoiled cans, ends, boxes, stickers">
+                  <Field label="Packaging waste" hint={packagingWasteHint}>
                     <NumberField suffix="%" step="0.5" value={inputs.packagingWastePercent} onChange={(v) => set("packagingWastePercent", v)} testId="input-packaging-waste" />
                   </Field>
                   <Field label="Flavor mix" hint="How flavors are weighted">
@@ -510,7 +525,7 @@ export default function AdminProfitability() {
                 <Field label="Vehicle miles, per week"><NumberField step="1" value={inputs.vehicleMilesPerWeek} onChange={(v) => set("vehicleMilesPerWeek", v)} testId="input-miles" /></Field>
                 <Field label="Rate per mile"><NumberField prefix="$" step="0.01" value={inputs.ratePerMile} onChange={(v) => set("ratePerMile", v)} testId="input-rate-per-mile" /></Field>
                 <Field label="Your travel, per week" hint="Beyond the vehicle miles"><NumberField prefix="$" step="1" value={inputs.ownerTravelPerWeek} onChange={(v) => set("ownerTravelPerWeek", v)} testId="input-owner-travel" /></Field>
-                <Field label="Other overhead, per week" hint="Utilities, CO2 and sanitizer, software, licenses, repairs, loan payments"><NumberField prefix="$" step="1" value={inputs.otherOverheadPerWeek} onChange={(v) => set("otherOverheadPerWeek", v)} testId="input-other-overhead" /></Field>
+                <Field label="Other overhead, per week" hint="Utilities, sanitizer, software, licenses, repairs, loan payments"><NumberField prefix="$" step="1" value={inputs.otherOverheadPerWeek} onChange={(v) => set("otherOverheadPerWeek", v)} testId="input-other-overhead" /></Field>
                 <Field label="B&O excise tax" hint="Of sales. 0.484% wholesaling, 0.471% retailing"><NumberField suffix="%" step="0.001" value={inputs.exciseTaxPercent} onChange={(v) => set("exciseTaxPercent", v)} testId="input-excise" /></Field>
                 <Field label="Free product, cases per week" hint={`Samples and dumps, at ${money2(u.caseCost)} a case`}><NumberField step="0.5" value={inputs.freeCasesPerWeek} onChange={(v) => set("freeCasesPerWeek", v)} testId="input-free-cases" /></Field>
               </CardContent>
@@ -635,7 +650,7 @@ export default function AdminProfitability() {
                 )}
                 <Separator className="my-2" />
                 <p className="text-muted-foreground">
-                  Over {WEEKS_PER_YEAR} weeks: {money0(projection.annual.revenue)} in sales,{" "}
+                  Over {WEEKS_PER_YEAR} weeks: {num(projection.annual.gallonsPackaged, 0)} gallons, {money0(projection.annual.revenue)} in sales,{" "}
                   <span className={projection.annual.operatingProfit < 0 ? "text-destructive" : ""}>{money0(projection.annual.operatingProfit)}</span> profit.
                 </p>
               </CardContent>
@@ -644,7 +659,7 @@ export default function AdminProfitability() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Flavors as the recipes price them</CardTitle>
-                <CardDescription>Mix is the share of kombucha sold in the last {actuals.weeks} weeks.</CardDescription>
+                <CardDescription>Packaging is before waste. Mix is the share of kombucha sold in the last {actuals.weeks} weeks.</CardDescription>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>

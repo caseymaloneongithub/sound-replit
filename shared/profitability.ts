@@ -70,7 +70,14 @@ export const projectionInputsSchema = z.object({
   }),
   /** Kombucha lost between the brew and the package, on top of what the package holds. */
   liquidWastePercent: percent,
-  /** Cans, ends, boxes and stickers spoiled, on top of the recipe (and on top of any waste rate on the materials). */
+  /**
+   * Cans, ends, boxes and stickers spoiled, on top of the recipe. This is the one
+   * packaging-waste figure: the materials carry their own waste rates
+   * (shared/material-waste.ts), and the basis reports what those come to rather
+   * than pricing them in, so cans at 5% in Materials aren't counted twice
+   * (owner, 2026-11-15: "We're not double counting waste from the materials page
+   * and the profitability page are we?").
+   */
   packagingWastePercent: percent,
   /** What a pound of CO2 costs (owner, 2026-11-15: "CO2 usage is scaled by liquid. I will give a price per lb"). */
   co2PricePerLb: money,
@@ -93,7 +100,7 @@ export const projectionInputsSchema = z.object({
   insurancePercent: percent,
   /** Kegs lost or never returned, as what replacing them costs in a year. */
   kegReplacementPerYear: money,
-  /** Utilities, CO2 and sanitizer, software, licenses, maintenance parts, loan payments: one weekly figure. */
+  /** Utilities, sanitizer, software, licenses, maintenance parts, loan payments: one weekly figure. CO2 is priced with the product. */
   otherOverheadPerWeek: money,
   vehicleMilesPerWeek: count,
   ratePerMile: z.number().finite().min(0).max(10),
@@ -111,17 +118,29 @@ export type FlavorCost = {
   name: string;
   /** From the Brew recipe; null when the flavor has none. */
   ingredientPerGallon: number | null;
-  /** From the Can recipe, before the page's packaging waste; null when the flavor has none. */
+  /** From the Can recipe, before any waste (the inputs' packagingWastePercent is applied; the materials' rates are not); null when the flavor has none. */
   packagingPerCase: number | null;
   /** Share of recent sales by volume of kombucha, among flavors with a Brew recipe. 0–1. */
   salesWeight: number;
 };
 
+/** A packaging material the Can recipes in use draw on, with the waste rate Materials gives it. */
+export type PackagingMaterial = { id: string; title: string; wasteRate: number };
+
 export type ProjectionBasis = {
   flavors: FlavorCost[];
   /** Weighted over the flavors, for each mix the inputs can choose. */
   ingredientPerGallon: { sales: number; even: number };
+  /** A case's packaging before any waste. */
   packagingPerCase: { sales: number; even: number };
+  /**
+   * What the materials' own waste rates would add to a case's packaging, as a
+   * percentage of it, for each mix: the figure packagingWastePercent stands in
+   * for. A new projection starts there.
+   */
+  packagingWasteInMaterials: { sales: number; even: number };
+  /** The packaging materials the Can recipes in use draw on, highest waste rate first. */
+  packagingMaterials: PackagingMaterial[];
   /** Things the basis couldn't price, in words for the page. */
   notes: string[];
 };
@@ -177,6 +196,11 @@ export type Projection = {
     kegCost: number;
   };
   channels: ChannelProjection[];
+  /**
+   * Kombucha a week: the cases (free product included) and kegs filled, what
+   * they hold, and what has to be brewed for them with the liquid waste.
+   */
+  volume: { cases: number; kegs: number; gallonsPackaged: number; gallonsBrewed: number };
   revenue: number;
   cogs: number;
   grossMargin: number;
@@ -206,7 +230,7 @@ export type Projection = {
     scale: number | null;
     channels: Record<Channel, { cases: number; kegs: number }> | null;
   };
-  annual: { revenue: number; operatingProfit: number };
+  annual: { revenue: number; operatingProfit: number; gallonsPackaged: number };
 };
 
 const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
@@ -214,6 +238,7 @@ const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
 /** One projected week from the inputs and the recipe-derived basis. */
 export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): Projection {
   const ingredientPerGallon = basis.ingredientPerGallon[inputs.flavorMix];
+  // The basis prices packaging before any waste; this is the only waste added to it.
   const packagingPerCase = basis.packagingPerCase[inputs.flavorMix] * (1 + inputs.packagingWastePercent / 100);
   const liquidFactor = 1 + inputs.liquidWastePercent / 100;
   const liquidGallonsPerCase = GALLONS_PER_CASE * liquidFactor;
@@ -260,6 +285,11 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
   const insurance = sum((c) => c.insurance);
   const contribution = sum((c) => c.contribution);
 
+  const cases = sum((c) => c.cases) + inputs.freeCasesPerWeek;
+  const kegs = sum((c) => c.kegs);
+  const gallonsPackaged = cases * GALLONS_PER_CASE + kegs * GALLONS_PER_KEG;
+  const volume = { cases, kegs, gallonsPackaged, gallonsBrewed: gallonsPackaged * liquidFactor };
+
   const burdenFactor = 1 + inputs.payrollBurdenPercent / 100;
   const buckets = Object.fromEntries(
     LABOR_BUCKETS.map((b) => [b, inputs.labor[b].hoursPerWeek * inputs.labor[b].ratePerHour * burdenFactor]),
@@ -293,6 +323,7 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
   return {
     unitCosts: { ingredientPerGallon, packagingPerCase, liquidGallonsPerCase, liquidGallonsPerKeg, caseIngredient, kegIngredient, co2LbPerGallon, caseCo2, kegCo2, caseCost, kegCost },
     channels,
+    volume,
     revenue,
     cogs,
     grossMargin: revenue - cogs,
@@ -308,6 +339,7 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     annual: {
       revenue: revenue * WEEKS_PER_YEAR,
       operatingProfit: operatingProfit * WEEKS_PER_YEAR,
+      gallonsPackaged: gallonsPackaged * WEEKS_PER_YEAR,
     },
   };
 }
@@ -329,8 +361,19 @@ function channelFrom(channel: Channel, feePercent: number, actuals?: ProjectionA
 /** Typical processing fees: Stripe cards on retail (2.9% + 30¢ on a $36 case), ACH on wholesale, checks from the distributor. */
 export const DEFAULT_FEE_PERCENT: Record<Channel, number> = { distributor: 0, wholesale: 0.8, retail: 3.2 };
 
-/** A fresh projection: sales from recent weeks, the owner's stated waste rates, and everything else left for the owner to fill in. */
-export function defaultInputs(actuals?: ProjectionActuals | null, catalog?: CatalogPrices | null): ProjectionInputs {
+/** Packaging waste where there is no basis to read it from: the owner's stated figure (2026-11-15). */
+export const DEFAULT_PACKAGING_WASTE_PERCENT = 5;
+
+/**
+ * A fresh projection: sales from recent weeks, packaging waste as the materials'
+ * own rates work out (so the two pages agree until the owner says otherwise),
+ * the owner's stated liquid waste, and everything else left to fill in.
+ */
+export function defaultInputs(
+  actuals?: ProjectionActuals | null,
+  catalog?: CatalogPrices | null,
+  basis?: Pick<ProjectionBasis, "packagingWasteInMaterials"> | null,
+): ProjectionInputs {
   const line = (): LaborLine => ({ hoursPerWeek: 0, ratePerHour: 20 });
   return {
     channels: {
@@ -339,7 +382,7 @@ export function defaultInputs(actuals?: ProjectionActuals | null, catalog?: Cata
       retail: channelFrom("retail", DEFAULT_FEE_PERCENT.retail, actuals, catalog),
     },
     liquidWastePercent: 10,
-    packagingWastePercent: 5,
+    packagingWastePercent: basis ? round(basis.packagingWasteInMaterials.sales, 1) : DEFAULT_PACKAGING_WASTE_PERCENT,
     co2PricePerLb: 0,
     co2Volumes: 2.8,
     // The tank is left full of gas at push pressure (half to three quarters of what

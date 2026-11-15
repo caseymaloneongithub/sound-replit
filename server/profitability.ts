@@ -6,9 +6,12 @@
  *
  * Costs: each flavor's Brew recipe prices a gallon of kombucha (its lines are
  * per gallon, with the materials' own waste rates on top, as cost of goods
- * counts them); its Can recipe prices a case's packaging. Where a flavor has
- * more than one of either, the newest active one speaks. Flavors are weighted
- * by their share of recent sales, by volume of kombucha, or evenly.
+ * counts them); its Can recipe prices a case's packaging before any waste, since
+ * the page adds its one packaging-waste figure there and cans at 5% in Materials
+ * must not be counted twice (owner, 2026-11-15) — what the materials' rates
+ * would add is reported beside it instead. Where a flavor has more than one of
+ * either, the newest active one speaks. Flavors are weighted by their share of
+ * recent sales, by volume of kombucha, or evenly.
  *
  * Scenarios live in site_settings under one key as JSON: a handful of named
  * input sets for one or two admins, not a table's worth.
@@ -29,6 +32,7 @@ import {
   type Channel,
   type ChannelActuals,
   type FlavorCost,
+  type PackagingMaterial,
   type ProjectionActuals,
   type ProjectionBasis,
   type ProjectionInputs,
@@ -77,15 +81,35 @@ type RecipeLineRow = {
   flavor: string;
   container: string | null;
   created_at: string;
+  material_id: string;
+  material: string;
   material_unit: string;
+  waste_rate: number;
+  /** The line at the material's cost, before its waste rate. */
+  base_cost: number;
+  /** The same with the material's waste rate on, as cost of goods counts it. */
   line_cost: number;
 };
 
+type FlavorRecipeCosts = {
+  name: string;
+  /** Per gallon, with the materials' waste rates. */
+  brew: number | null;
+  /** Per case, before any waste. */
+  can: number | null;
+  /** Per case with the materials' waste rates on, to say what those rates come to. */
+  canWithMaterialsWaste: number | null;
+  /** The packaging materials of the Can recipe in use. */
+  canMaterials: PackagingMaterial[];
+};
+
 /** Every flavor's cost per gallon (Brew) and packaging per case (Can), from the active recipes. */
-async function recipeCosts(): Promise<{ flavors: Map<string, { name: string; brew: number | null; can: number | null }>; notes: string[] }> {
+async function recipeCosts(): Promise<{ flavors: Map<string, FlavorRecipeCosts>; notes: string[] }> {
   const { rows } = await db.execute(sql`
     SELECT p.id AS process_id, p.title, p.unit, p.flavor_id, f.name AS flavor, fp.container,
-           p.created_at::text AS created_at, m.unit AS material_unit,
+           p.created_at::text AS created_at, m.id AS material_id, m.title AS material, m.unit AS material_unit,
+           m.waste_rate::float8 AS waste_rate,
+           (pm.units * m.cost)::float8 AS base_cost,
            (pm.units * (1 + m.waste_rate / 100) * m.cost)::float8 AS line_cost
     FROM processes p
     JOIN flavors f ON f.id = p.flavor_id
@@ -98,25 +122,38 @@ async function recipeCosts(): Promise<{ flavors: Map<string, { name: string; bre
       AND f.is_active = true AND (fp.id IS NULL OR fp.is_active = true)`);
   const lines = rows as unknown as RecipeLineRow[];
 
-  type Recipe = { title: string; unit: string; flavorId: string; flavor: string; container: string | null; createdAt: string; cost: number; liquidLinesSkipped: number };
+  type Recipe = {
+    title: string; unit: string; flavorId: string; flavor: string; container: string | null; createdAt: string;
+    /** With the materials' waste rates. */
+    cost: number;
+    /** Before any waste. */
+    baseCost: number;
+    materials: PackagingMaterial[];
+    liquidLinesSkipped: number;
+  };
   const recipes = new Map<string, Recipe>();
   for (const l of lines) {
     const r = recipes.get(l.process_id) ?? {
-      title: l.title, unit: l.unit, flavorId: l.flavor_id, flavor: l.flavor, container: l.container, createdAt: l.created_at, cost: 0, liquidLinesSkipped: 0,
+      title: l.title, unit: l.unit, flavorId: l.flavor_id, flavor: l.flavor, container: l.container, createdAt: l.created_at,
+      cost: 0, baseCost: 0, materials: [], liquidLinesSkipped: 0,
     };
     const isCanRecipe = /^can\b/i.test(r.title) || r.container === "can-case";
     // A Can recipe's packaging is cans, ends, boxes and stickers; kombucha is priced by the Brew recipe, so a liquid line here would count it twice.
     if (isCanRecipe && isGallons(l.material_unit)) r.liquidLinesSkipped += 1;
-    else r.cost += Number(l.line_cost) || 0;
+    else {
+      r.cost += Number(l.line_cost) || 0;
+      r.baseCost += Number(l.base_cost) || 0;
+      r.materials.push({ id: l.material_id, title: l.material, wasteRate: Number(l.waste_rate) || 0 });
+    }
     recipes.set(l.process_id, r);
   }
 
   const notes: string[] = [];
-  type FlavorEntry = { name: string; brew: number | null; can: number | null; brewAt?: string; canAt?: string };
+  type FlavorEntry = FlavorRecipeCosts & { brewAt?: string; canAt?: string };
   const flavors = new Map<string, FlavorEntry>();
   const newest = (a: string | undefined, b: string) => !a || b > a;
   for (const r of Array.from(recipes.values())) {
-    const entry: FlavorEntry = flavors.get(r.flavorId) ?? { name: r.flavor, brew: null, can: null };
+    const entry: FlavorEntry = flavors.get(r.flavorId) ?? { name: r.flavor, brew: null, can: null, canWithMaterialsWaste: null, canMaterials: [] };
     const isBrew = /^brew\b/i.test(r.title) || isGallons(r.unit);
     const isCan = /^can\b/i.test(r.title) || r.container === "can-case";
     if (isBrew) {
@@ -128,7 +165,9 @@ async function recipeCosts(): Promise<{ flavors: Map<string, { name: string; bre
       }
     } else if (isCan) {
       if (newest(entry.canAt, r.createdAt)) {
-        entry.can = r.cost;
+        entry.can = r.baseCost;
+        entry.canWithMaterialsWaste = r.cost;
+        entry.canMaterials = r.materials;
         entry.canAt = r.createdAt;
       }
     }
@@ -194,6 +233,15 @@ export async function buildBasis(since: Date): Promise<ProjectionBasis> {
 
   const brewItems = list.filter((f) => f.ingredientPerGallon !== null).map((f) => ({ value: f.ingredientPerGallon as number, weight: gallons.get(f.flavorId) ?? 0 }));
   const canItems = list.filter((f) => f.packagingPerCase !== null).map((f) => ({ value: f.packagingPerCase as number, weight: gallons.get(f.flavorId) ?? 0 }));
+  // The same cases with the materials' waste rates on, to say what those rates come to.
+  const canWasteItems = Array.from(flavors.entries())
+    .filter(([, f]) => f.can !== null && f.canWithMaterialsWaste !== null)
+    .map(([id, f]) => ({ value: f.canWithMaterialsWaste as number, weight: gallons.get(id) ?? 0 }));
+  const over = (withWaste: number, base: number) => (base > 0 ? (withWaste / base - 1) * 100 : 0);
+  // Each material once, though ends and boxes sit on every flavor's recipe.
+  const packagingMaterials = Array.from(
+    new Map(Array.from(flavors.values()).flatMap((f) => (f.can === null ? [] : f.canMaterials)).map((m) => [m.id, m])).values(),
+  ).sort((a, b) => b.wasteRate - a.wasteRate || a.title.localeCompare(b.title));
   if (brewItems.length === 0) notes.push("No active Brew recipe prices a gallon of kombucha, so ingredient costs are zero.");
   if (canItems.length === 0) notes.push("No active Can recipe prices a case's packaging, so packaging costs are zero.");
   for (const f of list) {
@@ -201,10 +249,16 @@ export async function buildBasis(since: Date): Promise<ProjectionBasis> {
     if (f.ingredientPerGallon === null && f.packagingPerCase !== null) notes.push(`${f.name} has a Can recipe but no Brew recipe.`);
   }
 
+  const packagingPerCase = { sales: weighted(canItems), even: mean(canItems.map((i) => i.value)) };
   return {
     flavors: list,
     ingredientPerGallon: { sales: weighted(brewItems), even: mean(brewItems.map((i) => i.value)) },
-    packagingPerCase: { sales: weighted(canItems), even: mean(canItems.map((i) => i.value)) },
+    packagingPerCase,
+    packagingWasteInMaterials: {
+      sales: over(weighted(canWasteItems), packagingPerCase.sales),
+      even: over(mean(canWasteItems.map((i) => i.value)), packagingPerCase.even),
+    },
+    packagingMaterials,
     notes,
   };
 }
