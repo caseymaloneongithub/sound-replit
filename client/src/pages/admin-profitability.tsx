@@ -379,7 +379,7 @@ export default function AdminProfitability() {
           <Stat label="Cost of goods" value={money0(projection.cogs)} hint={projection.revenue > 0 ? `${pct(projection.cogs / projection.revenue)} of revenue` : undefined} testId="stat-cogs" />
           <Stat label="Gross margin" value={money0(projection.grossMargin)} hint={projection.revenue > 0 ? pct(projection.grossMargin / projection.revenue) : undefined} testId="stat-gross" />
           <Stat label="Operating costs" value={money0(operatingCosts)} hint="fees, B&O, insurance, labor, overhead" testId="stat-opex" />
-          <Stat label="Profit" value={money0(projection.operatingProfit)} tone={projection.operatingProfit >= 0 ? "good" : "bad"} hint="per week; as owners, this is your pay" testId="stat-operating" />
+          <Stat label="Profit" value={money0(projection.operatingProfit)} tone={projection.operatingProfit >= 0 ? "good" : "bad"} hint={`per week, ${money0(projection.annual.operatingProfit)} a year; as owners, this is your pay`} testId="stat-operating" />
           <Stat label="Gallons" value={num(projection.volume.gallonsPackaged, 0)} hint={volumeHint} testId="stat-gallons" />
         </div>
 
