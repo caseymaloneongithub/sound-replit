@@ -383,7 +383,8 @@ export function defaultInputs(
     },
     liquidWastePercent: 10,
     packagingWastePercent: basis ? round(basis.packagingWasteInMaterials.sales, 1) : DEFAULT_PACKAGING_WASTE_PERCENT,
-    co2PricePerLb: 0,
+    // Owner, 2026-11-15: "CO2 is about $1 for now." Scenarios saved before that hold the $0 placeholder until it's typed in.
+    co2PricePerLb: 1,
     co2Volumes: 2.8,
     // The tank is left full of gas at push pressure (half to three quarters of what
     // the kombucha held), the canning line purges every can, and kegs are purged:
