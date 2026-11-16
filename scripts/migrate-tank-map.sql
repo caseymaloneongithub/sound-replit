@@ -59,10 +59,11 @@ ALTER TABLE vessel_fills ADD COLUMN IF NOT EXISTS kegs_in integer;
 UPDATE vessel_fills SET volume_gal_in = volume_gal, kegs_in = kegs WHERE volume_gal_in IS NULL AND kegs_in IS NULL;
 -- The brewhouse as the owner described it (2026-11-16): four fermenters in a square, the
 -- 10 bbl IBC tote top-left (FV1) and three 7 bbl pots; three 10 bbl conical brite tanks
--- in an L to their left; the keg fridge to the right. Sizes are gallons at 31 to the
--- barrel; names, sizes and shapes can be changed on the page by an admin.
+-- in an L to their left; the keg fridge to the right. Sizes are gallons: the tote is 330
+-- (owner, 2026-11-16), the rest 31 to the barrel; names, sizes and shapes can be changed
+-- on the page by an admin.
 INSERT INTO vessels (id, name, kind, capacity_gal, shape, display_order) VALUES
-  ('fv1', 'FV1', 'fermenter', 310, 'tote', 1),
+  ('fv1', 'FV1', 'fermenter', 330, 'tote', 1),
   ('fv2', 'FV2', 'fermenter', 217, 'pot', 2),
   ('fv3', 'FV3', 'fermenter', 217, 'pot', 3),
   ('fv4', 'FV4', 'fermenter', 217, 'pot', 4),
@@ -73,3 +74,6 @@ INSERT INTO vessels (id, name, kind, capacity_gal, shape, display_order) VALUES
 ON CONFLICT (id) DO NOTHING;
 UPDATE vessels SET shape = CASE WHEN kind = 'brite' THEN 'conical' WHEN capacity_gal >= 300 THEN 'tote' ELSE 'pot' END
   WHERE shape IS NULL AND kind <> 'fridge';
+-- The tote was first seeded at 310 (10 bbl at 31); it is a 330 gallon tote (owner, 2026-11-16:
+-- "The tote is 330"). Corrected once, while it still reads 310.
+UPDATE vessels SET capacity_gal = 330 WHERE id = 'fv1' AND shape = 'tote' AND capacity_gal = 310;
