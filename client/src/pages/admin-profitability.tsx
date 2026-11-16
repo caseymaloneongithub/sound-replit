@@ -282,6 +282,15 @@ export default function AdminProfitability() {
 
   const { basis, actuals, catalog } = basisData;
   const u = projection.unitCosts;
+  // Growth shows in the yearly figures (owner, 2026-11-15: "build in a monthly growth rate input").
+  const growing = inputs.monthlyGrowthPercent !== 0;
+  const growthWord = `${inputs.monthlyGrowthPercent > 0 ? "growing" : "shrinking"} ${num(Math.abs(inputs.monthlyGrowthPercent))}% a month`;
+  const yearEnd = projection.annual.yearEnd;
+  const growthHint = growing
+    ? `The yearly figures have volumes ${growthWord} for 12 months; what varies with them follows, labor and overhead stay as entered. `
+      + `A year from now the week is ${num(yearEnd.cases, 0)} cases and ${num(yearEnd.kegs)} kegs, `
+      + `${pct(Math.abs(projection.annual.growthFactor - 1), 0)} ${projection.annual.growthFactor >= 1 ? "more" : "less"} than now.`
+    : "How much sales volumes change each month, in the yearly figures; what varies with them follows, labor and overhead stay as entered. At 0 the year is this week 52 times.";
   // One row per payroll item: the rate typed, what it comes to a week, and where the rate comes from.
   const payrollRows: { item: PayrollItem; field: keyof PayrollInputs; hint: string; prefix?: string; suffix?: string; step: string }[] = [
     { item: "socialSecurityMedicare", field: "socialSecurityMedicarePercent", suffix: "%", step: "0.01", hint: "The employer's half: 6.2% Social Security and 1.45% Medicare." },
@@ -398,7 +407,7 @@ export default function AdminProfitability() {
             label="Net margin"
             value={projection.revenue > 0 ? pct(projection.netMargin) : "—"}
             tone={projection.revenue > 0 ? (projection.netMargin >= 0 ? "good" : "bad") : undefined}
-            hint={projection.revenue > 0 ? "profit over sales; the same for the year" : "no sales entered"}
+            hint={projection.revenue > 0 ? (growing ? `profit over sales this week; ${pct(projection.annual.netMargin)} over the year` : "profit over sales; the same for the year") : "no sales entered"}
             testId="stat-net-margin"
           />
           <Stat label="Gallons" value={num(projection.volume.gallonsPackaged, 0)} hint={volumeHint} testId="stat-gallons" />
@@ -440,6 +449,11 @@ export default function AdminProfitability() {
                     ))}
                   </TableBody>
                 </Table>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <Field label="Monthly growth" hint={growthHint}>
+                    <NumberField suffix="%" step="0.5" min={-50} value={inputs.monthlyGrowthPercent} onChange={(v) => set("monthlyGrowthPercent", v)} testId="input-growth" />
+                  </Field>
+                </div>
               </CardContent>
             </Card>
 
@@ -572,6 +586,7 @@ export default function AdminProfitability() {
                 <Field label="Vehicle miles, per week"><NumberField step="1" value={inputs.vehicleMilesPerWeek} onChange={(v) => set("vehicleMilesPerWeek", v)} testId="input-miles" /></Field>
                 <Field label="Rate per mile"><NumberField prefix="$" step="0.01" value={inputs.ratePerMile} onChange={(v) => set("ratePerMile", v)} testId="input-rate-per-mile" /></Field>
                 <Field label="Your travel, per week" hint="Beyond the vehicle miles"><NumberField prefix="$" step="1" value={inputs.ownerTravelPerWeek} onChange={(v) => set("ownerTravelPerWeek", v)} testId="input-owner-travel" /></Field>
+                <Field label="Marketing and selling, per month" hint="Market and event fees, demos and tastings, signage, tap handles, ads, website, memberships"><NumberField prefix="$" step="1" value={inputs.marketingPerMonth} onChange={(v) => set("marketingPerMonth", v)} testId="input-marketing" /></Field>
                 <Field label="Other overhead, per week" hint="Utilities, sanitizer, software, licenses, repairs, loan payments"><NumberField prefix="$" step="1" value={inputs.otherOverheadPerWeek} onChange={(v) => set("otherOverheadPerWeek", v)} testId="input-other-overhead" /></Field>
                 <Field label="B&O excise tax" hint="Of sales. 0.484% wholesaling, 0.471% retailing"><NumberField suffix="%" step="0.001" value={inputs.exciseTaxPercent} onChange={(v) => set("exciseTaxPercent", v)} testId="input-excise" /></Field>
                 <Field label="Free product, cases per week" hint={`Samples and dumps, at ${money2(u.caseCost)} a case`}><NumberField step="0.5" value={inputs.freeCasesPerWeek} onChange={(v) => set("freeCasesPerWeek", v)} testId="input-free-cases" /></Field>
@@ -647,6 +662,7 @@ export default function AdminProfitability() {
                     ["Rent", -projection.overhead.rent],
                     ["Vehicle and travel", -(projection.overhead.vehicle + projection.overhead.ownerTravel)],
                     ["Keg replacement", -projection.overhead.kegReplacement],
+                    ["Marketing and selling", -projection.overhead.marketing],
                     ["Other overhead", -projection.overhead.other],
                     ["Free product", -projection.overhead.freeProduct],
                   ].map(([label, value]) => (
@@ -697,9 +713,15 @@ export default function AdminProfitability() {
                   </>
                 )}
                 <Separator className="my-2" />
-                <p className="text-muted-foreground">
-                  Over {WEEKS_PER_YEAR} weeks: {num(projection.annual.gallonsPackaged, 0)} gallons, {money0(projection.annual.revenue)} in sales,{" "}
+                <p className="text-muted-foreground" data-testid="text-year-line">
+                  Over {WEEKS_PER_YEAR} weeks{growing ? `, ${growthWord}` : ""}: {num(projection.annual.gallonsPackaged, 0)} gallons, {money0(projection.annual.revenue)} in sales,{" "}
                   <span className={projection.annual.operatingProfit < 0 ? "text-destructive" : ""}>{money0(projection.annual.operatingProfit)}</span> profit.
+                  {growing && (
+                    <>
+                      {" "}A year from now the week is {money0(yearEnd.revenue)} in sales and{" "}
+                      <span className={yearEnd.operatingProfit < 0 ? "text-destructive" : ""}>{money0(yearEnd.operatingProfit)}</span> profit.
+                    </>
+                  )}
                 </p>
               </CardContent>
             </Card>

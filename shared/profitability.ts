@@ -140,10 +140,18 @@ export const projectionInputsSchema = z.object({
   vehicleMilesPerWeek: count,
   ratePerMile: z.number().finite().min(0).max(10),
   ownerTravelPerWeek: money,
+  /** Market and event fees, demos and tastings, signage, tap handles, ads, website, memberships: one monthly figure (owner, 2026-11-15: "Add a marketing and selling line to overhead"). */
+  marketingPerMonth: money,
   /** Washington B&O, as a percentage of sales (0.484% wholesaling and manufacturing, 0.471% retailing). */
   exciseTaxPercent: percent,
   /** Samples given away and product dumped, as cases a week at cost. */
   freeCasesPerWeek: count,
+  /**
+   * How much sales volumes change each month over the next 12, for the yearly figures
+   * (owner, 2026-11-15: "build in a monthly growth rate input"). What varies with volume
+   * follows; labor and overhead stay as entered. 0 makes the year this week 52 times.
+   */
+  monthlyGrowthPercent: z.number().finite().min(-50).max(100),
 });
 export type ProjectionInputs = z.infer<typeof projectionInputsSchema>;
 
@@ -259,6 +267,7 @@ export type Projection = {
     other: number;
     vehicle: number;
     ownerTravel: number;
+    marketing: number;
     freeProduct: number;
     total: number;
   };
@@ -278,8 +287,24 @@ export type Projection = {
     scale: number | null;
     channels: Record<Channel, { cases: number; kegs: number }> | null;
   };
-  /** The same week 52 times over (owner, 2026-11-15: "add annualized to all but gallons" — the tiles show these). */
-  annual: { revenue: number; cogs: number; operatingCosts: number; operatingProfit: number; gallonsPackaged: number };
+  /**
+   * The next 12 months (owner, 2026-11-15: "add annualized to all but gallons"; the tiles
+   * show these). Month m runs at (1 + monthlyGrowthPercent/100)^m times this week's volumes,
+   * the first month at m = 0: revenue, cost of goods, fees, B&O and insurance follow the
+   * volumes, labor and overhead stay as entered. At 0% it is this week 52 times.
+   */
+  annual: {
+    revenue: number;
+    cogs: number;
+    operatingCosts: number;
+    operatingProfit: number;
+    gallonsPackaged: number;
+    netMargin: number;
+    /** This week's volumes times this is the week a year from now: (1 + g)^12. */
+    growthFactor: number;
+    /** The week a year from now, at that factor, with labor and overhead as entered. */
+    yearEnd: { cases: number; kegs: number; gallonsPackaged: number; revenue: number; operatingProfit: number };
+  };
 };
 
 const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
@@ -334,9 +359,12 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
   const insurance = sum((c) => c.insurance);
   const contribution = sum((c) => c.contribution);
 
-  const cases = sum((c) => c.cases) + inputs.freeCasesPerWeek;
+  const soldCases = sum((c) => c.cases);
+  const cases = soldCases + inputs.freeCasesPerWeek;
   const kegs = sum((c) => c.kegs);
-  const gallonsPackaged = cases * GALLONS_PER_CASE + kegs * GALLONS_PER_KEG;
+  const soldGallons = soldCases * GALLONS_PER_CASE + kegs * GALLONS_PER_KEG;
+  const freeGallons = inputs.freeCasesPerWeek * GALLONS_PER_CASE;
+  const gallonsPackaged = soldGallons + freeGallons;
   const volume = { cases, kegs, gallonsPackaged, gallonsBrewed: gallonsPackaged * liquidFactor };
 
   const buckets = Object.fromEntries(
@@ -364,15 +392,41 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     other: inputs.otherOverheadPerWeek,
     vehicle: inputs.vehicleMilesPerWeek * inputs.ratePerMile,
     ownerTravel: inputs.ownerTravelPerWeek,
+    marketing: (inputs.marketingPerMonth * 12) / WEEKS_PER_YEAR,
     freeProduct: inputs.freeCasesPerWeek * caseCost,
     total: 0,
   };
   overhead.total = overhead.rent + overhead.kegReplacement + overhead.other
-    + overhead.vehicle + overhead.ownerTravel + overhead.freeProduct;
+    + overhead.vehicle + overhead.ownerTravel + overhead.marketing + overhead.freeProduct;
 
   const weeklyFixedCosts = laborTotal + overhead.total;
   const operatingCosts = fees + exciseTax + insurance + weeklyFixedCosts;
   const operatingProfit = contribution - weeklyFixedCosts;
+
+  // The next 12 months: month m runs at (1 + g)^m times this week's volumes, so the year
+  // holds Σ(1 + g)^m × 52/12 of this week's sales. Contribution scales with the volumes
+  // (prices, costs and mix are held); labor and overhead are the same every week.
+  const g = inputs.monthlyGrowthPercent / 100;
+  const yearWeeks = Array.from({ length: 12 }, (_, m) => (1 + g) ** m).reduce((s, f) => s + f, 0) * (WEEKS_PER_YEAR / 12);
+  const growthFactor = (1 + g) ** 12;
+  const annualRevenue = revenue * yearWeeks;
+  const annualProfit = contribution * yearWeeks - weeklyFixedCosts * WEEKS_PER_YEAR;
+  const annual = {
+    revenue: annualRevenue,
+    cogs: cogs * yearWeeks,
+    operatingCosts: (fees + exciseTax + insurance) * yearWeeks + weeklyFixedCosts * WEEKS_PER_YEAR,
+    operatingProfit: annualProfit,
+    gallonsPackaged: soldGallons * yearWeeks + freeGallons * WEEKS_PER_YEAR,
+    netMargin: safeDiv(annualProfit, annualRevenue),
+    growthFactor,
+    yearEnd: {
+      cases: soldCases * growthFactor + inputs.freeCasesPerWeek,
+      kegs: kegs * growthFactor,
+      gallonsPackaged: soldGallons * growthFactor + freeGallons,
+      revenue: revenue * growthFactor,
+      operatingProfit: contribution * growthFactor - weeklyFixedCosts,
+    },
+  };
 
   const scale = contribution > 0 ? weeklyFixedCosts / contribution : null;
   const breakEvenChannels = scale === null
@@ -399,13 +453,7 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     operatingProfit,
     netMargin: safeDiv(operatingProfit, revenue),
     breakEven: { scale, channels: breakEvenChannels },
-    annual: {
-      revenue: revenue * WEEKS_PER_YEAR,
-      cogs: cogs * WEEKS_PER_YEAR,
-      operatingCosts: operatingCosts * WEEKS_PER_YEAR,
-      operatingProfit: operatingProfit * WEEKS_PER_YEAR,
-      gallonsPackaged: gallonsPackaged * WEEKS_PER_YEAR,
-    },
+    annual,
   };
 }
 
@@ -466,8 +514,10 @@ export function defaultInputs(
     vehicleMilesPerWeek: 0,
     ratePerMile: 0.7,
     ownerTravelPerWeek: 0,
+    marketingPerMonth: 0,
     exciseTaxPercent: 0.484,
     freeCasesPerWeek: 0,
+    monthlyGrowthPercent: 0,
   };
 }
 
@@ -569,7 +619,9 @@ export function normalizeInputs(raw: unknown, fallback: ProjectionInputs = defau
     vehicleMilesPerWeek: finite(r.vehicleMilesPerWeek, fallback.vehicleMilesPerWeek),
     ratePerMile: finite(r.ratePerMile, fallback.ratePerMile),
     ownerTravelPerWeek: finite(r.ownerTravelPerWeek, fallback.ownerTravelPerWeek),
+    marketingPerMonth: finite(r.marketingPerMonth, fallback.marketingPerMonth),
     exciseTaxPercent: finite(r.exciseTaxPercent, fallback.exciseTaxPercent),
     freeCasesPerWeek: finite(r.freeCasesPerWeek, fallback.freeCasesPerWeek),
+    monthlyGrowthPercent: finite(r.monthlyGrowthPercent, fallback.monthlyGrowthPercent),
   };
 }
