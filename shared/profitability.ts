@@ -63,6 +63,9 @@ export const PAYROLL_LABELS: Record<PayrollItem, string> = {
 /** The federal rates every employer pays; the itemized payroll starts from these. */
 export const SOCIAL_SECURITY_MEDICARE_PERCENT = 7.65;
 export const FUTA_PERCENT = 0.6;
+/** Where the Washington items start (owner, 2026-11-16: "Start with 1% for ESD, $0.80 for L&I"); the rate notices give the real figures. */
+export const ESD_PERCENT_START = 1;
+export const LNI_PER_HOUR_START = 0.8;
 
 const money = z.number().finite().min(0).max(10_000_000);
 const percent = z.number().finite().min(0).max(100);
@@ -147,11 +150,12 @@ export const projectionInputsSchema = z.object({
   /** Samples given away and product dumped, as cases a week at cost. */
   freeCasesPerWeek: count,
   /**
-   * How much sales volumes change each month over the next 12, for the yearly figures
-   * (owner, 2026-11-15: "build in a monthly growth rate input"). What varies with volume
-   * follows; labor and overhead stay as entered. 0 makes the year this week 52 times.
+   * The yearly figures run every week at this many times this week's cases and kegs
+   * (owner, 2026-11-16: "Rather than a compound growth rate, go with a flat one time hit
+   * so I can just look at multiples of current"). What varies with volume follows; labor
+   * and overhead stay as entered. 1 makes the year this week 52 times.
    */
-  monthlyGrowthPercent: z.number().finite().min(-50).max(100),
+  salesMultiple: z.number().finite().min(0).max(10),
 });
 export type ProjectionInputs = z.infer<typeof projectionInputsSchema>;
 
@@ -288,10 +292,10 @@ export type Projection = {
     channels: Record<Channel, { cases: number; kegs: number }> | null;
   };
   /**
-   * The next 12 months (owner, 2026-11-15: "add annualized to all but gallons"; the tiles
-   * show these). Month m runs at (1 + monthlyGrowthPercent/100)^m times this week's volumes,
-   * the first month at m = 0: revenue, cost of goods, fees, B&O and insurance follow the
-   * volumes, labor and overhead stay as entered. At 0% it is this week 52 times.
+   * The year (owner, 2026-11-15: "add annualized to all but gallons"; the tiles show
+   * these), every week at salesMultiple times this week's volumes: revenue, cost of
+   * goods, fees, B&O and insurance follow the volumes, labor and overhead stay as
+   * entered. At 1× it is this week 52 times.
    */
   annual: {
     revenue: number;
@@ -300,10 +304,10 @@ export type Projection = {
     operatingProfit: number;
     gallonsPackaged: number;
     netMargin: number;
-    /** This week's volumes times this is the week a year from now: (1 + g)^12. */
-    growthFactor: number;
-    /** The week a year from now, at that factor, with labor and overhead as entered. */
-    yearEnd: { cases: number; kegs: number; gallonsPackaged: number; revenue: number; operatingProfit: number };
+    /** The multiple the year runs at, as entered. */
+    multiple: number;
+    /** One week of that year: this week's volumes times the multiple, with labor and overhead as entered. */
+    week: { cases: number; kegs: number; gallonsPackaged: number; revenue: number; operatingProfit: number };
   };
 };
 
@@ -403,28 +407,26 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
   const operatingCosts = fees + exciseTax + insurance + weeklyFixedCosts;
   const operatingProfit = contribution - weeklyFixedCosts;
 
-  // The next 12 months: month m runs at (1 + g)^m times this week's volumes, so the year
-  // holds Σ(1 + g)^m × 52/12 of this week's sales. Contribution scales with the volumes
-  // (prices, costs and mix are held); labor and overhead are the same every week.
-  const g = inputs.monthlyGrowthPercent / 100;
-  const yearWeeks = Array.from({ length: 12 }, (_, m) => (1 + g) ** m).reduce((s, f) => s + f, 0) * (WEEKS_PER_YEAR / 12);
-  const growthFactor = (1 + g) ** 12;
-  const annualRevenue = revenue * yearWeeks;
-  const annualProfit = contribution * yearWeeks - weeklyFixedCosts * WEEKS_PER_YEAR;
+  // The year at the multiple: every week sells the multiple times this week's cases and
+  // kegs, so contribution scales with it (prices, costs and mix are held); labor and
+  // overhead, free cases among them, are the same every week.
+  const multiple = inputs.salesMultiple;
+  const weekRevenue = revenue * multiple;
+  const weekProfit = contribution * multiple - weeklyFixedCosts;
   const annual = {
-    revenue: annualRevenue,
-    cogs: cogs * yearWeeks,
-    operatingCosts: (fees + exciseTax + insurance) * yearWeeks + weeklyFixedCosts * WEEKS_PER_YEAR,
-    operatingProfit: annualProfit,
-    gallonsPackaged: soldGallons * yearWeeks + freeGallons * WEEKS_PER_YEAR,
-    netMargin: safeDiv(annualProfit, annualRevenue),
-    growthFactor,
-    yearEnd: {
-      cases: soldCases * growthFactor + inputs.freeCasesPerWeek,
-      kegs: kegs * growthFactor,
-      gallonsPackaged: soldGallons * growthFactor + freeGallons,
-      revenue: revenue * growthFactor,
-      operatingProfit: contribution * growthFactor - weeklyFixedCosts,
+    revenue: weekRevenue * WEEKS_PER_YEAR,
+    cogs: cogs * multiple * WEEKS_PER_YEAR,
+    operatingCosts: ((fees + exciseTax + insurance) * multiple + weeklyFixedCosts) * WEEKS_PER_YEAR,
+    operatingProfit: weekProfit * WEEKS_PER_YEAR,
+    gallonsPackaged: (soldGallons * multiple + freeGallons) * WEEKS_PER_YEAR,
+    netMargin: safeDiv(weekProfit, weekRevenue),
+    multiple,
+    week: {
+      cases: soldCases * multiple + inputs.freeCasesPerWeek,
+      kegs: kegs * multiple,
+      gallonsPackaged: soldGallons * multiple + freeGallons,
+      revenue: weekRevenue,
+      operatingProfit: weekProfit,
     },
   };
 
@@ -517,17 +519,17 @@ export function defaultInputs(
     marketingPerMonth: 0,
     exciseTaxPercent: 0.484,
     freeCasesPerWeek: 0,
-    monthlyGrowthPercent: 0,
+    salesMultiple: 1,
   };
 }
 
-/** The federal rates; the Washington rates, health insurance and anything else wait to be typed in. */
+/** The federal rates and the Washington starting rates; the real ESD and L&I rates, health insurance and anything else wait to be typed in. */
 export function defaultPayroll(): PayrollInputs {
   return {
     socialSecurityMedicarePercent: SOCIAL_SECURITY_MEDICARE_PERCENT,
     futaPercent: FUTA_PERCENT,
-    esdPercent: 0,
-    lniPerHour: 0,
+    esdPercent: ESD_PERCENT_START,
+    lniPerHour: LNI_PER_HOUR_START,
     healthInsurancePerMonth: 0,
     otherPercent: 0,
   };
@@ -571,6 +573,7 @@ export function normalizeInputs(raw: unknown, fallback: ProjectionInputs = defau
     const d = fallback.labor[b];
     return { hoursPerWeek: finite(x.hoursPerWeek, d.hoursPerWeek), ratePerHour: finite(x.ratePerHour, d.ratePerHour) };
   };
+  const laborLines = { brewing: labor("brewing"), packaging: labor("packaging"), deliveries: labor("deliveries"), maintenance: labor("maintenance") };
   const payroll = (): PayrollInputs => {
     const d = fallback.payroll;
     const x = r.payroll;
@@ -585,19 +588,26 @@ export function normalizeInputs(raw: unknown, fallback: ProjectionInputs = defau
       };
     }
     // Scenarios saved before 2026-11-15 held one "payroll burden" percentage. Its total is
-    // kept: Social Security & Medicare and FUTA at their federal rates, the rest under
-    // "other" until the Washington rates and health insurance are typed in.
+    // kept: Social Security & Medicare, FUTA and ESD at their starting rates, L&I at its
+    // starting $/hour (taken out as the share of this scenario's wages it comes to), and
+    // what is left under "other" until the real rates and health insurance are typed in.
+    // An old figure too small to cover the items leaves "other" at 0 and the items standing.
     if (typeof r.payrollBurdenPercent === "number" && Number.isFinite(r.payrollBurdenPercent)) {
-      const old = Math.max(0, r.payrollBurdenPercent);
-      const socialSecurityMedicarePercent = Math.min(SOCIAL_SECURITY_MEDICARE_PERCENT, old);
-      const futaPercent = Math.min(FUTA_PERCENT, old - socialSecurityMedicarePercent);
+      let left = Math.max(0, r.payrollBurdenPercent);
+      const take = (rate: number) => { const t = Math.min(rate, left); left -= t; return t; };
+      const socialSecurityMedicarePercent = take(SOCIAL_SECURITY_MEDICARE_PERCENT);
+      const futaPercent = take(FUTA_PERCENT);
+      const esdPercent = take(ESD_PERCENT_START);
+      const wages = LABOR_BUCKETS.reduce((s, b) => s + laborLines[b].hoursPerWeek * laborLines[b].ratePerHour, 0);
+      const hours = LABOR_BUCKETS.reduce((s, b) => s + laborLines[b].hoursPerWeek, 0);
+      take(wages > 0 ? (hours * LNI_PER_HOUR_START * 100) / wages : 0);
       return {
         socialSecurityMedicarePercent,
         futaPercent,
-        esdPercent: 0,
-        lniPerHour: 0,
+        esdPercent,
+        lniPerHour: LNI_PER_HOUR_START,
         healthInsurancePerMonth: 0,
-        otherPercent: round(old - socialSecurityMedicarePercent - futaPercent, 2),
+        otherPercent: round(left, 2),
       };
     }
     return { ...d };
@@ -610,7 +620,7 @@ export function normalizeInputs(raw: unknown, fallback: ProjectionInputs = defau
     co2Volumes: finite(r.co2Volumes, fallback.co2Volumes),
     co2WastePercent: finite(r.co2WastePercent, fallback.co2WastePercent),
     flavorMix: r.flavorMix === "even" ? "even" : "sales",
-    labor: { brewing: labor("brewing"), packaging: labor("packaging"), deliveries: labor("deliveries"), maintenance: labor("maintenance") },
+    labor: laborLines,
     payroll: payroll(),
     rentPerMonth: finite(r.rentPerMonth, typeof r.rentPerYear === "number" ? r.rentPerYear / 12 : fallback.rentPerMonth),
     insurancePercent: finite(r.insurancePercent, fallback.insurancePercent),
@@ -622,6 +632,6 @@ export function normalizeInputs(raw: unknown, fallback: ProjectionInputs = defau
     marketingPerMonth: finite(r.marketingPerMonth, fallback.marketingPerMonth),
     exciseTaxPercent: finite(r.exciseTaxPercent, fallback.exciseTaxPercent),
     freeCasesPerWeek: finite(r.freeCasesPerWeek, fallback.freeCasesPerWeek),
-    monthlyGrowthPercent: finite(r.monthlyGrowthPercent, fallback.monthlyGrowthPercent),
+    salesMultiple: finite(r.salesMultiple, fallback.salesMultiple),
   };
 }

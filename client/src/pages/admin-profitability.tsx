@@ -16,10 +16,12 @@ import {
   CHANNELS,
   CHANNEL_LABELS,
   CO2_LB_PER_GALLON_PER_VOLUME,
+  ESD_PERCENT_START,
   GALLONS_PER_CASE,
   GALLONS_PER_KEG,
   LABOR_BUCKETS,
   LABOR_LABELS,
+  LNI_PER_HOUR_START,
   PAYROLL_LABELS,
   WEEKS_PER_YEAR,
   defaultInputs,
@@ -282,23 +284,24 @@ export default function AdminProfitability() {
 
   const { basis, actuals, catalog } = basisData;
   const u = projection.unitCosts;
-  // Growth shows in the yearly figures (owner, 2026-11-15: "build in a monthly growth rate input").
-  const growing = inputs.monthlyGrowthPercent !== 0;
-  const growthWord = `${inputs.monthlyGrowthPercent > 0 ? "growing" : "shrinking"} ${num(Math.abs(inputs.monthlyGrowthPercent))}% a month`;
-  const yearEnd = projection.annual.yearEnd;
-  const growthHint = growing
-    ? `The yearly figures have volumes ${growthWord} for 12 months; what varies with them follows, labor and overhead stay as entered. `
-      + `A year from now the week is ${num(yearEnd.cases, 0)} cases and ${num(yearEnd.kegs)} kegs, `
-      + `${pct(Math.abs(projection.annual.growthFactor - 1), 0)} ${projection.annual.growthFactor >= 1 ? "more" : "less"} than now.`
-    : "How much sales volumes change each month, in the yearly figures; what varies with them follows, labor and overhead stay as entered. At 0 the year is this week 52 times.";
+  // The multiple shows in the yearly figures (owner, 2026-11-16: "a flat one time hit so I can just look at multiples of current").
+  const multiple = inputs.salesMultiple;
+  const scaled = multiple !== 1;
+  const multipleWord = `${num(multiple, 2)}× this week's volumes`;
+  const yearWord = scaled ? `a year at ${num(multiple, 2)}×` : "a year";
+  const yearWeek = projection.annual.week;
+  const multipleHint = scaled
+    ? `The yearly figures run every week at ${multipleWord}; what varies with them follows, labor and overhead stay as entered. `
+      + `Each week is ${num(yearWeek.cases, 0)} cases and ${num(yearWeek.kegs)} kegs, ${pct(Math.abs(multiple - 1), 0)} ${multiple >= 1 ? "more" : "less"} than now.`
+    : "The yearly figures run at this many times this week's cases and kegs, every week; what varies with them follows, labor and overhead stay as entered. At 1 the year is this week 52 times.";
   // One row per payroll item: the rate typed, what it comes to a week, and where the rate comes from.
   const payrollRows: { item: PayrollItem; field: keyof PayrollInputs; hint: string; prefix?: string; suffix?: string; step: string }[] = [
     { item: "socialSecurityMedicare", field: "socialSecurityMedicarePercent", suffix: "%", step: "0.01", hint: "The employer's half: 6.2% Social Security and 1.45% Medicare." },
     { item: "futa", field: "futaPercent", suffix: "%", step: "0.1", hint: "0.6% of each employee's first $7,000 a year, so a little under 0.6% of all wages." },
-    { item: "esd", field: "esdPercent", suffix: "%", step: "0.01", hint: "Your rate from the ESD tax rate notice, on wages up to the year's wage base." },
-    { item: "lni", field: "lniPerHour", prefix: "$", suffix: "/hr", step: "0.01", hint: `From the L&I rate notice: the hourly rate less what employees have withheld, on ${num(projection.labor.hours)} hours a week here.` },
+    { item: "esd", field: "esdPercent", suffix: "%", step: "0.01", hint: `Your rate from the ESD tax rate notice, on wages up to the year's wage base; ${num(ESD_PERCENT_START)}% to start.` },
+    { item: "lni", field: "lniPerHour", prefix: "$", suffix: "/hr", step: "0.01", hint: `From the L&I rate notice, the hourly rate less what employees have withheld, on ${num(projection.labor.hours)} hours a week here; ${money2(LNI_PER_HOUR_START)} to start.` },
     { item: "healthInsurance", field: "healthInsurancePerMonth", prefix: "$", suffix: "/mo", step: "1", hint: "What you pay toward employees' coverage, all of them together, a month." },
-    { item: "other", field: "otherPercent", suffix: "%", step: "0.1", hint: "Paid sick leave as it's used (1 hour per 40 is 2.5%), a retirement match, bonuses, Paid Leave's employer share at 50 or more employees. A scenario saved with the old single burden % keeps the rest of it here." },
+    { item: "other", field: "otherPercent", suffix: "%", step: "0.1", hint: "Paid sick leave as it's used (1 hour per 40 is 2.5%), a retirement match, bonuses, Paid Leave's employer share at 50 or more employees. A scenario saved with the old single burden % keeps here what was left of it after the items above at their starting rates." },
   ];
   const volumeHint = `${num(projection.volume.cases, 0)} cases and ${num(projection.volume.kegs)} kegs a week; `
     + `brew ${num(projection.volume.gallonsBrewed, 0)} at ${num(inputs.liquidWastePercent)}% liquid waste`;
@@ -399,15 +402,15 @@ export default function AdminProfitability() {
         <div className="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-6 mb-6">
           {/* Each money tile reads "per week, $X a year" (owner, 2026-11-15: "add annualized to all but gallons");
               net margin took the gross margin's place ("don't need the gross margin so just replace"). */}
-          <Stat label="Revenue" value={money0(projection.revenue)} hint={`per week, ${money0(projection.annual.revenue)} a year`} testId="stat-revenue" />
-          <Stat label="Cost of goods" value={money0(projection.cogs)} hint={`per week, ${money0(projection.annual.cogs)} a year${projection.revenue > 0 ? `; ${pct(projection.cogs / projection.revenue)} of revenue` : ""}`} testId="stat-cogs" />
-          <Stat label="Operating costs" value={money0(projection.operatingCosts)} hint={`per week, ${money0(projection.annual.operatingCosts)} a year; fees, B&O, insurance, labor, overhead`} testId="stat-opex" />
-          <Stat label="Profit" value={money0(projection.operatingProfit)} tone={projection.operatingProfit >= 0 ? "good" : "bad"} hint={`per week, ${money0(projection.annual.operatingProfit)} a year; as owners, this is your pay`} testId="stat-operating" />
+          <Stat label="Revenue" value={money0(projection.revenue)} hint={`per week, ${money0(projection.annual.revenue)} ${yearWord}`} testId="stat-revenue" />
+          <Stat label="Cost of goods" value={money0(projection.cogs)} hint={`per week, ${money0(projection.annual.cogs)} ${yearWord}${projection.revenue > 0 ? `; ${pct(projection.cogs / projection.revenue)} of revenue` : ""}`} testId="stat-cogs" />
+          <Stat label="Operating costs" value={money0(projection.operatingCosts)} hint={`per week, ${money0(projection.annual.operatingCosts)} ${yearWord}; fees, B&O, insurance, labor, overhead`} testId="stat-opex" />
+          <Stat label="Profit" value={money0(projection.operatingProfit)} tone={projection.operatingProfit >= 0 ? "good" : "bad"} hint={`per week, ${money0(projection.annual.operatingProfit)} ${yearWord}; as owners, this is your pay`} testId="stat-operating" />
           <Stat
             label="Net margin"
             value={projection.revenue > 0 ? pct(projection.netMargin) : "—"}
             tone={projection.revenue > 0 ? (projection.netMargin >= 0 ? "good" : "bad") : undefined}
-            hint={projection.revenue > 0 ? (growing ? `profit over sales this week; ${pct(projection.annual.netMargin)} over the year` : "profit over sales; the same for the year") : "no sales entered"}
+            hint={projection.revenue > 0 ? (scaled ? `profit over sales this week; ${pct(projection.annual.netMargin)} at ${num(multiple, 2)}×` : "profit over sales; the same for the year") : "no sales entered"}
             testId="stat-net-margin"
           />
           <Stat label="Gallons" value={num(projection.volume.gallonsPackaged, 0)} hint={volumeHint} testId="stat-gallons" />
@@ -450,8 +453,8 @@ export default function AdminProfitability() {
                   </TableBody>
                 </Table>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <Field label="Monthly growth" hint={growthHint}>
-                    <NumberField suffix="%" step="0.5" min={-50} value={inputs.monthlyGrowthPercent} onChange={(v) => set("monthlyGrowthPercent", v)} testId="input-growth" />
+                  <Field label="Sales multiple" hint={multipleHint}>
+                    <NumberField suffix="×" step="0.1" value={inputs.salesMultiple} onChange={(v) => set("salesMultiple", v)} testId="input-multiple" />
                   </Field>
                 </div>
               </CardContent>
@@ -714,12 +717,12 @@ export default function AdminProfitability() {
                 )}
                 <Separator className="my-2" />
                 <p className="text-muted-foreground" data-testid="text-year-line">
-                  Over {WEEKS_PER_YEAR} weeks{growing ? `, ${growthWord}` : ""}: {num(projection.annual.gallonsPackaged, 0)} gallons, {money0(projection.annual.revenue)} in sales,{" "}
+                  Over {WEEKS_PER_YEAR} weeks{scaled ? ` at ${multipleWord}` : ""}: {num(projection.annual.gallonsPackaged, 0)} gallons, {money0(projection.annual.revenue)} in sales,{" "}
                   <span className={projection.annual.operatingProfit < 0 ? "text-destructive" : ""}>{money0(projection.annual.operatingProfit)}</span> profit.
-                  {growing && (
+                  {scaled && (
                     <>
-                      {" "}A year from now the week is {money0(yearEnd.revenue)} in sales and{" "}
-                      <span className={yearEnd.operatingProfit < 0 ? "text-destructive" : ""}>{money0(yearEnd.operatingProfit)}</span> profit.
+                      {" "}Each week: {money0(yearWeek.revenue)} in sales,{" "}
+                      <span className={yearWeek.operatingProfit < 0 ? "text-destructive" : ""}>{money0(yearWeek.operatingProfit)}</span> profit.
                     </>
                   )}
                 </p>
