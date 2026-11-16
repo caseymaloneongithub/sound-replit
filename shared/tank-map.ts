@@ -21,6 +21,20 @@ export const VESSEL_KIND_LABELS: Record<VesselKind, string> = {
   fridge: "Keg fridge",
 };
 
+/** How a vessel is drawn. Owner, 2026-11-16: "Our brite tanks are conical. Our small fermenters are pots. The large fermenter is an IBC tote." */
+export const VESSEL_SHAPES = ["conical", "pot", "tote"] as const;
+export type VesselShape = (typeof VESSEL_SHAPES)[number];
+export const VESSEL_SHAPE_LABELS: Record<VesselShape, string> = {
+  conical: "Conical tank",
+  pot: "Pot",
+  tote: "IBC tote",
+};
+/** The shape a vessel takes when none is set: brites are conical, fermenters pots, a 10 bbl fermenter a tote. */
+export function defaultVesselShape(kind: VesselKind, capacityBbl: number | null): VesselShape {
+  if (kind === "brite") return "conical";
+  return (capacityBbl ?? 0) >= 10 ? "tote" : "pot";
+}
+
 export const GALLONS_PER_BBL = 31;
 /** The fridge holds half-barrel kegs. */
 export const HALF_BBL_KEG_GALLONS = 15.5;
@@ -96,6 +110,7 @@ export type EmptyInput = z.infer<typeof emptyInputSchema>;
 export const vesselUpdateSchema = z.object({
   name: z.string().trim().min(1, "Give it a name").max(40).optional(),
   capacityBbl: bbl.nullable().optional(),
+  shape: z.enum(VESSEL_SHAPES).nullable().optional(),
   notes: note.optional(),
   isActive: z.boolean().optional(),
 });
@@ -129,6 +144,8 @@ export type TankMapVessel = {
   name: string;
   kind: VesselKind;
   capacityBbl: number | null;
+  /** How it is drawn; null for the fridge. */
+  shape: VesselShape | null;
   displayOrder: number;
   notes: string | null;
   /** What is in it now: at most one fill in a tank, any number in the fridge. */

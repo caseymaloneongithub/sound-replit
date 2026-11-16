@@ -22,10 +22,12 @@ import {
   fillUpdateSchema,
   moveInputSchema,
   vesselUpdateSchema,
+  defaultVesselShape,
   type FillOutcome,
   type TankMapData,
   type TankMapFill,
   type VesselKind,
+  type VesselShape,
 } from "@shared/tank-map";
 
 type Middleware = (req: any, res: any, next: any) => unknown;
@@ -109,6 +111,7 @@ export function registerTankMapRoutes(
             name: v.name,
             kind: v.kind as VesselKind,
             capacityBbl: num(v.capacityBbl),
+            shape: v.kind === "fridge" ? null : (v.shape as VesselShape | null) ?? defaultVesselShape(v.kind as VesselKind, num(v.capacityBbl)),
             displayOrder: v.displayOrder,
             notes: v.notes,
             fills: openFills.filter((f) => f.vesselId === v.id).map(shape),
@@ -370,6 +373,7 @@ export function registerTankMapRoutes(
       const patch: Partial<typeof vessels.$inferInsert> = {};
       if (body.name !== undefined) patch.name = body.name;
       if (body.capacityBbl !== undefined) patch.capacityBbl = vessel.kind === "fridge" ? null : bblText(body.capacityBbl);
+      if (body.shape !== undefined) patch.shape = vessel.kind === "fridge" ? null : body.shape;
       if (body.notes !== undefined) patch.notes = body.notes;
       if (body.isActive !== undefined) patch.isActive = body.isActive;
       if (Object.keys(patch).length) await db.update(vessels).set(patch).where(eq(vessels.id, vessel.id));

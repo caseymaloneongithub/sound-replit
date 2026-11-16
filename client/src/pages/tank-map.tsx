@@ -33,12 +33,16 @@ import {
   BBL_PER_HALF_BBL_KEG,
   FILL_OUTCOME_LABELS,
   VESSEL_KIND_LABELS,
+  VESSEL_SHAPES,
+  VESSEL_SHAPE_LABELS,
+  defaultVesselShape,
   packagesFromBbl,
   type FillOutcome,
   type TankMapData,
   type TankMapFill,
   type TankMapVessel,
   type VesselKind,
+  type VesselShape,
 } from "@shared/tank-map";
 
 const TZ = PICKUP_POLICY.timezone;
@@ -78,33 +82,57 @@ function packagesWord(volumeBbl: number) {
   return `≈ ${round(p.cases)} cases or ${round(p.halfBarrels)} half-barrels`;
 }
 
-/** The silhouette of a tank, filled to its level. */
-function TankFigure({ kind, ratio, color }: { kind: "fermenter" | "brite"; ratio: number; color: string | null }) {
+/** Each shape as drawn: where the liquid sits, the vessel's outline, the hardware behind it and over it. */
+const SHAPES: Record<VesselShape, { top: number; bottom: number; body: string; behind?: string; over?: string }> = {
+  // A cylinder on a cone, standing on legs.
+  conical: {
+    top: 10,
+    bottom: 130,
+    body: "M22 26 Q22 10 50 10 Q78 10 78 26 L78 92 L50 130 L22 92 Z",
+    behind: "M30 102 L18 136 M70 102 L82 136",
+  },
+  // An open pot: a rim, two handles, a flat bottom.
+  pot: {
+    top: 30,
+    bottom: 126,
+    body: "M20 24 L80 24 L80 118 Q80 126 72 126 L28 126 Q20 126 20 118 Z",
+    behind: "M20 42 Q6 42 6 52 Q6 62 20 62 M80 42 Q94 42 94 52 Q94 62 80 62",
+    over: "M15 24 L85 24",
+  },
+  // An IBC tote: the square tank in its cage, on a pallet, a cap on top and the valve below.
+  tote: {
+    top: 22,
+    bottom: 118,
+    body: "M18 22 H82 Q86 22 86 26 V114 Q86 118 82 118 H18 Q14 118 14 114 V26 Q14 22 18 22 Z",
+    behind: "M42 22 V12 H58 V22 M46 118 V124 H54 V118 M10 124 H90 M10 134 H90 M14 124 V134 M50 124 V134 M86 124 V134",
+    over: "M32 22 V118 M50 22 V118 M68 22 V118 M14 46 H86 M14 70 H86 M14 94 H86",
+  },
+};
+const SHAPE_WORDS: Record<VesselShape, string> = { conical: "conical", pot: "pot", tote: "IBC tote" };
+
+/** The silhouette of a vessel, filled to its level. */
+function TankFigure({ shape, ratio, color }: { shape: VesselShape; ratio: number; color: string | null }) {
   const clipId = useId();
-  const top = 10;
-  const bottom = kind === "fermenter" ? 130 : 124;
-  const body = kind === "fermenter"
-    ? "M22 26 Q22 10 50 10 Q78 10 78 26 L78 92 L50 130 L22 92 Z"
-    : "M22 24 Q22 8 50 8 Q78 8 78 24 L78 108 Q78 124 50 124 Q22 124 22 108 Z";
-  const legs = kind === "fermenter" ? "M30 102 L18 136 M70 102 L82 136" : "M30 122 L26 136 M70 122 L74 136";
+  const s = SHAPES[shape];
   const level = Math.max(0, Math.min(1, ratio));
-  const y = bottom - (bottom - top) * level;
+  const y = s.bottom - (s.bottom - s.top) * level;
   return (
     <svg viewBox="0 0 100 140" className="h-28 w-auto text-foreground" aria-hidden="true">
       <defs>
         <clipPath id={clipId}>
-          <path d={body} />
+          <path d={s.body} />
         </clipPath>
       </defs>
-      <path d={legs} stroke="currentColor" strokeOpacity="0.35" strokeWidth="3" strokeLinecap="round" fill="none" />
-      <path d={body} fill="currentColor" fillOpacity="0.06" />
+      {s.behind && <path d={s.behind} stroke="currentColor" strokeOpacity="0.35" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" fill="none" />}
+      <path d={s.body} fill="currentColor" fillOpacity="0.06" />
       {color && level > 0 && (
         <g clipPath={`url(#${clipId})`}>
-          <rect x="0" y={y} width="100" height={bottom - y + 2} fill={color} fillOpacity="0.85" />
+          <rect x="0" y={y} width="100" height={s.bottom - y + 2} fill={color} fillOpacity="0.85" />
           <rect x="0" y={y} width="100" height="3" fill="#ffffff" fillOpacity="0.35" />
         </g>
       )}
-      <path d={body} fill="none" stroke="currentColor" strokeOpacity="0.5" strokeWidth="2.5" strokeLinejoin="round" />
+      {s.over && <path d={s.over} stroke="currentColor" strokeOpacity="0.3" strokeWidth="2" strokeLinecap="round" fill="none" />}
+      <path d={s.body} fill="none" stroke="currentColor" strokeOpacity="0.5" strokeWidth="2.5" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -114,6 +142,7 @@ function TankCard({ vessel, onOpen }: { vessel: TankMapVessel; onOpen: () => voi
   const color = fill ? accentFor(fill.flavorName) : null;
   const ratio = fill && fill.volumeBbl !== null && vessel.capacityBbl ? fill.volumeBbl / vessel.capacityBbl : fill ? 1 : 0;
   const brewed = fill ? fill.brewedAt ?? fill.filledAt : null;
+  const shape = vessel.shape ?? defaultVesselShape(vessel.kind, vessel.capacityBbl);
   return (
     <button
       type="button"
@@ -126,7 +155,7 @@ function TankCard({ vessel, onOpen }: { vessel: TankMapVessel; onOpen: () => voi
         <span className="text-base font-semibold">{vessel.name}</span>
         <span className="text-xs text-muted-foreground">{vessel.capacityBbl ? `${vessel.capacityBbl} bbl` : VESSEL_KIND_LABELS[vessel.kind]}</span>
       </div>
-      <TankFigure kind={vessel.kind === "brite" ? "brite" : "fermenter"} ratio={ratio} color={color} />
+      <TankFigure shape={shape} ratio={ratio} color={color} />
       {fill ? (
         <div className="w-full text-center">
           <div className="truncate text-lg font-semibold leading-tight" style={{ color: color ?? undefined }}>{fill.flavorName}</div>
@@ -537,6 +566,7 @@ function VesselSettings({ vessel, pending, onSubmit, onCancel }: {
 }) {
   const [name, setName] = useState(vessel.name);
   const [capacity, setCapacity] = useState(vessel.capacityBbl === null ? "" : String(vessel.capacityBbl));
+  const [shape, setShape] = useState<VesselShape>(vessel.shape ?? defaultVesselShape(vessel.kind, vessel.capacityBbl));
   const ok = name.trim().length > 0 && (vessel.kind === "fridge" || Number(capacity) > 0);
   return (
     <form
@@ -544,7 +574,7 @@ function VesselSettings({ vessel, pending, onSubmit, onCancel }: {
       onSubmit={(e) => {
         e.preventDefault();
         if (!ok) return;
-        onSubmit({ name: name.trim(), ...(vessel.kind === "fridge" ? {} : { capacityBbl: Number(capacity) }) });
+        onSubmit({ name: name.trim(), ...(vessel.kind === "fridge" ? {} : { capacityBbl: Number(capacity), shape }) });
       }}
     >
       <div className="grid grid-cols-2 gap-3">
@@ -559,6 +589,17 @@ function VesselSettings({ vessel, pending, onSubmit, onCancel }: {
           </div>
         )}
       </div>
+      {vessel.kind !== "fridge" && (
+        <div className="space-y-1">
+          <Label>Drawn as</Label>
+          <Select value={shape} onValueChange={(v) => setShape(v as VesselShape)}>
+            <SelectTrigger data-testid="select-shape"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {VESSEL_SHAPES.map((s) => <SelectItem key={s} value={s}>{VESSEL_SHAPE_LABELS[s]}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
         <Button type="submit" size="sm" disabled={!ok || pending}>Save vessel</Button>
@@ -660,7 +701,7 @@ function VesselDialog({ vessel, data, onClose }: { vessel: TankMapVessel | null;
             )}
           </DialogTitle>
           <DialogDescription>
-            {VESSEL_KIND_LABELS[vessel.kind]}{vessel.capacityBbl ? `, ${vessel.capacityBbl} bbl` : ""}{vessel.notes ? ` · ${vessel.notes}` : ""}
+            {VESSEL_KIND_LABELS[vessel.kind]}{vessel.shape ? `, ${SHAPE_WORDS[vessel.shape]}` : ""}{vessel.capacityBbl ? `, ${vessel.capacityBbl} bbl` : ""}{vessel.notes ? ` · ${vessel.notes}` : ""}
           </DialogDescription>
         </DialogHeader>
 

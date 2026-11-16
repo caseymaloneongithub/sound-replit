@@ -1346,6 +1346,8 @@ export const vessels = pgTable("vessels", {
   name: text("name").notNull(), // "FV1", "BT2", "Fridge"
   kind: text("kind").notNull(), // 'fermenter' | 'brite' | 'fridge'
   capacityBbl: decimal("capacity_bbl", { precision: 6, scale: 2 }), // null for the fridge
+  // How it is drawn: 'conical' | 'pot' | 'tote'; null draws the kind's usual shape (shared/tank-map.ts defaultVesselShape).
+  shape: text("shape"),
   displayOrder: integer("display_order").notNull().default(0),
   isActive: boolean("is_active").notNull().default(true),
   notes: text("notes"),
