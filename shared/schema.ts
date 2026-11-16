@@ -1345,7 +1345,7 @@ export const vessels = pgTable("vessels", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(), // "FV1", "BT2", "Fridge"
   kind: text("kind").notNull(), // 'fermenter' | 'brite' | 'fridge'
-  capacityBbl: decimal("capacity_bbl", { precision: 6, scale: 2 }), // null for the fridge
+  capacityGal: decimal("capacity_gal", { precision: 6, scale: 2 }), // gallons; null for the fridge
   // How it is drawn: 'conical' | 'pot' | 'tote'; null draws the kind's usual shape (shared/tank-map.ts defaultVesselShape).
   shape: text("shape"),
   displayOrder: integer("display_order").notNull().default(0),
@@ -1363,10 +1363,10 @@ export const vesselFills = pgTable("vessel_fills", {
   // The batch's brew date, carried from fermenter to brite to fridge. A fermenter's
   // own filled_at is its brew date, so this is null there.
   brewedAt: timestamp("brewed_at", { withTimezone: true }),
-  volumeBbl: decimal("volume_bbl", { precision: 6, scale: 2 }), // tanks: barrels in it now
+  volumeGal: decimal("volume_gal", { precision: 6, scale: 2 }), // tanks: gallons in it now
   kegs: integer("kegs"), // the fridge: half-barrel kegs in it now
-  // The amount as it went in; volume_bbl / kegs shrink as parts move on or leave.
-  volumeBblIn: decimal("volume_bbl_in", { precision: 6, scale: 2 }),
+  // The amount as it went in; volume_gal / kegs shrink as parts move on or leave.
+  volumeGalIn: decimal("volume_gal_in", { precision: 6, scale: 2 }),
   kegsIn: integer("kegs_in"),
   notes: text("notes"),
   emptiedAt: timestamp("emptied_at", { withTimezone: true }),

@@ -26,10 +26,45 @@ if (isLocal) {
   const sql = neon(url);
   run = (st) => sql(st);
 }
-const statements = readFileSync(file, "utf8")
-  .split(/;\s*\n/)
-  .map((s) => s.replace(/^\s*--.*$/gm, "").trim())
-  .filter(Boolean);
+/** Statements end at a semicolon outside quotes, dollar-quoted blocks ($$ … $$, as in a DO block) and -- comments. */
+function splitStatements(text) {
+  const out = [];
+  let cur = "";
+  for (let i = 0; i < text.length; ) {
+    const ch = text[i];
+    if (ch === "-" && text[i + 1] === "-") {
+      const nl = text.indexOf("\n", i);
+      i = nl === -1 ? text.length : nl;
+      continue;
+    }
+    if (ch === "'") {
+      let j = i + 1;
+      while (j < text.length && !(text[j] === "'" && text[j + 1] !== "'")) j += text[j] === "'" ? 2 : 1;
+      cur += text.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    const tag = /^\$[A-Za-z_]*\$/.exec(text.slice(i, i + 64));
+    if (tag) {
+      const close = text.indexOf(tag[0], i + tag[0].length);
+      const j = close === -1 ? text.length : close + tag[0].length;
+      cur += text.slice(i, j);
+      i = j;
+      continue;
+    }
+    if (ch === ";") {
+      if (cur.trim()) out.push(cur.trim());
+      cur = "";
+      i++;
+      continue;
+    }
+    cur += ch;
+    i++;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+const statements = splitStatements(readFileSync(file, "utf8"));
 
 console.log(`${prod ? "PROD" : isLocal ? "local" : "dev"}: ${statements.length} statements from ${file}`);
 for (const st of statements) {

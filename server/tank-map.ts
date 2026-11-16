@@ -16,7 +16,8 @@ import type { z } from "zod";
 import { db } from "./db";
 import { flavors, vesselFills, vessels, type VesselFill } from "@shared/schema";
 import {
-  BBL_PER_HALF_BBL_KEG,
+  HALF_BBL_KEG_GALLONS,
+  REMAINDER_GALLONS,
   emptyInputSchema,
   fillInputSchema,
   fillUpdateSchema,
@@ -33,9 +34,6 @@ import {
 type Middleware = (req: any, res: any, next: any) => unknown;
 type Querier = Pick<typeof db, "select">;
 
-/** Below this many barrels a remainder is rounding, not kombucha. */
-const BBL_EPSILON = 0.05;
-
 class HttpError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -44,8 +42,8 @@ class HttpError extends Error {
 
 const num = (v: unknown): number | null => (v === null || v === undefined || v === "" ? null : Number(v));
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
-const bblText = (n: number | null | undefined) => (n === null || n === undefined ? null : n.toFixed(2));
-const fmtBbl = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+const galText = (n: number | null | undefined) => (n === null || n === undefined ? null : n.toFixed(2));
+const fmtGal = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 const firstIssue = (err: z.ZodError) => err.issues[0]?.message ?? "Check the form";
 const userId = (req: any): string | null => (req.originalUser || req.user)?.id ?? null;
 
@@ -59,8 +57,8 @@ async function openFillsIn(q: Querier, vesselId: string) {
   return q.select().from(vesselFills).where(and(eq(vesselFills.vesselId, vesselId), isNull(vesselFills.emptiedAt)));
 }
 
-/** A fill's size in barrels, whichever way it is counted. */
-const fillBbl = (f: Pick<VesselFill, "volumeBbl" | "kegs">) => num(f.volumeBbl) ?? (f.kegs ?? 0) * BBL_PER_HALF_BBL_KEG;
+/** A fill's size in gallons, whichever way it is counted. */
+const fillGallons = (f: Pick<VesselFill, "volumeGal" | "kegs">) => num(f.volumeGal) ?? (f.kegs ?? 0) * HALF_BBL_KEG_GALLONS;
 
 export function registerTankMapRoutes(
   app: Express,
@@ -93,9 +91,9 @@ export function registerTankMapRoutes(
         flavorName: flavorName.get(f.flavorId) ?? "Unknown flavor",
         filledAt: iso(f.filledAt)!,
         brewedAt: iso(f.brewedAt),
-        volumeBbl: num(f.volumeBbl),
+        volumeGal: num(f.volumeGal),
         kegs: f.kegs,
-        volumeBblIn: num(f.volumeBblIn) ?? num(f.volumeBbl),
+        volumeGalIn: num(f.volumeGalIn) ?? num(f.volumeGal),
         kegsIn: f.kegsIn ?? f.kegs,
         notes: f.notes,
         emptiedAt: iso(f.emptiedAt),
@@ -110,8 +108,8 @@ export function registerTankMapRoutes(
             id: v.id,
             name: v.name,
             kind: v.kind as VesselKind,
-            capacityBbl: num(v.capacityBbl),
-            shape: v.kind === "fridge" ? null : (v.shape as VesselShape | null) ?? defaultVesselShape(v.kind as VesselKind, num(v.capacityBbl)),
+            capacityGal: num(v.capacityGal),
+            shape: v.kind === "fridge" ? null : (v.shape as VesselShape | null) ?? defaultVesselShape(v.kind as VesselKind, num(v.capacityGal)),
             displayOrder: v.displayOrder,
             notes: v.notes,
             fills: openFills.filter((f) => f.vesselId === v.id).map(shape),
@@ -141,8 +139,8 @@ export function registerTankMapRoutes(
         if (kind !== "fridge" && (await openFillsIn(tx, vessel.id)).length) {
           throw new HttpError(409, `${vessel.name} isn't empty. Move or empty what's in it first.`);
         }
-        const volume = kind === "fridge" ? null : body.volumeBbl ?? num(vessel.capacityBbl) ?? 0;
-        if (kind !== "fridge" && !(volume! > 0)) throw new HttpError(400, "How many barrels went in?");
+        const volume = kind === "fridge" ? null : body.volumeGal ?? num(vessel.capacityGal) ?? 0;
+        if (kind !== "fridge" && !(volume! > 0)) throw new HttpError(400, "How many gallons went in?");
         const kegs = kind === "fridge" ? body.kegs ?? 0 : null;
         if (kind === "fridge" && !(kegs! > 0)) throw new HttpError(400, "How many kegs went in?");
         const [inserted] = await tx.insert(vesselFills).values({
@@ -150,9 +148,9 @@ export function registerTankMapRoutes(
           flavorId: flavor.id,
           filledAt,
           brewedAt: kind === "fermenter" ? null : body.brewedAt ?? null,
-          volumeBbl: bblText(volume),
+          volumeGal: galText(volume),
           kegs,
-          volumeBblIn: bblText(volume),
+          volumeGalIn: galText(volume),
           kegsIn: kegs,
           notes: body.notes ?? null,
           createdByUserId: userId(req),
@@ -193,10 +191,10 @@ export function registerTankMapRoutes(
           patch.kegs = body.kegs;
           patch.kegsIn = (fill.kegsIn ?? fill.kegs ?? 0) + (body.kegs - (fill.kegs ?? 0));
         }
-      } else if (body.volumeBbl !== undefined && body.volumeBbl !== null) {
-        if (!(body.volumeBbl > 0)) throw new HttpError(400, "How many barrels are in there?");
-        patch.volumeBbl = bblText(body.volumeBbl);
-        patch.volumeBblIn = bblText((num(fill.volumeBblIn) ?? num(fill.volumeBbl) ?? 0) + (body.volumeBbl - (num(fill.volumeBbl) ?? 0)));
+      } else if (body.volumeGal !== undefined && body.volumeGal !== null) {
+        if (!(body.volumeGal > 0)) throw new HttpError(400, "How many gallons are in there?");
+        patch.volumeGal = galText(body.volumeGal);
+        patch.volumeGalIn = galText((num(fill.volumeGalIn) ?? num(fill.volumeGal) ?? 0) + (body.volumeGal - (num(fill.volumeGal) ?? 0)));
       }
       await db.update(vesselFills).set(patch).where(eq(vesselFills.id, fill.id));
       res.json({ ok: true });
@@ -224,45 +222,45 @@ export function registerTankMapRoutes(
           throw new HttpError(409, `${to.name} isn't empty. Move or empty what's in it first.`);
         }
         const movedAt = body.movedAt ?? new Date();
-        const have = fillBbl(source);
-        let movedBbl: number;
+        const have = fillGallons(source);
+        let movedGal: number;
         let kegs: number | null = null;
         let volume: number | null = null;
         if (toKind === "fridge") {
-          kegs = body.kegs ?? Math.max(1, Math.floor(have / BBL_PER_HALF_BBL_KEG + 1e-9));
+          kegs = body.kegs ?? Math.max(1, Math.floor(have / HALF_BBL_KEG_GALLONS + 1e-9));
           if (!(kegs > 0)) throw new HttpError(400, "How many kegs were filled?");
-          movedBbl = kegs * BBL_PER_HALF_BBL_KEG;
+          movedGal = kegs * HALF_BBL_KEG_GALLONS;
         } else {
-          volume = body.volumeBbl ?? have;
-          if (!(volume > 0)) throw new HttpError(400, "How many barrels moved?");
-          const cap = num(to.capacityBbl);
-          if (cap && volume > cap + BBL_EPSILON) throw new HttpError(400, `${to.name} holds ${fmtBbl(cap)} bbl.`);
-          movedBbl = volume;
+          volume = body.volumeGal ?? have;
+          if (!(volume > 0)) throw new HttpError(400, "How many gallons moved?");
+          const cap = num(to.capacityGal);
+          if (cap && volume > cap + REMAINDER_GALLONS) throw new HttpError(400, `${to.name} holds ${fmtGal(cap)} gal.`);
+          movedGal = volume;
         }
-        if (have > 0 && movedBbl > have + BBL_EPSILON) {
-          throw new HttpError(400, `${from?.name ?? "That vessel"} only has ${fmtBbl(have)} bbl in it.`);
+        if (have > 0 && movedGal > have + REMAINDER_GALLONS) {
+          throw new HttpError(400, `${from?.name ?? "That vessel"} only has ${fmtGal(have)} gal in it.`);
         }
-        const remaining = have - movedBbl;
+        const remaining = have - movedGal;
         const now = new Date();
         await tx.insert(vesselFills).values({
           vesselId: to.id,
           flavorId: source.flavorId,
           filledAt: movedAt,
           brewedAt: source.brewedAt ?? source.filledAt,
-          volumeBbl: bblText(volume),
+          volumeGal: galText(volume),
           kegs,
-          volumeBblIn: bblText(volume),
+          volumeGalIn: galText(volume),
           kegsIn: kegs,
           notes: body.notes ?? null,
           fromFillId: source.id,
           createdByUserId: userId(req),
         });
-        if (have > 0 && remaining > BBL_EPSILON) {
+        if (have > 0 && remaining > REMAINDER_GALLONS) {
           // Part of it moved; the rest stays where it was.
           await tx.update(vesselFills)
             .set(source.kegs !== null
-              ? { kegs: Math.round(remaining / BBL_PER_HALF_BBL_KEG), updatedAt: now }
-              : { volumeBbl: bblText(remaining), updatedAt: now })
+              ? { kegs: Math.round(remaining / HALF_BBL_KEG_GALLONS), updatedAt: now }
+              : { volumeGal: galText(remaining), updatedAt: now })
             .where(eq(vesselFills.id, source.id));
         } else {
           await tx.update(vesselFills).set({ emptiedAt: movedAt, outcome: "moved", updatedAt: now }).where(eq(vesselFills.id, source.id));
@@ -287,20 +285,20 @@ export function registerTankMapRoutes(
         const emptiedAt = body.emptiedAt ?? new Date();
         const now = new Date();
         const partialKegs = fill.kegs !== null && body.kegs !== undefined && body.kegs !== null && body.kegs < fill.kegs ? body.kegs : null;
-        const have = num(fill.volumeBbl);
-        const partialBbl = have !== null && body.volumeBbl !== undefined && body.volumeBbl !== null && body.volumeBbl < have - BBL_EPSILON ? body.volumeBbl : null;
-        if (partialKegs !== null || partialBbl !== null) {
+        const have = num(fill.volumeGal);
+        const partialGal = have !== null && body.volumeGal !== undefined && body.volumeGal !== null && body.volumeGal < have - REMAINDER_GALLONS ? body.volumeGal : null;
+        if (partialKegs !== null || partialGal !== null) {
           if (partialKegs !== null && !(partialKegs > 0)) throw new HttpError(400, "How many kegs went out?");
-          if (partialBbl !== null && !(partialBbl > 0)) throw new HttpError(400, "How many barrels went out?");
+          if (partialGal !== null && !(partialGal > 0)) throw new HttpError(400, "How many gallons went out?");
           // The part that left becomes its own closed fill, so the history has it; the rest stays.
           await tx.insert(vesselFills).values({
             vesselId: fill.vesselId,
             flavorId: fill.flavorId,
             filledAt: fill.filledAt,
             brewedAt: fill.brewedAt,
-            volumeBbl: partialBbl !== null ? bblText(partialBbl) : null,
+            volumeGal: partialGal !== null ? galText(partialGal) : null,
             kegs: partialKegs,
-            volumeBblIn: partialBbl !== null ? bblText(partialBbl) : null,
+            volumeGalIn: partialGal !== null ? galText(partialGal) : null,
             kegsIn: partialKegs,
             notes: body.notes ?? null,
             emptiedAt,
@@ -311,7 +309,7 @@ export function registerTankMapRoutes(
           await tx.update(vesselFills)
             .set(partialKegs !== null
               ? { kegs: (fill.kegs ?? 0) - partialKegs, updatedAt: now }
-              : { volumeBbl: bblText((have ?? 0) - (partialBbl ?? 0)), updatedAt: now })
+              : { volumeGal: galText((have ?? 0) - (partialGal ?? 0)), updatedAt: now })
             .where(eq(vesselFills.id, fill.id));
           return;
         }
@@ -345,11 +343,11 @@ export function registerTankMapRoutes(
             if (source.emptiedAt && source.outcome === "moved") {
               await tx.update(vesselFills).set({ emptiedAt: null, outcome: null, updatedAt: now }).where(eq(vesselFills.id, source.id));
             } else if (!source.emptiedAt) {
-              const back = fillBbl(fill);
+              const back = fillGallons(fill);
               await tx.update(vesselFills)
                 .set(source.kegs !== null
-                  ? { kegs: source.kegs + Math.round(back / BBL_PER_HALF_BBL_KEG), updatedAt: now }
-                  : { volumeBbl: bblText((num(source.volumeBbl) ?? 0) + back), updatedAt: now })
+                  ? { kegs: source.kegs + Math.round(back / HALF_BBL_KEG_GALLONS), updatedAt: now }
+                  : { volumeGal: galText((num(source.volumeGal) ?? 0) + back), updatedAt: now })
                 .where(eq(vesselFills.id, source.id));
             }
           }
@@ -372,7 +370,7 @@ export function registerTankMapRoutes(
       if (!vessel) throw new HttpError(404, "No such vessel");
       const patch: Partial<typeof vessels.$inferInsert> = {};
       if (body.name !== undefined) patch.name = body.name;
-      if (body.capacityBbl !== undefined) patch.capacityBbl = vessel.kind === "fridge" ? null : bblText(body.capacityBbl);
+      if (body.capacityGal !== undefined) patch.capacityGal = vessel.kind === "fridge" ? null : galText(body.capacityGal);
       if (body.shape !== undefined) patch.shape = vessel.kind === "fridge" ? null : body.shape;
       if (body.notes !== undefined) patch.notes = body.notes;
       if (body.isActive !== undefined) patch.isActive = body.isActive;

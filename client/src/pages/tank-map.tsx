@@ -30,13 +30,14 @@ import { useAuth } from "@/hooks/use-auth";
 import { FLAVOR_ACCENTS } from "@/lib/flavor-display";
 import { PICKUP_POLICY } from "@shared/pickup-policy";
 import {
-  BBL_PER_HALF_BBL_KEG,
   FILL_OUTCOME_LABELS,
+  HALF_BBL_KEG_GALLONS,
+  REMAINDER_GALLONS,
   VESSEL_KIND_LABELS,
   VESSEL_SHAPES,
   VESSEL_SHAPE_LABELS,
   defaultVesselShape,
-  packagesFromBbl,
+  packagesFromGallons,
   type FillOutcome,
   type TankMapData,
   type TankMapFill,
@@ -56,7 +57,7 @@ const dayNumber = (d: Date) => {
 };
 const daysSince = (iso: string) => Math.max(0, dayNumber(new Date()) - dayNumber(new Date(iso)));
 const dayWord = (n: number) => (n === 0 ? "today" : `${n} ${n === 1 ? "day" : "days"}`);
-const bbl = (n: number) => `${Number.isInteger(n) ? n : Number(n.toFixed(1))} bbl`;
+const gal = (n: number) => `${Number.isInteger(n) ? n : Number(n.toFixed(1))} gal`;
 const kegWord = (n: number) => `${n} ${n === 1 ? "keg" : "kegs"}`;
 const round = (n: number) => Math.round(n);
 const todayInput = () => formatInTimeZone(new Date(), TZ, "yyyy-MM-dd");
@@ -72,15 +73,17 @@ function accentFor(name: string): string {
   return FALLBACK_ACCENTS[hash % FALLBACK_ACCENTS.length];
 }
 
-/** The amount in a fill, in words: barrels in a tank, kegs in the fridge. */
-const amountWord = (f: TankMapFill) => (f.kegs !== null ? kegWord(f.kegs) : f.volumeBbl !== null ? bbl(f.volumeBbl) : "");
+/** The amount in a fill, in words: gallons in a tank, kegs in the fridge. */
+const amountWord = (f: TankMapFill) => (f.kegs !== null ? kegWord(f.kegs) : f.volumeGal !== null ? gal(f.volumeGal) : "");
 /** The amount as it went in, before any part moved on or left. */
-const amountInWord = (f: TankMapFill) => (f.kegsIn !== null ? kegWord(f.kegsIn) : f.volumeBblIn !== null ? bbl(f.volumeBblIn) : amountWord(f));
+const amountInWord = (f: TankMapFill) => (f.kegsIn !== null ? kegWord(f.kegsIn) : f.volumeGalIn !== null ? gal(f.volumeGalIn) : amountWord(f));
 /** What a tank's contents would package into. */
-function packagesWord(volumeBbl: number) {
-  const p = packagesFromBbl(volumeBbl);
+function packagesWord(gallons: number) {
+  const p = packagesFromGallons(gallons);
   return `≈ ${round(p.cases)} cases or ${round(p.halfBarrels)} half-barrels`;
 }
+/** Kegs in the fridge, with the gallons they hold. */
+const kegsLine = (n: number) => `${n} half-barrel${n === 1 ? "" : "s"} · ${gal(n * HALF_BBL_KEG_GALLONS)}`;
 
 /** Each shape as drawn: where the liquid sits, the vessel's outline, the hardware behind it and over it. */
 const SHAPES: Record<VesselShape, { top: number; bottom: number; body: string; behind?: string; over?: string }> = {
@@ -140,9 +143,9 @@ function TankFigure({ shape, ratio, color }: { shape: VesselShape; ratio: number
 function TankCard({ vessel, onOpen }: { vessel: TankMapVessel; onOpen: () => void }) {
   const fill = vessel.fills[0];
   const color = fill ? accentFor(fill.flavorName) : null;
-  const ratio = fill && fill.volumeBbl !== null && vessel.capacityBbl ? fill.volumeBbl / vessel.capacityBbl : fill ? 1 : 0;
+  const ratio = fill && fill.volumeGal !== null && vessel.capacityGal ? fill.volumeGal / vessel.capacityGal : fill ? 1 : 0;
   const brewed = fill ? fill.brewedAt ?? fill.filledAt : null;
-  const shape = vessel.shape ?? defaultVesselShape(vessel.kind, vessel.capacityBbl);
+  const shape = vessel.shape ?? defaultVesselShape(vessel.kind, vessel.capacityGal);
   return (
     <button
       type="button"
@@ -153,13 +156,13 @@ function TankCard({ vessel, onOpen }: { vessel: TankMapVessel; onOpen: () => voi
     >
       <div className="flex w-full items-baseline justify-between gap-2">
         <span className="text-base font-semibold">{vessel.name}</span>
-        <span className="text-xs text-muted-foreground">{vessel.capacityBbl ? `${vessel.capacityBbl} bbl` : VESSEL_KIND_LABELS[vessel.kind]}</span>
+        <span className="text-xs text-muted-foreground">{vessel.capacityGal ? gal(vessel.capacityGal) : VESSEL_KIND_LABELS[vessel.kind]}</span>
       </div>
       <TankFigure shape={shape} ratio={ratio} color={color} />
       {fill ? (
         <div className="w-full text-center">
           <div className="truncate text-lg font-semibold leading-tight" style={{ color: color ?? undefined }}>{fill.flavorName}</div>
-          <div className="text-sm">{fill.volumeBbl !== null ? bbl(fill.volumeBbl) : ""}</div>
+          <div className="text-sm">{fill.volumeGal !== null ? gal(fill.volumeGal) : ""}</div>
           <div className="mt-1 text-xs text-muted-foreground">
             {vessel.kind === "fermenter"
               ? `Brewed ${dateWord(fill.filledAt)} · ${dayWord(daysSince(fill.filledAt))}`
@@ -206,7 +209,7 @@ function FridgeCard({ vessel, onOpen }: { vessel: TankMapVessel; onOpen: () => v
         ))}
       </div>
       <div className="mt-2 text-xs text-muted-foreground">
-        {kegs > 0 ? `${kegs} half-barrel${kegs === 1 ? "" : "s"} · ${round(kegs * BBL_PER_HALF_BBL_KEG * 31)} gal` : "Tap to add kegs"}
+        {kegs > 0 ? kegsLine(kegs) : "Tap to add kegs"}
       </div>
     </button>
   );
@@ -266,7 +269,7 @@ function Summary({ vessels }: { vessels: TankMapVessel[] }) {
             {fullBrites.map((v) => (
               <li key={v.id}>
                 <FlavorDot name={v.fills[0].flavorName} />{v.name} · {v.fills[0].flavorName}
-                {v.fills[0].volumeBbl !== null && ` · ${bbl(v.fills[0].volumeBbl)}, ${packagesWord(v.fills[0].volumeBbl)}`}
+                {v.fills[0].volumeGal !== null && ` · ${gal(v.fills[0].volumeGal)}, ${packagesWord(v.fills[0].volumeGal)}`}
               </li>
             ))}
             {!fullBrites.length && <li className="text-muted-foreground">Nothing in the brites</li>}
@@ -277,7 +280,7 @@ function Summary({ vessels }: { vessels: TankMapVessel[] }) {
       <Card data-testid="summary-kegs">
         <CardContent className="p-4">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Kegs in the fridge</div>
-          <p className="mt-1 text-sm font-medium">{kegTotal ? `${kegTotal} half-barrel${kegTotal === 1 ? "" : "s"} · ${round(kegTotal * BBL_PER_HALF_BBL_KEG * 31)} gal` : "None"}</p>
+          <p className="mt-1 text-sm font-medium">{kegTotal ? kegsLine(kegTotal) : "None"}</p>
           <ul className="mt-1 space-y-0.5 text-sm">
             {Array.from(kegsByFlavor.entries()).map(([name, n]) => (
               <li key={name}><FlavorDot name={name} />{name} · {kegWord(n)}</li>
@@ -367,7 +370,7 @@ function FillForm({ vessel, flavors, initial, pending, onSubmit, onCancel }: {
   const [date, setDate] = useState(initial ? inputDate(initial.filledAt) : todayInput());
   const [brewed, setBrewed] = useState(initial ? inputDate(initial.brewedAt) : "");
   const [amount, setAmount] = useState(
-    initial ? String(isFridge ? initial.kegs ?? "" : initial.volumeBbl ?? "") : isFridge ? "1" : String(vessel.capacityBbl ?? ""),
+    initial ? String(isFridge ? initial.kegs ?? "" : initial.volumeGal ?? "") : isFridge ? "1" : String(vessel.capacityGal ?? ""),
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const n = Number(amount);
@@ -382,7 +385,7 @@ function FillForm({ vessel, flavors, initial, pending, onSubmit, onCancel }: {
           flavorId,
           filledAt: fromInput(date),
           brewedAt: vessel.kind === "fermenter" ? undefined : fromInput(brewed) ?? null,
-          ...(isFridge ? { kegs: n } : { volumeBbl: n }),
+          ...(isFridge ? { kegs: n } : { volumeGal: n }),
           notes: notes.trim() || null,
         });
       }}
@@ -393,8 +396,8 @@ function FillForm({ vessel, flavors, initial, pending, onSubmit, onCancel }: {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1">
-          <Label htmlFor="fill-amount">{isFridge ? "Half-barrel kegs" : "Barrels"}</Label>
-          <Input id="fill-amount" type="number" inputMode="decimal" step={isFridge ? "1" : "0.5"} min="0" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-amount" />
+          <Label htmlFor="fill-amount">{isFridge ? "Half-barrel kegs" : "Gallons"}</Label>
+          <Input id="fill-amount" type="number" inputMode="decimal" step={isFridge ? "1" : "any"} min="0" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-amount" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="fill-date">{vessel.kind === "fermenter" ? "Brewed" : "Went in"}</Label>
@@ -434,23 +437,23 @@ function MoveForm({ fill, vessel, vessels, pending, onSubmit, onCancel }: {
   const preferred = options.find((v) => (vessel.kind === "fermenter" ? v.kind === "brite" : v.kind === "fridge")) ?? options[0];
   const [toId, setToId] = useState(preferred?.id ?? "");
   const to = options.find((v) => v.id === toId);
-  const have = fill.volumeBbl ?? (fill.kegs ?? 0) * BBL_PER_HALF_BBL_KEG;
+  const have = fill.volumeGal ?? (fill.kegs ?? 0) * HALF_BBL_KEG_GALLONS;
   const defaultAmount = (dest: TankMapVessel | undefined) =>
-    !dest ? "" : dest.kind === "fridge" ? String(Math.max(1, Math.floor(have / BBL_PER_HALF_BBL_KEG + 1e-9))) : String(Math.min(have, dest.capacityBbl ?? have));
+    !dest ? "" : dest.kind === "fridge" ? String(Math.max(1, Math.floor(have / HALF_BBL_KEG_GALLONS + 1e-9))) : String(Math.min(have, dest.capacityGal ?? have));
   const [amount, setAmount] = useState(defaultAmount(preferred));
   const [date, setDate] = useState(todayInput());
   const [notes, setNotes] = useState("");
   const n = Number(amount);
-  const movedBbl = to?.kind === "fridge" ? n * BBL_PER_HALF_BBL_KEG : n;
-  const remaining = have - movedBbl;
-  const ok = !!to && Number.isFinite(n) && n > 0 && movedBbl <= have + 0.05;
+  const movedGal = to?.kind === "fridge" ? n * HALF_BBL_KEG_GALLONS : n;
+  const remaining = have - movedGal;
+  const ok = !!to && Number.isFinite(n) && n > 0 && movedGal <= have + REMAINDER_GALLONS;
   return (
     <form
       className="space-y-3"
       onSubmit={(e) => {
         e.preventDefault();
         if (!ok || !to) return;
-        onSubmit({ toVesselId: to.id, movedAt: fromInput(date), ...(to.kind === "fridge" ? { kegs: n } : { volumeBbl: n }), notes: notes.trim() || null });
+        onSubmit({ toVesselId: to.id, movedAt: fromInput(date), ...(to.kind === "fridge" ? { kegs: n } : { volumeGal: n }), notes: notes.trim() || null });
       }}
     >
       <div className="space-y-1">
@@ -459,7 +462,7 @@ function MoveForm({ fill, vessel, vessels, pending, onSubmit, onCancel }: {
           <SelectTrigger data-testid="select-destination"><SelectValue placeholder="Where it went" /></SelectTrigger>
           <SelectContent>
             {options.map((v) => (
-              <SelectItem key={v.id} value={v.id}>{v.name} · {VESSEL_KIND_LABELS[v.kind]}{v.capacityBbl ? `, ${v.capacityBbl} bbl` : ""}</SelectItem>
+              <SelectItem key={v.id} value={v.id}>{v.name} · {VESSEL_KIND_LABELS[v.kind]}{v.capacityGal ? `, ${gal(v.capacityGal)}` : ""}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -467,8 +470,8 @@ function MoveForm({ fill, vessel, vessels, pending, onSubmit, onCancel }: {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1">
-          <Label htmlFor="move-amount">{to?.kind === "fridge" ? "Half-barrel kegs filled" : "Barrels moved"}</Label>
-          <Input id="move-amount" type="number" inputMode="decimal" step={to?.kind === "fridge" ? "1" : "0.5"} min="0" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-move-amount" />
+          <Label htmlFor="move-amount">{to?.kind === "fridge" ? "Half-barrel kegs filled" : "Gallons moved"}</Label>
+          <Input id="move-amount" type="number" inputMode="decimal" step={to?.kind === "fridge" ? "1" : "any"} min="0" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-move-amount" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="move-date">On</Label>
@@ -476,10 +479,10 @@ function MoveForm({ fill, vessel, vessels, pending, onSubmit, onCancel }: {
         </div>
       </div>
       <p className="text-sm text-muted-foreground">
-        {have > 0 && (remaining > 0.05
-          ? `${vessel.name} keeps ${bbl(remaining)}.`
-          : movedBbl > have + 0.05
-            ? `${vessel.name} only has ${bbl(have)}.`
+        {have > 0 && (remaining > REMAINDER_GALLONS
+          ? `${vessel.name} keeps ${gal(remaining)}.`
+          : movedGal > have + REMAINDER_GALLONS
+            ? `${vessel.name} only has ${gal(have)}.`
             : `${vessel.name} will be empty.`)}
         {to?.kind === "fridge" && " A half-barrel is 15.5 gallons."}
       </p>
@@ -507,12 +510,14 @@ function EmptyForm({ fill, vessel, pending, onSubmit, onCancel }: {
   const isFridge = vessel.kind === "fridge";
   const choices: Exclude<FillOutcome, "moved">[] = isFridge ? ["delivered", "dumped", "other"] : ["packaged", "dumped", "other"];
   const [outcome, setOutcome] = useState<Exclude<FillOutcome, "moved">>(choices[0]);
-  const have = isFridge ? fill.kegs ?? 0 : fill.volumeBbl ?? 0;
+  const have = isFridge ? fill.kegs ?? 0 : fill.volumeGal ?? 0;
+  // Kegs are counted exactly; gallons get the same slack the server gives a remainder.
+  const slack = isFridge ? 0 : REMAINDER_GALLONS;
   const [amount, setAmount] = useState(String(have));
   const [date, setDate] = useState(todayInput());
   const [notes, setNotes] = useState("");
   const n = Number(amount);
-  const ok = Number.isFinite(n) && n > 0 && n <= have + 0.05;
+  const ok = Number.isFinite(n) && n > 0 && n <= have + slack;
   const remaining = have - n;
   return (
     <form
@@ -520,7 +525,7 @@ function EmptyForm({ fill, vessel, pending, onSubmit, onCancel }: {
       onSubmit={(e) => {
         e.preventDefault();
         if (!ok) return;
-        onSubmit({ outcome, emptiedAt: fromInput(date), ...(isFridge ? { kegs: n } : { volumeBbl: n }), notes: notes.trim() || null });
+        onSubmit({ outcome, emptiedAt: fromInput(date), ...(isFridge ? { kegs: n } : { volumeGal: n }), notes: notes.trim() || null });
       }}
     >
       <div className="flex flex-wrap gap-2">
@@ -532,8 +537,8 @@ function EmptyForm({ fill, vessel, pending, onSubmit, onCancel }: {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1">
-          <Label htmlFor="empty-amount">{isFridge ? "Kegs out" : "Barrels out"}</Label>
-          <Input id="empty-amount" type="number" inputMode="decimal" step={isFridge ? "1" : "0.5"} min="0" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-empty-amount" />
+          <Label htmlFor="empty-amount">{isFridge ? "Kegs out" : "Gallons out"}</Label>
+          <Input id="empty-amount" type="number" inputMode="decimal" step={isFridge ? "1" : "any"} min="0" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-empty-amount" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="empty-date">On</Label>
@@ -541,7 +546,7 @@ function EmptyForm({ fill, vessel, pending, onSubmit, onCancel }: {
         </div>
       </div>
       <p className="text-sm text-muted-foreground">
-        {remaining > 0.05 ? `${isFridge ? kegWord(Math.round(remaining)) : bbl(remaining)} stay${isFridge && Math.round(remaining) !== 1 ? "" : "s"} in ${vessel.name}.` : n > have + 0.05 ? `${vessel.name} only has ${isFridge ? kegWord(have) : bbl(have)}.` : `${vessel.name} will be empty.`}
+        {remaining > slack ? `${isFridge ? kegWord(Math.round(remaining)) : gal(remaining)} stay${isFridge && Math.round(remaining) !== 1 ? "" : "s"} in ${vessel.name}.` : n > have + slack ? `${vessel.name} only has ${isFridge ? kegWord(have) : gal(have)}.` : `${vessel.name} will be empty.`}
         {!isFridge && outcome === "packaged" && n > 0 && ` ${packagesWord(n)}.`}
       </p>
       <div className="space-y-1">
@@ -565,8 +570,8 @@ function VesselSettings({ vessel, pending, onSubmit, onCancel }: {
   onCancel: () => void;
 }) {
   const [name, setName] = useState(vessel.name);
-  const [capacity, setCapacity] = useState(vessel.capacityBbl === null ? "" : String(vessel.capacityBbl));
-  const [shape, setShape] = useState<VesselShape>(vessel.shape ?? defaultVesselShape(vessel.kind, vessel.capacityBbl));
+  const [capacity, setCapacity] = useState(vessel.capacityGal === null ? "" : String(vessel.capacityGal));
+  const [shape, setShape] = useState<VesselShape>(vessel.shape ?? defaultVesselShape(vessel.kind, vessel.capacityGal));
   const ok = name.trim().length > 0 && (vessel.kind === "fridge" || Number(capacity) > 0);
   return (
     <form
@@ -574,7 +579,7 @@ function VesselSettings({ vessel, pending, onSubmit, onCancel }: {
       onSubmit={(e) => {
         e.preventDefault();
         if (!ok) return;
-        onSubmit({ name: name.trim(), ...(vessel.kind === "fridge" ? {} : { capacityBbl: Number(capacity), shape }) });
+        onSubmit({ name: name.trim(), ...(vessel.kind === "fridge" ? {} : { capacityGal: Number(capacity), shape }) });
       }}
     >
       <div className="grid grid-cols-2 gap-3">
@@ -584,8 +589,8 @@ function VesselSettings({ vessel, pending, onSubmit, onCancel }: {
         </div>
         {vessel.kind !== "fridge" && (
           <div className="space-y-1">
-            <Label htmlFor="vessel-capacity">Size, bbl</Label>
-            <Input id="vessel-capacity" type="number" inputMode="decimal" step="0.5" min="0" value={capacity} onChange={(e) => setCapacity(e.target.value)} />
+            <Label htmlFor="vessel-capacity">Size, gallons</Label>
+            <Input id="vessel-capacity" type="number" inputMode="decimal" step="any" min="0" value={capacity} onChange={(e) => setCapacity(e.target.value)} />
           </div>
         )}
       </div>
@@ -626,7 +631,7 @@ function FillDetails({ fill, vessel }: { fill: TankMapFill; vessel: TankMapVesse
           : `In since ${dateWord(fill.filledAt)}, ${dayWord(daysSince(fill.filledAt))}${brewed ? `; brewed ${dateWord(brewed)}, ${dayWord(daysSince(brewed))} ago` : ""}`}
         {fill.fromVesselName && fill.fromVesselName !== vessel.name && ` · from ${fill.fromVesselName}`}
       </div>
-      {fill.volumeBbl !== null && vessel.kind !== "fermenter" && <div className="text-sm text-muted-foreground">{packagesWord(fill.volumeBbl)}</div>}
+      {fill.volumeGal !== null && vessel.kind !== "fermenter" && <div className="text-sm text-muted-foreground">{packagesWord(fill.volumeGal)}</div>}
       {fill.notes && <p className="mt-1 whitespace-pre-line text-sm">{fill.notes}</p>}
     </div>
   );
@@ -701,7 +706,7 @@ function VesselDialog({ vessel, data, onClose }: { vessel: TankMapVessel | null;
             )}
           </DialogTitle>
           <DialogDescription>
-            {VESSEL_KIND_LABELS[vessel.kind]}{vessel.shape ? `, ${SHAPE_WORDS[vessel.shape]}` : ""}{vessel.capacityBbl ? `, ${vessel.capacityBbl} bbl` : ""}{vessel.notes ? ` · ${vessel.notes}` : ""}
+            {VESSEL_KIND_LABELS[vessel.kind]}{vessel.shape ? `, ${SHAPE_WORDS[vessel.shape]}` : ""}{vessel.capacityGal ? `, ${gal(vessel.capacityGal)}` : ""}{vessel.notes ? ` · ${vessel.notes}` : ""}
           </DialogDescription>
         </DialogHeader>
 

@@ -7,8 +7,9 @@
  * Vessels and what is in them live in vessels / vessel_fills (shared/schema.ts). A fill
  * is one thing in one vessel from the day it went in until the day it left: the open
  * fills are the map, the closed ones the history. This file holds what the page and
- * the server share: the vessel kinds, the arithmetic from barrels to packages, and the
- * shapes of the requests and of the map itself.
+ * the server share: the vessel kinds, the arithmetic from gallons to packages, and the
+ * shapes of the requests and of the map itself. Everything is counted in gallons (owner,
+ * 2026-11-16: "Let's go with gallons"); the fridge in half-barrel kegs of 15.5.
  */
 import { z } from "zod";
 import { GALLONS_PER_CASE, GALLONS_PER_KEG } from "./profitability";
@@ -29,22 +30,20 @@ export const VESSEL_SHAPE_LABELS: Record<VesselShape, string> = {
   pot: "Pot",
   tote: "IBC tote",
 };
-/** The shape a vessel takes when none is set: brites are conical, fermenters pots, a 10 bbl fermenter a tote. */
-export function defaultVesselShape(kind: VesselKind, capacityBbl: number | null): VesselShape {
+/** The shape a vessel takes when none is set: brites are conical, fermenters pots, the 10 bbl (310 gal) fermenter a tote. */
+export function defaultVesselShape(kind: VesselKind, capacityGal: number | null): VesselShape {
   if (kind === "brite") return "conical";
-  return (capacityBbl ?? 0) >= 10 ? "tote" : "pot";
+  return (capacityGal ?? 0) >= 300 ? "tote" : "pot";
 }
 
-export const GALLONS_PER_BBL = 31;
 /** The fridge holds half-barrel kegs. */
 export const HALF_BBL_KEG_GALLONS = 15.5;
-export const BBL_PER_HALF_BBL_KEG = HALF_BBL_KEG_GALLONS / GALLONS_PER_BBL;
+/** Below this many gallons what is left after a move or a packaging run is rounding, not kombucha. */
+export const REMAINDER_GALLONS = 1;
 
 /** What a volume packages into before any waste: cases of twelve cans, half-barrel kegs, sixth-barrel kegs. */
-export function packagesFromBbl(bbl: number) {
-  const gallons = bbl * GALLONS_PER_BBL;
+export function packagesFromGallons(gallons: number) {
   return {
-    gallons,
     cases: gallons / GALLONS_PER_CASE,
     halfBarrels: gallons / HALF_BBL_KEG_GALLONS,
     sixtels: gallons / GALLONS_PER_KEG,
@@ -64,7 +63,7 @@ export const FILL_OUTCOME_LABELS: Record<FillOutcome, string> = {
 
 // Request shapes. Dates arrive as ISO strings (or nothing, meaning now); blanks are dropped.
 const when = z.preprocess((v) => (v === "" || v === null ? undefined : v), z.coerce.date().optional());
-const bbl = z.coerce.number().finite().min(0).max(1000);
+const gallons = z.coerce.number().finite().min(0).max(9999);
 const kegCount = z.coerce.number().int().min(0).max(10_000);
 const note = z.string().trim().max(500).nullish().transform((v) => (v ? v : null));
 
@@ -74,8 +73,8 @@ export const fillInputSchema = z.object({
   filledAt: when,
   /** For a brite tank or the fridge: when the batch was brewed, if known. A fermenter's own filledAt is its brew date. */
   brewedAt: when,
-  /** Tanks: barrels in. Left out, the vessel's capacity. */
-  volumeBbl: bbl.nullish(),
+  /** Tanks: gallons in. Left out, the vessel's size. */
+  volumeGal: gallons.nullish(),
   /** The fridge: half-barrel kegs in. */
   kegs: kegCount.nullish(),
   notes: note,
@@ -88,8 +87,8 @@ export type FillUpdate = z.infer<typeof fillUpdateSchema>;
 export const moveInputSchema = z.object({
   toVesselId: z.string().min(1, "Pick where it went"),
   movedAt: when,
-  /** Into a tank: barrels moved; less than the source holds leaves the rest where it was. */
-  volumeBbl: bbl.nullish(),
+  /** Into a tank: gallons moved; less than the source holds leaves the rest where it was. */
+  volumeGal: gallons.nullish(),
   /** Into the fridge: half-barrel kegs filled. */
   kegs: kegCount.nullish(),
   notes: note,
@@ -99,8 +98,8 @@ export type MoveInput = z.infer<typeof moveInputSchema>;
 export const emptyInputSchema = z.object({
   outcome: z.enum(["packaged", "delivered", "dumped", "other"]),
   emptiedAt: when,
-  /** Tanks: barrels out; fewer than the fill holds leaves the rest in the tank. */
-  volumeBbl: bbl.nullish(),
+  /** Tanks: gallons out; fewer than the fill holds leaves the rest in the tank. */
+  volumeGal: gallons.nullish(),
   /** The fridge: kegs out; fewer than the fill holds leaves the rest. */
   kegs: kegCount.nullish(),
   notes: note,
@@ -109,7 +108,7 @@ export type EmptyInput = z.infer<typeof emptyInputSchema>;
 
 export const vesselUpdateSchema = z.object({
   name: z.string().trim().min(1, "Give it a name").max(40).optional(),
-  capacityBbl: bbl.nullable().optional(),
+  capacityGal: gallons.nullable().optional(),
   shape: z.enum(VESSEL_SHAPES).nullable().optional(),
   notes: note.optional(),
   isActive: z.boolean().optional(),
@@ -125,11 +124,11 @@ export type TankMapFill = {
   flavorName: string;
   filledAt: string;
   brewedAt: string | null;
-  /** What is in it now (or was, when it closed). */
-  volumeBbl: number | null;
+  /** What is in it now (or was, when it closed): gallons in a tank, half-barrel kegs in the fridge. */
+  volumeGal: number | null;
   kegs: number | null;
   /** What went in; the same until a part moves on or leaves. */
-  volumeBblIn: number | null;
+  volumeGalIn: number | null;
   kegsIn: number | null;
   notes: string | null;
   emptiedAt: string | null;
@@ -143,7 +142,8 @@ export type TankMapVessel = {
   id: string;
   name: string;
   kind: VesselKind;
-  capacityBbl: number | null;
+  /** Gallons it holds; null for the fridge. */
+  capacityGal: number | null;
   /** How it is drawn; null for the fridge. */
   shape: VesselShape | null;
   displayOrder: number;
