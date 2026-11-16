@@ -30,7 +30,7 @@ export const VESSEL_SHAPE_LABELS: Record<VesselShape, string> = {
   pot: "Pot",
   tote: "IBC tote",
 };
-/** The shape a vessel takes when none is set: brites are conical, fermenters pots, a big fermenter (the 330 gal IBC tote) a tote. */
+/** The shape a vessel takes when none is set: brites are conical, fermenters pots, a big fermenter (the 500 gal IBC tote) a tote. */
 export function defaultVesselShape(kind: VesselKind, capacityGal: number | null): VesselShape {
   if (kind === "brite") return "conical";
   return (capacityGal ?? 0) >= 300 ? "tote" : "pot";
