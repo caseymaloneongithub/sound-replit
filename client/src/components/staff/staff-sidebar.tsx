@@ -31,6 +31,7 @@ import {
   FileSpreadsheet,
   Send,
   Activity,
+  Cylinder,
   Navigation, Truck, TrendingUp } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useNewContactCount } from "@/components/staff/contact-requests-panel";
@@ -157,6 +158,7 @@ export function StaffSidebar({ onLinkClick, headerAction }: StaffSidebarProps) {
     {
       title: "Brewing & Inventory",
       items: [
+        { title: "Tank Map", href: "/staff-portal/tanks", icon: Cylinder },
         { title: "Dashboard", href: "/inventory/dashboard", icon: LayoutDashboard },
         { title: "Productions", href: "/inventory/productions", icon: Factory },
         { title: "Recipes", href: "/inventory/recipes", icon: FlaskConical },

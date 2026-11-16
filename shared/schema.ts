@@ -1333,3 +1333,45 @@ export const wholesaleStoreSearches = pgTable("wholesale_store_searches", {
   ip: text("ip"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// ─── Tank map (owner, 2026-11-16) ──────────────────────────────────────────────
+// The brewhouse's vessels — fermenters, brite tanks, the keg fridge — and what is in
+// them. A fill is one thing in one vessel from the day it went in until the day it
+// left: the open fills (emptied_at null) are the map, the closed ones the history.
+// Moving kombucha closes the fill in one vessel and opens one in the next, linked by
+// from_fill_id, with the brew date carried along. Words and shapes: shared/tank-map.ts;
+// the table DDL and the seeded vessels: scripts/migrate-tank-map.sql.
+export const vessels = pgTable("vessels", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(), // "FV1", "BT2", "Fridge"
+  kind: text("kind").notNull(), // 'fermenter' | 'brite' | 'fridge'
+  capacityBbl: decimal("capacity_bbl", { precision: 6, scale: 2 }), // null for the fridge
+  displayOrder: integer("display_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type Vessel = typeof vessels.$inferSelect;
+
+export const vesselFills = pgTable("vessel_fills", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vesselId: varchar("vessel_id").notNull().references(() => vessels.id),
+  flavorId: varchar("flavor_id").notNull().references(() => flavors.id),
+  filledAt: timestamp("filled_at", { withTimezone: true }).notNull().defaultNow(),
+  // The batch's brew date, carried from fermenter to brite to fridge. A fermenter's
+  // own filled_at is its brew date, so this is null there.
+  brewedAt: timestamp("brewed_at", { withTimezone: true }),
+  volumeBbl: decimal("volume_bbl", { precision: 6, scale: 2 }), // tanks: barrels in it now
+  kegs: integer("kegs"), // the fridge: half-barrel kegs in it now
+  // The amount as it went in; volume_bbl / kegs shrink as parts move on or leave.
+  volumeBblIn: decimal("volume_bbl_in", { precision: 6, scale: 2 }),
+  kegsIn: integer("kegs_in"),
+  notes: text("notes"),
+  emptiedAt: timestamp("emptied_at", { withTimezone: true }),
+  outcome: text("outcome"), // 'moved' | 'packaged' | 'delivered' | 'dumped' | 'other'
+  // The fill this one came out of: a move's source, or the larger fill a part was taken from.
+  fromFillId: varchar("from_fill_id").references((): AnyPgColumn => vesselFills.id),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type VesselFill = typeof vesselFills.$inferSelect;

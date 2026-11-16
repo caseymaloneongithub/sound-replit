@@ -29,6 +29,7 @@ import { nextShipDate, formatShipDate, type ShippingQuote, type ShippingLabel } 
 import { insertShippingBoxSchema, shippingBoxes } from "@shared/schema";
 import { registerClaimRoutes, getPendingClaim, holdPendingOrder, createLinkRequest } from "./claim-flow";
 import { registerProfitabilityRoutes } from "./profitability";
+import { registerTankMapRoutes } from "./tank-map";
 import {
   frequencyToDays,
   frequencyToStripeInterval,
@@ -13807,6 +13808,7 @@ If you have any questions, please don't hesitate to reach out!`,
 
   registerClaimRoutes(app, { isAuthenticated, isStaffOrAdmin, placeCustomerOrder, baseUrl: getBaseUrl });
   registerProfitabilityRoutes(app, { isAuthenticated, isAdmin });
+  registerTankMapRoutes(app, { isAuthenticated, isStaffOrAdmin, isAdmin });
 
   const httpServer = createServer(app);
 

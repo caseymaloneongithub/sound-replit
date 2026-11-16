@@ -68,6 +68,7 @@ import DeliveryRoutes from "@/pages/delivery-routes";
 import DriverMode from "@/pages/driver-mode";
 import AdminChecklist from "@/pages/admin-checklist";
 import OrdersBoard from "@/pages/orders-board";
+import TankMap from "@/pages/tank-map";
 import Contact from "@/pages/contact";
 import Cart from "@/pages/cart";
 import SecurityPolicy from "@/pages/security-policy";
@@ -137,6 +138,7 @@ function Router() {
       <StaffProtectedRoute path="/driver" component={DriverMode} />
       <StaffProtectedRoute path="/staff-portal/wholesale/invoices" component={WholesaleInvoices} />
       <StaffProtectedRoute path="/staff-portal/orders-board" component={OrdersBoard} />
+      <StaffProtectedRoute path="/staff-portal/tanks" component={TankMap} />
       <StaffProtectedRoute path="/staff-portal/checklist" component={AdminChecklist} />
       
       {/* A shared invoice link (owner, 2026-10-29): the signature in the URL is the key, no login. */}
