@@ -45,6 +45,25 @@ export const LABOR_LABELS: Record<LaborBucket, string> = {
   maintenance: "Maintenance",
 };
 
+/**
+ * What the employer pays on top of wages, item by item (owner, 2026-11-15: "be more
+ * explicit about the extra payroll costs ... I can feed our individual WA ESD and LNI
+ * rates. Employer payroll taxes, health insurance subsidy").
+ */
+export const PAYROLL_ITEMS = ["socialSecurityMedicare", "futa", "esd", "lni", "healthInsurance", "other"] as const;
+export type PayrollItem = (typeof PAYROLL_ITEMS)[number];
+export const PAYROLL_LABELS: Record<PayrollItem, string> = {
+  socialSecurityMedicare: "Social Security & Medicare",
+  futa: "Federal unemployment (FUTA)",
+  esd: "WA unemployment (ESD)",
+  lni: "WA L&I workers' comp",
+  healthInsurance: "Health insurance",
+  other: "Other",
+};
+/** The federal rates every employer pays; the itemized payroll starts from these. */
+export const SOCIAL_SECURITY_MEDICARE_PERCENT = 7.65;
+export const FUTA_PERCENT = 0.6;
+
 const money = z.number().finite().min(0).max(10_000_000);
 const percent = z.number().finite().min(0).max(100);
 const count = z.number().finite().min(0).max(1_000_000);
@@ -61,6 +80,22 @@ export type ChannelInputs = z.infer<typeof channelInputsSchema>;
 
 const laborLineSchema = z.object({ hoursPerWeek: count, ratePerHour: money });
 export type LaborLine = z.infer<typeof laborLineSchema>;
+
+export const payrollInputsSchema = z.object({
+  /** The employer's half of Social Security and Medicare: 6.2% + 1.45% of wages. */
+  socialSecurityMedicarePercent: percent,
+  /** Federal unemployment: 0.6% of each employee's first $7,000 a year (after the credit for paying the state on time), so a little under 0.6% of all wages. */
+  futaPercent: percent,
+  /** Washington unemployment insurance: the employer's own rate from ESD's yearly notice, on wages up to the taxable wage base. */
+  esdPercent: percent,
+  /** Washington L&I workers' comp: the employer's share of the hourly rate on the rate notice (the rate less what employees have withheld), per hour worked. */
+  lniPerHour: z.number().finite().min(0).max(100),
+  /** What the employer pays toward employees' health insurance, all employees together, per month. */
+  healthInsurancePerMonth: money,
+  /** Anything else that follows wages, as a percentage: paid sick leave as it's used, a retirement match, bonuses, Paid Leave's employer share at 50 or more employees. */
+  otherPercent: percent,
+});
+export type PayrollInputs = z.infer<typeof payrollInputsSchema>;
 
 export const projectionInputsSchema = z.object({
   channels: z.object({
@@ -93,8 +128,8 @@ export const projectionInputsSchema = z.object({
     deliveries: laborLineSchema,
     maintenance: laborLineSchema,
   }),
-  /** Employer payroll taxes and the like, as a percentage on top of wages. */
-  payrollBurdenPercent: percent,
+  /** What the employer pays on top of wages, item by item. Scenarios saved with the old single burden % are upgraded in normalizeInputs. */
+  payroll: payrollInputsSchema,
   rentPerMonth: money,
   /** Insurance as a share of sales (owner, 2026-11-15: "make insurance a % of sales. Start at 1.2%"). */
   insurancePercent: percent,
@@ -208,7 +243,16 @@ export type Projection = {
   exciseTax: number;
   insurance: number;
   contribution: number;
-  labor: { total: number; wages: number; burden: number; buckets: Record<LaborBucket, number> };
+  labor: {
+    /** Wages plus everything the employer pays on top of them. */
+    total: number;
+    wages: number;
+    hours: number;
+    /** Each payroll item as a week's dollars, and their sum. */
+    payroll: Record<PayrollItem, number> & { total: number };
+    /** Each bucket's wages. */
+    buckets: Record<LaborBucket, number>;
+  };
   overhead: {
     rent: number;
     kegReplacement: number;
@@ -295,13 +339,24 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
   const gallonsPackaged = cases * GALLONS_PER_CASE + kegs * GALLONS_PER_KEG;
   const volume = { cases, kegs, gallonsPackaged, gallonsBrewed: gallonsPackaged * liquidFactor };
 
-  const burdenFactor = 1 + inputs.payrollBurdenPercent / 100;
   const buckets = Object.fromEntries(
-    LABOR_BUCKETS.map((b) => [b, inputs.labor[b].hoursPerWeek * inputs.labor[b].ratePerHour * burdenFactor]),
+    LABOR_BUCKETS.map((b) => [b, inputs.labor[b].hoursPerWeek * inputs.labor[b].ratePerHour]),
   ) as Record<LaborBucket, number>;
-  const laborTotal = LABOR_BUCKETS.reduce((s, b) => s + buckets[b], 0);
-  const wages = laborTotal / burdenFactor;
-  const laborBurden = laborTotal - wages;
+  const wages = LABOR_BUCKETS.reduce((s, b) => s + buckets[b], 0);
+  const hours = LABOR_BUCKETS.reduce((s, b) => s + inputs.labor[b].hoursPerWeek, 0);
+  // The percentages follow wages, L&I follows hours worked, health insurance is a monthly bill.
+  const pr = inputs.payroll;
+  const payroll = {
+    socialSecurityMedicare: (wages * pr.socialSecurityMedicarePercent) / 100,
+    futa: (wages * pr.futaPercent) / 100,
+    esd: (wages * pr.esdPercent) / 100,
+    lni: hours * pr.lniPerHour,
+    healthInsurance: (pr.healthInsurancePerMonth * 12) / WEEKS_PER_YEAR,
+    other: (wages * pr.otherPercent) / 100,
+    total: 0,
+  };
+  payroll.total = PAYROLL_ITEMS.reduce((s, k) => s + payroll[k], 0);
+  const laborTotal = wages + payroll.total;
 
   const overhead = {
     rent: (inputs.rentPerMonth * 12) / WEEKS_PER_YEAR,
@@ -337,7 +392,7 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     exciseTax,
     insurance,
     contribution,
-    labor: { total: laborTotal, wages, burden: laborBurden, buckets },
+    labor: { total: laborTotal, wages, hours, payroll, buckets },
     overhead,
     weeklyFixedCosts,
     operatingCosts,
@@ -403,7 +458,7 @@ export function defaultInputs(
     co2WastePercent: 150,
     flavorMix: "sales",
     labor: { brewing: line(), packaging: line(), deliveries: line(), maintenance: line() },
-    payrollBurdenPercent: 10,
+    payroll: defaultPayroll(),
     rentPerMonth: 0,
     insurancePercent: 1.2,
     kegReplacementPerYear: 0,
@@ -413,6 +468,18 @@ export function defaultInputs(
     ownerTravelPerWeek: 0,
     exciseTaxPercent: 0.484,
     freeCasesPerWeek: 0,
+  };
+}
+
+/** The federal rates; the Washington rates, health insurance and anything else wait to be typed in. */
+export function defaultPayroll(): PayrollInputs {
+  return {
+    socialSecurityMedicarePercent: SOCIAL_SECURITY_MEDICARE_PERCENT,
+    futaPercent: FUTA_PERCENT,
+    esdPercent: 0,
+    lniPerHour: 0,
+    healthInsurancePerMonth: 0,
+    otherPercent: 0,
   };
 }
 
@@ -454,6 +521,37 @@ export function normalizeInputs(raw: unknown, fallback: ProjectionInputs = defau
     const d = fallback.labor[b];
     return { hoursPerWeek: finite(x.hoursPerWeek, d.hoursPerWeek), ratePerHour: finite(x.ratePerHour, d.ratePerHour) };
   };
+  const payroll = (): PayrollInputs => {
+    const d = fallback.payroll;
+    const x = r.payroll;
+    if (x && typeof x === "object") {
+      return {
+        socialSecurityMedicarePercent: finite(x.socialSecurityMedicarePercent, d.socialSecurityMedicarePercent),
+        futaPercent: finite(x.futaPercent, d.futaPercent),
+        esdPercent: finite(x.esdPercent, d.esdPercent),
+        lniPerHour: finite(x.lniPerHour, d.lniPerHour),
+        healthInsurancePerMonth: finite(x.healthInsurancePerMonth, d.healthInsurancePerMonth),
+        otherPercent: finite(x.otherPercent, d.otherPercent),
+      };
+    }
+    // Scenarios saved before 2026-11-15 held one "payroll burden" percentage. Its total is
+    // kept: Social Security & Medicare and FUTA at their federal rates, the rest under
+    // "other" until the Washington rates and health insurance are typed in.
+    if (typeof r.payrollBurdenPercent === "number" && Number.isFinite(r.payrollBurdenPercent)) {
+      const old = Math.max(0, r.payrollBurdenPercent);
+      const socialSecurityMedicarePercent = Math.min(SOCIAL_SECURITY_MEDICARE_PERCENT, old);
+      const futaPercent = Math.min(FUTA_PERCENT, old - socialSecurityMedicarePercent);
+      return {
+        socialSecurityMedicarePercent,
+        futaPercent,
+        esdPercent: 0,
+        lniPerHour: 0,
+        healthInsurancePerMonth: 0,
+        otherPercent: round(old - socialSecurityMedicarePercent - futaPercent, 2),
+      };
+    }
+    return { ...d };
+  };
   return {
     channels: { distributor: channel("distributor"), wholesale: channel("wholesale"), retail: channel("retail") },
     liquidWastePercent: finite(r.liquidWastePercent, fallback.liquidWastePercent),
@@ -463,7 +561,7 @@ export function normalizeInputs(raw: unknown, fallback: ProjectionInputs = defau
     co2WastePercent: finite(r.co2WastePercent, fallback.co2WastePercent),
     flavorMix: r.flavorMix === "even" ? "even" : "sales",
     labor: { brewing: labor("brewing"), packaging: labor("packaging"), deliveries: labor("deliveries"), maintenance: labor("maintenance") },
-    payrollBurdenPercent: finite(r.payrollBurdenPercent, fallback.payrollBurdenPercent),
+    payroll: payroll(),
     rentPerMonth: finite(r.rentPerMonth, typeof r.rentPerYear === "number" ? r.rentPerYear / 12 : fallback.rentPerMonth),
     insurancePercent: finite(r.insurancePercent, fallback.insurancePercent),
     kegReplacementPerYear: finite(r.kegReplacementPerYear, fallback.kegReplacementPerYear),

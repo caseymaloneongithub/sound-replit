@@ -20,6 +20,7 @@ import {
   GALLONS_PER_KEG,
   LABOR_BUCKETS,
   LABOR_LABELS,
+  PAYROLL_LABELS,
   WEEKS_PER_YEAR,
   defaultInputs,
   normalizeInputs,
@@ -29,6 +30,8 @@ import {
   type Channel,
   type ChannelInputs,
   type LaborBucket,
+  type PayrollInputs,
+  type PayrollItem,
   type ProjectionActuals,
   type ProjectionBasis,
   type ProjectionInputs,
@@ -254,6 +257,8 @@ export default function AdminProfitability() {
     setInputs((i) => (i ? { ...i, channels: { ...i.channels, [ch]: { ...i.channels[ch], [field]: value } } } : i));
   const setLabor = (b: LaborBucket, field: "hoursPerWeek" | "ratePerHour", value: number) =>
     setInputs((i) => (i ? { ...i, labor: { ...i.labor, [b]: { ...i.labor[b], [field]: value } } } : i));
+  const setPayroll = (field: keyof PayrollInputs, value: number) =>
+    setInputs((i) => (i ? { ...i, payroll: { ...i.payroll, [field]: value } } : i));
 
   if (basisLoading || scenariosLoading || draftLoading || (!inputs && !basisError)) {
     return (
@@ -277,6 +282,15 @@ export default function AdminProfitability() {
 
   const { basis, actuals, catalog } = basisData;
   const u = projection.unitCosts;
+  // One row per payroll item: the rate typed, what it comes to a week, and where the rate comes from.
+  const payrollRows: { item: PayrollItem; field: keyof PayrollInputs; hint: string; prefix?: string; suffix?: string; step: string }[] = [
+    { item: "socialSecurityMedicare", field: "socialSecurityMedicarePercent", suffix: "%", step: "0.01", hint: "The employer's half: 6.2% Social Security and 1.45% Medicare." },
+    { item: "futa", field: "futaPercent", suffix: "%", step: "0.1", hint: "0.6% of each employee's first $7,000 a year, so a little under 0.6% of all wages." },
+    { item: "esd", field: "esdPercent", suffix: "%", step: "0.01", hint: "Your rate from the ESD tax rate notice, on wages up to the year's wage base." },
+    { item: "lni", field: "lniPerHour", prefix: "$", suffix: "/hr", step: "0.01", hint: `From the L&I rate notice: the hourly rate less what employees have withheld, on ${num(projection.labor.hours)} hours a week here.` },
+    { item: "healthInsurance", field: "healthInsurancePerMonth", prefix: "$", suffix: "/mo", step: "1", hint: "What you pay toward employees' coverage, all of them together, a month." },
+    { item: "other", field: "otherPercent", suffix: "%", step: "0.1", hint: "Paid sick leave as it's used (1 hour per 40 is 2.5%), a retirement match, bonuses, Paid Leave's employer share at 50 or more employees. A scenario saved with the old single burden % keeps the rest of it here." },
+  ];
   const volumeHint = `${num(projection.volume.cases, 0)} cases and ${num(projection.volume.kegs)} kegs a week; `
     + `brew ${num(projection.volume.gallonsBrewed, 0)} at ${num(inputs.liquidWastePercent)}% liquid waste`;
   // Packaging waste is counted here and nowhere else (owner, 2026-11-15: "We're
@@ -480,7 +494,7 @@ export default function AdminProfitability() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Labor</CardTitle>
-                <CardDescription>Employees' hours a week by what they're spent on; your own time is paid out of profit. Burden is employer payroll tax and the like, on top of wages.</CardDescription>
+                <CardDescription>Employees' hours a week by what they're spent on, at their wage; your own time is paid out of profit. Under the wages is everything the employer pays on top of them.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <Table>
@@ -503,20 +517,46 @@ export default function AdminProfitability() {
                     ))}
                     <TableRow>
                       <TableCell className="font-medium" colSpan={3}>
-                        All labor, with burden
+                        Wages
+                        <div className="text-[11px] font-normal text-muted-foreground">{num(projection.labor.hours)} hours a week</div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums font-medium" data-testid="text-wages-total">{money0(projection.labor.wages)}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>On top of wages</TableHead>
+                      <TableHead className="text-right">Rate</TableHead>
+                      <TableHead className="text-right">Weekly</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {payrollRows.map((row) => (
+                      <TableRow key={row.item}>
+                        <TableCell className="font-medium">
+                          {PAYROLL_LABELS[row.item]}
+                          <div className="max-w-sm text-[11px] font-normal text-muted-foreground">{row.hint}</div>
+                        </TableCell>
+                        <TableCell>
+                          <NumberField className="w-28 ml-auto" prefix={row.prefix} suffix={row.suffix} step={row.step} value={inputs.payroll[row.field]} onChange={(v) => setPayroll(row.field, v)} ariaLabel={PAYROLL_LABELS[row.item]} testId={`input-payroll-${row.item}`} />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums" data-testid={`text-payroll-${row.item}`}>{money0(projection.labor.payroll[row.item])}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow>
+                      <TableCell className="font-medium" colSpan={2}>
+                        All labor
                         <div className="text-[11px] font-normal text-muted-foreground" data-testid="text-labor-split">
-                          {money0(projection.labor.wages)} in wages plus {money0(projection.labor.burden)} burden
+                          {money0(projection.labor.wages)} in wages plus {money0(projection.labor.payroll.total)} in payroll taxes and benefits
+                          {projection.labor.wages > 0 ? `, ${pct(projection.labor.payroll.total / projection.labor.wages)} on top` : ""}
                         </div>
                       </TableCell>
                       <TableCell className="text-right tabular-nums font-medium" data-testid="text-labor-total">{money0(projection.labor.total)}</TableCell>
                     </TableRow>
                   </TableBody>
                 </Table>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Payroll burden" hint={`Employer taxes on the hours above: ${money0(projection.labor.burden)} a week`}>
-                    <NumberField suffix="%" step="0.5" value={inputs.payrollBurdenPercent} onChange={(v) => set("payrollBurdenPercent", v)} testId="input-payroll-burden" />
-                  </Field>
-                </div>
               </CardContent>
             </Card>
 
@@ -602,7 +642,8 @@ export default function AdminProfitability() {
                     ["Processing fees", -projection.fees],
                     ["B&O tax", -projection.exciseTax],
                     ["Insurance", -projection.insurance],
-                    ["Labor", -projection.labor.total],
+                    ["Wages", -projection.labor.wages],
+                    ["Payroll taxes and benefits", -projection.labor.payroll.total],
                     ["Rent", -projection.overhead.rent],
                     ["Vehicle and travel", -(projection.overhead.vehicle + projection.overhead.ownerTravel)],
                     ["Keg replacement", -projection.overhead.kegReplacement],
