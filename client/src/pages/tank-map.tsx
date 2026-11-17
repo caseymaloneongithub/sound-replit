@@ -150,7 +150,7 @@ function TankCard({ vessel, onOpen }: { vessel: TankMapVessel; onOpen: () => voi
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full flex-col items-center rounded-xl border-2 bg-card p-3 text-left shadow-sm transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex h-full w-full flex-col items-center rounded-xl border-2 bg-card p-3 text-left shadow-sm transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       style={{ borderColor: color ?? undefined }}
       data-testid={`vessel-${vessel.id}`}
     >
@@ -159,8 +159,10 @@ function TankCard({ vessel, onOpen }: { vessel: TankMapVessel; onOpen: () => voi
         <span className="text-xs text-muted-foreground">{vessel.capacityGal ? gal(vessel.capacityGal) : VESSEL_KIND_LABELS[vessel.kind]}</span>
       </div>
       <TankFigure shape={shape} ratio={ratio} color={color} />
+      {/* The text block has room for the longest case (name, amount, two dated lines), so every
+          tile is the same height whatever is in it, and an empty one lines up with a full one. */}
       {fill ? (
-        <div className="w-full text-center">
+        <div className="min-h-[5rem] w-full text-center">
           <div className="truncate text-lg font-semibold leading-tight" style={{ color: color ?? undefined }}>{fill.flavorName}</div>
           <div className="text-sm">{fill.volumeGal !== null ? gal(fill.volumeGal) : ""}</div>
           <div className="mt-1 text-xs text-muted-foreground">
@@ -173,7 +175,7 @@ function TankCard({ vessel, onOpen }: { vessel: TankMapVessel; onOpen: () => voi
           )}
         </div>
       ) : (
-        <div className="py-2 text-center">
+        <div className="flex min-h-[5rem] flex-col items-center justify-center text-center">
           <div className="text-sm font-medium text-muted-foreground">Empty</div>
           <div className="text-xs text-muted-foreground">Tap to fill</div>
         </div>
