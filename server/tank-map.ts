@@ -72,9 +72,10 @@ export function registerTankMapRoutes(
         db.select().from(vessels).orderBy(asc(vessels.displayOrder), asc(vessels.name)),
         db.select({ id: flavors.id, name: flavors.name, isActive: flavors.isActive }).from(flavors).orderBy(asc(flavors.displayOrder), asc(flavors.name)),
         db.select().from(vesselFills).where(isNull(vesselFills.emptiedAt)).orderBy(asc(vesselFills.filledAt)),
+        // Enough history for the Recent list and for "what went in last time" in each vessel.
         db.select().from(vesselFills)
           .orderBy(desc(sql`greatest(${vesselFills.filledAt}, coalesce(${vesselFills.emptiedAt}, ${vesselFills.filledAt}))`))
-          .limit(40),
+          .limit(120),
       ]);
       const fromIds = Array.from(new Set([...openFills, ...recentFills].map((f) => f.fromFillId).filter((x): x is string => !!x)));
       const sources = fromIds.length

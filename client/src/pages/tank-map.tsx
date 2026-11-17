@@ -357,10 +357,12 @@ function FlavorSelect({ value, onChange, flavors }: { value: string; onChange: (
   );
 }
 
-function FillForm({ vessel, flavors, initial, pending, onSubmit, onCancel }: {
+function FillForm({ vessel, flavors, initial, lastGal, pending, onSubmit, onCancel }: {
   vessel: TankMapVessel;
   flavors: TankMapData["flavors"];
   initial: TankMapFill | null;
+  /** What went into this vessel last time: offered for the next batch, before its full size. */
+  lastGal?: number | null;
   pending: boolean;
   onSubmit: (body: Record<string, unknown>) => void;
   onCancel?: () => void;
@@ -370,7 +372,7 @@ function FillForm({ vessel, flavors, initial, pending, onSubmit, onCancel }: {
   const [date, setDate] = useState(initial ? inputDate(initial.filledAt) : todayInput());
   const [brewed, setBrewed] = useState(initial ? inputDate(initial.brewedAt) : "");
   const [amount, setAmount] = useState(
-    initial ? String(isFridge ? initial.kegs ?? "" : initial.volumeGal ?? "") : isFridge ? "1" : String(vessel.capacityGal ?? ""),
+    initial ? String(isFridge ? initial.kegs ?? "" : initial.volumeGal ?? "") : isFridge ? "1" : String(lastGal ?? vessel.capacityGal ?? ""),
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const n = Number(amount);
@@ -398,6 +400,9 @@ function FillForm({ vessel, flavors, initial, pending, onSubmit, onCancel }: {
         <div className="space-y-1">
           <Label htmlFor="fill-amount">{isFridge ? "Half-barrel kegs" : "Gallons"}</Label>
           <Input id="fill-amount" type="number" inputMode="decimal" step={isFridge ? "1" : "any"} min="0" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-amount" />
+          {!initial && !isFridge && lastGal && (
+            <p className="text-xs text-muted-foreground" data-testid="text-last-fill">Last time {gal(lastGal)}{vessel.capacityGal ? `; holds ${gal(vessel.capacityGal)}` : ""}.</p>
+          )}
         </div>
         <div className="space-y-1">
           <Label htmlFor="fill-date">{vessel.kind === "fermenter" ? "Brewed" : "Went in"}</Label>
@@ -671,6 +676,12 @@ function VesselDialog({ vessel, data, onClose }: { vessel: TankMapVessel | null;
   const tankFill = isFridge ? null : vessel.fills[0] ?? null;
   const pending = act.isPending;
   const start = (m: Mode, f: TankMapFill | null) => { setMode(m); setTarget(f); setConfirmRemove(null); };
+  // What went into this vessel last time is the best guess for the next batch. A part split
+  // off a fill is recorded against the same vessel and is not a batch, and a figure above
+  // the vessel's size (its size was corrected since) is not offered.
+  const batches = data.recent.filter((f) => f.vesselId === vessel.id && f.volumeGalIn !== null && !(f.fromFillId && f.fromVesselName === f.vesselName));
+  const lastBatch = batches.sort((a, b) => b.filledAt.localeCompare(a.filledAt))[0]?.volumeGalIn ?? null;
+  const lastGal = lastBatch !== null && (!vessel.capacityGal || lastBatch <= vessel.capacityGal) ? lastBatch : null;
 
   const fillActions = (f: TankMapFill) => (
     <div className="flex flex-wrap gap-2">
@@ -717,7 +728,7 @@ function VesselDialog({ vessel, data, onClose }: { vessel: TankMapVessel | null;
 
         {/* A tank: one thing at a time. */}
         {!isFridge && !tankFill && mode !== "fill" && (
-          <FillForm vessel={vessel} flavors={data.flavors} initial={null} pending={pending}
+          <FillForm vessel={vessel} flavors={data.flavors} initial={null} lastGal={lastGal} pending={pending}
             onSubmit={(body) => act.mutate({ method: "POST", url: `/api/tank-map/vessels/${vessel.id}/fills`, body, done: `${vessel.name} filled` })} />
         )}
         {!isFridge && tankFill && mode === "view" && (
