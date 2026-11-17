@@ -26,12 +26,16 @@ import {
   CHANNELS,
   GALLONS_PER_CASE,
   GALLONS_PER_KEG,
+  INGREDIENT_BUCKETS,
+  ingredientBucket,
   normalizeInputs,
   projectionInputsSchema,
   type CatalogPrices,
   type Channel,
   type ChannelActuals,
   type FlavorCost,
+  type IngredientBucket,
+  type IngredientParts,
   type PackagingMaterial,
   type ProjectionActuals,
   type ProjectionBasis,
@@ -95,6 +99,10 @@ type FlavorRecipeCosts = {
   name: string;
   /** Per gallon, with the materials' waste rates. */
   brew: number | null;
+  /** The same gallon as tea, sugar and the rest, by the materials' names. */
+  brewParts: IngredientParts | null;
+  /** The Brew recipe's materials, to say what counts as which. */
+  brewMaterials: { id: string; title: string }[];
   /** Per case, before any waste. */
   can: number | null;
   /** Per case with the materials' waste rates on, to say what those rates come to. */
@@ -128,6 +136,9 @@ async function recipeCosts(): Promise<{ flavors: Map<string, FlavorRecipeCosts>;
     cost: number;
     /** Before any waste. */
     baseCost: number;
+    /** The cost, with waste, as tea, sugar and the rest; what a Brew recipe reports. */
+    parts: IngredientParts;
+    ingredients: { id: string; title: string }[];
     materials: PackagingMaterial[];
     liquidLinesSkipped: number;
   };
@@ -135,7 +146,7 @@ async function recipeCosts(): Promise<{ flavors: Map<string, FlavorRecipeCosts>;
   for (const l of lines) {
     const r = recipes.get(l.process_id) ?? {
       title: l.title, unit: l.unit, flavorId: l.flavor_id, flavor: l.flavor, container: l.container, createdAt: l.created_at,
-      cost: 0, baseCost: 0, materials: [], liquidLinesSkipped: 0,
+      cost: 0, baseCost: 0, parts: { tea: 0, sugar: 0, other: 0 }, ingredients: [], materials: [], liquidLinesSkipped: 0,
     };
     const isCanRecipe = /^can\b/i.test(r.title) || r.container === "can-case";
     // A Can recipe's packaging is cans, ends, boxes and stickers; kombucha is priced by the Brew recipe, so a liquid line here would count it twice.
@@ -143,6 +154,8 @@ async function recipeCosts(): Promise<{ flavors: Map<string, FlavorRecipeCosts>;
     else {
       r.cost += Number(l.line_cost) || 0;
       r.baseCost += Number(l.base_cost) || 0;
+      r.parts[ingredientBucket(l.material)] += Number(l.line_cost) || 0;
+      r.ingredients.push({ id: l.material_id, title: l.material });
       r.materials.push({ id: l.material_id, title: l.material, wasteRate: Number(l.waste_rate) || 0 });
     }
     recipes.set(l.process_id, r);
@@ -153,7 +166,7 @@ async function recipeCosts(): Promise<{ flavors: Map<string, FlavorRecipeCosts>;
   const flavors = new Map<string, FlavorEntry>();
   const newest = (a: string | undefined, b: string) => !a || b > a;
   for (const r of Array.from(recipes.values())) {
-    const entry: FlavorEntry = flavors.get(r.flavorId) ?? { name: r.flavor, brew: null, can: null, canWithMaterialsWaste: null, canMaterials: [] };
+    const entry: FlavorEntry = flavors.get(r.flavorId) ?? { name: r.flavor, brew: null, brewParts: null, brewMaterials: [], can: null, canWithMaterialsWaste: null, canMaterials: [] };
     const isBrew = /^brew\b/i.test(r.title) || isGallons(r.unit);
     const isCan = /^can\b/i.test(r.title) || r.container === "can-case";
     if (isBrew) {
@@ -161,6 +174,8 @@ async function recipeCosts(): Promise<{ flavors: Map<string, FlavorRecipeCosts>;
         notes.push(`${r.title} is priced per ${r.unit}, not per gallon, so it isn't used.`);
       } else if (newest(entry.brewAt, r.createdAt)) {
         entry.brew = r.cost;
+        entry.brewParts = r.parts;
+        entry.brewMaterials = r.ingredients;
         entry.brewAt = r.createdAt;
       }
     } else if (isCan) {
@@ -232,6 +247,25 @@ export async function buildBasis(since: Date): Promise<ProjectionBasis> {
     .sort((a, b) => b.salesWeight - a.salesWeight || a.name.localeCompare(b.name));
 
   const brewItems = list.filter((f) => f.ingredientPerGallon !== null).map((f) => ({ value: f.ingredientPerGallon as number, weight: gallons.get(f.flavorId) ?? 0 }));
+  // The same flavors and weights, one part of the gallon at a time, so the parts sum to the whole.
+  const partItems = (b: IngredientBucket) => list
+    .filter((f) => f.ingredientPerGallon !== null)
+    .map((f) => ({ value: flavors.get(f.flavorId)?.brewParts?.[b] ?? 0, weight: gallons.get(f.flavorId) ?? 0 }));
+  const ingredientPartsPerGallon = {
+    sales: Object.fromEntries(INGREDIENT_BUCKETS.map((b) => [b, weighted(partItems(b))])) as IngredientParts,
+    even: Object.fromEntries(INGREDIENT_BUCKETS.map((b) => [b, mean(partItems(b).map((i) => i.value))])) as IngredientParts,
+  };
+  const ingredientMaterials = Object.fromEntries(INGREDIENT_BUCKETS.map((b) => [b, [] as string[]])) as Record<IngredientBucket, string[]>;
+  const seenMaterials = new Set<string>();
+  for (const f of Array.from(flavors.values())) {
+    if (f.brew === null) continue;
+    for (const m of f.brewMaterials) {
+      if (seenMaterials.has(m.id)) continue;
+      seenMaterials.add(m.id);
+      ingredientMaterials[ingredientBucket(m.title)].push(m.title);
+    }
+  }
+  for (const b of INGREDIENT_BUCKETS) ingredientMaterials[b].sort();
   const canItems = list.filter((f) => f.packagingPerCase !== null).map((f) => ({ value: f.packagingPerCase as number, weight: gallons.get(f.flavorId) ?? 0 }));
   // The same cases with the materials' waste rates on, to say what those rates come to.
   const canWasteItems = Array.from(flavors.entries())
@@ -253,6 +287,8 @@ export async function buildBasis(since: Date): Promise<ProjectionBasis> {
   return {
     flavors: list,
     ingredientPerGallon: { sales: weighted(brewItems), even: mean(brewItems.map((i) => i.value)) },
+    ingredientPartsPerGallon,
+    ingredientMaterials,
     packagingPerCase,
     packagingWasteInMaterials: {
       sales: over(weighted(canWasteItems), packagingPerCase.sales),

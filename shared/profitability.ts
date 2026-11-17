@@ -46,6 +46,31 @@ export const LABOR_LABELS: Record<LaborBucket, string> = {
 };
 
 /**
+ * The cost of goods by component (owner, 2026-11-17: "break out COG into components -
+ * tea, sugar, co2, packaging"). A Brew recipe line is tea, sugar or the rest of the
+ * recipe (spices, fruit, hops), read off the material's name as Materials spells it:
+ * "Ingredients:Tea - Earl Grey Rose", "Ingredients:Other - Sugar", "Ingredients:Spices -
+ * Ginger Root". CO2 and packaging are priced on their own already.
+ */
+export const INGREDIENT_BUCKETS = ["tea", "sugar", "other"] as const;
+export type IngredientBucket = (typeof INGREDIENT_BUCKETS)[number];
+export const INGREDIENT_BUCKET_LABELS: Record<IngredientBucket, string> = {
+  tea: "Tea",
+  sugar: "Sugar",
+  other: "Spices & other ingredients",
+};
+export type IngredientParts = Record<IngredientBucket, number>;
+export function ingredientBucket(materialTitle: string): IngredientBucket {
+  const t = materialTitle.toLowerCase();
+  if (/sugar|sucrose|dextrose/.test(t)) return "sugar";
+  if (/\btea\b|rooibos|oolong|matcha|pu-?erh/.test(t)) return "tea";
+  return "other";
+}
+export const COGS_PARTS = ["tea", "sugar", "other", "co2", "packaging"] as const;
+export type CogsPart = (typeof COGS_PARTS)[number];
+export const COGS_PART_LABELS: Record<CogsPart, string> = { ...INGREDIENT_BUCKET_LABELS, co2: "CO2", packaging: "Packaging" };
+
+/**
  * What the employer pays on top of wages, item by item (owner, 2026-11-15: "be more
  * explicit about the extra payroll costs ... I can feed our individual WA ESD and LNI
  * rates. Employer payroll taxes, health insurance subsidy").
@@ -178,6 +203,10 @@ export type ProjectionBasis = {
   flavors: FlavorCost[];
   /** Weighted over the flavors, for each mix the inputs can choose. */
   ingredientPerGallon: { sales: number; even: number };
+  /** The same gallon as tea, sugar and the rest, for each mix; the three sum to ingredientPerGallon. */
+  ingredientPartsPerGallon: { sales: IngredientParts; even: IngredientParts };
+  /** The Brew materials behind each part, by name, so the split can be checked. */
+  ingredientMaterials: Record<IngredientBucket, string[]>;
   /** A case's packaging before any waste. */
   packagingPerCase: { sales: number; even: number };
   /**
@@ -230,6 +259,8 @@ export type ChannelProjection = {
 export type Projection = {
   unitCosts: {
     ingredientPerGallon: number;
+    /** The gallon's ingredients as tea, sugar and the rest; they sum to ingredientPerGallon. */
+    ingredientParts: IngredientParts;
     packagingPerCase: number;
     liquidGallonsPerCase: number;
     liquidGallonsPerKeg: number;
@@ -250,6 +281,8 @@ export type Projection = {
   volume: { cases: number; kegs: number; gallonsPackaged: number; gallonsBrewed: number };
   revenue: number;
   cogs: number;
+  /** The cost of goods by component; the five sum to cogs. */
+  cogsParts: Record<CogsPart, number>;
   grossMargin: number;
   fees: number;
   exciseTax: number;
@@ -316,6 +349,7 @@ const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
 /** One projected week from the inputs and the recipe-derived basis. */
 export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): Projection {
   const ingredientPerGallon = basis.ingredientPerGallon[inputs.flavorMix];
+  const ingredientParts = basis.ingredientPartsPerGallon[inputs.flavorMix];
   // The basis prices packaging before any waste; this is the only waste added to it.
   const packagingPerCase = basis.packagingPerCase[inputs.flavorMix] * (1 + inputs.packagingWastePercent / 100);
   const liquidFactor = 1 + inputs.liquidWastePercent / 100;
@@ -370,6 +404,18 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
   const freeGallons = inputs.freeCasesPerWeek * GALLONS_PER_CASE;
   const gallonsPackaged = soldGallons + freeGallons;
   const volume = { cases, kegs, gallonsPackaged, gallonsBrewed: gallonsPackaged * liquidFactor };
+
+  // The cost of goods by component (owner, 2026-11-17): the kombucha brewed for what sold,
+  // split the way the recipes split a gallon, then CO2 and packaging on the packages. Free
+  // cases are overhead, not here. The five sum to cogs.
+  const soldLiquidGallons = soldCases * liquidGallonsPerCase + kegs * liquidGallonsPerKeg;
+  const cogsParts: Record<CogsPart, number> = {
+    tea: ingredientParts.tea * soldLiquidGallons,
+    sugar: ingredientParts.sugar * soldLiquidGallons,
+    other: ingredientParts.other * soldLiquidGallons,
+    co2: soldCases * caseCo2 + kegs * kegCo2,
+    packaging: soldCases * packagingPerCase,
+  };
 
   const buckets = Object.fromEntries(
     LABOR_BUCKETS.map((b) => [b, inputs.labor[b].hoursPerWeek * inputs.labor[b].ratePerHour]),
@@ -438,11 +484,12 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
       ) as Record<Channel, { cases: number; kegs: number }>);
 
   return {
-    unitCosts: { ingredientPerGallon, packagingPerCase, liquidGallonsPerCase, liquidGallonsPerKeg, caseIngredient, kegIngredient, co2LbPerGallon, caseCo2, kegCo2, caseCost, kegCost },
+    unitCosts: { ingredientPerGallon, ingredientParts, packagingPerCase, liquidGallonsPerCase, liquidGallonsPerKeg, caseIngredient, kegIngredient, co2LbPerGallon, caseCo2, kegCo2, caseCost, kegCost },
     channels,
     volume,
     revenue,
     cogs,
+    cogsParts,
     grossMargin: revenue - cogs,
     fees,
     exciseTax,

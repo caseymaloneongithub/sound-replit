@@ -16,6 +16,8 @@ import {
   CHANNELS,
   CHANNEL_LABELS,
   CO2_LB_PER_GALLON_PER_VOLUME,
+  COGS_PARTS,
+  COGS_PART_LABELS,
   ESD_PERCENT_START,
   GALLONS_PER_CASE,
   GALLONS_PER_KEG,
@@ -31,6 +33,7 @@ import {
   type CatalogPrices,
   type Channel,
   type ChannelInputs,
+  type CogsPart,
   type LaborBucket,
   type PayrollInputs,
   type PayrollItem,
@@ -284,6 +287,8 @@ export default function AdminProfitability() {
 
   const { basis, actuals, catalog } = basisData;
   const u = projection.unitCosts;
+  /** The Brew materials a cost-of-goods line is made of, for its tooltip; CO2 and packaging have none here. */
+  const materialsIn = (p: CogsPart) => (p === "tea" || p === "sugar" || p === "other" ? basis.ingredientMaterials[p].join(", ") || undefined : undefined);
   // The multiple shows in the yearly figures (owner, 2026-11-16: "a flat one time hit so I can just look at multiples of current").
   const multiple = inputs.salesMultiple;
   const scaled = multiple !== 1;
@@ -680,6 +685,41 @@ export default function AdminProfitability() {
                     <dd className={`tabular-nums ${projection.operatingProfit < 0 ? "text-destructive" : "text-green-700 dark:text-green-400"}`}>{money0(projection.operatingProfit)}</dd>
                   </div>
                 </dl>
+              </CardContent>
+            </Card>
+
+            {/* The cost of goods by component (owner, 2026-11-17: "break out COG into components - tea, sugar, co2, packaging"). */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Cost of goods by component</CardTitle>
+                <CardDescription>
+                  This week's {money0(projection.cogs)}. Tea, sugar and the rest are read off the Brew recipes by their materials' names;
+                  CO2 and packaging are priced above. Hover a line for the materials in it.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <dl className="space-y-1 text-sm" data-testid="cogs-parts">
+                  {COGS_PARTS.map((p) => (
+                    <div key={p} className="flex justify-between gap-3" title={materialsIn(p)}>
+                      <dt className="text-muted-foreground">{COGS_PART_LABELS[p]}</dt>
+                      <dd className="tabular-nums" data-testid={`text-cogs-${p}`}>
+                        {money0(projection.cogsParts[p])}
+                        <span className="ml-2 inline-block w-10 text-right text-muted-foreground">{projection.cogs > 0 ? pct(projection.cogsParts[p] / projection.cogs, 0) : "—"}</span>
+                      </dd>
+                    </div>
+                  ))}
+                  <Separator className="my-2" />
+                  <div className="flex justify-between font-semibold">
+                    <dt>Cost of goods</dt>
+                    <dd className="tabular-nums">
+                      {money0(projection.cogs)}
+                      <span className="ml-2 inline-block w-10 text-right font-normal text-muted-foreground">{projection.cogs > 0 ? "100%" : ""}</span>
+                    </dd>
+                  </div>
+                </dl>
+                <p className="mt-3 text-xs text-muted-foreground" data-testid="text-ingredient-parts">
+                  A gallon of kombucha is {money2(u.ingredientParts.tea)} of tea, {money2(u.ingredientParts.sugar)} of sugar and {money2(u.ingredientParts.other)} of spices and other ingredients.
+                </p>
               </CardContent>
             </Card>
 
