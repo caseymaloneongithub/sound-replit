@@ -241,6 +241,22 @@ export type CatalogPrices = {
   kegPrice: Record<Channel, number | null>;
 };
 
+/**
+ * One unit's economics in a channel: margin is the price less cost of goods, fees, B&O and
+ * insurance; afterLabor takes off the labor the unit carries (owner, 2026-11-17: "distribute
+ * brewing and draining labor by volume. Distribute all delivery labor to wholesale by unit
+ * (keg or case). Distribute packaging labor to cans by case").
+ */
+export type UnitMargin = {
+  price: number;
+  cost: number;
+  margin: number;
+  marginPercent: number;
+  labor: number;
+  afterLabor: number;
+  afterLaborPercent: number;
+};
+
 export type ChannelProjection = {
   channel: Channel;
   cases: number;
@@ -252,8 +268,10 @@ export type ChannelProjection = {
   insurance: number;
   /** Revenue less cost of goods, fees, B&O and insurance: what each week's sales leave to cover everything else. */
   contribution: number;
-  perCase: { price: number; cost: number; margin: number; marginPercent: number };
-  perKeg: { price: number; cost: number; margin: number; marginPercent: number };
+  /** The labor the channel's units carry this week (Projection.labor.byUnit says how). */
+  labor: number;
+  perCase: UnitMargin;
+  perKeg: UnitMargin;
 };
 
 export type Projection = {
@@ -297,6 +315,21 @@ export type Projection = {
     payroll: Record<PayrollItem, number> & { total: number };
     /** Each bucket's wages. */
     buckets: Record<LaborBucket, number>;
+    /**
+     * Labor as the units carry it (owner, 2026-11-17): brewing & draining by volume over every
+     * gallon packaged, packaging over every case, deliveries over wholesale cases and kegs,
+     * each bucket with its share of payroll taxes and benefits (burdenRate). Maintenance is
+     * on no unit; the free cases' share of brewing and packaging is onFreeProduct.
+     */
+    byUnit: {
+      brewingPerGallon: number;
+      packagingPerCase: number;
+      deliveryPerWholesaleUnit: number;
+      burdenRate: number;
+      onSoldUnits: number;
+      onFreeProduct: number;
+      maintenance: number;
+    };
   };
   overhead: {
     rent: number;
@@ -364,58 +397,13 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
   const caseCost = caseIngredient + packagingPerCase + caseCo2;
   const kegCost = kegIngredient + kegCo2;
 
-  const channels: ChannelProjection[] = CHANNELS.map((channel) => {
-    const c = inputs.channels[channel];
-    const revenue = c.casesPerWeek * c.casePrice + c.kegsPerWeek * c.kegPrice;
-    const cogs = c.casesPerWeek * caseCost + c.kegsPerWeek * kegCost;
-    const fees = revenue * (c.feePercent / 100);
-    const exciseTax = revenue * (inputs.exciseTaxPercent / 100);
-    const insurance = revenue * (inputs.insurancePercent / 100);
-    const variableRate = c.feePercent / 100 + inputs.exciseTaxPercent / 100 + inputs.insurancePercent / 100;
-    const caseMargin = c.casePrice * (1 - variableRate) - caseCost;
-    const kegMargin = c.kegPrice * (1 - variableRate) - kegCost;
-    return {
-      channel,
-      cases: c.casesPerWeek,
-      kegs: c.kegsPerWeek,
-      revenue,
-      cogs,
-      fees,
-      exciseTax,
-      insurance,
-      contribution: revenue - cogs - fees - exciseTax - insurance,
-      perCase: { price: c.casePrice, cost: caseCost, margin: caseMargin, marginPercent: safeDiv(caseMargin, c.casePrice) },
-      perKeg: { price: c.kegPrice, cost: kegCost, margin: kegMargin, marginPercent: safeDiv(kegMargin, c.kegPrice) },
-    };
-  });
-
-  const sum = (pick: (c: ChannelProjection) => number) => channels.reduce((s, c) => s + pick(c), 0);
-  const revenue = sum((c) => c.revenue);
-  const cogs = sum((c) => c.cogs);
-  const fees = sum((c) => c.fees);
-  const exciseTax = sum((c) => c.exciseTax);
-  const insurance = sum((c) => c.insurance);
-  const contribution = sum((c) => c.contribution);
-
-  const soldCases = sum((c) => c.cases);
+  // What the week packages, from the sales entered: the units labor is spread over.
+  const soldCases = CHANNELS.reduce((s, ch) => s + inputs.channels[ch].casesPerWeek, 0);
+  const kegs = CHANNELS.reduce((s, ch) => s + inputs.channels[ch].kegsPerWeek, 0);
   const cases = soldCases + inputs.freeCasesPerWeek;
-  const kegs = sum((c) => c.kegs);
   const soldGallons = soldCases * GALLONS_PER_CASE + kegs * GALLONS_PER_KEG;
   const freeGallons = inputs.freeCasesPerWeek * GALLONS_PER_CASE;
   const gallonsPackaged = soldGallons + freeGallons;
-  const volume = { cases, kegs, gallonsPackaged, gallonsBrewed: gallonsPackaged * liquidFactor };
-
-  // The cost of goods by component (owner, 2026-11-17): the kombucha brewed for what sold,
-  // split the way the recipes split a gallon, then CO2 and packaging on the packages. Free
-  // cases are overhead, not here. The five sum to cogs.
-  const soldLiquidGallons = soldCases * liquidGallonsPerCase + kegs * liquidGallonsPerKeg;
-  const cogsParts: Record<CogsPart, number> = {
-    tea: ingredientParts.tea * soldLiquidGallons,
-    sugar: ingredientParts.sugar * soldLiquidGallons,
-    other: ingredientParts.other * soldLiquidGallons,
-    co2: soldCases * caseCo2 + kegs * kegCo2,
-    packaging: soldCases * packagingPerCase,
-  };
 
   const buckets = Object.fromEntries(
     LABOR_BUCKETS.map((b) => [b, inputs.labor[b].hoursPerWeek * inputs.labor[b].ratePerHour]),
@@ -435,6 +423,76 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
   };
   payroll.total = PAYROLL_ITEMS.reduce((s, k) => s + payroll[k], 0);
   const laborTotal = wages + payroll.total;
+
+  // Labor by unit (owner, 2026-11-17): "distribute brewing and draining labor by volume.
+  // Distribute all delivery labor to wholesale by unit (keg or case). Distribute packaging
+  // labor to cans by case." Each bucket carries its share of payroll taxes and benefits.
+  // Brewing is spread over every gallon packaged and packaging over every case, free
+  // product included, so a unit carries what it takes to make and the free cases' share
+  // stays with them; maintenance is on no unit. With nothing to carry it (no gallons, no
+  // cases, no wholesale units) a bucket's labor stays whole in the week's total.
+  const burdenRate = safeDiv(payroll.total, wages);
+  const loaded = (b: LaborBucket) => buckets[b] * (1 + burdenRate);
+  const wholesaleUnits = inputs.channels.wholesale.casesPerWeek + inputs.channels.wholesale.kegsPerWeek;
+  const brewingPerGallon = safeDiv(loaded("brewing"), gallonsPackaged);
+  const packagingLaborPerCase = safeDiv(loaded("packaging"), cases);
+  const deliveryPerWholesaleUnit = safeDiv(loaded("deliveries"), wholesaleUnits);
+  const caseLabor = (ch: Channel) => GALLONS_PER_CASE * brewingPerGallon + packagingLaborPerCase + (ch === "wholesale" ? deliveryPerWholesaleUnit : 0);
+  const kegLabor = (ch: Channel) => GALLONS_PER_KEG * brewingPerGallon + (ch === "wholesale" ? deliveryPerWholesaleUnit : 0);
+
+  const channels: ChannelProjection[] = CHANNELS.map((channel) => {
+    const c = inputs.channels[channel];
+    const revenue = c.casesPerWeek * c.casePrice + c.kegsPerWeek * c.kegPrice;
+    const cogs = c.casesPerWeek * caseCost + c.kegsPerWeek * kegCost;
+    const fees = revenue * (c.feePercent / 100);
+    const exciseTax = revenue * (inputs.exciseTaxPercent / 100);
+    const insurance = revenue * (inputs.insurancePercent / 100);
+    const variableRate = c.feePercent / 100 + inputs.exciseTaxPercent / 100 + inputs.insurancePercent / 100;
+    const caseMargin = c.casePrice * (1 - variableRate) - caseCost;
+    const kegMargin = c.kegPrice * (1 - variableRate) - kegCost;
+    const unitCaseLabor = caseLabor(channel);
+    const unitKegLabor = kegLabor(channel);
+    const unit = (price: number, cost: number, margin: number, labor: number): UnitMargin => ({
+      price, cost, margin, marginPercent: safeDiv(margin, price), labor, afterLabor: margin - labor, afterLaborPercent: safeDiv(margin - labor, price),
+    });
+    return {
+      channel,
+      cases: c.casesPerWeek,
+      kegs: c.kegsPerWeek,
+      revenue,
+      cogs,
+      fees,
+      exciseTax,
+      insurance,
+      contribution: revenue - cogs - fees - exciseTax - insurance,
+      labor: c.casesPerWeek * unitCaseLabor + c.kegsPerWeek * unitKegLabor,
+      perCase: unit(c.casePrice, caseCost, caseMargin, unitCaseLabor),
+      perKeg: unit(c.kegPrice, kegCost, kegMargin, unitKegLabor),
+    };
+  });
+
+  const sum = (pick: (c: ChannelProjection) => number) => channels.reduce((s, c) => s + pick(c), 0);
+  const revenue = sum((c) => c.revenue);
+  const cogs = sum((c) => c.cogs);
+  const fees = sum((c) => c.fees);
+  const exciseTax = sum((c) => c.exciseTax);
+  const insurance = sum((c) => c.insurance);
+  const contribution = sum((c) => c.contribution);
+  const laborOnSoldUnits = sum((c) => c.labor);
+  const laborOnFreeProduct = inputs.freeCasesPerWeek * (GALLONS_PER_CASE * brewingPerGallon + packagingLaborPerCase);
+  const volume = { cases, kegs, gallonsPackaged, gallonsBrewed: gallonsPackaged * liquidFactor };
+
+  // The cost of goods by component (owner, 2026-11-17): the kombucha brewed for what sold,
+  // split the way the recipes split a gallon, then CO2 and packaging on the packages. Free
+  // cases are overhead, not here. The five sum to cogs.
+  const soldLiquidGallons = soldCases * liquidGallonsPerCase + kegs * liquidGallonsPerKeg;
+  const cogsParts: Record<CogsPart, number> = {
+    tea: ingredientParts.tea * soldLiquidGallons,
+    sugar: ingredientParts.sugar * soldLiquidGallons,
+    other: ingredientParts.other * soldLiquidGallons,
+    co2: soldCases * caseCo2 + kegs * kegCo2,
+    packaging: soldCases * packagingPerCase,
+  };
 
   const overhead = {
     rent: (inputs.rentPerMonth * 12) / WEEKS_PER_YEAR,
@@ -495,7 +553,22 @@ export function projectWeek(inputs: ProjectionInputs, basis: ProjectionBasis): P
     exciseTax,
     insurance,
     contribution,
-    labor: { total: laborTotal, wages, hours, payroll, buckets },
+    labor: {
+      total: laborTotal,
+      wages,
+      hours,
+      payroll,
+      buckets,
+      byUnit: {
+        brewingPerGallon,
+        packagingPerCase: packagingLaborPerCase,
+        deliveryPerWholesaleUnit,
+        burdenRate,
+        onSoldUnits: laborOnSoldUnits,
+        onFreeProduct: laborOnFreeProduct,
+        maintenance: loaded("maintenance"),
+      },
+    },
     overhead,
     weeklyFixedCosts,
     operatingCosts,

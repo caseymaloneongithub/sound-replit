@@ -35,6 +35,7 @@ import {
   type ChannelInputs,
   type CogsPart,
   type LaborBucket,
+  type UnitMargin,
   type PayrollInputs,
   type PayrollItem,
   type ProjectionActuals,
@@ -607,49 +608,58 @@ export default function AdminProfitability() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Margin by channel</CardTitle>
-                <CardDescription>Per unit, after cost of goods, fees, B&O and insurance.</CardDescription>
+                <CardDescription>
+                  Per unit, after cost of goods, fees, B&O, insurance and the labor it takes: brewing & draining spread by volume,
+                  packaging per case, deliveries on wholesale cases and kegs, payroll costs on top. Maintenance stays overhead.
+                </CardDescription>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Unit</TableHead>
-                      <TableHead className="text-right">Price</TableHead>
-                      <TableHead className="text-right">Margin</TableHead>
-                      <TableHead className="text-right">Weekly</TableHead>
+                      <TableHead className="px-2">Unit</TableHead>
+                      <TableHead className="px-2 text-right">Price</TableHead>
+                      <TableHead className="px-2 text-right">Labor</TableHead>
+                      <TableHead className="px-2 text-right">Margin</TableHead>
+                      <TableHead className="px-2 text-right">Weekly</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {projection.channels.flatMap((c) => {
+                      // Margin is after the unit's labor (owner, 2026-11-17); the figure before it sits in the tooltip.
+                      const unitRow = (kind: "case" | "keg", m: UnitMargin, units: number) => (
+                        <TableRow key={`${c.channel}-${kind}`} data-testid={`row-margin-${c.channel}-${kind}`}>
+                          <TableCell className="px-2 text-sm">{CHANNEL_LABELS[c.channel]} {kind}</TableCell>
+                          <TableCell className="px-2 text-right tabular-nums text-sm">{money2(m.price)}</TableCell>
+                          <TableCell className="px-2 text-right tabular-nums text-sm text-muted-foreground">{money2(m.labor)}</TableCell>
+                          <TableCell className={`px-2 text-right tabular-nums text-sm ${m.afterLabor < 0 ? "text-destructive" : ""}`} title={`${money2(m.margin)} (${pct(m.marginPercent, 0)}) before labor`}>
+                            {money2(m.afterLabor)}
+                            <div className="text-xs text-muted-foreground">{pct(m.afterLaborPercent, 0)}</div>
+                          </TableCell>
+                          <TableCell className="px-2 text-right tabular-nums text-sm">{money0(units * m.afterLabor)}</TableCell>
+                        </TableRow>
+                      );
                       const rows = [] as React.ReactNode[];
-                      if (c.cases > 0 || c.perCase.price > 0) {
-                        rows.push(
-                          <TableRow key={`${c.channel}-case`} data-testid={`row-margin-${c.channel}-case`}>
-                            <TableCell className="text-sm">{CHANNEL_LABELS[c.channel]} case</TableCell>
-                            <TableCell className="text-right tabular-nums text-sm">{money2(c.perCase.price)}</TableCell>
-                            <TableCell className={`text-right tabular-nums text-sm ${c.perCase.margin < 0 ? "text-destructive" : ""}`}>{money2(c.perCase.margin)} <span className="text-muted-foreground">({pct(c.perCase.marginPercent, 0)})</span></TableCell>
-                            <TableCell className="text-right tabular-nums text-sm">{money0(c.cases * c.perCase.margin)}</TableCell>
-                          </TableRow>,
-                        );
-                      }
-                      if (c.kegs > 0 || c.perKeg.price > 0) {
-                        rows.push(
-                          <TableRow key={`${c.channel}-keg`} data-testid={`row-margin-${c.channel}-keg`}>
-                            <TableCell className="text-sm">{CHANNEL_LABELS[c.channel]} keg</TableCell>
-                            <TableCell className="text-right tabular-nums text-sm">{money2(c.perKeg.price)}</TableCell>
-                            <TableCell className={`text-right tabular-nums text-sm ${c.perKeg.margin < 0 ? "text-destructive" : ""}`}>{money2(c.perKeg.margin)} <span className="text-muted-foreground">({pct(c.perKeg.marginPercent, 0)})</span></TableCell>
-                            <TableCell className="text-right tabular-nums text-sm">{money0(c.kegs * c.perKeg.margin)}</TableCell>
-                          </TableRow>,
-                        );
-                      }
+                      if (c.cases > 0 || c.perCase.price > 0) rows.push(unitRow("case", c.perCase, c.cases));
+                      if (c.kegs > 0 || c.perKeg.price > 0) rows.push(unitRow("keg", c.perKeg, c.kegs));
                       return rows;
                     })}
                     <TableRow>
-                      <TableCell className="font-medium" colSpan={3}>Left to cover labor and overhead</TableCell>
-                      <TableCell className="text-right tabular-nums font-medium" data-testid="text-contribution">{money0(projection.contribution)}</TableCell>
+                      <TableCell className="px-2 text-sm text-muted-foreground" colSpan={4}>Other labor: maintenance, free product</TableCell>
+                      <TableCell className="px-2 text-right tabular-nums text-sm text-muted-foreground" data-testid="text-other-labor">{money0(-(projection.labor.total - projection.labor.byUnit.onSoldUnits))}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="px-2 font-medium" colSpan={4}>Left to cover overhead</TableCell>
+                      <TableCell className="px-2 text-right tabular-nums font-medium" data-testid="text-after-labor">{money0(projection.contribution - projection.labor.total)}</TableCell>
                     </TableRow>
                   </TableBody>
                 </Table>
+                <p className="px-6 py-3 text-xs text-muted-foreground" data-testid="text-labor-by-unit">
+                  Labor by unit: brewing & draining {money2(projection.labor.byUnit.brewingPerGallon)} a gallon
+                  ({money2(GALLONS_PER_CASE * projection.labor.byUnit.brewingPerGallon)} a case, {money2(GALLONS_PER_KEG * projection.labor.byUnit.brewingPerGallon)} a keg),
+                  packaging {money2(projection.labor.byUnit.packagingPerCase)} a case, deliveries {money2(projection.labor.byUnit.deliveryPerWholesaleUnit)} a wholesale case or keg
+                  {projection.labor.byUnit.burdenRate > 0 ? `, each with ${pct(projection.labor.byUnit.burdenRate, 0)} payroll costs on top` : ""}.
+                </p>
               </CardContent>
             </Card>
 
