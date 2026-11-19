@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { refreshStockViews } from "@/lib/stock-views";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { StaffLayout } from "@/components/staff/staff-layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,7 +54,7 @@ const todayISO = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-function LogProductionForm({ recipes, onClose }: { recipes: Recipe[]; onClose: () => void }) {
+function LogProductionForm({ recipes, showCost, onClose }: { recipes: Recipe[]; showCost: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const [processId, setProcessId] = useState<string>(recipes[0]?.id ?? "");
   const [units, setUnits] = useState("1");
@@ -112,12 +113,14 @@ function LogProductionForm({ recipes, onClose }: { recipes: Recipe[]; onClose: (
             data-testid="input-production-date" />
         </div>
       </div>
-      {recipe && (
+      {recipe && (showCost || recipe.finishedProductName) && (
         <div className="rounded-md bg-muted/50 p-3 text-sm space-y-1">
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Estimated material cost</span>
-            <span className="font-semibold tabular-nums">{money(costPerUnit * n(units))}</span>
-          </div>
+          {showCost && (
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Estimated material cost</span>
+              <span className="font-semibold tabular-nums" data-testid="text-production-cost">{money(costPerUnit * n(units))}</span>
+            </div>
+          )}
           {recipe.finishedProductName && (
             <div className="flex items-center justify-between text-green-700 dark:text-green-400">
               <span>Adds to finished stock</span>
@@ -161,6 +164,10 @@ function StatCard({ label, value }: {
 
 export default function Productions() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  // Material costs are for admins and up; staff log batches without seeing what they cost
+  // (owner, 2026-11-18). Hidden on this page only: the Materials and Recipes pages are unchanged.
+  const showCost = user?.role === "admin" || user?.role === "super_admin";
   const [logOpen, setLogOpen] = useState(false);
 
   const { data: productions = [], isLoading } = useQuery<Production[]>({
@@ -242,14 +249,14 @@ export default function Productions() {
                   <TableHead>Date</TableHead>
                   <TableHead>Recipe</TableHead>
                   <TableHead className="text-right">Units</TableHead>
-                  <TableHead className="text-right">Est. material cost</TableHead>
+                  {showCost && <TableHead className="text-right">Est. material cost</TableHead>}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {productions.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={showCost ? 5 : 4} className="text-center text-muted-foreground py-10">
                       No productions logged yet.
                     </TableCell>
                   </TableRow>
@@ -268,9 +275,11 @@ export default function Productions() {
                       <TableCell className="text-right tabular-nums">
                         {n(p.units).toLocaleString()}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {cpu > 0 ? money(cpu * n(p.units)) : "—"}
-                      </TableCell>
+                      {showCost && (
+                        <TableCell className="text-right tabular-nums text-muted-foreground" data-testid="text-production-row-cost">
+                          {cpu > 0 ? money(cpu * n(p.units)) : "—"}
+                        </TableCell>
+                      )}
                       <TableCell className="text-right">
                         <Button variant="ghost" size="sm"
                           className="text-destructive hover:text-destructive"
@@ -296,7 +305,7 @@ export default function Productions() {
             <DialogDescription>Record a completed batch. Stock is drawn down via the recipe.</DialogDescription>
           </DialogHeader>
           {/* Only recipes that can be made: switched on, for a flavor that's switched on. */}
-          <LogProductionForm recipes={recipes.filter((r) => r.isActive && !r.flavorRetired)} onClose={() => setLogOpen(false)} />
+          <LogProductionForm recipes={recipes.filter((r) => r.isActive && !r.flavorRetired)} showCost={showCost} onClose={() => setLogOpen(false)} />
         </DialogContent>
       </Dialog>
     </StaffLayout>
