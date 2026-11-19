@@ -2762,6 +2762,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Correct a logged batch; stock follows the correction (owner, 2026-11-18; storage.updateProduction says how).
+  app.patch("/api/productions/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
+    try {
+      const body = { ...req.body };
+      if (typeof body.date === 'string') body.date = new Date(body.date);
+      const data = insertProductionSchema.partial().parse(body);
+      const updated = await storage.updateProduction(req.params.id, data);
+      if (!updated) return res.status(404).json({ message: "Production not found" });
+      res.json(updated);
+      void checkMaterialStockAlerts(); // materials moved either way
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Error updating production: " + error.message });
+    }
+  });
+
   app.delete("/api/productions/:id", isAuthenticated, isStaffOrAdmin, async (req, res) => {
     try {
       await storage.deleteProduction(req.params.id);

@@ -54,12 +54,14 @@ const todayISO = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-function LogProductionForm({ recipes, showCost, onClose }: { recipes: Recipe[]; showCost: boolean; onClose: () => void }) {
+// With `initial`, the form corrects that batch instead of logging a new one; the server
+// moves stock by the difference (owner, 2026-11-18).
+function LogProductionForm({ recipes, showCost, initial, onClose }: { recipes: Recipe[]; showCost: boolean; initial?: Production | null; onClose: () => void }) {
   const { toast } = useToast();
-  const [processId, setProcessId] = useState<string>(recipes[0]?.id ?? "");
-  const [units, setUnits] = useState("1");
-  const [date, setDate] = useState(todayISO());
-  const [notes, setNotes] = useState("");
+  const [processId, setProcessId] = useState<string>(initial?.processId ?? recipes[0]?.id ?? "");
+  const [units, setUnits] = useState(initial ? String(n(initial.units)) : "1");
+  const [date, setDate] = useState(initial ? initial.date.slice(0, 10) : todayISO());
+  const [notes, setNotes] = useState(initial?.notes ?? "");
 
   const recipe = recipes.find((r) => r.id === processId);
   const costPerUnit = recipe
@@ -68,19 +70,21 @@ function LogProductionForm({ recipes, showCost, onClose }: { recipes: Recipe[]; 
 
   const save = useMutation({
     mutationFn: async () =>
-      apiRequest("POST", "/api/productions", {
+      apiRequest(initial ? "PATCH" : "POST", initial ? `/api/productions/${initial.id}` : "/api/productions", {
         processId, units: String(n(units)), date, notes: notes.trim() || null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/productions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/products"] }); // finished stock may have changed
       refreshStockViews(); // raw stock and usage changed: Materials and every dashboard panel
-      toast({
-        title: "Production logged",
-        description: recipe?.finishedProductName
-          ? `Materials drawn down; ${recipe.finishedProductName} stock increased.`
-          : "Material stock has been drawn down.",
-      });
+      toast(initial
+        ? { title: "Production updated", description: "Material and finished stock follow the change." }
+        : {
+          title: "Production logged",
+          description: recipe?.finishedProductName
+            ? `Materials drawn down; ${recipe.finishedProductName} stock increased.`
+            : "Material stock has been drawn down.",
+        });
       onClose();
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -140,7 +144,7 @@ function LogProductionForm({ recipes, showCost, onClose }: { recipes: Recipe[]; 
         <Button onClick={() => save.mutate()} disabled={!processId || n(units) <= 0 || save.isPending}
           data-testid="button-save-production">
           {save.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-          Log production
+          {initial ? "Save changes" : "Log production"}
         </Button>
       </DialogFooter>
     </div>
@@ -169,6 +173,7 @@ export default function Productions() {
   // (owner, 2026-11-18). Hidden on this page only: the Materials and Recipes pages are unchanged.
   const showCost = user?.role === "admin" || user?.role === "super_admin";
   const [logOpen, setLogOpen] = useState(false);
+  const [editing, setEditing] = useState<Production | null>(null);
 
   const { data: productions = [], isLoading } = useQuery<Production[]>({
     queryKey: ["/api/productions"],
@@ -280,7 +285,9 @@ export default function Productions() {
                           {cpu > 0 ? money(cpu * n(p.units)) : "—"}
                         </TableCell>
                       )}
-                      <TableCell className="text-right">
+                      <TableCell className="text-right whitespace-nowrap">
+                        <Button variant="ghost" size="sm" onClick={() => setEditing(p)}
+                          data-testid={`button-edit-production-${p.id}`}>Edit</Button>
                         <Button variant="ghost" size="sm"
                           className="text-destructive hover:text-destructive"
                           onClick={() => {
@@ -298,14 +305,24 @@ export default function Productions() {
         </Card>
       </div>
 
-      <Dialog open={logOpen} onOpenChange={setLogOpen}>
+      <Dialog open={logOpen || editing !== null} onOpenChange={(open) => { if (!open) { setLogOpen(false); setEditing(null); } }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Log production</DialogTitle>
-            <DialogDescription>Record a completed batch. Stock is drawn down via the recipe.</DialogDescription>
+            <DialogTitle>{editing ? "Edit production" : "Log production"}</DialogTitle>
+            <DialogDescription>
+              {editing
+                ? "Correct the batch. Stock moves by the difference: a changed count scales what it used, a changed recipe draws the new one."
+                : "Record a completed batch. Stock is drawn down via the recipe."}
+            </DialogDescription>
           </DialogHeader>
-          {/* Only recipes that can be made: switched on, for a flavor that's switched on. */}
-          <LogProductionForm recipes={recipes.filter((r) => r.isActive && !r.flavorRetired)} showCost={showCost} onClose={() => setLogOpen(false)} />
+          {/* Only recipes that can be made: switched on, for a flavor that's switched on; plus the batch's own when editing. */}
+          <LogProductionForm
+            key={editing?.id ?? "new"}
+            recipes={recipes.filter((r) => (r.isActive && !r.flavorRetired) || r.id === editing?.processId)}
+            showCost={showCost}
+            initial={editing}
+            onClose={() => { setLogOpen(false); setEditing(null); }}
+          />
         </DialogContent>
       </Dialog>
     </StaffLayout>

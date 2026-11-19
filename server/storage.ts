@@ -1170,109 +1170,180 @@ export class PostgresStorage implements IStorage {
     }));
   }
 
-  // Apply (sign = -1 to consume, +1 to restore) a production's material draw to stock, per the recipe BOM
   /**
-   * Log a batch. Everything happens in ONE transaction with exact numeric SQL:
-   *   1. insert the production row
-   *   2. snapshot what it consumes (units Ã— each recipe line) into production_material_usage
-   *   3. deduct those exact amounts from material stock in a single statement
-   *   4. add finished-goods stock if the recipe is linked to a sellable product
-   *
-   * The previous version did step 3 as one UPDATE per recipe line with JS float math and
-   * no transaction â€” a failure after the insert left a batch on record with materials only
-   * partly deducted, and the deduction itself was rounded in JS before it hit the DB.
+   * Draw a batch's materials per the recipe AS IT IS NOW, keep the snapshot of what it
+   * used, and add its finished stock. What logging a batch and re-logging an edited one
+   * share (createProduction, updateProduction).
+   */
+  private async applyProductionStock(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], prod: Production, edited = false): Promise<void> {
+    // The snapshot is the record of truth for reversal, so later recipe edits can't change
+    // what this batch "used". Each line is drawn with its material's waste rate on top
+    // (shared/material-waste.ts): 2% waste on cans means the batch uses 2% more cans than
+    // the recipe line says.
+    await tx.execute(sql`
+      INSERT INTO production_material_usage (production_id, material_id, units_consumed)
+      SELECT ${prod.id}, pm.material_id, (${String(prod.units)}::numeric * pm.units * (1 + m.waste_rate / 100))
+      FROM process_materials pm
+      JOIN materials m ON m.id = pm.material_id
+      WHERE pm.process_id = ${prod.processId} AND pm.units > 0
+    `);
+
+    // One statement, exact numeric arithmetic, no per-line round trips.
+    await tx.execute(sql`
+      UPDATE materials m
+      SET stock = m.stock - u.units_consumed
+      FROM production_material_usage u
+      WHERE u.production_id = ${prod.id} AND u.material_id = m.id
+    `);
+
+    const [proc] = await tx.select().from(processes).where(eq(processes.id, prod.processId));
+    if (proc?.finishedProductId) {
+      const qty = Math.round(Number(prod.units));
+      if (qty !== 0) {
+        await tx.insert(inventoryAdjustments).values({
+          productId: proc.finishedProductId,
+          quantity: qty,
+          reason: 'production',
+          batchMetadata: JSON.stringify({ productionId: prod.id, processTitle: proc.title, ...(edited ? { edited: true } : {}) }),
+          notes: `${edited ? 'Production edited' : 'Production logged'}: ${proc.title}`,
+        });
+        await tx.update(products)
+          .set({ stockQuantity: sql`${products.stockQuantity} + ${qty}`, inStock: sql`(${products.stockQuantity} + ${qty}) > 0` })
+          .where(eq(products.id, proc.finishedProductId));
+      }
+    }
+  }
+
+  /**
+   * Put back EXACTLY what a batch consumed, from its usage snapshot — not from the recipe
+   * as it stands today — and take back the finished stock it added. Batches logged before
+   * the snapshot table existed have no usage rows; for those the current recipe is the
+   * best information available, and the log says so. The snapshot rows go with it. What
+   * deleting a batch and re-logging an edited one share (deleteProduction, updateProduction).
+   */
+  private async reverseProductionStock(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], prod: Production, why: 'deleted' | 'edited'): Promise<void> {
+    const usage = await tx.select().from(productionMaterialUsage).where(eq(productionMaterialUsage.productionId, prod.id));
+    if (usage.length > 0) {
+      await tx.execute(sql`
+        UPDATE materials m
+        SET stock = m.stock + u.units_consumed
+        FROM production_material_usage u
+        WHERE u.production_id = ${prod.id} AND u.material_id = m.id
+      `);
+    } else {
+      // No waste rate here: a batch this old was drawn before waste rates existed.
+      console.warn(`[INVENTORY] Production ${prod.id} predates usage snapshots — restoring from the CURRENT recipe (may differ from what was consumed if the recipe changed).`);
+      await tx.execute(sql`
+        UPDATE materials m
+        SET stock = m.stock + (${String(prod.units)}::numeric * pm.units)
+        FROM process_materials pm
+        WHERE pm.process_id = ${prod.processId} AND pm.material_id = m.id AND pm.units > 0
+      `);
+    }
+    await tx.delete(productionMaterialUsage).where(eq(productionMaterialUsage.productionId, prod.id));
+
+    const [proc] = await tx.select().from(processes).where(eq(processes.id, prod.processId));
+    if (proc?.finishedProductId) {
+      const qty = Math.round(Number(prod.units));
+      if (qty !== 0) {
+        await tx.insert(inventoryAdjustments).values({
+          productId: proc.finishedProductId,
+          quantity: -qty,
+          reason: 'correction',
+          batchMetadata: JSON.stringify({ reversedProductionId: prod.id, why }),
+          notes: `Reversal of ${why} production: ${proc.title}`,
+        });
+        await tx.update(products)
+          .set({ stockQuantity: sql`${products.stockQuantity} - ${qty}`, inStock: sql`(${products.stockQuantity} - ${qty}) > 0` })
+          .where(eq(products.id, proc.finishedProductId));
+      }
+    }
+  }
+
+  /**
+   * Log a batch, in one transaction with exact numeric SQL: the row, then what it drew
+   * (applyProductionStock). An earlier version deducted line by line in JS float math
+   * without a transaction, so a failure left a batch on record with its materials only
+   * partly deducted.
    */
   async createProduction(data: InsertProduction): Promise<Production> {
     return await db.transaction(async (tx) => {
       const [created] = await tx.insert(productions).values(data).returning();
-
-      // Snapshot consumption from the recipe AS IT IS NOW â€” this is the record of truth
-      // for reversal, so later recipe edits can't change what this batch "used".
-      // Each line is drawn with its material's waste rate on top (shared/material-waste.ts):
-      // 2% waste on cans means the batch uses 2% more cans than the recipe line says.
-      await tx.execute(sql`
-        INSERT INTO production_material_usage (production_id, material_id, units_consumed)
-        SELECT ${created.id}, pm.material_id, (${String(created.units)}::numeric * pm.units * (1 + m.waste_rate / 100))
-        FROM process_materials pm
-        JOIN materials m ON m.id = pm.material_id
-        WHERE pm.process_id = ${created.processId} AND pm.units > 0
-      `);
-
-      // One statement, exact numeric arithmetic, no per-line round trips.
-      await tx.execute(sql`
-        UPDATE materials m
-        SET stock = m.stock - u.units_consumed
-        FROM production_material_usage u
-        WHERE u.production_id = ${created.id} AND u.material_id = m.id
-      `);
-
-      const [proc] = await tx.select().from(processes).where(eq(processes.id, created.processId));
-      if (proc?.finishedProductId) {
-        const qty = Math.round(Number(created.units));
-        if (qty !== 0) {
-          await tx.insert(inventoryAdjustments).values({
-            productId: proc.finishedProductId,
-            quantity: qty,
-            reason: 'production',
-            batchMetadata: JSON.stringify({ productionId: created.id, processTitle: proc.title }),
-            notes: `Production logged: ${proc.title}`,
-          });
-          await tx.update(products)
-            .set({ stockQuantity: sql`${products.stockQuantity} + ${qty}`, inStock: sql`(${products.stockQuantity} + ${qty}) > 0` })
-            .where(eq(products.id, proc.finishedProductId));
-        }
-      }
+      await this.applyProductionStock(tx, created);
       return created;
     });
   }
 
   /**
-   * Delete a batch, restoring EXACTLY what it consumed from its usage snapshot â€” not from
-   * the recipe as it stands today. Batches logged before the snapshot table existed have
-   * no usage rows; for those we fall back to the current recipe (the old behaviour) and
-   * say so in the log, because it is the best information available.
+   * Correct a logged batch so that stock follows the correction (owner, 2026-11-18:
+   * "editable in a way that adjusts stock correctly"), in one transaction and under the
+   * batch's own id:
+   * - a different recipe, or a batch too old to have a usage snapshot: as if it had been
+   *   deleted and logged again, drawing the recipe as it is now;
+   * - the same recipe with a different count: what the batch used is scaled, as it was
+   *   drawn then, so stock moves by exactly the difference, and the finished stock by the
+   *   difference in whole units;
+   * - a date or a note alone: the row changes, stock does not.
+   * Returns undefined when there is no such batch.
    */
+  async updateProduction(id: string, data: Partial<Pick<InsertProduction, 'processId' | 'units' | 'date' | 'notes'>>): Promise<Production | undefined> {
+    return await db.transaction(async (tx) => {
+      const [prod] = await tx.select().from(productions).where(eq(productions.id, id));
+      if (!prod) return undefined;
+      if (Object.keys(data).length === 0) return prod;
+      const recipeChanged = data.processId !== undefined && data.processId !== prod.processId;
+      const oldUnits = Number(prod.units);
+      const newUnits = data.units !== undefined ? Number(data.units) : oldUnits;
+      const unitsChanged = newUnits !== oldUnits;
+      const snapshot = await tx.select({ id: productionMaterialUsage.id }).from(productionMaterialUsage)
+        .where(eq(productionMaterialUsage.productionId, id)).limit(1);
+
+      if (recipeChanged || (unitsChanged && (snapshot.length === 0 || oldUnits <= 0))) {
+        await this.reverseProductionStock(tx, prod, 'edited');
+        const [updated] = await tx.update(productions).set(data).where(eq(productions.id, id)).returning();
+        await this.applyProductionStock(tx, updated, true);
+        return updated;
+      }
+
+      if (unitsChanged) {
+        await tx.execute(sql`
+          UPDATE materials m
+          SET stock = m.stock - u.units_consumed * (${String(newUnits)}::numeric / ${String(oldUnits)}::numeric - 1)
+          FROM production_material_usage u
+          WHERE u.production_id = ${id} AND u.material_id = m.id
+        `);
+        await tx.execute(sql`
+          UPDATE production_material_usage
+          SET units_consumed = units_consumed * (${String(newUnits)}::numeric / ${String(oldUnits)}::numeric)
+          WHERE production_id = ${id}
+        `);
+        const [proc] = await tx.select().from(processes).where(eq(processes.id, prod.processId));
+        const delta = Math.round(newUnits) - Math.round(oldUnits);
+        if (proc?.finishedProductId && delta !== 0) {
+          await tx.insert(inventoryAdjustments).values({
+            productId: proc.finishedProductId,
+            quantity: delta,
+            reason: 'correction',
+            batchMetadata: JSON.stringify({ productionId: id, edited: true, unitsFrom: oldUnits, unitsTo: newUnits }),
+            notes: `Production edited: ${proc.title}, ${oldUnits} to ${newUnits}`,
+          });
+          await tx.update(products)
+            .set({ stockQuantity: sql`${products.stockQuantity} + ${delta}`, inStock: sql`(${products.stockQuantity} + ${delta}) > 0` })
+            .where(eq(products.id, proc.finishedProductId));
+        }
+      }
+
+      const [updated] = await tx.update(productions).set(data).where(eq(productions.id, id)).returning();
+      return updated;
+    });
+  }
+
+  /** Delete a batch, restoring what it consumed (reverseProductionStock says how). */
   async deleteProduction(id: string): Promise<void> {
     await db.transaction(async (tx) => {
       const [prod] = await tx.select().from(productions).where(eq(productions.id, id));
       if (!prod) return;
-
-      const usage = await tx.select().from(productionMaterialUsage).where(eq(productionMaterialUsage.productionId, id));
-      if (usage.length > 0) {
-        await tx.execute(sql`
-          UPDATE materials m
-          SET stock = m.stock + u.units_consumed
-          FROM production_material_usage u
-          WHERE u.production_id = ${id} AND u.material_id = m.id
-        `);
-      } else {
-        // No waste rate here: a batch this old was drawn before waste rates existed.
-        console.warn(`[INVENTORY] Production ${id} predates usage snapshots â€” restoring from the CURRENT recipe (may differ from what was consumed if the recipe changed).`);
-        await tx.execute(sql`
-          UPDATE materials m
-          SET stock = m.stock + (${String(prod.units)}::numeric * pm.units)
-          FROM process_materials pm
-          WHERE pm.process_id = ${prod.processId} AND pm.material_id = m.id AND pm.units > 0
-        `);
-      }
-
-      const [proc] = await tx.select().from(processes).where(eq(processes.id, prod.processId));
-      if (proc?.finishedProductId) {
-        const qty = Math.round(Number(prod.units));
-        if (qty !== 0) {
-          await tx.insert(inventoryAdjustments).values({
-            productId: proc.finishedProductId,
-            quantity: -qty,
-            reason: 'correction',
-            batchMetadata: JSON.stringify({ reversedProductionId: prod.id }),
-            notes: `Reversal of deleted production: ${proc.title}`,
-          });
-          await tx.update(products)
-            .set({ stockQuantity: sql`${products.stockQuantity} - ${qty}`, inStock: sql`(${products.stockQuantity} - ${qty}) > 0` })
-            .where(eq(products.id, proc.finishedProductId));
-        }
-      }
-      // usage rows cascade-delete with the production
+      await this.reverseProductionStock(tx, prod, 'deleted');
       await tx.delete(productions).where(eq(productions.id, id));
     });
   }
